@@ -5,7 +5,8 @@ import type { Enquiry, EnquiryItem, EnquiryItemRate } from "@/types";
 import { parseMoneyInput, parseSignedMoneyInput, historyDateChip } from "@/types";
 import { RATE_STATUS_LABEL, fmtINR, ceil5, finalRound, shareKey } from "@/enquiry/pricing";
 import { itemHasUnreviewedQuotes, isOpenSpecFlag } from "@/enquiry/queue";
-import FlagThread from "@/components/FlagThread";
+import LoopCards from "@/components/LoopCards";
+import { openLoops } from "@/enquiry/loops";
 import ItemRateForm from "@/components/ItemRateForm";
 import Lightbox from "@/components/Lightbox";
 
@@ -43,11 +44,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
   const [reqOpen, setReqOpen] = useState<number | null>(null);
   const [reqNote, setReqNote] = useState("");
   const [flagBusy, setFlagBusy] = useState(false);
-  // Optional per-item management remark (e.g. "valid 7 days", "transport
-  // extra"): saved into the item thread alongside the rates, visible to
-  // Sales under the decided rate.
-  const [remarks, setRemarks] = useState<Record<number, string>>({});
-  const [remarkOpen, setRemarkOpen] = useState<number | null>(null);
+  // Per-item note drafts are handled inside LoopCards (immediate sends).
   // Per-item forwardable note: procurement's salesNote for the selected vendor,
   // editable by founder before finalizing (forwarded to sales with finalRate).
   const [salesNotes, setSalesNotes] = useState<Record<number, string>>({});
@@ -82,6 +79,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
 
   useEffect(() => {
     const s: Record<number, number> = {};
+    const m: Record<number, MarkupMode> = {};
     const p: Record<number, string> = {};
     const f: Record<number, string> = {};
     const d: Record<number, string> = {};
@@ -108,17 +106,18 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
       if (disc !== undefined && disc !== null && String(disc).trim() !== "" && Number(disc) !== 0) d[i] = String(disc);
       const selRate: any = (it.rates ?? []).find((r: any) => r.vendor === (it.selectedVendor ?? ""));
       if (selRate?.salesNote) sn[i] = String(selRate.salesNote);
+      // Stored direct final (finalRate with no vendor quote, blank vendor):
+      // reopen in Final ₹ mode so it keeps computing as decided.
+      if ((it.finalRate !== undefined && it.finalRate !== null) && !it.selectedVendor && (it.rates ?? []).length === 0) m[i] = "final";
     });
     setSel(s);
-    setModes({});
+    setModes(m);
     setPctInputs(p);
     setFinalInputs(f);
     setDiscountInputs(d);
     setSalesNotes(sn);
     setReqOpen(null);
     setReqNote("");
-    setRemarks({});
-    setRemarkOpen(null);
     setChecked({});
     setBulkPct("");
     setBulkTotal("");
@@ -289,7 +288,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
     .map(({ i }) => i);
   const decidedCount = actionableIdx.filter((i) => computeItem(i, items[i]) !== null).length;
   const allDecided = actionableIdx.length > 0 && decidedCount === actionableIdx.length;
-  // Flagged (specIssue) items stay decidable — "rates remain actionable" —
+  // Flagged (open spec record) items stay decidable — "rates remain actionable" —
   // so a flagged-only row with a decision must still offer Save/Finalize.
   // Only a row with nothing actionable AND nothing decided is unsavable
   // (all rate-available / not-available bypasses).
@@ -297,7 +296,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
 
   const buildItems = (finalize: boolean): EnquiryItem[] =>
     items.map((it, i) => {
-      // Rate already available / not available: never touched, never finalized — specIssue intimates only, rates stay actionable.
+      // Rate already available / not available: never touched, never finalized — open spec intimates only, rates stay actionable.
       if (it.rateAvailable || (it as any).notAvailable) return { ...it };
       const ri = selRateIdx(i, it);
       const picked = ri === undefined ? undefined : (it.rates ?? [])[ri];
@@ -359,16 +358,6 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
           String(out.finalRate ?? "") === String((it as any).finalRate ?? "");
         if (!sameDecision) out.finalizedAt = new Date().toISOString();
       }
-      // Optional management remark: appended to the item thread (the
-      // server keeps client remark entries, crediting the writer's role),
-      // so Sales sees it under the decided rate.
-      const remark = (remarks[i] ?? "").trim();
-      if (remark) {
-        out.thread = [
-          ...(it.thread ?? []),
-          { by: "management" as const, kind: "remark" as const, text: remark.slice(0, 500), at: new Date().toISOString() },
-        ];
-      }
       return out;
     });
 
@@ -423,27 +412,92 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
     })();
   };
 
-  // Flag procurement IMMEDIATELY (no separate Save needed): the request is
-  // PATCHed straight away so it can never be lost by closing the panel —
-  // the old staged-then-save flow silently dropped flags on locked
-  // (finalized/sent) enquiries where Save is disabled, so procurement was
-  // never flagged. The flag is a pure signal: existing quotes and decisions
-  // stay intact, and the handoff reopens server-side.
+  // Ask procurement for rates IMMEDIATELY (no separate Save needed): the
+  // loop record opens straight away so it can never be lost by closing the
+  // panel. The ask is a pure signal: existing quotes and decisions stay
+  // intact, and the handoff reopens server-side.
   const sendFlagNow = (i: number) => {
-    const note = reqNote.trim();
+    const note = reqNote.trim() || "requested";
     setSaveError(null);
     setFlagBusy(true);
-    const at = new Date().toISOString();
     void (async () => {
       try {
         await onSave(
-          items.map((it, j) => (j === i ? { ...it, ratesRequested: note || "requested", ratesRequestedAt: at } : it)),
+          items.map((it, j) => (j === i ? { ...it, loopOpen: { kind: "rates" as const, text: note } } : it)),
           false,
         );
         setReqOpen(null);
         setReqNote("");
       } catch (e: any) {
         setSaveError(e?.message || "Flag failed — please retry.");
+      } finally {
+        setFlagBusy(false);
+      }
+    })();
+  };
+
+  // Loop verbs (immediate, same pattern): answer / forward / withdraw /
+  // reject sales queries; reject not-available asks. Answers carry the
+  // reply sales sees; forwards route the query to procurement.
+  const loopAnswerNow = (i: number, id: string, text: string, media?: EnquiryItem["media"]) => {
+    setSaveError(null);
+    setFlagBusy(true);
+    void (async () => {
+      try {
+        await onSave(
+          items.map((it, j) => (j === i ? { ...it, loopAnswer: { id, text, media } } : it)),
+          false,
+        );
+      } catch (e: any) {
+        setSaveError(e?.message || "Answer failed — please retry.");
+      } finally {
+        setFlagBusy(false);
+      }
+    })();
+  };
+  const loopForwardNow = (i: number, id: string, to: "management" | "procurement") => {
+    setSaveError(null);
+    setFlagBusy(true);
+    void (async () => {
+      try {
+        await onSave(
+          items.map((it, j) => (j === i ? { ...it, loopForward: { id, to } } : it)),
+          false,
+        );
+      } catch (e: any) {
+        setSaveError(e?.message || "Forward failed — please retry.");
+      } finally {
+        setFlagBusy(false);
+      }
+    })();
+  };
+  const loopWithdrawNow = (i: number, id: string) => {
+    setSaveError(null);
+    setFlagBusy(true);
+    void (async () => {
+      try {
+        await onSave(
+          items.map((it, j) => (j === i ? { ...it, loopWithdraw: { id } } : it)),
+          false,
+        );
+      } catch (e: any) {
+        setSaveError(e?.message || "Withdraw failed — please retry.");
+      } finally {
+        setFlagBusy(false);
+      }
+    })();
+  };
+  const loopRejectNow = (i: number, id: string) => {
+    setSaveError(null);
+    setFlagBusy(true);
+    void (async () => {
+      try {
+        await onSave(
+          items.map((it, j) => (j === i ? { ...it, loopReject: { id } } : it)),
+          false,
+        );
+      } catch (e: any) {
+        setSaveError(e?.message || "Reject failed — please retry.");
       } finally {
         setFlagBusy(false);
       }
@@ -473,22 +527,11 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
     })();
   };
 
-  // Withdraw an unanswered request (explicit "" clears server-side).
+  // Withdraw an unanswered rate ask (explicit loop verb).
   const withdrawFlagNow = (i: number) => {
-    setSaveError(null);
-    setFlagBusy(true);
-    void (async () => {
-      try {
-        await onSave(
-          items.map((it, j) => (j === i ? { ...it, ratesRequested: "" } : it)),
-          false,
-        );
-      } catch (e: any) {
-        setSaveError(e?.message || "Withdraw failed — please retry.");
-      } finally {
-        setFlagBusy(false);
-      }
-    })();
+    const rec = openLoops(items[i], 'rates')[0];
+    if (!rec) return;
+    loopWithdrawNow(i, rec.id);
   };
 
   const handleNotAvailable = (i: number) => {
@@ -529,20 +572,19 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
   };
 
   const handleRejectNotAvailable = (i: number) => {
+    const rec = openLoops(items[i], 'not_available')[0];
+    if (!rec) return;
+    loopRejectNow(i, rec.id);
+  };
+
+  // Fire-and-forget item save for LoopCards verbs (same surfacing as the
+  // other immediate actions: errors land in the panel banner).
+  const saveLoopItems = (i: number, fn: (it: any) => any) => {
     setSaveError(null);
-    setFlagBusy(true);
-    void (async () => {
-      try {
-        await onSave(
-          items.map((it, j) => (j === i ? { ...(it as any), notAvailableRequested: undefined, notAvailableRequestedAt: undefined } as any : it)),
-          false,
-        );
-      } catch (e: any) {
-        setSaveError(e?.message || "Reject failed — please retry.");
-      } finally {
-        setFlagBusy(false);
-      }
-    })();
+    const p = onSave(items.map((it, j) => (j === i ? fn(it) : it)), false) as unknown as Promise<void> | void;
+    if (p && typeof (p as any).catch === "function") {
+      void (p as Promise<void>).catch((e: any) => setSaveError(e?.message || "Save failed — please retry."));
+    }
   };
 
   const checkedIdx = items
@@ -601,16 +643,21 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
     setSaveError(null);
     setSavedTick(false);
     try {
-      await onSave(buildItems(finalize), finalize);
+      const built = buildItems(finalize);
+      await onSave(built, finalize);
       // Success: drop the just-saved drafts so the panel shows stored truth.
+      // Direct finals (blank vendor, no rates) reopen in Final ₹ mode —
+      // otherwise the cleared mode would read them as undecided.
+      const m: Record<number, MarkupMode> = {};
+      built.forEach((b, i) => {
+        if (b.finalRate !== undefined && b.finalRate !== null && !b.selectedVendor && ((b.rates ?? []).length === 0)) m[i] = "final";
+      });
       setPctInputs({});
       setFinalInputs({});
       setDiscountInputs({});
       setSalesNotes({});
-      setModes({});
+      setModes(m);
       setReqOpen(null);
-      setRemarks({});
-      setRemarkOpen(null);
       setRevise({});
       setSavedTick(true);
     } catch (e: any) {
@@ -660,7 +707,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                         </span>
                         {it.qty && <span className="text-[var(--text-tertiary)] font-semibold">× {it.qty}</span>}
                         <span className="ml-auto font-mono text-[var(--text-secondary)]">
-                          {it.selectedVendor ? `${it.selectedVendor} · ` : ""}{vRate !== undefined ? `₹${Number(vRate).toLocaleString("en-IN")} → ` : ""}
+                          {it.selectedVendor ? `${it.selectedVendor} · ` : ""}{(selRow as any)?.size ? `${String((selRow as any).size).slice(0, 40)} · ` : ""}{vRate !== undefined ? `₹${Number(vRate).toLocaleString("en-IN")} → ` : ""}
                           <span className="font-extrabold text-emerald-400">₹{Number(it.finalRate).toLocaleString("en-IN")}</span>
                         </span>
                         {(it as any).finalDiscountPercent ? (
@@ -679,7 +726,6 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                           })}
                         </div>
                       )}
-                      <FlagThread thread={it.thread ?? []} tone="auto" />
                     </li>
                   );
                 })}
@@ -758,7 +804,17 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                       Marked {historyDateChip((it as any).notAvailableAt) || "recently"} · Sales sees this as not available.
                     </p>
                   </div>
-                  <FlagThread thread={it.thread ?? []} tone="auto" />
+                  <LoopCards
+                    item={it}
+                    mode="management"
+                    onOpen={(kind, text, media) => saveLoopItems(i, (x: any) => ({ ...x, loopOpen: { kind, text, media } }))}
+                    onAnswer={(id, text, media) => loopAnswerNow(i, id, text, media)}
+                    onForward={(id, to) => loopForwardNow(i, id, to)}
+                    onWithdraw={(id) => loopWithdrawNow(i, id)}
+                    onReject={(id) => loopRejectNow(i, id)}
+                    onOpenLightbox={openLightbox}
+                    askKinds={["note"]}
+                  />
                   <button type="button" onClick={() => handleClearNotAvailable(i)} disabled={flagBusy}
                     className="px-2.5 py-1.5 bg-transparent border border-[var(--border-card)] text-[var(--text-secondary)] hover:bg-[var(--bg-input)] hover:text-[var(--text-primary)] font-bold text-[11px] rounded-lg cursor-pointer disabled:opacity-50">
                     ↩ Clear — available again
@@ -766,7 +822,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                 </div>
               );
             }
-            if ((it as any).notAvailableRequested) {
+            if (openLoops(it, 'not_available').length > 0) {
               return (
                 <div key={i} className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
                   <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
@@ -783,14 +839,17 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                   {it.spec && (
                     <p className="text-xs text-[var(--text-secondary)] font-medium whitespace-pre-wrap leading-relaxed">{it.spec}</p>
                   )}
-                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5 text-[11px] leading-relaxed">
-                    <p className="font-extrabold text-amber-400 uppercase tracking-wide text-[10px]">Procurement says not available</p>
-                    <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{String((it as any).notAvailableRequested)}</p>
-                    <p className="mt-1 text-[var(--text-tertiary)]">
-                      Requested {historyDateChip((it as any).notAvailableRequestedAt) || "recently"} · Approve to show sales.
-                    </p>
-                  </div>
-                  <FlagThread thread={it.thread ?? []} tone="auto" />
+                  <LoopCards
+                    item={it}
+                    mode="management"
+                    onOpen={(kind, text, media) => saveLoopItems(i, (x: any) => ({ ...x, loopOpen: { kind, text, media } }))}
+                    onAnswer={(id, text, media) => loopAnswerNow(i, id, text, media)}
+                    onForward={(id, to) => loopForwardNow(i, id, to)}
+                    onWithdraw={(id) => loopWithdrawNow(i, id)}
+                    onReject={(id) => loopRejectNow(i, id)}
+                    onOpenLightbox={openLightbox}
+                    askKinds={["note"]}
+                  />
                   {notAvailableOpen === i ? (
                     <div className="space-y-1.5 rounded-lg border border-dashed border-[var(--border-card)] p-2">
                       <input
@@ -812,7 +871,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                     </div>
                   ) : (
                     <div className="flex flex-wrap gap-2">
-                      <button type="button" onClick={() => { setNotAvailableOpen(i); setNotAvailableReason(String((it as any).notAvailableRequested ?? "")); }}
+                      <button type="button" onClick={() => { setNotAvailableOpen(i); setNotAvailableReason(String(openLoops(it, 'not_available')[0]?.text ?? "")); }}
                         className="px-2.5 py-1.5 bg-amber-600 hover:bg-amber-500 text-white font-bold text-[11px] rounded-lg cursor-pointer border-0">
                         Approve — share with sales
                       </button>
@@ -825,13 +884,14 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                 </div>
               );
             }
-            // Flagged intimates only — vendor rates stay visible and actionable (per founder: specIssue with rates shows in Management).
-            // Resolved flags show no banner (audit trail lives in the thread below).
-            const flaggedBanner = isOpenSpecFlag(it) && !sent ? (
+            // Flagged intimates only — vendor rates stay visible and actionable (per founder: open spec with rates shows in Management).
+            // Answered asks show no banner (audit trail lives in the loop cards below).
+            const openSpec = openLoops(it, 'spec')[0];
+            const flaggedBanner = openSpec && !sent ? (
               <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-2.5 text-[11px] leading-relaxed">
                 <p className="font-extrabold text-red-400 uppercase tracking-wide text-[10px]">Procurement flagged incorrect spec — intimating only</p>
-                <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{it.specIssue}</p>
-                <p className="mt-1 text-[var(--text-tertiary)]">Flagged {historyDateChip(it.specFlaggedAt) || "recently"} · shown read-only banner, rates remain actionable.</p>
+                <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{openSpec.text}</p>
+                <p className="mt-1 text-[var(--text-tertiary)]">Flagged {historyDateChip(openSpec.openedAt) || "recently"} · shown read-only banner, rates remain actionable.</p>
               </div>
             ) : null;
             // Legacy internal rows with no rate yet: enter the sourced rate
@@ -854,7 +914,17 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                   {it.spec && (
                     <p className="text-xs text-[var(--text-secondary)] font-medium whitespace-pre-wrap leading-relaxed">{it.spec}</p>
                   )}
-                  <FlagThread thread={it.thread ?? []} tone="auto" />
+                  <LoopCards
+                    item={it}
+                    mode="management"
+                    onOpen={(kind, text, media) => saveLoopItems(i, (x: any) => ({ ...x, loopOpen: { kind, text, media } }))}
+                    onAnswer={(id, text, media) => loopAnswerNow(i, id, text, media)}
+                    onForward={(id, to) => loopForwardNow(i, id, to)}
+                    onWithdraw={(id) => loopWithdrawNow(i, id)}
+                    onReject={(id) => loopRejectNow(i, id)}
+                    onOpenLightbox={openLightbox}
+                    askKinds={["note"]}
+                  />
                   <ItemRateForm
                     submitLabel="Add internal rate"
                     onAdd={(rate) => void addInternalRate(i, rate)}
@@ -900,22 +970,18 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                   <p className="text-xs text-[var(--text-secondary)] font-medium whitespace-pre-wrap leading-relaxed">{it.spec}</p>
                 )}
                 {flaggedBanner}
-                {(it.media ?? []).length > 0 && (
-                  <div className="flex flex-wrap gap-1.5">
-                    {(it.media ?? []).map((m: any, mi: number) => {
-                      const list = (it.media ?? []).filter((x: any) => x.type !== "video" && x.type !== "pdf").map((x: any) => x.url);
-                      return m.type === "video" ? (
-                        <video key={mi} src={m.url} controls preload="metadata" className="w-20 h-12 rounded-lg object-cover border border-[var(--border-card)] bg-black" />
-                      ) : m.type === "pdf" ? (
-                        <a key={mi} href={m.url} target="_blank" rel="noreferrer" className="px-2 py-1.5 rounded-lg border border-[var(--border-card)] bg-red-500/10 text-[10px] font-bold">PDF</a>
-                      ) : (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img key={mi} src={m.url} alt={`Item attachment ${mi+1}`} className="w-14 h-14 rounded-lg object-cover border border-[var(--border-card)] cursor-zoom-in" onClick={() => openLightbox(m.url, list, Math.max(0, list.indexOf(m.url)))} />
-                      );
-                    })}
-                  </div>
-                )}
-                <FlagThread thread={it.thread ?? []} tone="auto" />
+                <LoopCards
+                  item={it}
+                  mode="management"
+                  onOpen={(kind, text, media) => saveLoopItems(i, (x: any) => ({ ...x, loopOpen: { kind, text, media } }))}
+                  onAnswer={(id, text, media) => loopAnswerNow(i, id, text, media)}
+                  onForward={(id, to) => loopForwardNow(i, id, to)}
+                  onWithdraw={(id) => loopWithdrawNow(i, id)}
+                  onReject={(id) => loopRejectNow(i, id)}
+                  onOpenLightbox={openLightbox}
+                  askKinds={["rates", "note"]}
+                  askLabels={{ rates: "Flag procurement", note: "Add note" }}
+                />
                 {(it as any).expectedRate !== undefined && (it as any).expectedRate !== null && (
                   <p className="text-[11px] font-extrabold text-sky-400">
                     🎯 Client expects ₹{Number((it as any).expectedRate).toLocaleString("en-IN")}
@@ -924,7 +990,35 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                 )}
                 {rates.length === 0 ? (
                   <div className="space-y-2">
-                    <p className="text-[11px] text-[var(--text-tertiary)] italic">No vendor rates yet — add one here to finalize directly.</p>
+                    {isItemLocked ? null : (
+                      <>
+                        <p className="text-[11px] text-[var(--text-secondary)]">
+                          No vendor rates yet — set the final price directly below (no vendor quote needed)
+                          {isOpenSpecFlag(it) ? " — this overrides the spec hold, flagged for the record" : ""}.
+                        </p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <input
+                            value={finalInputs[i] ?? ""}
+                            onChange={(e) => {
+                              setFinalInputs((prev) => ({ ...prev, [i]: e.target.value }));
+                              setModes((prev) => ({ ...prev, [i]: "final" }));
+                            }}
+                            placeholder="Final price ₹"
+                            inputMode="decimal"
+                            className="w-32 px-2 py-1 rounded-lg border border-[var(--border-card)] bg-[var(--bg-card)] text-xs text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                          />
+                          {(() => {
+                            const dc = computeItem(i, it);
+                            return dc ? (
+                              <span className="text-[11px] font-extrabold text-emerald-400">
+                                Final: {fmtINR(dc.finalRate)}{dc.unrounded !== dc.finalRate ? " (rounded ↑)" : ""}
+                              </span>
+                            ) : null;
+                          })()}
+                        </div>
+                      </>
+                    )}
+                    <p className="text-[11px] text-[var(--text-tertiary)] italic">Or add a vendor rate here to finalize against a quote instead.</p>
                     {!isItemLocked && (
                       <ItemRateForm
                         submitLabel="Add rate & finalize"
@@ -957,7 +1051,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                         />
                         <span className="flex-1 min-w-0">
                           <span className="flex items-center gap-2 flex-wrap">
-                            <span className="text-[var(--text-primary)] font-semibold">{r.vendor}</span>
+                            <span className="text-[var(--text-primary)] font-semibold">{r.vendor}{(r as any)?.size ? <span className="font-semibold text-[var(--text-secondary)]"> · {String((r as any).size).slice(0, 60)}</span> : ""}</span>
                             {r.specSame === false && (
                               <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide bg-amber-500/10 text-amber-400 border border-amber-500/30">Spec differs</span>
                             )}
@@ -993,6 +1087,11 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                           </span>
                           {r.description && (
                             <span className="block text-[var(--text-tertiary)] whitespace-pre-wrap leading-relaxed mt-0.5">{r.description}</span>
+                          )}
+                          {(r as any)?.salesNote && (
+                            <span className="block text-[11px] text-emerald-600 dark:text-emerald-400 whitespace-pre-wrap leading-relaxed mt-0.5 border-l-2 border-emerald-500/30 pl-2" title="Procurement's note for sales">
+                              <span className="font-bold">For sales: </span>{String((r as any).salesNote)}
+                            </span>
                           )}
                           {r.specSame === false && r.specDiff && (
                             <span className="block text-amber-400/90 whitespace-pre-wrap leading-relaxed mt-0.5">
@@ -1039,7 +1138,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                   {isItemLocked ? (
                     <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-2.5 space-y-1.5">
                       <p className="text-[11px] font-extrabold text-emerald-400">
-                        {it.internalRates ? "Rate available internally" : "Rate Received"}: ₹{Number(it.finalRate).toLocaleString("en-IN")}
+                        {it.internalRates ? "Rate available internally" : !it.selectedVendor && (it.rates ?? []).length === 0 ? "Direct final (no vendor quote)" : "Rate Received"}: ₹{Number(it.finalRate).toLocaleString("en-IN")}
                         {(it as any).finalDiscountPercent ? ` · ${(it as any).finalDiscountPercent}% off` : ""}
                       </p>
                       {(() => {
@@ -1167,9 +1266,9 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                   {(finalized || sent) && it.finalRate !== undefined && it.finalRate !== null && (
                     <span className="block text-[11px] text-[var(--text-tertiary)]">Locked at {fmtINR(it.finalRate)}</span>
                   )}
-                  {it.ratesRequested && (
+                  {openLoops(it, 'rates').length > 0 && (
                     <p className="text-[10px] font-semibold text-indigo-400">
-                      Rates requested from procurement{it.ratesRequested !== "requested" ? `: ${it.ratesRequested}` : "…"}
+                      Rates requested from procurement{openLoops(it, 'rates')[0]?.text && openLoops(it, 'rates')[0].text !== "requested" ? `: ${openLoops(it, 'rates')[0].text}` : "…"}
                     </p>
                   )}
                   {revise[i] && (
@@ -1209,7 +1308,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                       Flag procurement
                     </button>
                   )}
-                  {it.ratesRequested && (
+                  {openLoops(it, 'rates').length > 0 && (
                     <button type="button" onClick={() => withdrawFlagNow(i)} disabled={flagBusy}
                       className="px-2.5 py-1.5 bg-transparent border-0 text-[11px] font-bold text-[var(--text-tertiary)] hover:text-[var(--text-primary)] cursor-pointer disabled:opacity-50">
                       Withdraw request
@@ -1223,31 +1322,6 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                       title="Return this item to the procurement queue"
                       className="px-2.5 py-1.5 bg-transparent border border-violet-500/40 text-violet-400 hover:bg-violet-500/10 font-bold text-[11px] rounded-lg cursor-pointer">
                       Return to procurement
-                    </button>
-                  )}
-                  {remarkOpen === i ? (
-                    <div className="flex-1 min-w-[12rem] space-y-1.5 rounded-lg border border-dashed border-[var(--border-card)] p-2">
-                      <input
-                        value={remarks[i] ?? ""}
-                        onChange={(e) => setRemarks((prev) => ({ ...prev, [i]: e.target.value }))}
-                        placeholder="Remark for sales, saved with the rates (optional)…"
-                        className="w-full px-2 py-1.5 rounded-lg border border-[var(--border-card)] bg-[var(--bg-card)] text-xs text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
-                      />
-                      <div className="flex gap-2">
-                        <button type="button" onClick={() => setRemarkOpen(null)}
-                          className="px-3 py-1.5 bg-[var(--bg-input)] hover:bg-zinc-600 text-[var(--text-primary)] font-bold text-[11px] rounded-lg cursor-pointer border-0">
-                          Done
-                        </button>
-                        <button type="button" onClick={() => { setRemarks((prev) => ({ ...prev, [i]: "" })); setRemarkOpen(null); }}
-                          className="px-3 py-1.5 font-bold text-[11px] rounded-lg cursor-pointer border-0 bg-transparent text-[var(--text-tertiary)] hover:text-[var(--text-primary)]">
-                          Clear
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <button type="button" onClick={() => setRemarkOpen(i)}
-                      className="px-2.5 py-1.5 bg-transparent border border-[var(--border-card)] text-[var(--text-secondary)] hover:bg-zinc-700/40 font-bold text-[11px] rounded-lg cursor-pointer">
-                      Add remark{(remarks[i] ?? "").trim() ? " ✓" : ""}
                     </button>
                   )}
                   {notAvailableOpen === i ? (

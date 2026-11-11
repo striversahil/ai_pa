@@ -4,14 +4,20 @@
 import {
   parseItemMedia,
   parseItemRates,
-  parseFlagThread,
   numOrUndefined,
 } from "./parse";
 import type {
-  FlagThreadBy,
-  FlagThreadEntry,
+  LoopParty,
 } from "./types";
 import { enquiryLabelText } from "./types";
+import {
+  applyLoopOps,
+  answerOpen,
+  auditNote,
+  openLoops,
+  migrateItemLoops,
+  type LoopWriter,
+} from "./loops";
 
 export interface ItemWriteCtx {
   storedItems: any[];
@@ -245,83 +251,30 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
         base.internalRates = stored.internalRates === true;
         base.internalRatesAt = stored.internalRatesAt ?? undefined;
       }
-      // A fresh/edited rate answers Management's request — clear it.
-      // Untouched rates keep a pending request alive.
-      const ratesChanged = JSON.stringify(base.rates ?? []) !== JSON.stringify(stored.rates ?? []);
-      base.ratesRequested = ratesChanged ? undefined : stored.ratesRequested;
-      base.ratesRequestedAt = ratesChanged ? undefined : stored.ratesRequestedAt;
-      // A fresh/edited rate (not a pure removal) OR new item media (reference
-      // picture) answers sales' merged variation/reference request the same way.
-      // Anything else keeps the pending request (and its text+media) exactly as stored.
-      // Mirror of the sales remarkFix below: a fresh PROCUREMENT reply in the
-      // item thread ALSO answers the request — text or attachment, no separate
-      // action. The request clears; both sides stay visible in the thread,
-      // exactly like the flag flow (the request itself is trailed as a
-      // sales flag — see the sales writer block).
-      const storedVar = String(stored.variationRequest ?? "").trim();
-      const storedVarMedia = parseItemMedia((stored as any).variationRequestMedia ?? []);
-      const ratesGrew = (base.rates ?? []).length >= (stored.rates ?? []).length;
-      const baseMedia = parseItemMedia(base.media ?? []);
-      const storedMedia2 = parseItemMedia(stored.media ?? []);
-      const storedMediaKeys = new Set(storedMedia2.map((m: any) => `${m.type}:${m.url}`));
-      const mediaAdded = baseMedia.some((m: any) => !storedMediaKeys.has(`${m.type}:${m.url}`));
-      const storedThreadForReply = parseFlagThread((stored as any)?.thread);
-      const seenForReply = new Set(storedThreadForReply.map((e: any) => `${e.at}|${e.kind}|${e.text}`));
-      const freshProcReply = parseFlagThread((it as any)?.thread).find((e: any) =>
-        !seenForReply.has(`${e.at}|${e.kind}|${e.text}`)
-        && (e.kind === 'remark' || e.kind === 'fix')
-        && (String((e as any)?.by ?? '') === 'procurement' || actingProcurement)
-        && (String((e as any)?.text ?? '').trim().length > 0 || (Array.isArray((e as any)?.media) && ((e as any).media ?? []).length > 0)));
-      if (storedVar && ((ratesChanged && ratesGrew) || mediaAdded || !!freshProcReply)) {
-        base.variationRequest = undefined;
-        base.variationRequestedAt = undefined;
-        (base as any).variationRequestMedia = undefined;
-      } else {
-        base.variationRequest = stored.variationRequest;
-        base.variationRequestedAt = stored.variationRequestedAt;
-        (base as any).variationRequestMedia = storedVar ? parseItemMedia((stored as any).variationRequestMedia ?? []) : undefined;
-        if (!storedVar) (base as any).variationRequestMedia = undefined;
-      }
+      // Loop auto-answers that need the merged-rates diff are applied in the
+      // loop pass at the end of this function (answerOpen on rates/query
+      // records); this branch only pins non-loop fields.
     }
-    // Management rate-request lifecycle: only privileged writers may set
-    // it. Plain sales writers follow the stored value so a stale edit can
-    // never forge or wipe an active request; procurement clears it by
-    // changing rates (handled in the restricted branch above).
-    // withdrewRequest tracks an explicit privileged withdraw ("") so the
-    // loop trail below stamps it correctly (declared here — used below).
-    let withdrewRequest = false;
     if (!privileged && !restricted) {
-      base.ratesRequested = stored.ratesRequested;
-      base.ratesRequestedAt = stored.ratesRequestedAt;
       base.internalRates = stored.internalRates === true;
       base.internalRatesAt = stored.internalRatesAt ?? undefined;
     } else {
-      // Explicit "" from a privileged writer withdraws an unanswered request
-      // (pick() preserves it; absent still means "leave stored"). Remember
-      // the withdraw so the loop trail below stamps it as withdrawn, not as
-      // answered-by-quotes.
-      if (privileged && (base as any).ratesRequested === "") {
-        withdrewRequest = true;
-        base.ratesRequested = undefined;
-        base.ratesRequestedAt = undefined;
-      }
-      // Submitted value stands (privileged set it, or the restricted
-      // branch above already resolved it) — but a concurrent rate change
-      // answers the request, so drop it.
-      const ratesChanged = JSON.stringify(parseItemRates(base.rates ?? [])) !== JSON.stringify(parseItemRates(stored.rates ?? []));
-      if (ratesChanged) {
-        base.ratesRequested = undefined;
-        base.ratesRequestedAt = undefined;
-      }
       // A fresh management request is a pure signal: quotes AND decisions
       // stay intact — flagging procurement never deletes prior work (a flag
       // once wiped the item's rates + decision, destroying quoted work).
-      // Procurement's next rate edit answers the request (ratesChanged
-      // above clears it); new quotes after a decision resurface in the
-      // management queue via itemHasUnreviewedQuotes.
+      // Procurement's next rate edit answers the request in the loop pass;
+      // new quotes after a decision resurface in the management queue via
+      // itemHasUnreviewedQuotes.
       // The handoff reopen lives in applyRateLifecycles below.
+      void 0;
     }
-    // Not available: procurement requests (notAvailableRequested), management approves (notAvailable + shared text) → sales sees notAvailable
+    // Not available STATE (procurement requests via loop records, management
+    // approves with notAvailable + shared text → sales sees notAvailable).
+    // Request text lives in loop records (kind not_available); these branches
+    // only pin the approve state per role. Open/answer/withdraw/reject flow
+    // through loop intents in the loop pass below.
+    // approveNA signals the loop pass to answer open not_available records.
+    let approveNA = false;
     if (privileged) {
       const hasNotAvailable = Object.prototype.hasOwnProperty.call(it as any, 'notAvailable');
       if (hasNotAvailable) {
@@ -330,9 +283,7 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
           (base as any).notAvailable = true;
           const r = typeof (base as any).notAvailableReason === 'string' ? String((base as any).notAvailableReason).trim().slice(0, 500) : '';
           (base as any).notAvailableReason = r || undefined;
-          // Approving clears the procurement request
-          (base as any).notAvailableRequested = undefined;
-          (base as any).notAvailableRequestedAt = undefined;
+          approveNA = true;
         } else {
           (base as any).notAvailable = undefined;
           (base as any).notAvailableReason = undefined;
@@ -343,57 +294,16 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
         (base as any).notAvailableReason = (stored as any).notAvailableReason ? String((stored as any).notAvailableReason).slice(0, 500) : undefined;
         (base as any).notAvailableAt = (stored as any).notAvailableAt;
       }
-      const hasRequested = Object.prototype.hasOwnProperty.call(it as any, 'notAvailableRequested');
-      if (hasRequested) {
-        const req = typeof (it as any).notAvailableRequested === 'string' ? String((it as any).notAvailableRequested).trim().slice(0, 500) : '';
-        if (req) {
-          (base as any).notAvailableRequested = req;
-        } else {
-          (base as any).notAvailableRequested = undefined;
-          (base as any).notAvailableRequestedAt = undefined;
-        }
-      } else {
-        (base as any).notAvailableRequested = (stored as any).notAvailableRequested ? String((stored as any).notAvailableRequested).slice(0, 500) : undefined;
-        (base as any).notAvailableRequestedAt = (stored as any).notAvailableRequestedAt;
-      }
     } else if (restricted) {
       // Procurement can only request, never directly approve
       (base as any).notAvailable = (stored as any).notAvailable === true ? true : undefined;
       (base as any).notAvailableReason = (stored as any).notAvailableReason ? String((stored as any).notAvailableReason).slice(0, 500) : undefined;
       (base as any).notAvailableAt = (stored as any).notAvailableAt;
-      // If procurement mistakenly sends notAvailable:true (old frontend), treat as requested
-      if (Object.prototype.hasOwnProperty.call(it as any, 'notAvailable') && (it as any).notAvailable === true) {
-        const r = typeof (it as any).notAvailableReason === 'string' ? String((it as any).notAvailableReason).trim().slice(0, 500) : (typeof (it as any).notAvailableRequested === 'string' ? String((it as any).notAvailableRequested).trim().slice(0, 500) : '');
-        if (r || (it as any).notAvailable === true) {
-          (base as any).notAvailableRequested = r || String((it as any).notAvailableRequested ?? "Not available").slice(0, 500) || "Not available";
-        }
-      }
-      const hasRequested = Object.prototype.hasOwnProperty.call(it as any, 'notAvailableRequested');
-      if (hasRequested) {
-        const req = typeof (it as any).notAvailableRequested === 'string' ? String((it as any).notAvailableRequested).trim().slice(0, 500) : '';
-        if (req) {
-          (base as any).notAvailableRequested = req;
-        } else {
-          // Only clear if not being set via notAvailable above
-          if (!Object.prototype.hasOwnProperty.call(it as any, 'notAvailable') || (it as any).notAvailable !== true) {
-            (base as any).notAvailableRequested = undefined;
-            (base as any).notAvailableRequestedAt = undefined;
-          }
-        }
-      } else {
-        // Preserve stored if not sending, unless we just set via notAvailable above
-        if (!(base as any).notAvailableRequested) {
-          (base as any).notAvailableRequested = (stored as any).notAvailableRequested ? String((stored as any).notAvailableRequested).slice(0, 500) : undefined;
-          (base as any).notAvailableRequestedAt = (stored as any).notAvailableRequestedAt;
-        }
-      }
     } else {
       // Sales cannot touch either
       (base as any).notAvailable = (stored as any).notAvailable === true ? true : undefined;
       (base as any).notAvailableReason = (stored as any).notAvailableReason ? String((stored as any).notAvailableReason).slice(0, 500) : undefined;
       (base as any).notAvailableAt = (stored as any).notAvailableAt;
-      (base as any).notAvailableRequested = (stored as any).notAvailableRequested ? String((stored as any).notAvailableRequested).slice(0, 500) : undefined;
-      (base as any).notAvailableRequestedAt = (stored as any).notAvailableRequestedAt;
     }
     // Media merge for sales/management (non-restricted) — same append
     // semantics as procurement but allows explicit deletions: if incoming is
@@ -418,14 +328,16 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
       base.media = applyMediaRemovals(base.media as any[]);
       if ((base.media as any[]).length === 0) delete (base as any).media;
     }
-    // Spec-dispute lifecycle (all writers):
-    // - a spec text change clears an open flag from any surface;
-    // - fresh reference media clears it ONLY from a non-procurement surface
-    //   (the sales-correction reshare path). Procurement attaching photos
-    //   (vendor refs, site pics) must never resolve its own flag — the flag
-    //   stays until sales fixes the spec;
-    // - otherwise an open flag survives even if the write omits it;
-    // - finalized items can't be newly flagged.
+    // ── Loop pass (deterministic records replace the old thread) ──────────
+    // Writer desk (surface-aware, same derivation the old trail role used):
+    // a privileged writer using the sales UI stamps as sales.
+    const surface = String((ctx as any).surface ?? '').toLowerCase();
+    const role: LoopParty = surface === 'procurement' ? 'procurement'
+      : surface === 'sales' ? 'sales'
+      : surface === 'management' ? 'management'
+      : actingProcurement ? 'procurement' : privileged ? 'management' : 'sales';
+    const nowIso = new Date().toISOString();
+    const writer: LoopWriter = { privileged, restricted, actingProcurement, desk: role };
     // KYP grounding: preserve inferred category/item; completeness is
     // recomputed only by the AI intake (LLM spec-check). Manual edits keep
     // the stored grounding so the checklist stays visible until next intake.
@@ -444,216 +356,114 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
         if ((stored as any).kypItem && !(base as any).kypItem) (base as any).kypItem = (stored as any).kypItem;
       }
     }
-    const hadFlag = !!stored.specIssue;
+    // Explicit verbs + legacy bridge → records.
+    let loops = applyLoopOps(stored, it, writer, nowIso);
+    const note = (text: string, internal = false) => {
+      loops = [...loops, auditNote(text, role, nowIso, internal)];
+    };
+    // Auto-answers from field changes.
     const specChanged = String(base.spec ?? "") !== String(stored.spec ?? "");
     const mediaKey = (m: any): string => `${m?.type === 'video' ? 'video' : m?.type === 'pdf' ? 'pdf' : 'image'}:${String(m?.url ?? '')}`;
     const storedUrls = new Set(parseItemMedia(stored.media ?? []).map(mediaKey));
     const newMedia = parseItemMedia(base.media ?? []).filter((m: any) => !storedUrls.has(mediaKey(m)));
     const mediaAdded = newMedia.length > 0;
-    // Sales remark on a flagged item also resolves it (permanent fix for
-    // procurement not seeing the fix: sales wrote "Size 8 x 32" as a remark
-    // but spec stayed "" so the flag never cleared). A fresh sales remark
-    // now clears the hold and, if spec is still empty, promotes the remark
-    // text into spec so procurement has the size without a second edit.
-    const storedThreadForFix = parseFlagThread((stored as any)?.thread);
-    const seenForFix = new Set(storedThreadForFix.map((e) => `${e.at}|${e.kind}|${e.text}`));
-    const incomingRemarksForFix = parseFlagThread((it as any)?.thread).filter((e) => e.kind === 'remark');
-    const freshSalesRemark = incomingRemarksForFix.find((e) => !seenForFix.has(`${e.at}|${e.kind}|${e.text}`) && (e.by === 'sales' || (!actingProcurement && !privileged)));
-    const remarkFix = !!freshSalesRemark && hadFlag;
-    if (remarkFix && !String(base.spec ?? "").trim()) {
-      base.spec = String(freshSalesRemark.text).slice(0, 2000);
+    if (specChanged) {
+      loops = answerOpen(loops, 'spec', 'Spec corrected', role, nowIso);
+    } else if (mediaAdded && !actingProcurement) {
+      // Fresh reference media from a non-procurement surface answers the
+      // spec ask (sales-correction reshare path). Procurement attaching
+      // photos (vendor refs, site pics) never resolves its own ask.
+      loops = answerOpen(loops, 'spec', 'Reference attachments added', role, nowIso);
     }
-    // Bilateral open thread: either side may flag, any spec/media/remark fix clears
-    const fixed = specChanged || mediaAdded || remarkFix;
-    if (stored.finalRate !== undefined && stored.finalRate !== null) {
-      // Re-flag finalized from either side reopens for re-quote (bilateral)
-      if (base.specIssue && !stored.specIssue) {
+    const ratesChanged = JSON.stringify(parseItemRates(base.rates ?? [])) !== JSON.stringify(parseItemRates(stored.rates ?? []));
+    const ratesGrew = (base.rates ?? []).length >= (stored.rates ?? []).length;
+    if (actingProcurement && ratesChanged && ratesGrew) {
+      loops = answerOpen(loops, 'rates', 'New vendor rates added', role, nowIso);
+      loops = answerOpen(loops, 'query', 'Info/alternate fulfilled', role, nowIso, 'procurement');
+    }
+    if (actingProcurement && mediaAdded) {
+      loops = answerOpen(loops, 'query', 'Reference shared', role, nowIso, 'procurement');
+    }
+    // Re-flag on a decided item reopens for re-quote: a newly opened spec
+    // record wipes the decision (same as the old re-flag rule).
+    {
+      const storedOpenSpec = openLoops({ loops: migrateItemLoops(stored) }, 'spec');
+      const nowOpenSpec = openLoops({ loops }, 'spec');
+      if (stored.finalRate !== undefined && stored.finalRate !== null
+        && storedOpenSpec.length === 0 && nowOpenSpec.length > 0) {
         base.selectedVendor = undefined;
+        (base as any).selectedRateIdx = undefined;
         base.markup = undefined;
         base.finalRate = undefined;
         base.finalDiscountPercent = undefined;
         base.finalizedAt = undefined;
-      } else {
-        base.specIssue = stored.specIssue;
-        base.specFlaggedAt = stored.specFlaggedAt;
-      }
-    } else if (fixed) {
-      delete base.specIssue;
-      delete base.specFlaggedAt;
-    } else if (hadFlag && base.specIssue === undefined) {
-      base.specIssue = stored.specIssue;
-      base.specFlaggedAt = stored.specFlaggedAt;
-    }
-    // Loop trail (server-authored, forge-proof): stored history + this
-    // write's transitions. Client-sent flag/fix/request/quoted entries are
-    // ignored — only client remarks are kept (once each). Rendered in
-    // procurement so multi-round back-and-forth stays visible. The stamp
-    // follows the acting surface (procurement queue work reads Procurement
-    // even when the writer holds MIS/admin). Surface-aware: a privileged
-    // writer using the sales UI (surface=sales) must stamp as sales, not
-    // management — fixes "Management Remark" when sales asks.
-    const surface = String((ctx as any).surface ?? '').toLowerCase();
-    const role: FlagThreadBy = surface === 'procurement' ? 'procurement'
-      : surface === 'sales' ? 'sales'
-      : surface === 'management' ? 'management'
-      : actingProcurement ? 'procurement' : privileged ? 'management' : 'sales';
-    const storedThread = parseFlagThread((stored as any)?.thread);
-    const seen = new Set(storedThread.map((e) => `${e.at}|${e.kind}|${e.text}|${(e.media ?? []).map((m:any)=>m.url).join(',')}`));
-    const trail: FlagThreadEntry[] = [...storedThread];
-    for (const e of parseFlagThread((it as any)?.thread)) {
-      if (e.kind !== 'remark') continue;
-      const key = `${e.at}|${e.kind}|${e.text}|${(e.media ?? []).map((m:any)=>m.url).join(',')}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      trail.push({ by: e.by === role ? e.by : role, kind: 'remark', text: e.text, at: e.at, media: e.media?.length ? e.media : undefined });
-    }
-    const nowIso = new Date().toISOString();
-    const flagSet = !stored.specIssue && base.specIssue;
-    const flagCleared = !!stored.specIssue && !base.specIssue;
-    const reqSet = !stored.ratesRequested && base.ratesRequested;
-    const reqCleared = !!stored.ratesRequested && !base.ratesRequested;
-    if (flagSet) trail.push({ by: role, kind: 'flag', text: String(base.specIssue).slice(0, 2000), at: nowIso });
-    if (flagCleared) {
-      trail.push({
-        by: role,
-        kind: 'fix',
-        text: specChanged && mediaAdded ? 'Spec corrected with new references'
-          : mediaAdded ? 'Reference attachments added' : 'Spec corrected',
-        at: nowIso,
-        media: mediaAdded && newMedia.length ? newMedia : undefined,
-      } as FlagThreadEntry);
-    }
-    if (reqSet) trail.push({ by: role, kind: 'request', text: String(base.ratesRequested).slice(0, 500), at: nowIso });
-    if (reqCleared) {
-      trail.push(withdrewRequest
-        ? { by: role, kind: 'remark', text: 'Rate request withdrawn', at: nowIso }
-        : { by: role, kind: 'quoted', text: 'New vendor rates added', at: nowIso });
-    }
-    // Sales merged variation/reference requests (non-blocking, per-item):
-    // sales sets text + optional common attachment (example picture); procurement
-    // answers IN THE THREAD (reply text/attachment clears it — mirror of the
-    // sales-remark-clears-flag rule), or fulfills with a new rate (alternate
-    // make) OR new item media (reference picture). The request is trailed as
-    // a SALES FLAG so both sides read it exactly like a procurement flag —
-    // never a side banner. Procurement reopen only (hasPendingVariationWork),
-    // never management — not a price enquiry.
-    // Unlike the old alternate path, we keep previous vendor rates/finalRate
-    // intact so a reference request on a finalized item doesn't reset pricing.
-    // (Same guarantee as rate requests above: no request flow ever wipes.)
-    if (!privileged && !restricted) {
-      const inVar = (it as any)?.variationRequest;
-      const inVarMedia = parseItemMedia((it as any)?.variationRequestMedia ?? []);
-      const stVar = String(stored.variationRequest ?? "");
-      const stVarMedia = parseItemMedia((stored as any).variationRequestMedia ?? []);
-      const text = typeof inVar === "string" ? inVar.trim().slice(0, 500) : "";
-      const hasText = !!text;
-      const hasMedia = inVarMedia.length > 0;
-      const stText = stVar.trim();
-      const stMediaKeys = new Set(stVarMedia.map((m: any) => `${m.type}:${m.url}`));
-      const inMediaKeys = new Set(inVarMedia.map((m: any) => `${m.type}:${m.url}`));
-      const mediaChanged = hasMedia && (inVarMedia.length !== stVarMedia.length || inVarMedia.some((m: any) => !stMediaKeys.has(`${m.type}:${m.url}`)));
-      const textChanged = hasText && text !== stText;
-      if (hasText) {
-        base.variationRequest = text;
-        (base as any).variationRequestMedia = inVarMedia.length ? inVarMedia : undefined;
-        if (textChanged || mediaChanged) {
-          base.variationRequestedAt = nowIso;
-          // No quoting-round wipe for merged reference flow — keep rates/finalRate
-          // so a "need reference picture" on a finalized item doesn't reset pricing.
-          const mediaPart = hasMedia ? ` + ${inVarMedia.length} attachment(s)` : "";
-          // Trailed as a FLAG (not a remark): sales' request opens in the item
-          // thread exactly like a procurement flag — same label, same pending
-          // detection (hasPendingProcurementThread), same reply-to-resolve.
-          // Only short locker URLs ride the entry; legacy embedded data-URIs
-          // stay out (row-size discipline, same as the queue strip).
-          const shortMedia = hasMedia ? inVarMedia.filter((m: any) => !(m?.url ?? '').startsWith('data:')) : [];
-          trail.push({ by: role, kind: 'flag', text: `Info/alternate requested: ${text}${mediaPart}`.slice(0, 500), at: nowIso, media: shortMedia.length ? shortMedia : undefined });
-        } else {
-          base.variationRequestedAt = stored.variationRequestedAt ?? nowIso;
-          if (stVarMedia.length) (base as any).variationRequestMedia = stVarMedia;
-        }
-      } else if (inVar === "" && stVar) {
-        base.variationRequest = undefined;
-        base.variationRequestedAt = undefined;
-        (base as any).variationRequestMedia = undefined;
-        trail.push({ by: role, kind: 'remark', text: 'Info/alternate request withdrawn', at: nowIso });
-      } else {
-        base.variationRequest = stored.variationRequest;
-        base.variationRequestedAt = stored.variationRequestedAt;
-        if (stVar) (base as any).variationRequestMedia = stVarMedia.length ? stVarMedia : undefined;
       }
     }
-    // Procurement answered the merged request — fresh rate, new item media
-    // (reference), or a reply in the item thread. Trail it so sales sees the
-    // loop close. Sales' own withdraw already trailed above and never takes
-    // this branch.
-    if (!!String(stored.variationRequest ?? "").trim() && !(base as any).variationRequest && actingProcurement) {
-      trail.push({ by: role, kind: 'quoted', text: 'Info/alternate fulfilled', at: nowIso });
+    // Not-available approve answers the ask.
+    if (approveNA) {
+      const before = loops;
+      loops = answerOpen(loops, 'not_available', `Marked as not available${(base as any).notAvailableReason ? `: ${(base as any).notAvailableReason}` : ''}`.slice(0, 500), 'management', nowIso);
+      if (loops !== before) (base as any).notAvailableAt = nowIso;
+      else if (!(base as any).notAvailableAt) (base as any).notAvailableAt = stored.notAvailableAt ?? nowIso;
     }
-    // Internal-handling lifecycle (privileged only — other roles are
-    // pinned to stored above): stamp the handoff, trail the transition.
+    // Server-authored audit notes (visible, same as the old trail remarks).
     if (privileged) {
       const internalSet = !stored.internalRates && base.internalRates;
       const internalCleared = !!stored.internalRates && !base.internalRates;
       if (internalSet) {
         base.internalRatesAt = base.internalRatesAt || nowIso;
-        trail.push({ by: role, kind: 'remark', text: 'Taken up internally by management', at: nowIso });
+        note('Taken up internally by management');
       }
       if (internalCleared) {
         base.internalRatesAt = undefined;
-        trail.push({ by: role, kind: 'remark', text: 'Returned to the procurement queue', at: nowIso });
+        note('Returned to the procurement queue');
       }
     }
-    // Not available lifecycle (procurement → management approval → sales)
-    const notAvailableSet = !(stored as any)?.notAvailable && (base as any)?.notAvailable === true;
-    const notAvailableCleared = !!(stored as any)?.notAvailable && !(base as any)?.notAvailable;
-    if (notAvailableSet) {
+    if (!(stored as any)?.notAvailable && (base as any)?.notAvailable === true && !approveNA) {
       (base as any).notAvailableAt = nowIso;
-      const reason = (base as any).notAvailableReason ? `: ${(base as any).notAvailableReason}` : '';
-      trail.push({ by: role, kind: 'remark', text: `Marked as not available${reason}`.slice(0, 500), at: nowIso });
     }
-    if (notAvailableCleared) {
+    if (!!(stored as any)?.notAvailable && !(base as any)?.notAvailable) {
       (base as any).notAvailableAt = undefined;
       (base as any).notAvailableReason = undefined;
-      trail.push({ by: role, kind: 'remark', text: 'Not available cleared — back to queue', at: nowIso });
+      note('Not available cleared — back to queue');
     }
-    const notAvailableRequestedSet = !String((stored as any)?.notAvailableRequested ?? "").trim() && String((base as any)?.notAvailableRequested ?? "").trim();
-    const notAvailableRequestedCleared = !!String((stored as any)?.notAvailableRequested ?? "").trim() && !String((base as any)?.notAvailableRequested ?? "").trim();
-    if (notAvailableRequestedSet) {
-      (base as any).notAvailableRequestedAt = nowIso;
-      trail.push({ by: role, kind: 'request', text: `Not available requested: ${String((base as any).notAvailableRequested).slice(0, 500)}`, at: nowIso });
+    // Direct final (management decided with no vendor quote — blank vendor):
+    // stamp an audit entry so the bypass stays visible.
+    if (privileged && base.finalRate !== undefined && base.finalRate !== null
+      && !base.selectedVendor && ((base.rates ?? []).length === 0)) {
+      const hadFinal = stored.finalRate !== undefined && stored.finalRate !== null;
+      if (!hadFinal) {
+        note('Direct final set without vendor quote');
+      }
     }
-    if (notAvailableRequestedCleared && !notAvailableSet) {
-      (base as any).notAvailableRequestedAt = undefined;
-      trail.push({ by: role, kind: 'remark', text: 'Not available request withdrawn/rejected', at: nowIso });
-    }
-    // Thread resolved lifecycle (either side can resolve/reopen per item) — always open unless resolved.
-    const incomingResolved = (it as any)?.threadResolved;
-    const storedResolved = !!(stored as any)?.threadResolved;
-    if (incomingResolved === true && !storedResolved) {
-      (base as any).threadResolved = true;
-      (base as any).threadResolvedBy = role;
-      (base as any).threadResolvedAt = nowIso;
-      trail.push({ by: role, kind: 'remark', text: 'Thread resolved', at: nowIso });
-    } else if (incomingResolved === false && storedResolved) {
-      (base as any).threadResolved = undefined;
-      (base as any).threadResolvedBy = undefined;
-      (base as any).threadResolvedAt = undefined;
-      trail.push({ by: role, kind: 'remark', text: 'Thread reopened', at: nowIso });
-    } else {
-      (base as any).threadResolved = (stored as any)?.threadResolved;
-      (base as any).threadResolvedBy = (stored as any)?.threadResolvedBy;
-      (base as any).threadResolvedAt = (stored as any)?.threadResolvedAt;
-    }
-    // Rates-union trail note (stashed near the top of this function): a stale
-    // save that dropped stored quotes, or an explicit marker delete, gets an
-    // audit entry here — the incident that motivated the union rule was
-    // invisible precisely because no trail existed.
     if ((base as any).ratesTrailNote) {
-      trail.push({ by: role, kind: 'quoted', text: String((base as any).ratesTrailNote).slice(0, 500), at: nowIso });
+      note(String((base as any).ratesTrailNote).slice(0, 500), true);
       delete (base as any).ratesTrailNote;
     }
-    base.thread = trail.slice(-50);
+    // Persist records; drop every legacy loop field + intent marker (never
+    // stored — verbs are validated anew on each save).
+    base.loops = loops.slice(-100);
+    delete (base as any).specIssue;
+    delete (base as any).specFlaggedAt;
+    delete (base as any).ratesRequested;
+    delete (base as any).ratesRequestedAt;
+    delete (base as any).variationRequest;
+    delete (base as any).variationRequestMedia;
+    delete (base as any).queryWith;
+    delete (base as any).queryResolvedAt;
+    delete (base as any).queryResolvedBy;
+    delete (base as any).queryAnswer;
+    delete (base as any).thread;
+    delete (base as any).threadResolved;
+    delete (base as any).threadResolvedBy;
+    delete (base as any).threadResolvedAt;
+    delete (base as any).notAvailableRequested;
+    delete (base as any).notAvailableRequestedAt;
+    delete (base as any).loopOpen;
+    delete (base as any).loopAnswer;
+    delete (base as any).loopForward;
+    delete (base as any).loopWithdraw;
+    delete (base as any).loopReject;
     return base;
   }).filter((it: any) => it !== null);
 }
@@ -767,13 +577,14 @@ export interface RateWriteCtx {
  */
 export function applyLateQuoteReopen(
   updates: any,
-  ctx: { storedItems: any[]; storedRateStatus: string; actedBy: FlagThreadBy },
+  ctx: { storedItems: any[]; storedRateStatus: string; actedBy: LoopParty },
 ): boolean {
   if (ctx.storedRateStatus !== 'finalized') return false;
   if ((updates as any).rateStatus !== undefined) return false;
   const items = (updates as any).items;
   if (!Array.isArray(items)) return false;
   let noted = false;
+  const nowIso = new Date().toISOString();
   (updates as any).items = items.map((it: any, idx: number) => {
     const stored = ctx.storedItems[idx] ?? {};
     if (stored.finalRate === undefined || stored.finalRate === null) return it;
@@ -787,14 +598,12 @@ export function applyLateQuoteReopen(
     );
     if (added.length === 0) return it;
     noted = true;
-    const thread = Array.isArray((it as any).thread) ? [...(it as any).thread] : [];
-    thread.push({
-      by: ctx.actedBy,
-      kind: 'quoted',
-      text: `Late vendor quote (${added.map((r: any) => String(r.vendor)).join(', ')}) — previous rate kept for sales`,
-      at: new Date().toISOString(),
-    });
-    return { ...it, thread: thread.slice(-50) };
+    const loops = Array.isArray((it as any)?.loops) ? [...(it as any).loops] : [];
+    loops.push(auditNote(
+      `Late vendor quote (${added.map((r: any) => String(r.vendor)).join(', ')}) — previous rate kept for sales`,
+      ctx.actedBy, nowIso, true,
+    ));
+    return { ...it, loops: loops.slice(-100) };
   });
   return noted;
 }
@@ -856,16 +665,13 @@ export function applySentRevision(
 export function applyRateLifecycles(updates: any, ctx: RateWriteCtx): void {
   const { storedForItems, storedItems, privileged, restricted } = ctx;
   const canStamp = privileged || restricted || ctx.canConclude === true;
-  // Sent/terminal: auto-resolve procurement flags (text stays in thread), conclude procurement
+  // Sent/terminal: auto-answer open spec asks (hold released), conclude procurement
   if ((updates as any).rateStatus === 'sent' && Array.isArray((updates as any).items)) {
     const nowIso = new Date().toISOString();
     (updates as any).items = (updates as any).items.map((it: any) => {
-      if (!it?.specIssue) return it;
-      const thread = Array.isArray(it.thread) ? [...it.thread] : [];
-      // keep flag text in thread (already there), resolve the hold
-      thread.push({ by: privileged ? 'management' as const : 'sales' as const, kind: 'fix' as const, text: 'Resolved on sent', at: nowIso });
-      const { specIssue, specFlaggedAt, ...rest } = it;
-      return { ...rest, thread: thread.slice(-50), threadResolved: true, threadResolvedAt: nowIso, threadResolvedBy: privileged ? 'management' : 'sales' };
+      const loops = Array.isArray(it?.loops) ? it.loops : [];
+      if (!loops.some((l: any) => l && l.status === 'open' && l.kind === 'spec')) return it;
+      return { ...it, loops: answerOpen(loops, 'spec', 'Resolved on sent', privileged ? 'management' : 'sales', nowIso) };
     });
     if (!String((updates as any).procurementSubmittedAt ?? '').trim() && !String((storedForItems as any)?.procurementSubmittedAt ?? '').trim()) {
       (updates as any).procurementSubmittedAt = nowIso;
@@ -881,11 +687,11 @@ export function applyRateLifecycles(updates: any, ctx: RateWriteCtx): void {
     }
     // Privileged value stands as sent (stamp or clear).
   }
-  // A fresh management rates-request reopens the enquiry for procurement:
+  // A fresh management rates ask reopens the enquiry for procurement:
   // the handoff clears so both queues gate it back until re-submit.
   if (privileged && Array.isArray((updates as any).items)) {
     const reopens = ((updates as any).items as any[]).some((it: any, idx: number) =>
-      it?.ratesRequested && !(storedItems[idx]?.ratesRequested));
+      openLoops(it, 'rates').length > 0 && openLoops({ loops: migrateItemLoops(storedItems[idx]) }, 'rates').length === 0);
     if (reopens) (updates as any).procurementSubmittedAt = '';
   }
   // Auto-advance: an item save that leaves every loop item with a final
@@ -897,15 +703,19 @@ export function applyRateLifecycles(updates: any, ctx: RateWriteCtx): void {
   // finalizedAt is stamped for items that lack it, mirroring an explicit finalize.
   if ((updates as any).rateStatus === undefined && Array.isArray((updates as any).items)) {
     const merged = (updates as any).items as any[];
-    // `rateAvailable` / `notAvailable` are bypasses — a procurement-
-    // flagged (`specIssue`) item that is also marked available/notAvailable no longer
-    // blocks the loop. Pure flagged items (no bypass) still block.
-    const hasBlockingFlag = merged.some((it) => it?.specIssue && !it?.rateAvailable && !(it as any)?.notAvailable);
+    // `rateAvailable` / `notAvailable` are bypasses — an open procurement
+    // spec ask on an item that is also marked available/notAvailable no longer
+    // blocks the loop. Pure spec-held items still block — UNLESS management
+    // already set a direct final on them (override decided, hold stays for
+    // the audit trail but must not strand the enquiry).
+    const openSpec = (it: any): boolean => openLoops(it, 'spec').length > 0;
+    const hasBlockingFlag = merged.some((it) => openSpec(it) && !it?.rateAvailable && !(it as any)?.notAvailable
+      && (it?.finalRate === undefined || it?.finalRate === null));
     const curStatus = String((storedForItems as any)?.rateStatus ?? '');
     if (hasBlockingFlag) {
       // Procurement hold persists — do not auto-finalize while a non-
       // available flagged item exists. Toggling `rateAvailable` off again
-      // restores this block (specIssue is restored in normalizeItemWrites).
+      // restores this block (open loops persist in normalizeItemWrites).
       // If the enquiry was previously finalized via the available bypass,
       // toggling off must revert so `sent` disables and the procurement
       // queue regains the item.
@@ -913,7 +723,7 @@ export function applyRateLifecycles(updates: any, ctx: RateWriteCtx): void {
         (updates as any).rateStatus = 'rates_received';
       }
     } else {
-      const loop = merged.filter((it) => !it?.specIssue && !it?.rateAvailable && !(it as any)?.notAvailable && !it?.internalRates);
+      const loop = merged.filter((it) => !openSpec(it) && !it?.rateAvailable && !(it as any)?.notAvailable && !it?.internalRates);
       const done = loop.filter((it) =>
         it?.finalRate !== undefined && it?.finalRate !== null && Number.isFinite(Number(it?.finalRate)));
       // Empty loop means every item is either rate-available / not-available, internal, or
@@ -925,7 +735,7 @@ export function applyRateLifecycles(updates: any, ctx: RateWriteCtx): void {
         if (curStatus === '' || curStatus === 'rate_pending' || curStatus === 'rates_received') {
           const nowIso = new Date().toISOString();
           (updates as any).items = merged.map((it) =>
-            (!it?.specIssue && !it?.rateAvailable && !(it as any)?.notAvailable && !it?.internalRates
+            (!openSpec(it) && !it?.rateAvailable && !(it as any)?.notAvailable && !it?.internalRates
               && it?.finalRate !== undefined && it?.finalRate !== null && !it?.finalizedAt)
               ? { ...it, finalizedAt: nowIso }
               : it);
@@ -950,16 +760,17 @@ export function applyRateLifecycles(updates: any, ctx: RateWriteCtx): void {
  *  enquiryUpdate (Phase-1 split). */
 export function assertFinalizeGate(merged: any[], rateStatus: unknown): string | null {
   if (rateStatus !== 'finalized' && rateStatus !== 'sent') return null;
-  // Every non-held item must have either a vendor rate or be marked
-  // rateAvailable — otherwise a half-quoted enquiry could be finalized/sent.
-  // Sales saw this as "Mark as sent works even though some items have no
-  // rates" (2026-09-17). Block here so both roles get the same hard gate.
-  const missingRates = merged.filter((it) => !it?.specIssue && !it?.rateAvailable && !(it as any)?.notAvailable && !it?.internalRates && ((it as any)?.rates ?? []).length === 0);
+  // Every non-held item must have a decision — a direct final (finalRate
+  // with no vendor quote, blank vendor) counts as decided, so unquoted /
+  // flagged items with a final no longer refuse finalize/sent.
+  const held = (it: any): boolean => openLoops({ loops: (it as any)?.loops }, 'spec').length > 0;
+  const missingRates = merged.filter((it) => !held(it) && !it?.rateAvailable && !(it as any)?.notAvailable && !it?.internalRates && ((it as any)?.rates ?? []).length === 0
+    && (it?.finalRate === undefined || it?.finalRate === null));
   if (missingRates.length > 0) {
     const verb = rateStatus === 'sent' ? 'mark as sent' : 'finalize';
     return `${missingRates.length} item${missingRates.length === 1 ? "" : "s"} still need vendor rates (or mark rate available / not available) before you ${verb}`;
   }
-  const loop = merged.filter((it) => !it?.specIssue && !it?.rateAvailable && !(it as any)?.notAvailable);
+  const loop = merged.filter((it) => !held(it) && !it?.rateAvailable && !(it as any)?.notAvailable);
   const done = loop.filter((it) =>
     it?.finalRate !== undefined && it?.finalRate !== null && Number.isFinite(Number(it?.finalRate)));
   if (done.length < loop.length) {

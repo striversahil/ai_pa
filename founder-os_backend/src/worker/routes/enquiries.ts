@@ -254,7 +254,9 @@ function aiConfigured(c: any): boolean {
                 });
               }
               concluded.push(id);
-              // Terminal zoho (sent/declined/accepted) auto-dilutes procurement flags: text stays in thread, flag resolved
+              // Terminal zoho (sent/declined/accepted) auto-answers open loops:
+              // no desk can act on a concluded row, so every open ask closes
+              // with an audit answer instead of lingering in queues.
               if (kind === 'terminal' || kind === 'sent') {
                 try {
                   let cur: any = null;
@@ -262,13 +264,12 @@ function aiConfigured(c: any): boolean {
                   const items = Array.isArray((cur as any)?.items) ? (cur as any).items : [];
                   let changed = false;
                   const nowIso = new Date().toISOString();
+                  const { answerAllOpen } = await import('../../modules/enquiries/loops');
                   const next = items.map((it: any) => {
-                    if (!it?.specIssue) return it;
+                    const loops = Array.isArray(it?.loops) ? it.loops : [];
+                    if (!loops.some((l: any) => l && l.status === 'open')) return it;
                     changed = true;
-                    const thread = Array.isArray(it.thread) ? [...it.thread] : [];
-                    thread.push({ by: 'management' as const, kind: 'fix' as const, text: 'Resolved on zoho terminal', at: nowIso });
-                    const { specIssue, specFlaggedAt, ...rest } = it;
-                    return { ...rest, thread: thread.slice(-50), threadResolved: true, threadResolvedAt: nowIso, threadResolvedBy: 'management' };
+                    return { ...it, loops: answerAllOpen(loops, 'management', 'Closed on Zoho terminal', nowIso) };
                   });
                   if (changed) {
                     try { await (prisma as any).enquiry.updateMany({ where: { id } as any, data: { items: JSON.stringify(next) } as any }); } catch { await (prisma as any).enquiry.update({ where: { id } as any, data: { items: next } as any }); }
@@ -388,6 +389,8 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
         unprocessed: EnquiryRoutes.stripQueueMediaUrls(all.unprocessed),
         empty: all.empty,
         historyTotal: all.historyTotal,
+        query: EnquiryRoutes.stripQueueMediaUrls(all.query),
+        queryResolved: EnquiryRoutes.stripQueueMediaUrls(all.queryResolved),
         computedAt: all.computedAt,
       });
     } catch (e: any) {

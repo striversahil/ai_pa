@@ -10,7 +10,7 @@ import {
   getDigitalMarketingMetricsSeries,
   resolveSelfDigitalMarketingManager,
 } from '../automations/digital-marketing/service';
-import { getDigitalMarketingAds } from '../automations/digital-marketing/ads';
+import { getDigitalMarketingAds, createAd, updateAd, deleteAd } from '../automations/digital-marketing/ads';
 
 void prisma;
 
@@ -74,6 +74,23 @@ router.get('/ads', asyncHandler(async (_req, res) => {
   catch (e: any) { res.status(400).json({ error: e?.message ?? 'ads failed' }); }
 }));
 
+router.post('/ads', asyncHandler(async (req, res) => {
+  const me = await getMe(store as any, req.headers.cookie || null).catch(() => null);
+  const actor = (me as any)?.user?.name ?? (me as any)?.user?.email ?? null;
+  try { res.status(201).json(await createAd(req.body || {}, actor)); }
+  catch (e: any) { res.status(400).json({ error: e?.message ?? 'create failed' }); }
+}));
+
+router.patch('/ads/:id', asyncHandler(async (req, res) => {
+  try { res.json(await updateAd(String(req.params.id), req.body || {})); }
+  catch (e: any) { res.status(400).json({ error: e?.message ?? 'update failed' }); }
+}));
+
+router.delete('/ads/:id', misGuard, asyncHandler(async (req, res) => {
+  try { await deleteAd(String(req.params.id)); res.json({ ok: true }); }
+  catch (e: any) { res.status(400).json({ error: e?.message ?? 'delete failed' }); }
+}));
+
 router.patch('/logs/:id', asyncHandler(async (req, res) => {
   const me = await getMe(store as any, req.headers.cookie || null).catch(() => null);
   const actor = (me as any)?.user?.name ?? (me as any)?.user?.email ?? null;
@@ -93,5 +110,8 @@ router.patch('/logs/:id', asyncHandler(async (req, res) => {
 router.post('/logs/:id/files', (_req, res) => res.status(501).json({ error: 'Account file upload is only available on the Cloudflare Worker runtime' }));
 router.get('/files/:id', (_req, res) => res.status(501).json({ error: 'Account file serving is only available on the Cloudflare Worker runtime' }));
 router.delete('/files/:id', (_req, res) => res.status(501).json({ error: 'Account file delete is only available on the Cloudflare Worker runtime' }));
+router.post('/ads/:id/files', (_req, res) => res.status(501).json({ error: 'Ad file upload is only available on the Cloudflare Worker runtime' }));
+router.get('/ads/files/:id', (_req, res) => res.status(501).json({ error: 'Ad file serving is only available on the Cloudflare Worker runtime' }));
+router.delete('/ads/files/:id', (_req, res) => res.status(501).json({ error: 'Ad file delete is only available on the Cloudflare Worker runtime' }));
 
 export default router;

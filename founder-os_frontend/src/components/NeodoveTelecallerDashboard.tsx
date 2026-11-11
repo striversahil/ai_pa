@@ -260,7 +260,7 @@ export default function NeodoveTelecallerDashboard() {
 
   const agents = data?.agents ?? [];
   const totals = data?.totals;
-  const benchmarks = data?.benchmarks ?? { connectedCallsPerDay: 120, leadsPerAgentPerDay: 5 };
+  const benchmarks = data?.benchmarks ?? { connectedCallsPerDay: 120, leadsPerAgentPerDay: 10 };
   const zohoUnmapped = data?.zohoUnmapped ?? [];
   const withKra = agents.filter((a) => a.kra);
   const days = data?.meta.range?.days ?? 1;

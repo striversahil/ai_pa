@@ -1,13 +1,16 @@
 // service.ts — KV-cached stock payload: multi-location closings, moving-average
-// valuation, ABC classes, dead-stock ageing, SO reservations.
+// valuation, ABC classes, dead-stock ageing, SO reservations + planning params
+// (avg daily consumption / MOQ-rounded pending to order from stock_update.json).
 import { prisma } from '../../shared/prisma-d1';
 import { cached, cacheDel } from '../../shared/cache';
-import { stockStatus } from './queues';
-import type { StockLine, StockPayload } from './types';
+import { stockStatus, suggestedOrderWithMoq } from './queues';
+import type { StockLine, StockPayload, StockPlanning } from './types';
 
 export const STOCK_CACHE_KEY = 'stock:data:v2';
 const STOCK_TTL_MS = 5 * 60 * 1000;
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+const PLANNING_KEY = 'stock:planning';
+const DEFAULT_PLANNING: StockPlanning = { leadTimeDays: 60, safetyFactor: 5, moq: 25, source: 'default' };
 
 export function istDay(offset = 0): string {
   const now = new Date(Date.now() + offset * 86400000);
@@ -20,14 +23,31 @@ function lastDays(n: number): string[] {
   return out;
 }
 
+export async function getStockPlanning(): Promise<StockPlanning> {
+  try {
+    const row = await (prisma as any).setting.findUnique({ where: { key: PLANNING_KEY } }).catch(() => null);
+    if (row?.value) {
+      const p = JSON.parse(String(row.value));
+      return {
+        leadTimeDays: Number(p.leadTimeDays) || DEFAULT_PLANNING.leadTimeDays,
+        safetyFactor: Number(p.safetyFactor) || DEFAULT_PLANNING.safetyFactor,
+        moq: Number(p.moq) || DEFAULT_PLANNING.moq,
+        source: String(p.source ?? 'setting'),
+      };
+    }
+  } catch { /* fall through */ }
+  return { ...DEFAULT_PLANNING };
+}
+
 export async function getStockData(days = 14): Promise<StockPayload> {
   const span = Math.min(Math.max(Number(days) || 14, 1), 31);
   return cached(`${STOCK_CACHE_KEY}:${span}`, STOCK_TTL_MS, async () => {
-    const [items, movesRaw, locs, resRaw] = await Promise.all([
+    const [items, movesRaw, locs, resRaw, planning] = await Promise.all([
       (prisma as any).stockItem.findMany({ orderBy: [{ sku: 'asc' }] }),
       (prisma as any).stockMovement.findMany({ orderBy: [{ day: 'asc' }] }),
       (prisma as any).stockLocation.findMany({ orderBy: [{ name: 'asc' }] }).catch(() => []),
       (prisma as any).stockReservation.findMany({ where: { status: 'open' } }).catch(() => []),
+      getStockPlanning(),
     ]);
     const moves = ((movesRaw as any[]) ?? []).filter((m) => String(m.status ?? 'approved') === 'approved');
     const dayList = lastDays(span);
@@ -98,6 +118,8 @@ export async function getStockData(days = 14): Promise<StockPayload> {
       const rs = reserved.get(id) ?? 0;
       const avail = oh - rs;
       const reorderLevel = Number(it.reorderLevel ?? 0);
+      const maxLevel = Number(it.maxLevel ?? 0);
+      const moq = Number(it.moq ?? 0) || planning.moq;
       const rate = avgRate.get(id) ?? 0;
       const lm = lastMove.get(id) ?? '';
       const deadDays = lm ? Math.max(0, Math.floor((dayNum(today) - dayNum(lm)) / 86400000)) : 999;
@@ -108,10 +130,15 @@ export async function getStockData(days = 14): Promise<StockPayload> {
         unitFactor: Number(it.unitFactor ?? 1) || 1,
         purchaseRate: Number(it.purchaseRate ?? 0), saleRate: Number(it.saleRate ?? 0),
         supplier: String(it.supplier ?? ''), reorderLevel,
-        minLevel: Number(it.minLevel ?? 0), maxLevel: Number(it.maxLevel ?? 0),
+        minLevel: Number(it.minLevel ?? 0), maxLevel,
+        avgDailyConsumption: Number(it.avgDailyConsumption ?? 0),
+        leadTimeDays: Number(it.leadTimeDays ?? 0) || planning.leadTimeDays,
+        safetyFactor: Number(it.safetyFactor ?? 0) || planning.safetyFactor,
+        moq,
         imageUrl: String(it.imageUrl ?? ''),
         active: it.active !== false && it.active !== 0,
         onHand: oh, reserved: rs, available: avail, avgRate: rate, stockValue: oh * rate,
+        pendingToOrder: suggestedOrderWithMoq(avail, maxLevel, reorderLevel, moq),
         status: stockStatus(avail, reorderLevel), abc: abc.get(id) ?? 'C',
         lastMoveDay: lm, deadDays,
       };
@@ -122,6 +149,7 @@ export async function getStockData(days = 14): Promise<StockPayload> {
       meta: {
         analysis: 'stock', generatedAt: new Date().toISOString(), day: today, days: dayList,
         locations: ((locs as any[]) ?? []).map((l) => ({ id: String(l.id), name: String(l.name), active: l.active !== false && l.active !== 0 })),
+        planning,
       },
       items: lines,
       closings,
@@ -134,6 +162,7 @@ export async function getStockData(days = 14): Promise<StockPayload> {
         out: active.filter((l) => l.status === 'out').length,
         dead: active.filter((l) => l.deadDays >= 90).length,
         pendingAdjust,
+        pendingToOrder: active.reduce((s, l) => s + l.pendingToOrder, 0),
       },
       movements: ((movesRaw as any[]) ?? []).slice(-300).map((m) => ({
         id: String(m.id), itemId: String(m.itemId), day: String(m.day), kind: m.kind,

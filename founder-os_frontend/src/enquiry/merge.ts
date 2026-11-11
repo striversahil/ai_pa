@@ -22,22 +22,44 @@ const itemIdentity = (it: EnquiryItem): string =>
   `${String(it?.name ?? '').trim()}|${String(it?.qty ?? '').trim()}|${String(it?.spec ?? '').trim()}`;
 
 /** Carry stored media over one incoming media-stripped item. Returns the
- *  incoming item unchanged when no carry is needed (referential identity). */
+ *  incoming item unchanged when no carry is needed (referential identity).
+ *  Loop attachments merge per record BY ID — media bytes only, never the
+ *  record itself: status/answer/holder/text are server truth. Replacing the
+ *  whole array with the stale local copy un-registers answers (a text-only
+ *  answer carries no media, so the stale open loop always won). */
 export function mergeItemMedia(stored: EnquiryItem | undefined, incoming: EnquiryItem): EnquiryItem {
   if (!stored) return incoming;
   const inMedia = incoming.media ?? [];
   const stMedia = stored.media ?? [];
-  const inVar = incoming.variationRequestMedia ?? [];
   // Never resurrect legacy embedded data: bytes (megabytes) — only short
   // locker URLs are safe to carry (same filter the backend applies).
-  const stVar = (stored.variationRequestMedia ?? []).filter(isLockerUrl);
+  const stById = new Map((stored.loops ?? []).map((l) => [String((l as any)?.id ?? ''), l]));
+  let loopsChanged = false;
+  const mergedLoops = (incoming.loops ?? []).map((l) => {
+    const st = stById.get(String((l as any)?.id ?? ''));
+    if (!st) return l;
+    // Fill missing bytes from the stored twin; incoming non-empty wins.
+    const fill = (cur: EnquiryMedia[] | undefined, was: EnquiryMedia[] | undefined): EnquiryMedia[] | undefined => {
+      if ((cur ?? []).length > 0) return undefined;
+      const w = (was ?? []).filter(isLockerUrl);
+      return w.length > 0 ? w : undefined;
+    };
+    const m = fill(l.media, (st as any).media);
+    const am = (l as any).answer ? fill((l as any).answer.media, (st as any).answer?.media) : undefined;
+    if (m === undefined && am === undefined) return l;
+    loopsChanged = true;
+    return {
+      ...l,
+      ...(m !== undefined ? { media: m } : {}),
+      ...((l as any).answer && am !== undefined ? { answer: { ...(l as any).answer, media: am } } : {}),
+    };
+  });
   const carryMedia = inMedia.length === 0 && stMedia.length > 0;
-  const carryVar = inVar.length === 0 && stVar.length > 0;
-  if (!carryMedia && !carryVar) return incoming;
+  if (!carryMedia && !loopsChanged) return incoming;
   return {
     ...incoming,
     ...(carryMedia ? { media: stMedia } : {}),
-    ...(carryVar ? { variationRequestMedia: stVar } : {}),
+    ...(loopsChanged ? { loops: mergedLoops } : {}),
   };
 }
 

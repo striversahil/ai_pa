@@ -12,11 +12,11 @@ import {
   isoOrUndefined,
   normalizeVisibility,
   numOrUndefined,
-  parseFlagThread,
   parseItemMedia,
   parseItemRates,
   signedNumOrUndefined,
 } from "./parse";
+import { parseLoopRecords, migrateItemLoops } from "./loops";
 import { redactEnquiryPII } from "./scopes";
 
 export { redactedCacheKey, REDACTED_CACHE_TTL_MS };
@@ -124,6 +124,11 @@ const redacted = await Promise.all(enquiries.map(async (e: any) => {
       spec: String(it?.spec ?? ''),
       media: parseItemMedia(it?.media),
       rates: parseItemRates(it?.rates),
+      // Sales negotiation target — procurement negotiates vendors toward
+      // this (documented contract; the queue card renders it). Live
+      // workflow data, never AI-rewritten, never PII.
+      expectedRate: numOrUndefined((it as any)?.expectedRate),
+      expectedNote: (it as any)?.expectedNote ? String((it as any).expectedNote).slice(0, 500) : undefined,
       selectedVendor: it?.selectedVendor ? String(it.selectedVendor) : undefined,
       markup: signedNumOrUndefined(it?.markup),
       finalRate: numOrUndefined(it?.finalRate),
@@ -139,54 +144,24 @@ const redacted = await Promise.all(enquiries.map(async (e: any) => {
       // workflow data (adding a quote never changes the hash above), so
       // they must always ride along. Dropping them here made newly added
       // vendor rates "show for a second, then disappear" on refetch.
-      served = { name: cached.name, qty: cached.qty, spec: cached.spec, media: sales.media, rates: sales.rates };
+      // Size + expected target ride the same live path (never AI-rewritten).
+      served = { name: cached.name, qty: cached.qty, spec: cached.spec, media: sales.media, rates: sales.rates, expectedRate: (sales as any).expectedRate, expectedNote: (sales as any).expectedNote };
     } else {
       // Markup decisions AND finalize timing stay Management-only.
       const { selectedVendor, markup, finalRate, finalizedAt, ...rest } = sales;
       served = rest;
     }
-    // Spec-dispute flags are live workflow metadata (not PII, not a markup
-    // decision): always overlay the stored values so a flag change never
-    // waits on — or invalidates — the AI rewrite cache.
-    if (it?.specIssue) {
-      served.specIssue = String(it.specIssue).slice(0, 2000);
-      if (it?.specFlaggedAt) served.specFlaggedAt = String(it.specFlaggedAt);
-    }
-    // Rate-availability / not-available is live workflow metadata too: the procurement queue
-    // predicate depends on it, so it rides along regardless of cache path.
+    // Rate-availability is live workflow metadata too.
     served.rateAvailable = (it as any)?.rateAvailable === true;
     served.notAvailable = (it as any)?.notAvailable === true;
     if ((it as any)?.notAvailableReason) served.notAvailableReason = String((it as any).notAvailableReason).slice(0, 500);
     if ((it as any)?.notAvailableAt) served.notAvailableAt = String((it as any).notAvailableAt);
-    if ((it as any)?.notAvailableRequested) {
-      served.notAvailableRequested = String((it as any).notAvailableRequested).slice(0, 500);
-      if ((it as any)?.notAvailableRequestedAt) served.notAvailableRequestedAt = String((it as any).notAvailableRequestedAt);
-    }
-    // Management rate-requests are live workflow metadata as well: overlay
-    // stored values so the queue predicate never waits on the AI cache.
-    if ((it as any)?.ratesRequested) {
-      served.ratesRequested = String((it as any).ratesRequested).slice(0, 500);
-      if ((it as any)?.ratesRequestedAt) served.ratesRequestedAt = String((it as any).ratesRequestedAt);
-    }
-    // Sales alternate/info requests are live workflow metadata too: procurement
-    // must see them (banner + queue) the moment sales asks — never gated
-    // on the AI rewrite cache. Common attachment travels with the text.
-    if ((it as any)?.variationRequest) {
-      served.variationRequest = String((it as any).variationRequest).slice(0, 500);
-      if ((it as any)?.variationRequestedAt) served.variationRequestedAt = String((it as any).variationRequestedAt);
-      if (Array.isArray((it as any)?.variationRequestMedia) && (it as any).variationRequestMedia.length > 0) {
-        served.variationRequestMedia = parseItemMedia((it as any).variationRequestMedia);
-      }
-    }
-      // Loop trail is live workflow metadata too: always the stored values.
-      served.thread = parseFlagThread((it as any)?.thread);
-      // Resolution is live workflow metadata as well: without it a resolved
-      // flag's lingering text would read as still awaiting sales fix (chip +
-      // conclude gate both key on openness, never on text presence).
-      served.threadResolved = (it as any)?.threadResolved === true;
-      if ((it as any)?.threadResolvedBy) served.threadResolvedBy = String((it as any).threadResolvedBy).slice(0, 40);
-      if ((it as any)?.threadResolvedAt) served.threadResolvedAt = String((it as any).threadResolvedAt);
-      servedItems.push(served);
+    // Loop records are live workflow metadata (not PII, not a markup
+    // decision): always overlay the stored values so an ask/answer never
+    // waits on — or invalidates — the AI rewrite cache. Unmigrated legacy
+    // rows read through migrateItemLoops (same as the queue compute).
+    served.loops = migrateItemLoops({ ...(it as any), loops: parseLoopRecords((it as any)?.loops) });
+    servedItems.push(served);
   });
   return {
     entry: { id, pending },
@@ -239,11 +214,15 @@ export async function redactCommentList(
 // photos/video (one row alone is ~2.5MB; ~84% of all item bytes), and every
 // dashboard render + 60s poll + live-event refetch hauls the full queues.
 // Strip media BYTES at every queue serve point (tables never render them —
-// counts/chips read metadata, never urls). Threads stay fully intact: the
-// write path appends remarks by media-identity dedupe, so a slimmed thread
-// echo would re-push every stored remark as a duplicate.
-// Full media returns on single-row reads (`enquiryGet` / `enquiryGetRedacted`
-// below) — dashboard modals fetch the open row on demand.
+// counts/chips read metadata, never urls). Loop records carry the same rule
+// for their attachments. Full media returns on single-row reads
+// (`enquiryGet` / `enquiryGetRedacted` below) — dashboard modals fetch the
+// open row on demand.
+const stripDataUris = (list: any[]): any[] =>
+  (Array.isArray(list) ? list : []).filter(
+    (m: any) => m && typeof (m as any)?.url === 'string' && !(m as any).url.startsWith('data:'),
+  );
+
 export function stripQueueMediaUrls(rows: any[]): any[] {
   return (rows ?? []).map((e: any) => {
     const items = Array.isArray((e as any)?.items) ? (e as any).items : null;
@@ -251,19 +230,22 @@ export function stripQueueMediaUrls(rows: any[]): any[] {
     let touched = false;
     const out = items.map((it: any) => {
       const hasMedia = Array.isArray((it as any)?.media) && (it as any).media.length > 0;
-      const hasVarMedia = Array.isArray((it as any)?.variationRequestMedia) && (it as any).variationRequestMedia.length > 0;
-      if (!hasMedia && !hasVarMedia) return it;
+      const loops = Array.isArray((it as any)?.loops) ? (it as any).loops : [];
+      const hasLoopMedia = loops.some((l: any) =>
+        (Array.isArray(l?.media) && l.media.length > 0) || (Array.isArray(l?.answer?.media) && l.answer.media.length > 0));
+      if (!hasMedia && !hasLoopMedia) return it;
       touched = true;
       const c: any = { ...(it as any) };
       if (hasMedia) c.media = [];
-      // Sales' request reference photo MUST stay visible to procurement (the
-      // whole point of the alternate/info request) — but only as short
+      // Loop attachments stay visible (asks + answers) — but only as short
       // locker URLs. Legacy embedded data-URIs stay stripped: they are the
       // megabytes this strip exists for, and old rows re-upload on next edit.
-      if (hasVarMedia) {
-        c.variationRequestMedia = ((it as any).variationRequestMedia as any[]).filter(
-          (m: any) => m && typeof (m as any)?.url === 'string' && !(m as any).url.startsWith('data:'),
-        );
+      if (hasLoopMedia) {
+        c.loops = loops.map((l: any) => ({
+          ...l,
+          media: stripDataUris(l?.media),
+          answer: l?.answer ? { ...l.answer, media: stripDataUris(l.answer.media) } : l.answer,
+        }));
       }
       return c;
     });

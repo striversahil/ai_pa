@@ -10,19 +10,19 @@
 //   Sales creates (rate_pending) → Procurement quotes (rates_received) →
 //   Management decides (finalized) → Sales marks sent. `procurementSubmittedAt`
 //   is the explicit "Enquiry Concluded" handoff; `rateAvailable` /
-//   `internalRates` / `specIssue` are per-item bypasses/holds.
+//   `internalRates` are per-item bypasses, open spec records are holds.
 import type { Enquiry, EnquiryItem } from "./types";
 
-type ItemRateShape = Pick<EnquiryItem, "rateAvailable" | "internalRates" | "rates" | "ratesRequested"> & { notAvailable?: boolean };
-type ItemDecisionShape = Pick<EnquiryItem, "rateAvailable" | "internalRates" | "rates" | "finalRate" | "specIssue"> & { notAvailable?: boolean };
+type ItemRateShape = Pick<EnquiryItem, "rateAvailable" | "internalRates" | "rates"> & { notAvailable?: boolean };
+type ItemDecisionShape = Pick<EnquiryItem, "rateAvailable" | "internalRates" | "rates" | "finalRate"> & { notAvailable?: boolean };
 type EnquiryShape = Pick<Enquiry, "items"> & { procurementSubmittedAt?: string };
 
 /** Loop-eligible for Procurement: unavailable, not internal, unquoted or re-requested. */
 export function itemNeedsRates(it: ItemRateShape): boolean {
-  return !it?.rateAvailable && !(it as any)?.notAvailable && !(it as any)?.notAvailableRequested && !it?.internalRates && (((it?.rates ?? []).length === 0) || !!(it as any)?.ratesRequested);
+  return !it?.rateAvailable && !(it as any)?.notAvailable && openItemLoops(it, 'not_available').length === 0 && !it?.internalRates && (((it?.rates ?? []).length === 0) || openItemLoops(it, 'rates').length > 0);
 }
 
-/** Loop-eligible for Management: quoted/internal, undecided — specIssue intimates, rates-available normal flow not blocked. */
+/** Loop-eligible for Management: quoted/internal, undecided — spec holds intimate, rates-available normal flow not blocked. */
 export function itemNeedsDecision(it: ItemDecisionShape): boolean {
   return !it?.rateAvailable && !(it as any)?.notAvailable
     && ((((it as any)?.rates ?? []).length > 0) || (it as any)?.internalRates === true)
@@ -42,22 +42,61 @@ export function isSubmitted(e: { procurementSubmittedAt?: string }): boolean {
   return !!String(e?.procurementSubmittedAt ?? "").trim();
 }
 
+import { openLoops, migrateItemLoops } from './loops';
+import type { LoopKind, LoopParty } from './types';
+
+/** Loops on an item, migrating legacy rows on the fly (pure). */
+function loopsOf(it: any): import('./types').LoopRecord[] {
+  const loops = Array.isArray((it as any)?.loops) ? (it as any).loops : [];
+  if (loops.length > 0) return loops;
+  return migrateItemLoops(it);
+}
+
+/** Open records on an item, optionally filtered by kind and/or holder. */
+export function openItemLoops(it: any, kind?: LoopKind, holder?: LoopParty): import('./types').LoopRecord[] {
+  return openLoops({ loops: loopsOf(it) }, kind, holder);
+}
+
 /** Fresh unquoted work reopens procurement Active even on concluded rows. */
 export function hasFreshUnquotedWork(e: Pick<Enquiry, "items">): boolean {
-  return ((e as any).items ?? []).some((it: any) => !it?.rateAvailable && !(it as any)?.notAvailable && !(it as any)?.notAvailableRequested && !it?.internalRates && !it?.specIssue
+  return ((e as any).items ?? []).some((it: any) => !it?.rateAvailable && !(it as any)?.notAvailable && openItemLoops(it, 'not_available').length === 0 && !it?.internalRates && openItemLoops(it, 'spec').length === 0
     && ((it?.rates ?? []).length === 0) && (it?.finalRate === undefined || it?.finalRate === null));
 }
 
-/** Pending sales alternate request: sales asked for a different make/option
- *  (`variationRequest`) and procurement hasn't quoted it yet. Reopens the
- *  procurement Active queue even on concluded rows. */
+/** Pending sales query held by PROCUREMENT (forwarded by management) —
+ *  reopens the procurement Active queue even on concluded rows. Fresh asks
+ *  land with management first and do NOT reopen procurement until forwarded. */
 export function hasPendingVariationWork(e: Pick<Enquiry, "items">): boolean {
-  return ((e as any).items ?? []).some((it: any) => String(it?.variationRequest ?? "").trim().length > 0);
+  return ((e as any).items ?? []).some((it: any) => openItemLoops(it, 'query', 'procurement').length > 0);
 }
 
-/** Pending not-available request: procurement says material not available, awaiting management approval. */
+/** Any open sales query (needs action — with management or procurement). */
+export function hasOpenQuery(e: Pick<Enquiry, "items">): boolean {
+  return ((e as any).items ?? []).some((it: any) => openItemLoops(it, 'query').length > 0);
+}
+
+/** Open query currently held by one desk (Query tab state chips). */
+export function hasRoutedQuery(e: Pick<Enquiry, "items">, withDesk: 'management' | 'procurement'): boolean {
+  return ((e as any).items ?? []).some((it: any) => openItemLoops(it, 'query', withDesk).length > 0);
+}
+
+/** Resolved-query window for the Query tab's Resolved filter (days). */
+/** Mirror: `frontend/src/enquiry/queue.ts` — change both together. */
+export const QUERY_RESOLVED_DAYS = 30;
+
+/** Answered query with no open query left (Resolved filter adjacent to
+ *  Needs action). Windowed so the filter stays a recent-answers list. */
+export function hasResolvedQuery(e: Pick<Enquiry, "items">, nowMs = Date.now()): boolean {
+  if (hasOpenQuery(e)) return false;
+  return ((e as any).items ?? []).some((it: any) =>
+    loopsOf(it).some((l) => l.kind === 'query' && l.status === 'answered'
+      && Number.isFinite(Date.parse(String(l.closedAt ?? '')))
+      && nowMs - Date.parse(String(l.closedAt ?? '')) < QUERY_RESOLVED_DAYS * 86400 * 1000));
+}
+
+/** Pending not-available ask: procurement says material not available, awaiting management approval. */
 export function hasPendingNotAvailableWork(e: Pick<Enquiry, "items">): boolean {
-  return ((e as any).items ?? []).some((it: any) => String(it?.notAvailableRequested ?? "").trim().length > 0);
+  return ((e as any).items ?? []).some((it: any) => openItemLoops(it, 'not_available').length > 0);
 }
 
 /** New vendor quotes since the decision: a decided item (finalRate set) with
@@ -80,7 +119,7 @@ export function itemHasUnreviewedQuotes(it: any): boolean {
 
 /** One fresh line is quotable even on a concluded row (card stays editable). */
 export function isFreshQuotableItem(it: ItemDecisionShape): boolean {
-  return !(it as any)?.rateAvailable && !(it as any)?.notAvailable && !(it as any)?.notAvailableRequested && !(it as any)?.internalRates && !(it as any)?.specIssue
+  return !(it as any)?.rateAvailable && !(it as any)?.notAvailable && openItemLoops(it, 'not_available').length === 0 && !(it as any)?.internalRates && openItemLoops(it, 'spec').length === 0
     && (((it as any)?.rates ?? []).length === 0) && ((it as any)?.finalRate === undefined || (it as any)?.finalRate === null);
 }
 
@@ -107,13 +146,13 @@ export function isZohoClosedStatus(s: unknown): boolean {
 export function isProcurementPendingEnquiry(e: EnquiryShape): boolean {
   const items = (e as any).items ?? [];
   if (items.length === 0) return false;
-  // Sales ask (flag/request) reactivates even when terminal — check before terminal gate
-  if (hasPendingProcurementThread(e as any)) return true;
+  // Procurement-held ask reactivates even when terminal — check before terminal gate
+  if (hasPendingProcurementLoop(e as any)) return true;
   // Open sent-revision: the row loops again — Zoho non-draft does NOT hold it terminal.
   const reopened = isSentReopened(e as any);
   const isTerminal = !reopened && (String((e as any).rateStatus ?? '') === 'sent' || (String((e as any).zohoStatus ?? '').trim() && String((e as any).zohoStatus ?? '').trim().toLowerCase() !== 'draft'));
-  // Zoho sent thread (any sales remark) reactivates terminal for visibility — e.g. 10-23 "sent"
-  if (isTerminal && hasAnySalesThread(e as any)) return true;
+  // Zoho sent + open sales-originated loop reactivates terminal for visibility — e.g. 10-23 "sent"
+  if (isTerminal && hasOpenSalesLoop(e as any)) return true;
   // Zoho not draft (sent/accepted/declined etc.) — procurement done even with pending rates
   if (!reopened && String((e as any).rateStatus ?? '') === 'sent') return false;
   const zs = String((e as any).zohoStatus ?? '').trim().toLowerCase();
@@ -122,15 +161,15 @@ export function isProcurementPendingEnquiry(e: EnquiryShape): boolean {
   // queue even on concluded rows — the client keeps asking.
   if (hasFreshUnquotedWork(e as any) || hasPendingVariationWork(e as any)) return true;
   if (isSubmitted(e)) return false;
-  return items.some((it: any) => !it?.rateAvailable && !(it as any)?.notAvailable && !(it as any)?.notAvailableRequested && !it?.internalRates);
+  return items.some((it: any) => !it?.rateAvailable && !(it as any)?.notAvailable && openItemLoops(it, 'not_available').length === 0 && !it?.internalRates);
 }
 
 export function isProcurementHistoryEnquiry(e: EnquiryShape): boolean {
   const items = (e as any).items ?? [];
-  if (hasPendingProcurementThread(e as any)) return false;
+  if (hasPendingProcurementLoop(e as any)) return false;
   const reopened = isSentReopened(e as any);
   const isTerminal = !reopened && (String((e as any).rateStatus ?? '') === 'sent' || (String((e as any).zohoStatus ?? '').trim() && String((e as any).zohoStatus ?? '').trim().toLowerCase() !== 'draft'));
-  if (isTerminal && hasAnySalesThread(e as any)) return false;
+  if (isTerminal && hasOpenSalesLoop(e as any)) return false;
   // Zoho not draft (sent/accepted/declined etc.) — always History
   if (!reopened && String((e as any).rateStatus ?? '') === 'sent') return items.length > 0;
   const zs = String((e as any).zohoStatus ?? '').trim().toLowerCase();
@@ -140,7 +179,7 @@ export function isProcurementHistoryEnquiry(e: EnquiryShape): boolean {
   if (!isSubmitted(e)) return false;
   if (hasFreshUnquotedWork(e as any) || hasPendingVariationWork(e as any)) return false;
   if (hasPendingNotAvailableWork(e as any)) return false;
-  return items.some((it: any) => ((it.rates ?? []).length > 0 && !it.ratesRequested) || (it as any).notAvailable || (it as any).notAvailableRequested || it.rateAvailable);
+  return items.some((it: any) => ((it.rates ?? []).length > 0 && openItemLoops(it, 'rates').length === 0) || (it as any).notAvailable || openItemLoops(it, 'not_available').length > 0 || it.rateAvailable);
 }
 
 export function isManagementPendingEnquiry(e: EnquiryShape): boolean {
@@ -150,28 +189,32 @@ export function isManagementPendingEnquiry(e: EnquiryShape): boolean {
   if (!reopened && String((e as any).rateStatus ?? '') === 'sent') return false;
   const zs = String((e as any).zohoStatus ?? '').trim().toLowerCase();
   if (!reopened && zs && zs !== 'draft') return false;
-  // Decided items with new unshared vendor quotes since the decision
-  // (variation answers, late quotes) come back for review/share — plus
-  // procurement's not-available requests awaiting approval.
-  return items.some((it: any) => itemNeedsDecision(it) || itemHasUnreviewedQuotes(it) || !!(it as any).notAvailableRequested);
+  // Decided items with new unshared vendor quotes since the decision come
+  // back for review/share — plus open not-available asks awaiting approval.
+  return items.some((it: any) => itemNeedsDecision(it) || itemHasUnreviewedQuotes(it) || openItemLoops(it, 'not_available').length > 0);
 }
 
-/** Open spec flag: procurement flagged it AND the thread is still unresolved.
- *  Resolved text lingers on the row (audit trail) but must never block the
- *  queue, the chip, or conclude — the lifecycle is "always open unless
- *  resolved" (see update.ts). Mirrors `frontend/src/enquiry/queue.ts`. */
+/** Open spec ask: procurement opened it and sales hasn't answered yet.
+ *  Answered text lingers on the row (audit trail in the record) but must
+ *  never block the queue, the chip, or conclude. Mirrors
+ *  `frontend/src/enquiry/queue.ts`. */
 export function isOpenSpecFlag(it: any): boolean {
-  return !!(it as any)?.specIssue && !(it as any)?.threadResolved;
+  return openItemLoops(it, 'spec').length > 0;
+}
+
+/** Open not-available ask (procurement asked, management must approve). */
+export function isOpenNotAvailableAsk(it: any): boolean {
+  return openItemLoops(it, 'not_available').length > 0;
 }
 
 /** Submit readiness: every quotable loop item carries ≥1 vendor rate. */
 export function procurementSubmittable(e: Pick<Enquiry, "items">): { ok: boolean; reason: string } {
   const items = ((e as any).items ?? []) as any[];
-  const flagged = items.filter((it: any) => isOpenSpecFlag(it) && !(it as any)?.notAvailable && !(it as any)?.notAvailableRequested).length;
+  const flagged = items.filter((it: any) => isOpenSpecFlag(it) && !(it as any)?.notAvailable && openItemLoops(it, 'not_available').length === 0).length;
   if (flagged > 0) return { ok: false, reason: `${flagged} item${flagged === 1 ? "" : "s"} awaiting sales spec fix` };
-  const loop = items.filter((it: any) => !isOpenSpecFlag(it) && !it?.rateAvailable && !(it as any)?.notAvailable && !(it as any)?.notAvailableRequested && !it?.internalRates);
+  const loop = items.filter((it: any) => !isOpenSpecFlag(it) && !it?.rateAvailable && !(it as any)?.notAvailable && openItemLoops(it, 'not_available').length === 0 && !it?.internalRates);
   if (loop.length === 0) {
-    const hasBypass = items.some((it: any) => it?.rateAvailable || (it as any)?.notAvailable || (it as any)?.notAvailableRequested || it?.internalRates);
+    const hasBypass = items.some((it: any) => it?.rateAvailable || (it as any)?.notAvailable || openItemLoops(it, 'not_available').length > 0 || it?.internalRates);
     if (hasBypass) return { ok: true, reason: "" };
     return { ok: false, reason: "No quotable items yet" };
   }
@@ -188,7 +231,7 @@ export function procurementSubmittable(e: Pick<Enquiry, "items">): { ok: boolean
 export function ratesCoverage(e: Pick<Enquiry, "items">): { total: number; rated: number; complete: boolean; pending: string[]; held: number; heldNames: string[] } {
   const items = (e as any).items ?? [];
   const nameOf = (it: any): string => String(it?.name || `Item ${items.indexOf(it) + 1}`);
-  const bypassed = (it: any): boolean => !!it?.rateAvailable || !!(it as any)?.notAvailable || !!(it as any)?.notAvailableRequested || !!it?.internalRates;
+  const bypassed = (it: any): boolean => !!it?.rateAvailable || !!(it as any)?.notAvailable || openItemLoops(it, 'not_available').length > 0 || !!it?.internalRates;
   const heldItems = items.filter((it: any) => !bypassed(it) && isOpenSpecFlag(it));
   const loop = items.filter((it: any) => !bypassed(it) && !isOpenSpecFlag(it));
   const pending = loop
@@ -205,48 +248,27 @@ export function ratesCoverage(e: Pick<Enquiry, "items">): { total: number; rated
   };
 }
 
-/** Needs action: the actionable subset of open threads — someone must move:
- *  spec fix (sales), pending ask (procurement must answer), or not-available
- *  request (management must approve). A RESOLVED flag is audit trail, never
- *  action — mirrors frontend queue.ts. */
+/** Needs action: the actionable subset of open loops — someone must move:
+ *  spec ask (sales must fix), procurement-held ask (procurement must answer),
+ *  or not-available ask (management must approve). Answered records are
+ *  audit trail, never action — mirrors frontend queue.ts. */
 export function needsActionThread(e: Pick<Enquiry, "items">): boolean {
-  return ((e as any).items ?? []).some((it: any) => isOpenSpecFlag(it) || hasPendingProcurementThread({ items: [it] } as any) || !!String((it as any)?.notAvailableRequested ?? "").trim());
+  return ((e as any).items ?? []).some((it: any) => isOpenSpecFlag(it) || hasPendingProcurementLoop({ items: [it] } as any) || openItemLoops(it, 'not_available').length > 0);
 }
 
-/** Open thread from either side: survives concluded/zoho filters until resolved (bilateral).
- *  Resolved flag text lingers (audit) but is NOT open — mirrors frontend. */
-export function hasOpenThread(e: Pick<Enquiry, "items">): boolean {
-  return ((e as any).items ?? []).some((it: any) =>
-    isOpenSpecFlag(it) ||
-    !!String(it?.variationRequest ?? "").trim() ||
-    !!String(it?.notAvailableRequested ?? "").trim() ||
-    !!String(it?.ratesRequested ?? "").trim() ||
-    (Array.isArray(it?.thread) && it.thread.length > 0 && !it?.threadResolved)
-  );
+/** Any open loop record: survives concluded/zoho filters until answered.
+ *  Answered records linger (audit) but are NOT open — mirrors frontend. */
+export function hasOpenLoop(e: Pick<Enquiry, "items">): boolean {
+  return ((e as any).items ?? []).some((it: any) => loopsOf(it).some((l) => l.status === 'open'));
 }
-export function isOpenThreadEnquiry(e: Pick<Enquiry, "items">): boolean {
-  return hasOpenThread(e);
+/** Procurement needs to answer: any open record held by procurement
+ *  (spec answers stay with sales; queries route via holder). */
+export function hasPendingProcurementLoop(e: Pick<Enquiry, "items">): boolean {
+  return ((e as any).items ?? []).some((it: any) => loopsOf(it).some((l) => l.status === 'open' && l.holder === 'procurement'));
 }
-/** Procurement needs to answer: only sales ask (variation/request/flag), not generic remark/fix. */
-export function hasPendingProcurementThread(e: Pick<Enquiry, "items">): boolean {
-  return ((e as any).items ?? []).some((it: any) => {
-    if (String(it?.variationRequest ?? "").trim()) return true;
-    if (String((it as any)?.ratesRequested ?? "").trim()) return true;
-    if (Array.isArray(it?.thread) && it.thread.length > 0 && !it?.threadResolved) {
-      const last = it.thread[it.thread.length - 1];
-      if (String((last as any)?.by ?? "") === "sales" && (String((last as any)?.kind ?? "") === "flag" || String((last as any)?.kind ?? "") === "request")) return true;
-    }
-    return false;
-  });
-}
-export function hasAnySalesThread(e: Pick<Enquiry, "items">): boolean {
-  return ((e as any).items ?? []).some((it: any) => {
-    if (Array.isArray(it?.thread) && it.thread.length > 0 && !it?.threadResolved) {
-      const last = it.thread[it.thread.length - 1];
-      if (String((last as any)?.by ?? "") === "sales" && String((last as any)?.kind ?? "") !== "fix") return true;
-    }
-    return false;
-  });
+/** Sales-originated open loops (asks sales opened and not yet answered). */
+export function hasOpenSalesLoop(e: Pick<Enquiry, "items">): boolean {
+  return ((e as any).items ?? []).some((it: any) => loopsOf(it).some((l) => l.status === 'open' && l.openedBy === 'sales'));
 }
 
 export function isManagementHistoryEnquiry(e: Pick<Enquiry, "items" | "rateStatus">): boolean {
@@ -266,7 +288,7 @@ export function isManagementHistoryEnquiry(e: Pick<Enquiry, "items" | "rateStatu
     if (sent || (zs && zs !== 'draft')) return true;
   }
   if (items.length === 0) return false;
-  const relevant = items.filter((it: any) => !it?.specIssue && !(it as any)?.notAvailableRequested);
+  const relevant = items.filter((it: any) => openItemLoops(it, 'spec').length === 0 && openItemLoops(it, 'not_available').length === 0);
   if (relevant.length === 0) return false;
   // Every non-held item must be accounted for — either rate-available / not-available or
   // decided. Pure bypass rows only belong here after commit, otherwise

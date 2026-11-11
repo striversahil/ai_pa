@@ -36,6 +36,9 @@ export interface EnquiryMedia {
 export interface EnquiryItemRate {
   vendor: string;
   rate: number;
+  /** Per-quote size (e.g. "8 x 32") — each vendor quotes their own size;
+   *  shown on every rate row in procurement + management views. */
+  size?: string;
   /** Procurement-entered discount % the vendor offers (0-100). Info-only,
    *  shown to Management alongside the rate. */
   discountPercent?: number;
@@ -87,43 +90,21 @@ export interface EnquiryItem {
   finalDiscountPercent?: number;
   /** ISO instant the item was finalized. */
   finalizedAt?: string;
-  /** Procurement spec dispute: present = spec flagged incorrect, awaiting a
-   *  sales spec edit (which auto-clears it). Held out of Management meanwhile. */
-  specIssue?: string;
-  specFlaggedAt?: string;
   /** Rate availability (sales-marked): true = rate already available, the item
    *  skips the procurement→management loop. False/absent = rate unavailable. */
   rateAvailable?: boolean;
-  /** Not available: procurement requests, management approves (shared text) → sales sees badge. */
+  /** Not available: procurement asks (loop record), management approves with
+   *  shared text → sales sees badge. */
   notAvailable?: boolean;
   notAvailableReason?: string;
   notAvailableAt?: string;
-  /** Procurement → management request: “material not available” awaiting approval. */
-  notAvailableRequested?: string;
-  notAvailableRequestedAt?: string;
   /** Management-internal handling: true = management sources this item's
    *  rates itself; the procurement queue skips it. Management-only flag. */
   internalRates?: boolean;
   internalRatesAt?: string;
-  /** Management → procurement request: present = management asked for (more)
-   *  vendor rates (incorrect quote / different vendor needed). Cleared when
-   *  procurement adds or edits a rate. */
-  ratesRequested?: string;
-  ratesRequestedAt?: string;
-  /** Sales → procurement alternate request (non-blocking): free text like
-   *  "client wants ABB make" entered via "Request alternate option".
-   *  Needs NO management approval — procurement quotes it as a new rate row
-   *  (which clears it). Sales may withdraw anytime. */
-  variationRequest?: string;
-  variationRequestedAt?: string;
-  /** Common attachment for the merged info/alternate request. */
-  variationRequestMedia?: EnquiryMedia[];
-  threadResolved?: boolean;
-  threadResolvedBy?: 'sales' | 'procurement' | 'management';
-  threadResolvedAt?: string;
-  /** Back-and-forth loop trail (server-authored): flags, remarks, fixes,
-   *  requests — oldest first. Visible in procurement. */
-  thread?: FlagThreadEntry[];
+  /** Deterministic loop records (spec asks, queries, rate asks, not-available
+   *  asks, notes). Sole routing + audit mechanism — see backend loops.ts. */
+  loops?: LoopRecord[];
   /** AI bulk intake: true = raw "Add via AI" item awaiting the GH intake
    *  action, which replaces it with vision-split items. */
   aiPending?: boolean;
@@ -140,12 +121,23 @@ export interface EnquiryItem {
   kypComplete?: boolean;
 }
 
-export interface FlagThreadEntry {
-  by: 'sales' | 'procurement' | 'management';
-  kind: 'flag' | 'remark' | 'fix' | 'request' | 'quoted';
+export type LoopParty = 'sales' | 'procurement' | 'management';
+export type LoopKind = 'spec' | 'query' | 'rates' | 'not_available' | 'note';
+export type LoopStatus = 'open' | 'answered' | 'withdrawn' | 'rejected';
+
+export interface LoopRecord {
+  id: string;
+  kind: LoopKind;
   text: string;
-  at: string;
   media?: EnquiryMedia[];
+  openedBy: LoopParty;
+  openedAt: string;
+  holder: LoopParty;
+  status: LoopStatus;
+  answer?: { text: string; media?: EnquiryMedia[]; by: LoopParty; at: string };
+  forwarded?: { by: LoopParty; at: string; from: LoopParty; to: LoopParty };
+  closedAt?: string;
+  internal?: boolean;
 }
 
 // Queue predicates live in @/enquiry/queue (single frontend source of truth,

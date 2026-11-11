@@ -1,0 +1,358 @@
+{
+    "product_name": "SEFAR NYTAL MILLING FABRICS",
+    "category": "Bolting Cloth",
+    "unit": "meters (assumed)",
+    "lead_time_days": 60,
+    "safety_factor": 5,
+    "moq": 25,
+    "summary": {
+        "total_items": 123,
+        "items_with_consumption": 43,
+        "items_with_zero_consumption": 80,
+        "total_max_level": 4944.52,
+        "total_pending_to_order": 5300
+    },
+    "items_with_pending_stock": [
+        {
+            "item": "5XXX WIDTH 110CM",
+            "avg_daily_consumption": 0.16,
+            "max_level": 48.39,
+            "pending_stock": 50
+        },
+        {
+            "item": "8XXX WIDTH 110CM",
+            "avg_daily_consumption": 0.32,
+            "max_level": 95.81,
+            "pending_stock": 100
+        },
+        {
+            "item": "8XXX WIDTH 158CM",
+            "avg_daily_consumption": 0.48,
+            "max_level": 145.16,
+            "pending_stock": 150
+        },
+        {
+            "item": "9XXX WIDTH 110CM",
+            "avg_daily_consumption": 0.86,
+            "max_level": 257.42,
+            "pending_stock": 275
+        },
+        {
+            "item": "9XXX WIDTH 158CM",
+            "avg_daily_consumption": 0.15,
+            "max_level": 46.45,
+            "pending_stock": 50
+        },
+        {
+            "item": "9.5XXX WIDTH 110CM",
+            "avg_daily_consumption": 0.51,
+            "max_level": 153.87,
+            "pending_stock": 175
+        },
+        {
+            "item": "10XXX WIDTH 110CM",
+            "avg_daily_consumption": 0.64,
+            "max_level": 191.61,
+            "pending_stock": 200
+        },
+        {
+            "item": "10XXX WIDTH 158CM",
+            "avg_daily_consumption": 0.81,
+            "max_level": 241.94,
+            "pending_stock": 250
+        },
+        {
+            "item": "10.5XXX WIDTH 110CM",
+            "avg_daily_consumption": 0.32,
+            "max_level": 96.77,
+            "pending_stock": 100
+        },
+        {
+            "item": "11XXX WIDTH 110CM",
+            "avg_daily_consumption": 2.05,
+            "max_level": 616.45,
+            "pending_stock": 625
+        },
+        {
+            "item": "11MF WIDTH 158CM",
+            "avg_daily_consumption": 0.65,
+            "max_level": 193.55,
+            "pending_stock": 200
+        },
+        {
+            "item": "12MF WIDTH 158CM",
+            "avg_daily_consumption": 0.32,
+            "max_level": 96.77,
+            "pending_stock": 100
+        },
+        {
+            "item": "8GG WIDTH 110CM",
+            "avg_daily_consumption": 0.16,
+            "max_level": 48.39,
+            "pending_stock": 50
+        },
+        {
+            "item": "10GG WIDTH 110CM",
+            "avg_daily_consumption": 0.32,
+            "max_level": 96.77,
+            "pending_stock": 100
+        },
+        {
+            "item": "18GG WIDTH 110CM",
+            "avg_daily_consumption": 0.10,
+            "max_level": 29.03,
+            "pending_stock": 50
+        },
+        {
+            "item": "20GG WIDTH 110CM",
+            "avg_daily_consumption": 0.15,
+            "max_level": 43.55,
+            "pending_stock": 50
+        },
+        {
+            "item": "22GG WIDTH 110CM",
+            "avg_daily_consumption": 0.40,
+            "max_level": 119.03,
+            "pending_stock": 125
+        },
+        {
+            "item": "24GG WIDTH 110CM",
+            "avg_daily_consumption": 0.46,
+            "max_level": 139.35,
+            "pending_stock": 150
+        },
+        {
+            "item": "26GG WIDTH 110CM",
+            "avg_daily_consumption": 0.20,
+            "max_level": 60.00,
+            "pending_stock": 75
+        },
+        {
+            "item": "26GG WIDTH 158CM",
+            "avg_daily_consumption": 0.06,
+            "max_level": 19.35,
+            "pending_stock": 25
+        },
+        {
+            "item": "28GG WIDTH 110CM",
+            "avg_daily_consumption": 0.34,
+            "max_level": 100.65,
+            "pending_stock": 125
+        },
+        {
+            "item": "28GG WIDTH 158CM",
+            "avg_daily_consumption": 0.06,
+            "max_level": 19.35,
+            "pending_stock": 25
+        },
+        {
+            "item": "30GG WIDTH 110CM",
+            "avg_daily_consumption": 0.07,
+            "max_level": 21.29,
+            "pending_stock": 25
+        },
+        {
+            "item": "30GG WIDTH 158CM",
+            "avg_daily_consumption": 0.06,
+            "max_level": 19.35,
+            "pending_stock": 25
+        },
+        {
+            "item": "32GG WIDTH 110CM",
+            "avg_daily_consumption": 0.50,
+            "max_level": 150.00,
+            "pending_stock": 150
+        },
+        {
+            "item": "32GG WIDTH 158CM",
+            "avg_daily_consumption": 0.06,
+            "max_level": 19.35,
+            "pending_stock": 25
+        },
+        {
+            "item": "34GG WIDTH 110CM",
+            "avg_daily_consumption": 0.36,
+            "max_level": 107.42,
+            "pending_stock": 125
+        },
+        {
+            "item": "34GG WIDTH 136CM",
+            "avg_daily_consumption": 0.03,
+            "max_level": 9.68,
+            "pending_stock": 25
+        },
+        {
+            "item": "36GG WIDTH 110CM",
+            "avg_daily_consumption": 0.04,
+            "max_level": 11.61,
+            "pending_stock": 25
+        },
+        {
+            "item": "36GG WIDTH 158CM",
+            "avg_daily_consumption": 0.04,
+            "max_level": 12.10,
+            "pending_stock": 25
+        },
+        {
+            "item": "38GG WIDTH 110CM",
+            "avg_daily_consumption": 0.18,
+            "max_level": 53.23,
+            "pending_stock": 75
+        },
+        {
+            "item": "40GG WIDTH 110CM",
+            "avg_daily_consumption": 0.15,
+            "max_level": 43.55,
+            "pending_stock": 50
+        },
+        {
+            "item": "42GG WIDTH 110CM",
+            "avg_daily_consumption": 0.16,
+            "max_level": 49.35,
+            "pending_stock": 50
+        },
+        {
+            "item": "44GG WIDTH 110CM",
+            "avg_daily_consumption": 0.23,
+            "max_level": 67.74,
+            "pending_stock": 75
+        },
+        {
+            "item": "47GG WIDTH 110CM",
+            "avg_daily_consumption": 0.26,
+            "max_level": 77.42,
+            "pending_stock": 100
+        },
+        {
+            "item": "50GG WIDTH 110CM",
+            "avg_daily_consumption": 0.27,
+            "max_level": 82.26,
+            "pending_stock": 100
+        },
+        {
+            "item": "52GG WIDTH 110CM",
+            "avg_daily_consumption": 0.30,
+            "max_level": 89.03,
+            "pending_stock": 100
+        },
+        {
+            "item": "54GG WIDTH 110CM",
+            "avg_daily_consumption": 0.53,
+            "max_level": 159.68,
+            "pending_stock": 175
+        },
+        {
+            "item": "60GG WIDTH 110CM",
+            "avg_daily_consumption": 0.20,
+            "max_level": 60.97,
+            "pending_stock": 75
+        },
+        {
+            "item": "62GG WIDTH 110CM",
+            "avg_daily_consumption": 0.10,
+            "max_level": 29.03,
+            "pending_stock": 50
+        },
+        {
+            "item": "64GG WIDTH 110CM",
+            "avg_daily_consumption": 0.14,
+            "max_level": 42.58,
+            "pending_stock": 50
+        },
+        {
+            "item": "74GG WIDTH 110CM",
+            "avg_daily_consumption": 0.07,
+            "max_level": 21.29,
+            "pending_stock": 25
+        }
+    ],
+    "items_zero_consumption_pending_0": [
+        "3XXX 110CM",
+        "4XXX 110CM",
+        "5XXX 158CM",
+        "6XXX 110CM",
+        "6XXX 158CM",
+        "7XXX 110CM",
+        "7XXX 158CM",
+        "8.5XXX 110CM",
+        "8.5XXX 158CM",
+        "9.5XXX 158CM",
+        "10.5XXX 158CM",
+        "11XXX 136CM",
+        "11XXX 158CM",
+        "12XXX 110CM",
+        "12XXX 158CM",
+        "13XXX 110CM",
+        "13XXX 158CM",
+        "14XXX 158CM",
+        "14.5XXX 158CM",
+        "7MF 158CM",
+        "8MF 158CM",
+        "8.5MF 158CM",
+        "9MF 158CM",
+        "9.5MF 158CM",
+        "10MF 158CM",
+        "10MF 136CM",
+        "10.5MF 158CM",
+        "13MF 158CM",
+        "PA 5 110CM",
+        "PA 6 110CM",
+        "PA 7 110CM",
+        "PA 8 110CM",
+        "PA 8.5 110CM",
+        "PA 9 110CM",
+        "PA 9.5 110CM",
+        "PA 10 110CM",
+        "PA 10 158CM",
+        "PA 10.5 110CM",
+        "PA 10.5 158CM",
+        "PA 11 110CM",
+        "PA 12 110CM",
+        "PA 20 110CM",
+        "6GG 110CM",
+        "12GG 110CM",
+        "12GG 142CM",
+        "14GG 110CM",
+        "14GG 136CM",
+        "15GG 110CM",
+        "15GG 136CM",
+        "16GG 110CM",
+        "16GG 136CM",
+        "17GG 110CM",
+        "17GG 136CM",
+        "18GG 136CM",
+        "18GG 158CM",
+        "19GG 110CM",
+        "19GG 136CM",
+        "20GG 136CM",
+        "22GG 158CM",
+        "23GG 110CM",
+        "23GG 136CM",
+        "23GG 158CM",
+        "24GG 158CM",
+        "27GG 110CM",
+        "31GG 110CM",
+        "38GG 158CM",
+        "40GG 158CM",
+        "42GG 158CM",
+        "44GG 158CM",
+        "45GG 110CM",
+        "45GG 158CM",
+        "47GG 158CM",
+        "50GG 158CM",
+        "52GG 158CM",
+        "54GG 158CM",
+        "58GG 110CM",
+        "58GG 158CM",
+        "60GG 158CM",
+        "64GG 158CM",
+        "66GG 110CM",
+        "66GG 158CM",
+        "68GG 110CM",
+        "70GG 110CM",
+        "70GG 158CM",
+        "72GG 110CM",
+        "72GG 158CM",
+        "74GG 158CM"
+    ]
+}

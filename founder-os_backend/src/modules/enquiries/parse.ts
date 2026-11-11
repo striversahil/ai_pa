@@ -3,7 +3,17 @@
 // Extracted from store.ts (no behavior change). Everything here is pure
 // (no I/O): media/rate/thread parsing, money/quantity/ISO coercion, and the
 // JSON-column parsers for items + requirements.
-import type { Enquiry, EnquiryItem, EnquiryItemRate, EnquiryMedia, EnquiryRequirement, FlagThreadBy, FlagThreadEntry } from "./types";
+import type {
+  Enquiry,
+  EnquiryItem,
+  EnquiryItemRate,
+  EnquiryMedia,
+  EnquiryRequirement,
+  LoopRecord,
+  FlagThreadBy,
+  FlagThreadEntry,
+} from "./types";
+import { migrateItemLoops } from "./loops";
 import { normalizeEnquirySource } from "./types";
 
 const THREAD_BY = new Set(['sales', 'procurement', 'management']);
@@ -77,6 +87,7 @@ export function parseItemRates(raw: unknown): EnquiryItemRate[] {
       return {
         vendor: String(r?.vendor ?? '').slice(0, 200),
         rate: strictNum(r?.rate) ?? NaN,
+        size: r?.size ? String(r.size).slice(0, 120) : undefined,
         discountPercent: parseDiscountPercent(r?.discountPercent),
         description: r?.description ? String(r.description).slice(0, 2000) : undefined,
         salesNote: r?.salesNote ? String(r.salesNote).slice(0, 2000) : undefined,
@@ -146,25 +157,15 @@ export function parseItems(raw: string | null): EnquiryItem[] {
         finalRate: numOrUndefined(r?.finalRate),
         finalDiscountPercent: parseDiscountPercent(r?.finalDiscountPercent),
         finalizedAt: isoOrUndefined(r?.finalizedAt),
-        specIssue: r?.specIssue ? String(r.specIssue).slice(0, 2000) : undefined,
-        specFlaggedAt: isoOrUndefined(r?.specFlaggedAt),
         rateAvailable: r?.rateAvailable === true,
         notAvailable: r?.notAvailable === true,
         notAvailableReason: r?.notAvailableReason ? String(r.notAvailableReason).slice(0, 500) : undefined,
         notAvailableAt: isoOrUndefined(r?.notAvailableAt),
-        notAvailableRequested: r?.notAvailableRequested ? String(r.notAvailableRequested).slice(0, 500) : undefined,
-        notAvailableRequestedAt: isoOrUndefined(r?.notAvailableRequestedAt),
         internalRates: r?.internalRates === true,
         internalRatesAt: isoOrUndefined(r?.internalRatesAt),
-        thread: parseFlagThread(r?.thread),
-        ratesRequested: r?.ratesRequested ? String(r.ratesRequested).slice(0, 500) : undefined,
-        ratesRequestedAt: isoOrUndefined(r?.ratesRequestedAt),
-        variationRequest: r?.variationRequest ? String(r.variationRequest).slice(0, 500) : undefined,
-        variationRequestedAt: isoOrUndefined(r?.variationRequestedAt),
-        variationRequestMedia: parseItemMedia(r?.variationRequestMedia),
-        threadResolved: r?.threadResolved === true,
-        threadResolvedBy: (['sales','procurement','management'] as const).includes(r?.threadResolvedBy) ? r.threadResolvedBy : undefined,
-        threadResolvedAt: isoOrUndefined(r?.threadResolvedAt),
+        // Legacy rows migrate on read: old text flags/requests/threads become
+        // explicit loop records (idempotent — migrated rows pass through).
+        loops: migrateItemLoops(r),
         aiPending: r?.aiPending === true ? true : undefined,
         expectedRate: numOrUndefined(r?.expectedRate),
         expectedNote: r?.expectedNote ? String(r.expectedNote).slice(0, 500) : undefined,
@@ -255,6 +256,40 @@ export function pickEnquiryFields(data: any): Partial<Enquiry> | null {
         // variation request by saving an explicit empty string.
         variationRequest: (r as any)?.variationRequest !== undefined ? String((r as any).variationRequest).slice(0, 500) : undefined,
         variationRequestMedia: (r as any)?.variationRequestMedia !== undefined ? parseItemMedia((r as any).variationRequestMedia) : undefined,
+        // Sales-query routing (management ↔ procurement): explicit marker,
+        // scope-enforced in normalizeItemWrites (privileged only; other
+        // roles follow stored). '' = clear alongside the request.
+        queryWith: (r as any)?.queryWith !== undefined
+          ? ((r as any).queryWith === 'procurement' ? 'procurement' : (r as any).queryWith === 'management' ? 'management' : '')
+          : undefined,
+        // Explicit management answer marker (privileged only): the reply
+        // text rides in the appended thread remark; this flag authorizes the
+        // clear + resolved stamp. Never persisted.
+        queryAnswer: (r as any)?.queryAnswer === true ? true : undefined,
+        // Deterministic loop verbs (open/answer/forward/withdraw/reject).
+        // Validated + permission-checked in normalizeItemWrites; the bridge
+        // above keeps older clients working. Never persisted as-is.
+        loopOpen: (r as any)?.loopOpen !== undefined ? {
+          kind: String((r as any)?.loopOpen?.kind ?? ''),
+          text: String((r as any)?.loopOpen?.text ?? '').slice(0, 2000),
+          media: (r as any)?.loopOpen?.media !== undefined ? parseItemMedia((r as any)?.loopOpen?.media) : undefined,
+        } : undefined,
+        loopAnswer: (r as any)?.loopAnswer !== undefined ? {
+          id: String((r as any)?.loopAnswer?.id ?? '').slice(0, 64),
+          text: String((r as any)?.loopAnswer?.text ?? '').slice(0, 2000),
+          media: (r as any)?.loopAnswer?.media !== undefined ? parseItemMedia((r as any)?.loopAnswer?.media) : undefined,
+        } : undefined,
+        loopForward: (r as any)?.loopForward !== undefined ? {
+          id: String((r as any)?.loopForward?.id ?? '').slice(0, 64),
+          to: String((r as any)?.loopForward?.to ?? ''),
+        } : undefined,
+        loopWithdraw: (r as any)?.loopWithdraw !== undefined ? {
+          id: String((r as any)?.loopWithdraw?.id ?? '').slice(0, 64),
+        } : undefined,
+        loopReject: (r as any)?.loopReject !== undefined ? {
+          id: String((r as any)?.loopReject?.id ?? '').slice(0, 64),
+          text: String((r as any)?.loopReject?.text ?? '').slice(0, 500),
+        } : undefined,
         thread: parseFlagThread(r?.thread),
         threadResolved: (r as any)?.threadResolved === true ? true : (r as any)?.threadResolved === false ? false : undefined,
         threadResolvedBy: (r as any)?.threadResolvedBy ? String((r as any).threadResolvedBy).slice(0, 20) : undefined,
@@ -307,7 +342,7 @@ export function composeSearchText(e: any): string {
   ];
   for (const it of (Array.isArray((e as any)?.items) ? (e as any).items : [])) {
     parts.push(s(it?.name), s(it?.qty, 120), s(it?.spec, 500), s(it?.category, 120), s(it?.kypItem, 120));
-    for (const r of (Array.isArray(it?.rates) ? it.rates : [])) parts.push(s(r?.vendor, 200));
+    for (const r of (Array.isArray(it?.rates) ? it.rates : [])) parts.push(s(r?.vendor, 200), s((r as any)?.size, 120));
   }
   for (const r of (Array.isArray((e as any)?.additionalRequirements) ? (e as any).additionalRequirements : [])) {
     parts.push(s(typeof r === 'string' ? r : r?.text));

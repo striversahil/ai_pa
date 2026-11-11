@@ -56,12 +56,12 @@ const vendorsOf = (item) => (item.rates ?? []).map((r) => r.vendor).sort();
 
 describe('rates union: stale snapshots never delete quotes', () => {
   for (const role of ['management', 'procurementViewer', 'procurementMis', 'sales']) {
-    it(`[${role}] stale pre-Greaves save keeps all quotes + stamps trail`, () => {
+    it(`[${role}] stale pre-Greaves save keeps all quotes + stamps loop note`, () => {
       const out = normalizeItemWrites([staleCbplItem()], withStored(role))[0];
       assert.deepStrictEqual(vendorsOf(out), ['CBPL', 'CBPL', 'Greaves']);
-      // Trail records the rescue.
-      const trail = Array.isArray(out.thread) ? out.thread : [];
-      assert.ok(trail.some((e) => String(e?.text ?? '').includes('kept')), `trail stamps reinstatement, got: ${JSON.stringify(trail)}`);
+      // Loop note records the rescue (deterministic records replaced the thread trail).
+      const loops = Array.isArray(out.loops) ? out.loops : [];
+      assert.ok(loops.some((l) => l.kind === 'note' && String(l?.text ?? '').includes('kept')), `loop note stamps reinstatement, got: ${JSON.stringify(loops)}`);
     });
   }
 
@@ -109,8 +109,8 @@ describe('rates union: stale snapshots never delete quotes', () => {
       fresh.rates = fresh.rates.filter((r) => !(r.vendor === 'CBPL' && r.rate === 19121));
       const out = normalizeItemWrites([fresh], withStored(role))[0];
       assert.deepStrictEqual(vendorsOf(out), ['CBPL', 'Greaves']);
-      const trail = Array.isArray(out.thread) ? out.thread : [];
-      assert.ok(trail.some((e) => String(e?.text ?? '').includes('removed')), `trail stamps deletion, got: ${JSON.stringify(trail)}`);
+      const loops = Array.isArray(out.loops) ? out.loops : [];
+      assert.ok(loops.some((l) => l.kind === 'note' && String(l?.text ?? '').includes('removed')), `loop note stamps deletion, got: ${JSON.stringify(loops)}`);
     }
   });
 
@@ -119,7 +119,7 @@ describe('rates union: stale snapshots never delete quotes', () => {
     const incoming = { name: 'X', qty: '', spec: 's', rates: [{ ...CBPL_GEAR }, { ...GREAVES }] };
     const out = normalizeItemWrites([incoming], { ...CTX.management, storedItems: [stored] })[0];
     assert.deepStrictEqual(vendorsOf(out), ['CBPL', 'Greaves']);
-    assert.strictEqual((out.thread ?? []).length, 0);
+    assert.strictEqual((out.loops ?? []).filter((l) => l.kind === 'note' && /kept|removed/.test(String(l?.text ?? ''))).length, 0);
   });
 
   it('removedRates never persists on the stored row', () => {

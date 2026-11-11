@@ -13,6 +13,7 @@ import EnquiryModal from "@/components/EnquiryModal";
 import Lightbox from "@/components/Lightbox";
 import type { Enquiry, Comment, EnquiryItem } from "@/types";
 import { enquiryLabel } from "@/types";
+import { isOpenSpecFlag } from "@/enquiry/queue";
 
 // Sales Enquiries dashboard (mounted as the `enquiry-tracker` automation).
 // Sales-only: the full daily pipeline with PII + lead attribution.
@@ -28,14 +29,14 @@ export default function EnquiryTracker() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Live intimations: toast when an enquiry transitions to finalized
   // (rates ready) or gains a spec flag (needs correction) while open.
-  const [rateToast, setRateToast] = useState<{ id: string; label: string; title: string; kind: "rates" | "spec" | "specdiff" | "reopened" | "thread" } | null>(null);
+  const [rateToast, setRateToast] = useState<{ id: string; label: string; title: string; kind: "rates" | "spec" | "specdiff" | "reopened" | "loop" } | null>(null);
   const rateStatusRef = useRef<Record<string, string>>({});
   const flagCountRef = useRef<Record<string, number>>({});
   const specDiffCountRef = useRef<Record<string, number>>({});
-  const threadCountRef = useRef<Record<string, number>>({});
+  const loopCountRef = useRef<Record<string, number>>({});
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const flashToast = useCallback((id: string, label: string, title: string, kind: "rates" | "spec" | "specdiff" | "reopened" | "thread") => {
+  const flashToast = useCallback((id: string, label: string, title: string, kind: "rates" | "spec" | "specdiff" | "reopened" | "loop") => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     setRateToast({ id, label, title, kind });
     toastTimer.current = setTimeout(() => setRateToast(null), 10000);
@@ -89,7 +90,7 @@ export default function EnquiryTracker() {
   };
 
   // List rows arrive WITHOUT item media bytes (payload size) — backfill the
-  // full row (photos, threads) the moment it is opened, same pattern as the
+  // full row (photos, loops) the moment it is opened, same pattern as the
   // procurement/management dashboards. Saves from slim rows are safe: the
   // backend preserves stored media on empty incoming.
   useEffect(() => {
@@ -105,13 +106,13 @@ export default function EnquiryTracker() {
     for (const e of enquiries) {
       if (rateStatusRef.current[e.id] === undefined) rateStatusRef.current[e.id] = e.rateStatus ?? "";
       if (flagCountRef.current[e.id] === undefined) {
-        flagCountRef.current[e.id] = (e.items ?? []).filter((it) => it.specIssue).length;
+        flagCountRef.current[e.id] = (e.items ?? []).filter((it) => isOpenSpecFlag(it)).length;
       }
       if (specDiffCountRef.current[e.id] === undefined) {
         specDiffCountRef.current[e.id] = (e.items ?? []).reduce((n, it) => n + (it.rates ?? []).filter((r) => r.specSame === false).length, 0);
       }
-      if (threadCountRef.current[e.id] === undefined) {
-        threadCountRef.current[e.id] = (e.items ?? []).reduce((n, it) => n + ((it as any).thread ?? []).length, 0);
+      if (loopCountRef.current[e.id] === undefined) {
+        loopCountRef.current[e.id] = (e.items ?? []).reduce((n, it) => n + (Array.isArray((it as any)?.loops) ? (it as any).loops.length : 0), 0);
       }
     }
   }, [loaded, enquiries]);
@@ -141,7 +142,7 @@ export default function EnquiryTracker() {
     }
     const flagged = typeof s.flaggedCount === "number"
       ? s.flaggedCount
-      : ((raw.items ?? []) as any[]).filter((it) => it?.specIssue).length;
+      : ((raw.items ?? []) as any[]).filter((it) => (Array.isArray((it as any)?.loops) ? (it as any).loops : []).some((l: any) => l?.kind === 'spec' && l?.status === 'open')).length;
     const prevFlagged = flagCountRef.current[id];
     flagCountRef.current[id] = flagged;
     if (prevFlagged !== undefined && flagged > prevFlagged) {
@@ -155,14 +156,14 @@ export default function EnquiryTracker() {
     if (prevDiffs !== undefined && diffs > prevDiffs) {
       flashToast(id, label, title, "specdiff");
     }
-    const threadCount = typeof s.threadCount === "number"
-      ? s.threadCount
-      : ((raw.items ?? []) as any[]).reduce((n, it) => n + ((it as any).thread ?? []).length, 0);
-    const prevThread = threadCountRef.current[id];
-    threadCountRef.current[id] = threadCount;
-    if (prevThread !== undefined && threadCount > prevThread) {
+    const loopCount = typeof s.loopCount === "number"
+      ? s.loopCount
+      : ((raw.items ?? []) as any[]).reduce((n, it) => n + (Array.isArray((it as any)?.loops) ? (it as any).loops.length : 0), 0);
+    const prevLoops = loopCountRef.current[id];
+    loopCountRef.current[id] = loopCount;
+    if (prevLoops !== undefined && loopCount > prevLoops) {
       const isPrivilegedToast = !!(me as any)?.isRoot || !!me?.isAdmin || (me?.scopes ?? []).includes("mis") || (me?.scopes ?? []).includes("admin");
-      if (!isPrivilegedToast) flashToast(id, label, title, "thread");
+      if (!isPrivilegedToast) flashToast(id, label, title, "loop");
     }
   });
 
@@ -358,16 +359,16 @@ export default function EnquiryTracker() {
 
       {rateToast && (
         <div className={`fixed bottom-5 right-5 z-50 max-w-sm rounded-2xl border p-4 shadow-2xl animate-scale-up bg-[var(--bg-card)] ${
-          rateToast.kind === "spec" ? "border-red-500/40" : rateToast.kind === "specdiff" ? "border-amber-500/40" : rateToast.kind === "reopened" ? "border-amber-500/40" : rateToast.kind === "thread" ? "border-sky-500/40" : "border-emerald-500/40"
+          rateToast.kind === "spec" ? "border-red-500/40" : rateToast.kind === "specdiff" ? "border-amber-500/40" : rateToast.kind === "reopened" ? "border-amber-500/40" : rateToast.kind === "loop" ? "border-sky-500/40" : "border-emerald-500/40"
         }`}>
           <div className="flex items-start gap-3">
             <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-base ${
-              rateToast.kind === "spec" ? "bg-red-500/15" : rateToast.kind === "specdiff" ? "bg-amber-500/15" : rateToast.kind === "reopened" ? "bg-amber-500/15" : rateToast.kind === "thread" ? "bg-sky-500/15" : "bg-emerald-500/15"
-            }`}>{rateToast.kind === "spec" ? "🚩" : rateToast.kind === "specdiff" ? "⚠" : rateToast.kind === "reopened" ? "🔔" : rateToast.kind === "thread" ? "💬" : "💰"}</span>
+              rateToast.kind === "spec" ? "bg-red-500/15" : rateToast.kind === "specdiff" ? "bg-amber-500/15" : rateToast.kind === "reopened" ? "bg-amber-500/15" : rateToast.kind === "loop" ? "bg-sky-500/15" : "bg-emerald-500/15"
+            }`}>{rateToast.kind === "spec" ? "🚩" : rateToast.kind === "specdiff" ? "⚠" : rateToast.kind === "reopened" ? "🔔" : rateToast.kind === "loop" ? "💬" : "💰"}</span>
             <div className="min-w-0 flex-1">
               <p className={`text-xs font-extrabold ${
-                rateToast.kind === "spec" ? "text-red-500" : rateToast.kind === "specdiff" ? "text-amber-600 dark:text-amber-400" : rateToast.kind === "reopened" ? "text-amber-600 dark:text-amber-400" : rateToast.kind === "thread" ? "text-sky-600 dark:text-sky-400" : "text-emerald-600 dark:text-emerald-400"
-              }`}>{rateToast.kind === "spec" ? "Spec flagged — correction needed" : rateToast.kind === "specdiff" ? "Vendor quoted a different spec" : rateToast.kind === "reopened" ? "New vendor rates — decision reopened" : rateToast.kind === "thread" ? "New thread message" : "Rates ready"}</p>
+                rateToast.kind === "spec" ? "text-red-500" : rateToast.kind === "specdiff" ? "text-amber-600 dark:text-amber-400" : rateToast.kind === "reopened" ? "text-amber-600 dark:text-amber-400" : rateToast.kind === "loop" ? "text-sky-600 dark:text-sky-400" : "text-emerald-600 dark:text-emerald-400"
+              }`}>{rateToast.kind === "spec" ? "Spec flagged — correction needed" : rateToast.kind === "specdiff" ? "Vendor quoted a different spec" : rateToast.kind === "reopened" ? "New vendor rates — decision reopened" : rateToast.kind === "loop" ? "New loop update" : "Rates ready"}</p>
               <p className="truncate text-sm font-bold text-[var(--text-primary)]">{rateToast.title}</p>
               <p className="text-[11px] font-semibold text-[var(--color-brand-indigo)]">{rateToast.label}</p>
               <div className="mt-2 flex gap-2">
@@ -375,7 +376,7 @@ export default function EnquiryTracker() {
                   type="button"
                   onClick={() => { setSelectedId(rateToast.id); setRateToast(null); }}
                   className={`px-3 py-1.5 rounded-lg text-white text-xs font-bold cursor-pointer border-0 ${
-                    rateToast.kind === "spec" ? "bg-red-500 hover:bg-red-400" : rateToast.kind === "specdiff" ? "bg-amber-500 hover:bg-amber-400" : rateToast.kind === "thread" ? "bg-sky-600 hover:bg-sky-500" : "bg-emerald-600 hover:bg-emerald-500"
+                    rateToast.kind === "spec" ? "bg-red-500 hover:bg-red-400" : rateToast.kind === "specdiff" ? "bg-amber-500 hover:bg-amber-400" : rateToast.kind === "loop" ? "bg-sky-600 hover:bg-sky-500" : "bg-emerald-600 hover:bg-emerald-500"
                   }`}
                 >
                   {rateToast.kind === "rates" ? "View rates" : "View item"}

@@ -8,7 +8,7 @@ import InventoryTable from "./stock/InventoryTable";
 import AlertsReports from "./stock/AlertsReports";
 import { inr } from "./stock/shared";
 
-interface Payload { meta: { analysis: string; generatedAt: string; day: string; days: string[]; locations: { id: string; name: string }[] }; items: any[]; closings: Record<string, Record<string, number>>; totals: { skus: number; units: number; available: number; value: number; low: number; out: number; dead: number; pendingAdjust: number }; movements: any[]; }
+interface Payload { meta: { analysis: string; generatedAt: string; day: string; days: string[]; locations: { id: string; name: string }[]; planning?: { leadTimeDays: number; safetyFactor: number; moq: number; source: string } }; items: any[]; closings: Record<string, Record<string, number>>; totals: { skus: number; units: number; available: number; value: number; low: number; out: number; dead: number; pendingAdjust: number; pendingToOrder: number }; movements: any[]; }
 
 const panel = "bg-[var(--bg-card)] border border-[var(--border-card)] rounded-2xl";
 const field = "w-full px-3 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl outline-none text-sm text-[var(--text-primary)]";
@@ -59,10 +59,10 @@ export default function StockDashboard() {
   ];
 
   const downloadCsv = () => {
-    const header = ["SKU", "Product", "Category", "Brand", "Unit", "OnHand", "Reserved", "Available", "AvgRate", "StockValue", "Reorder", "Status", "ABC"];
+    const header = ["SKU", "Product", "Category", "Brand", "Unit", "OnHand", "Reserved", "Available", "AvgDailyConsumption", "MaxLevel", "PendingToOrder", "AvgRate", "StockValue", "Reorder", "Status", "ABC"];
     const lines = [header.join(",")];
     for (const r of rows) {
-      const cells = [r.sku, r.productName, r.category, r.brand, r.unit, r.onHand, r.reserved, r.available, r.avgRate, r.stockValue, r.reorderLevel, r.status, r.abc];
+      const cells = [r.sku, r.productName, r.category, r.brand, r.unit, r.onHand, r.reserved, r.available, r.avgDailyConsumption ?? 0, r.maxLevel ?? 0, r.pendingToOrder ?? 0, r.avgRate, r.stockValue, r.reorderLevel, r.status, r.abc];
       lines.push(cells.map((c) => `"${String(c ?? '').replace(/"/g, '""')}"`).join(","));
     }
     const blob = new Blob([lines.join("\n")], { type: "text/csv" });
@@ -99,6 +99,7 @@ export default function StockDashboard() {
           <h1 className="text-2xl font-semibold tracking-tight">Stock</h1>
           <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
             Auto-SKU inventory — on-hand vs available, moving-average value, transfers, reservations and day-wise closings.
+            {data?.meta.planning && <span className="ml-1 opacity-80">Planning: lead {data.meta.planning.leadTimeDays}d · safety ×{data.meta.planning.safetyFactor} · MOQ {data.meta.planning.moq}m (SEFAR backfill).</span>}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -137,8 +138,8 @@ export default function StockDashboard() {
           <button onClick={() => setErr("")} className="rounded-lg border border-rose-300 px-3 py-1 text-xs font-medium hover:bg-rose-100 dark:border-rose-800 dark:hover:bg-rose-950/50">Dismiss</button>
         </div>
       )}
-      <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-        {[["SKUs", String(data?.totals.skus ?? 0)], ["On-hand", String(data?.totals.units ?? 0)], ["Value", inr(data?.totals.value ?? 0)], ["Low", String(data?.totals.low ?? 0)], ["Out", String(data?.totals.out ?? 0)], ["Dead 90d", String(data?.totals.dead ?? 0)]].map(([l, v]) => (
+      <div className="grid grid-cols-2 md:grid-cols-7 gap-3">
+        {[["SKUs", String(data?.totals.skus ?? 0)], ["On-hand", String(data?.totals.units ?? 0)], ["Value", inr(data?.totals.value ?? 0)], ["To order", `${(data?.totals.pendingToOrder ?? 0).toLocaleString('en-IN')} m`], ["Low", String(data?.totals.low ?? 0)], ["Out", String(data?.totals.out ?? 0)], ["Dead 90d", String(data?.totals.dead ?? 0)]].map(([l, v]) => (
           <div key={l} className={`${panel} p-4`}><div className="text-[11px] uppercase tracking-wider opacity-60">{l}</div><div className="text-xl font-bold">{v}</div></div>
         ))}
       </div>

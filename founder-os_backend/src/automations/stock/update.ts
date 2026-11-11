@@ -31,6 +31,10 @@ export async function createStockItem(input: any) {
       reorderLevel: Number(input?.reorderLevel ?? 0) || 0,
       minLevel: Number(input?.minLevel ?? 0) || 0,
       maxLevel: Number(input?.maxLevel ?? 0) || 0,
+      avgDailyConsumption: Number(input?.avgDailyConsumption ?? 0) || 0,
+      leadTimeDays: Number(input?.leadTimeDays ?? 0) || 0,
+      safetyFactor: Number(input?.safetyFactor ?? 0) || 0,
+      moq: Number(input?.moq ?? 0) || 0,
       imageUrl: String(input?.imageUrl ?? '').trim(),
       active: input?.active !== false,
     },
@@ -44,7 +48,7 @@ export async function updateStockItem(id: string, input: any) {
   for (const f of ['productName', 'category', 'brand', 'barcode', 'unit', 'unitPurchase', 'supplier', 'imageUrl']) {
     if (input?.[f] !== undefined) patch[f] = String(input[f]).trim();
   }
-  for (const f of ['unitFactor', 'purchaseRate', 'saleRate', 'reorderLevel', 'minLevel', 'maxLevel']) {
+  for (const f of ['unitFactor', 'purchaseRate', 'saleRate', 'reorderLevel', 'minLevel', 'maxLevel', 'avgDailyConsumption', 'leadTimeDays', 'safetyFactor', 'moq']) {
     if (input?.[f] !== undefined) patch[f] = Number(input[f]) || 0;
   }
   if (input?.active !== undefined) patch.active = input.active !== false;
@@ -125,4 +129,72 @@ export async function releaseReservation(id: string, mode: 'released' | 'consume
   const row = await (prisma as any).stockReservation.update({ where: { id: String(id) }, data: { status: mode } });
   await invalidateStockCache();
   return row;
+}
+
+export interface BackfillLine {
+  productName: string; category?: string; brand?: string; unit?: string;
+  supplier?: string; avgDailyConsumption?: number; maxLevel?: number;
+  reorderLevel?: number; leadTimeDays?: number; safetyFactor?: number; moq?: number;
+}
+
+export interface BackfillInput {
+  planning?: { leadTimeDays?: number; safetyFactor?: number; moq?: number; source?: string };
+  items: BackfillLine[];
+}
+
+/**
+ * Idempotent SEFAR-style backfill: match on (category, productName); create
+ * missing SKUs (auto BOL-0007…), refresh planning fields on existing rows.
+ * Never posts movements — on-hand stays derived, pending_to_order computed.
+ */
+export async function backfillStockFromPayload(input: BackfillInput, actor: string) {
+  const lines = Array.isArray(input?.items) ? input.items : [];
+  if (!lines.length) throw new Error('items[] is required');
+  const planning = {
+    leadTimeDays: Number(input?.planning?.leadTimeDays) || 60,
+    safetyFactor: Number(input?.planning?.safetyFactor) || 5,
+    moq: Number(input?.planning?.moq) || 25,
+    source: String(input?.planning?.source ?? 'stock_update.json'),
+  };
+  await (prisma as any).setting.upsert({
+    where: { key: 'stock:planning' },
+    update: { value: JSON.stringify(planning) },
+    create: { key: 'stock:planning', value: JSON.stringify(planning) },
+  }).catch(() => null);
+  let created = 0, updated = 0;
+  for (const l of lines) {
+    const productName = String(l?.productName ?? '').trim();
+    if (!productName) continue;
+    const category = String(l?.category ?? '').trim();
+    const maxLevel = Number(l?.maxLevel ?? 0) || 0;
+    const avg = Number(l?.avgDailyConsumption ?? 0) || 0;
+    const data = {
+      category,
+      brand: String(l?.brand ?? '').trim(),
+      unit: String(l?.unit ?? '').trim() || 'meters',
+      supplier: String(l?.supplier ?? '').trim(),
+      reorderLevel: Number(l?.reorderLevel ?? 0) || (maxLevel > 0 ? maxLevel : 0),
+      maxLevel,
+      avgDailyConsumption: avg,
+      leadTimeDays: Number(l?.leadTimeDays) || planning.leadTimeDays,
+      safetyFactor: Number(l?.safetyFactor) || planning.safetyFactor,
+      moq: Number(l?.moq) || planning.moq,
+      active: true,
+    };
+    const existing = await (prisma as any).stockItem.findMany({}).catch(() => []);
+    const hit = ((existing as any[]) ?? []).find(
+      (r) => String(r.productName ?? '').trim().toLowerCase() === productName.toLowerCase()
+        && String(r.category ?? '').trim().toLowerCase() === category.toLowerCase(),
+    );
+    if (hit) {
+      await (prisma as any).stockItem.update({ where: { id: String(hit.id) }, data }).catch(() => null);
+      updated++;
+    } else {
+      const sku = await generateSku(category, productName);
+      await (prisma as any).stockItem.create({ data: { sku, productName, ...data } });
+      created++;
+    }
+  }
+  await invalidateStockCache();
+  return { created, updated, total: lines.length, planning, actor };
 }

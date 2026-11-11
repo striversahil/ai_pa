@@ -23,6 +23,7 @@ export default function ItemRateForm({ onAdd, initial, submitLabel = "Add rate",
   const [salesNote, setSalesNote] = useState(initial?.salesNote ?? "");
   const [rate, setRate] = useState(initial?.rate !== undefined ? String(initial.rate) : "");
   const [discount, setDiscount] = useState(initial?.discountPercent !== undefined ? String(initial.discountPercent) : "");
+  const [size, setSize] = useState((initial as any)?.size ?? "");
   const [specMode, setSpecMode] = useState<"same" | "diff">(initial?.specSame === false ? "diff" : "same");
   const [specDiff, setSpecDiff] = useState(initial?.specDiff ?? "");
   const [formError, setFormError] = useState<string | null>(null);
@@ -63,6 +64,7 @@ export default function ItemRateForm({ onAdd, initial, submitLabel = "Add rate",
     onAdd({
       vendor: v,
       rate: r,
+      size: size.trim().slice(0, 120) || undefined,
       discountPercent: disc,
       description: description.trim() || undefined,
       salesNote: salesNote.trim() || undefined,
@@ -77,6 +79,7 @@ export default function ItemRateForm({ onAdd, initial, submitLabel = "Add rate",
     setDescription("");
     setSalesNote("");
     setRate("");
+    setSize("");
     setDiscount("");
     setSpecMode("same");
     setSpecDiff("");
@@ -112,6 +115,13 @@ export default function ItemRateForm({ onAdd, initial, submitLabel = "Add rate",
           placeholder="Rate ₹"
           inputMode="decimal"
           className="flex-1 px-2.5 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-brand-indigo text-xs text-[var(--text-primary)]"
+        />
+        <input
+          value={size}
+          onChange={(e) => setSize(e.target.value.slice(0, 120))}
+          placeholder="Size"
+          title="This vendor's quoted size"
+          className="w-24 px-2 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-brand-indigo text-xs text-[var(--text-primary)]"
         />
         <input
           value={discount}

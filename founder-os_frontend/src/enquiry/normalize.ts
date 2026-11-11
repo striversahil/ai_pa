@@ -4,6 +4,7 @@
 // shared by all three dashboards (sales tracker, procurement queue,
 // management review) so server-shape drift is fixed in one place.
 import type { Enquiry, Comment, Activity, EnquiryItem } from '../types';
+import { parseLoopRecords } from './loops';
 
 export function toComment(raw: any): Comment {
   return {
@@ -49,6 +50,7 @@ export function toEnquiry(raw: any): Enquiry {
               .map((q: any) => ({
                 vendor: String(q?.vendor ?? ""),
                 rate: Number(q?.rate ?? NaN),
+                size: q?.size ? String(q.size).slice(0, 120) : undefined,
                 discountPercent: q?.discountPercent !== undefined && q?.discountPercent !== null && q?.discountPercent !== "" ? Number(q.discountPercent) : undefined,
                 description: q?.description ? String(q.description) : undefined,
                 salesNote: q?.salesNote ? String(q.salesNote) : undefined,
@@ -76,54 +78,16 @@ export function toEnquiry(raw: any): Enquiry {
         finalRate: r?.finalRate !== undefined && r?.finalRate !== null && r?.finalRate !== "" ? Number(r.finalRate) : undefined,
         finalDiscountPercent: (r as any)?.finalDiscountPercent !== undefined && (r as any)?.finalDiscountPercent !== null && (r as any)?.finalDiscountPercent !== "" ? Number((r as any).finalDiscountPercent) : undefined,
         finalizedAt: r?.finalizedAt ? String(r.finalizedAt) : undefined,
-        specIssue: r?.specIssue ? String(r.specIssue) : undefined,
-        specFlaggedAt: r?.specFlaggedAt ? String(r.specFlaggedAt) : undefined,
         rateAvailable: r?.rateAvailable === true,
         notAvailable: (r as any)?.notAvailable === true,
         notAvailableReason: (r as any)?.notAvailableReason ? String((r as any).notAvailableReason) : undefined,
         notAvailableAt: (r as any)?.notAvailableAt ? String((r as any).notAvailableAt) : undefined,
-        notAvailableRequested: (r as any)?.notAvailableRequested ? String((r as any).notAvailableRequested) : undefined,
-        notAvailableRequestedAt: (r as any)?.notAvailableRequestedAt ? String((r as any).notAvailableRequestedAt) : undefined,
         internalRates: r?.internalRates === true,
         internalRatesAt: r?.internalRatesAt ? String(r.internalRatesAt) : undefined,
-        ratesRequested: r?.ratesRequested ? String(r.ratesRequested) : undefined,
-        ratesRequestedAt: r?.ratesRequestedAt ? String(r.ratesRequestedAt) : undefined,
-        variationRequest: r?.variationRequest ? String(r.variationRequest) : undefined,
-        variationRequestedAt: r?.variationRequestedAt ? String(r.variationRequestedAt) : undefined,
-        variationRequestMedia: Array.isArray(r?.variationRequestMedia)
-          ? r.variationRequestMedia
-              .map((m: any) => ({
-                type: m?.type === "video" ? "video" : m?.type === "pdf" ? "pdf" : "image",
-                url: String(m?.url ?? ""),
-                name: m?.name ? String(m.name) : undefined,
-              }))
-              .filter((m: any) => m.url.length > 0)
-          : undefined,
+        loops: parseLoopRecords((r as any)?.loops),
         aiPending: r?.aiPending === true ? true : undefined,
         expectedRate: r?.expectedRate !== undefined && r?.expectedRate !== null && r?.expectedRate !== "" ? Number(r.expectedRate) : undefined,
         expectedNote: r?.expectedNote ? String(r.expectedNote) : undefined,
-        thread: Array.isArray(r?.thread)
-          ? r.thread
-              .map((e: any) => ({
-                by: e?.by === 'procurement' ? 'procurement' : e?.by === 'management' ? 'management' : 'sales',
-                kind: ['flag', 'remark', 'fix', 'request', 'quoted'].includes(e?.kind) ? e.kind : 'remark',
-                text: String(e?.text ?? ''),
-                at: String(e?.at ?? ''),
-                media: Array.isArray(e?.media)
-                  ? e.media
-                      .map((m: any) => ({
-                        type: m?.type === "video" ? "video" : m?.type === "pdf" ? "pdf" : "image",
-                        url: String(m?.url ?? ""),
-                        name: m?.name ? String(m.name) : undefined,
-                      }))
-                      .filter((m: any) => m.url.length > 0)
-                  : undefined,
-              }))
-              .filter((e: any) => e.text.trim() || (e.media ?? []).length > 0)
-          : [],
-        threadResolved: (r as any)?.threadResolved === true,
-        threadResolvedBy: (['sales','procurement','management'] as const).includes((r as any)?.threadResolvedBy) ? (r as any).threadResolvedBy : undefined,
-        threadResolvedAt: (r as any)?.threadResolvedAt ? String((r as any).threadResolvedAt) : undefined,
       })).filter((r: any) => r.name.trim() || r.qty.trim() || r.spec.trim() || r.media.length > 0 || (r.rates ?? []).length > 0)
     : [];
   return {

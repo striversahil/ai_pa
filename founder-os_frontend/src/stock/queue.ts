@@ -25,6 +25,19 @@ export function suggestedOrder(available: number, maxLevel: number, reorderLevel
   return Math.max(0, Math.ceil(target - available));
 }
 
+export function roundUpToMoq(qty: number, moq: number): number {
+  const m = Number(moq) || 0;
+  if (m <= 0) return Math.max(0, Math.ceil(qty));
+  if (qty <= 0) return 0;
+  return Math.ceil(qty / m) * m;
+}
+
+export function suggestedOrderWithMoq(available: number, maxLevel: number, reorderLevel: number, moq: number): number {
+  const target = maxLevel > 0 ? maxLevel : reorderLevel * 2;
+  if (target <= 0) return 0;
+  return roundUpToMoq(target - available, moq);
+}
+
 export function isDeadStock(deadDays: number, threshold = 90): boolean {
   return deadDays >= threshold;
 }

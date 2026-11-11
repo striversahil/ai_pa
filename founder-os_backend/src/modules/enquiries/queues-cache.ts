@@ -27,6 +27,8 @@ import {
   isProcurementPendingEnquiry,
   isProcurementHistoryEnquiry,
   isSentReopened,
+  hasOpenQuery,
+  hasResolvedQuery,
 } from './queues';
 import type { EnquiryStore } from './types';
 
@@ -46,6 +48,10 @@ export interface ManagementQueues {
    *  these; redaction itself is applied at serve time, never cached). */
   procPending: any[];
   procHistory: any[];
+  /** Sales-query partitions: open queries (Query tab Needs action) + recently
+   *  answered (Query tab Resolved filter). Same scan, complete sets. */
+  query: any[];
+  queryResolved: any[];
   computedAt: string;
 }
 
@@ -63,6 +69,8 @@ interface CachedQueues {
   empty: string[];
   procPending: string[];
   procHistory: string[];
+  query: string[];
+  queryResolved: string[];
   historyTotal: number;
   computedAt: string;
 }
@@ -129,6 +137,11 @@ async function computeManagementQueues(store: EnquiryStore): Promise<CachedQueue
   const empty = (all as any[]).filter((e) => (((e as any).items ?? []).length === 0) && !isManagementHistoryEnquiry(e as any));
   const procPending = (all as any[]).filter((e) => isProcurementPendingEnquiry(e as any));
   const procHistory = (all as any[]).filter((e) => isProcurementHistoryEnquiry(e as any));
+  // Sales queries: open asks (needs action — management answers or forwards)
+  // plus recently answered (resolved filter). Membership is orthogonal to
+  // the Active/History partition — a query row keeps its decision tab too.
+  const query = (all as any[]).filter((e) => hasOpenQuery(e as any));
+  const queryResolved = (all as any[]).filter((e) => hasResolvedQuery(e as any));
   return {
     byId,
     active: ids(active),
@@ -137,6 +150,8 @@ async function computeManagementQueues(store: EnquiryStore): Promise<CachedQueue
     empty: ids(empty),
     procPending: ids(procPending),
     procHistory: ids(procHistory),
+    query: ids(query),
+    queryResolved: ids(queryResolved),
     historyTotal: history.length,
     computedAt: new Date().toISOString(),
   };
@@ -159,6 +174,8 @@ export async function getManagementQueues(store: EnquiryStore): Promise<Manageme
     empty: rows(c.empty),
     procPending: rows(c.procPending),
     procHistory: rows(c.procHistory),
+    query: rows(c.query),
+    queryResolved: rows(c.queryResolved),
     computedAt: c.computedAt,
   };
 }

@@ -617,27 +617,9 @@ async function computeDashboard(
         incomplete: false,
       };
     });
-  // Active Meta Ads campaign window (Saturday start → daily capture during run).
-  const metaAdsCampaign: any = await getActiveMetaCampaign(dateStr).catch(() => null);
-  // Carry-forward: today's Meta Ads Run box inherits the active campaign's
-  // category/amount/from-to for DISPLAY so every day of the run shows what
-  // campaign the inquiries/leads belong to (the day's own inquiries/leads win).
-  // DB rows are untouched — saving the day writes its own metricsJson.
-  if (metaAdsCampaign) {
-    const todayRun = (items as any[]).find((i) => String(i.templateId) === 'dmm-06');
-    if (todayRun && String(todayRun.logId ?? '') !== String(metaAdsCampaign.logId ?? '')) {
-      const cur = (todayRun.metricsJson && typeof todayRun.metricsJson === 'object') ? todayRun.metricsJson : {};
-      const pick = (k: string) => (cur as any)[k] ?? null;
-      todayRun.metricsJson = {
-        ...cur,
-        category: pick('category') ?? (metaAdsCampaign as any).category ?? null,
-        amountSpent: pick('amountSpent') ?? (metaAdsCampaign as any).amountSpent ?? null,
-        fromDate: pick('fromDate') ?? (metaAdsCampaign as any).fromDate ?? null,
-        toDate: pick('toDate') ?? (metaAdsCampaign as any).toDate ?? null,
-      };
-      (todayRun as any).campaignCarried = true;
-    }
-  }
+  // dmm-06/08/09 retired 2026-11-06 (migration 0115, manual ADS registry owns
+  // ad runs now) — no campaign banner or carry-forward. metaAdsCampaign stays
+  // in the payload as null for frontend compat.
   const team = await computeTeam(dateStr, carriedEffective, { roster, todayLogs: logs });
   return {
     meta: {
@@ -645,7 +627,7 @@ async function computeDashboard(
       today: istDateStr(),
       // Calc version tag (shown tiny in the UI header): proves which backend
       // logic produced these numbers. Bump when the dashboard math changes.
-      computeV: 'streak-1',
+      computeV: 'retire-ads-1',
       total: items.length,
       open: openCount,
       inProgress: inProgressCount,
@@ -673,7 +655,7 @@ async function computeDashboard(
     history,
     freqStats,
     unscheduled,
-    metaAdsCampaign,
+    metaAdsCampaign: null as any,
     team: { ...team, incompleteToday: (team as any).overdueToday },
   };
 }
@@ -689,9 +671,12 @@ export async function getDigitalMarketingDashboardData(query: Record<string, any
 }
 
 // ── KRA/KPI metrics series: per-day lead/volume numbers ─────────────────────
-// Day-wise aggregates for the dashboard charts: Meta Ads (spend/inquiries/
-// leads), B2B per-portal leads, WhatsApp (sent/leads/spend), Email (sent/
-// leads). Keyed by stable template ids (dmm-06..09), latest log wins per
+// Day-wise aggregates for the dashboard charts: B2B per-portal leads history
+// plus retired dmm-06/08/09 rows (Meta/WhatsApp/Email — no new instances since
+// migration 0115; values fade as the window slides, ADS registry owns new
+// runs). Keyed by stable template ids, latest log wins per (templateId,
+// dueDate). Form inputs save as strings, so every number is coerced
+// (negatives clamp to 0 — leads/spend can't be negative).
 // (templateId, dueDate). Form inputs save as strings, so every number is
 // coerced (negatives clamp to 0 — leads/spend can't be negative).
 // Served from the same DATA_CACHE_PREFIX, so log writes + rollover bust it
@@ -791,37 +776,10 @@ export function diffDays(from: string, to: string): number {
 }
 
 /**
- * Active Meta Ads campaign for `dateStr`: the most recent dmm-06 log (lookback
- * 60 days incl. today) whose [fromDate, toDate] window covers `dateStr`.
- * Saturday starts the campaign; the daily box stays open for inquiries/leads
- * for the whole duration — the dashboard wears this as a banner.
+ * RETIRED 2026-11-06 (migration 0115): dmm-06 Meta Ads Run moved to the manual
+ * ADS registry. Kept as a null stub for import compat — always returns null.
  */
-export async function getActiveMetaCampaign(dateStr: string): Promise<Record<string, any> | null> {
-  const from = addDays(dateStr, -60);
-  const rows = await (prisma as any).digitalMarketingTaskLog.findMany({
-    where: { templateId: 'dmm-06', dueDate: { gte: from, lte: dateStr } },
-    orderBy: { dueDate: 'desc' },
-    take: 60,
-  }).catch(() => []);
-  for (const r of rows as any[]) {
-    const m = parseMetricsJson((r as any).metricsJson);
-    const f = String((m as any).fromDate ?? '').slice(0, 10);
-    const t = String((m as any).toDate ?? '').slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(f) || !/^\d{4}-\d{2}-\d{2}$/.test(t)) continue;
-    if (f <= dateStr && dateStr <= t) {
-      return {
-        logId: String((r as any).id),
-        dueDate: String((r as any).dueDate),
-        category: (m as any).category ?? null,
-        amountSpent: (m as any).amountSpent ?? null,
-        fromDate: f,
-        toDate: t,
-        durationDays: durationDaysBetween(f, t),
-        inquiries: (m as any).inquiries ?? null,
-        leads: (m as any).leads ?? null,
-      };
-    }
-  }
+export async function getActiveMetaCampaign(_dateStr: string): Promise<Record<string, any> | null> {
   return null;
 }
 
@@ -865,21 +823,8 @@ export async function getDigitalMarketingExport(daysRaw: unknown, origin: string
     const g = windowGraceStart(t, today);
     if (g) graceToday.set(String(t.id), g);
   }
-  // Meta campaign windows declared in-range (Saturday starts): any dmm-06 log
-  // carrying a valid [fromDate, toDate] defines a run. Weekday rows inside a
-  // run inherit category/amount/from-to when their own log left them blank —
-  // so MIS sees which campaign each day's inquiries/leads belong to.
-  const metaWindows = (logs as any[])
-    .filter((l) => String((l as any).templateId) === 'dmm-06')
-    .map((l) => {
-      const mm = parseMetricsJson((l as any).metricsJson);
-      const f = String((mm as any).fromDate ?? '').slice(0, 10);
-      const tt = String((mm as any).toDate ?? '').slice(0, 10);
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(f) || !/^\d{4}-\d{2}-\d{2}$/.test(tt) || f > tt) return null;
-      return { f, t: tt, category: (mm as any).category ?? null, amountSpent: (mm as any).amountSpent ?? (mm as any).amount ?? null };
-    })
-    .filter(Boolean) as { f: string; t: string; category: string | null; amountSpent: number | null }[];
-  const coveringWindow = (date: string) => metaWindows.find((w) => w.f <= date && date <= w.t) ?? null;
+  // dmm-06/08/09 retired (migration 0115) — every row reports only its own
+  // stored numbers; campaign-window inheritance removed with the ADS registry.
   for (const date of dates) {
     const due = (templates as any[]).filter(
       (t) => t.active && !UNSCHEDULED_RULES.has(String(parseRule(t)?.type ?? t.ruleType ?? '')) && isDueOn(t, date),
@@ -895,9 +840,8 @@ export async function getDigitalMarketingExport(daysRaw: unknown, origin: string
       if (status === 'done') completed += 1;
       const graceStart = graceToday.get(String(t.id));
       const m = parseMetricsJson(log?.metricsJson);
-      const win = String(t.id) === 'dmm-06' ? coveringWindow(date) : null;
-      const mFrom = String((m as any).fromDate ?? (win as any)?.f ?? '').slice(0, 10) || null;
-      const mTo = String((m as any).toDate ?? (win as any)?.t ?? '').slice(0, 10) || null;
+      const mFrom = String((m as any).fromDate ?? '').slice(0, 10) || null;
+      const mTo = String((m as any).toDate ?? '').slice(0, 10) || null;
       rows.push({
         date,
         task: t.title,
@@ -914,11 +858,11 @@ export async function getDigitalMarketingExport(daysRaw: unknown, origin: string
         remark: log?.remark ?? null,
         timeSpentMin: log?.timeSpentMin ?? null,
         timeSpent: fmtMins(log?.timeSpentMin),
-        // Structured daily numbers (Meta Ads Run title highlight: category /
-        // amount / from-to / duration / inquiries / leads; whatsapp +amount).
+        // Structured daily numbers (B2B + retired dmm-06/08/09 history rows
+        // report only their own stored numbers).
         metricsJson: log?.metricsJson ? (() => { try { return JSON.parse(String(log.metricsJson)); } catch { return String(log.metricsJson); } })() : null,
-        category: (m as any).category ?? (win as any)?.category ?? null,
-        amountSpent: (m as any).amountSpent ?? (m as any).amount ?? (win as any)?.amountSpent ?? null,
+        category: (m as any).category ?? null,
+        amountSpent: (m as any).amountSpent ?? (m as any).amount ?? null,
         fromDate: mFrom,
         toDate: mTo,
         durationDays: mFrom && mTo ? durationDaysBetween(mFrom, mTo) : null,
@@ -1117,10 +1061,8 @@ export async function updateTemplate(id: string, input: Record<string, any>) {
 // `inprogress` / `overdue` / `skipped` are accepted for legacy compat only —
 // the UI only sends pending/done. `overdue` was once system-set and is now
 // never written (past rows surface as incomplete without a status rewrite).
-// Whatsapp (dmm-08) + Email (dmm-09) marketing additionally require, on Done:
-//   1. a "data used" source (metrics.dataSource — which list/database was used)
-//   2. at least one proof attachment (the data file / screenshot attached below)
-const MARKETING_PROOF_TEMPLATES = new Set(['dmm-08', 'dmm-09']);
+// dmm-08/09 proof gate retired 2026-11-06 with the tasks (migration 0115).
+// Done needs only the standard remark; historical rows stay editable.
 export async function logTask(
   logId: string,
   input: Record<string, any>,
@@ -1181,20 +1123,6 @@ export async function logTask(
       }
       data.metricsJson = JSON.stringify(clean);
     }
-  }
-  // Whatsapp / Email marketing proof gate: Done requires (1) the data-source
-  // field filled (which list was used) and (2) ≥1 proof attachment.
-  // dataSource may arrive in this PATCH or already be stored on the log.
-  if (status === 'done' && MARKETING_PROOF_TEMPLATES.has(String((current as any).templateId))) {
-    let merged: Record<string, any> = {};
-    try { merged = current.metricsJson ? JSON.parse(String(current.metricsJson)) : {}; } catch { merged = {}; }
-    if (data.metricsJson) {
-      try { merged = { ...merged, ...JSON.parse(String(data.metricsJson)) }; } catch { /* keep stored */ }
-    }
-    const ds = String((merged as any).dataSource ?? '').trim();
-    if (!ds) throw new Error('Write which data was used for marketing (Data used field) before marking Done');
-    const proofs = await (prisma as any).digitalMarketingTaskAttachment.count({ where: { logId } }).catch(() => 0);
-    if (!proofs || Number(proofs) < 1) throw new Error('Attach the marketing data as proof before marking Done');
   }
   // Time taken (hours+minutes in the UI, integer minutes here). Optional and
   // editable on any status — correcting logged time never needs a transition.

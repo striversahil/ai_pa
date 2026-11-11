@@ -1,7 +1,9 @@
 /**
- * GENERATED from data/digital_marketing_follow_up.json.
- * Do not hand-edit — re-run generator. Fresh-DB fallback seed used by
- * ensureSeedTemplates() (live seed lives in migrations/0038).
+ * GENERATED from data/digital_marketing_follow_up.json (fresh-DB fallback seed;
+ * live seed lives in migrations/0038; retirements in migrations/0115).
+ * dmm-06 (Meta Ads Run), dmm-08 (Whatsapp Marketing), dmm-09 (Email Marketing)
+ * retired 2026-11-06 — moved to the manual ADS registry (migration 0113).
+ * Do not re-activate: re-running the generator will flip them back on.
  */
 export interface DigitalMarketingSeedTask {
   id: string;
@@ -135,7 +137,7 @@ export const SEED_TASKS: DigitalMarketingSeedTask[] = [
     "department": "Digital Marketing",
     "sheetStatus": "Ok",
     "metricsSchema": "[{\"key\":\"category\",\"label\":\"Category\",\"type\":\"select\",\"options\":[\"Wire Mesh\",\"Transmission Accessories\",\"Roller Mill Accessories\",\"Purifier Accessories\",\"Plansifter Accessories\",\"Perforated Sheets\",\"Miscellaneous\",\"Magnets\",\"Lab Equipments\",\"Conveying Accessories\",\"Pipe Accessories\"]},{\"key\":\"amountSpent\",\"label\":\"Amount Spent (₹)\",\"type\":\"number\"},{\"key\":\"fromDate\",\"label\":\"Ad Run From\",\"type\":\"date\"},{\"key\":\"toDate\",\"label\":\"Ad Run To\",\"type\":\"date\"},{\"key\":\"inquiries\",\"label\":\"No of Inquiries Generated\",\"type\":\"number\"},{\"key\":\"leads\",\"label\":\"Leads Generated\",\"type\":\"number\"}]",
-    "active": true,
+    "active": false,
     "order": 6
   },
   {
@@ -173,7 +175,7 @@ export const SEED_TASKS: DigitalMarketingSeedTask[] = [
     "department": "Digital Marketing",
     "sheetStatus": "Ok",
     "metricsSchema": "[{\"key\":\"dataSource\",\"label\":\"Data used for marketing (source / list)\",\"type\":\"text\"},{\"key\":\"amountSpent\",\"label\":\"Amount Spent (₹)\",\"type\":\"number\"},{\"key\":\"whatsappCount\",\"label\":\"Whatsapp Marketing Count\",\"type\":\"number\"},{\"key\":\"whatsappLeads\",\"label\":\"Leads Generated Count\",\"type\":\"number\"}]",
-    "active": true,
+    "active": false,
     "order": 8
   },
   {
@@ -192,7 +194,7 @@ export const SEED_TASKS: DigitalMarketingSeedTask[] = [
     "department": "Digital Marketing",
     "sheetStatus": "Ok",
     "metricsSchema": "[{\"key\":\"dataSource\",\"label\":\"Data used for marketing (source / list)\",\"type\":\"text\"},{\"key\":\"emailCount\",\"label\":\"Email Marketing Count\",\"type\":\"number\"},{\"key\":\"emailLeads\",\"label\":\"Leads Generated Count\",\"type\":\"number\"}]",
-    "active": true,
+    "active": false,
     "order": 9
   }
 ];

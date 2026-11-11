@@ -50,6 +50,11 @@ the backend still honors stored flags so old rows never brick.
 - Only MIS/admin writes `selectedVendor/markup/finalRate/finalDiscountPercent`
   (+ `finalizedAt` stamp); other writers' values are ignored AND preserved
   (never wiped).
+- **Direct final (no vendor quote):** management may set `finalRate` (+ optional
+  markup) with a blank vendor on unquoted or spec-flagged items — the save
+  stamps a `Direct final set without vendor quote…` thread remark and counts
+  as decided for the finalize gate + auto-advance. Flagged items keep their
+  hold (sales still fixes the spec) but no longer strand the enquiry.
 - `finalize`/`sent` require 100% of loop items decided (completeness gate).
 - Fresh `ratesRequested` reopens the procurement handoff (never wipes quotes
   or decisions); late quotes on `finalized` keep the committed rate + `quoted`

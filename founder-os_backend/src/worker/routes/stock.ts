@@ -93,4 +93,15 @@ export function registerStockRoutes(app: Hono<{ Bindings: Bindings }>): void {
       return c.json(row);
     } catch (e: any) { return writeError(c, e); }
   });
+  app.post('/api/stock/backfill', async (c) => {
+    try { await requireStockScope(c); } catch (e) { return misScopeError(c, e); }
+    try {
+      const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+      const { backfillStockFromPayload } = await import('../../automations/stock/update');
+      const actor = (me as any)?.user?.name ?? (me as any)?.user?.email ?? '';
+      const row = await backfillStockFromPayload(await c.req.json().catch(() => ({ items: [] })), actor);
+      notifyLive(c, { type: LiveEvent.Stock });
+      return c.json(row, 201);
+    } catch (e: any) { return writeError(c, e); }
+  });
 }

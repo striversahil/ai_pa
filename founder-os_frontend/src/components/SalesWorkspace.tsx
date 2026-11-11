@@ -22,9 +22,11 @@ const EnquiryTracker = dynamic(() => import("./EnquiryTracker"), { ssr: false })
 const MasterDataView = dynamic(() => import("./master-data/MasterDataView"), { ssr: false });
 const SalesDispatchPanel = dynamic(() => import("./SalesDispatchPanel"), { ssr: false });
 const CallsPanel = dynamic(() => import("./CallsPanel"), { ssr: false });
+const FieldStaffPanel = dynamic(() => import("./FieldStaffPanel"), { ssr: false });
+const SalesObjectionsPanel = dynamic(() => import("./SalesObjectionsPanel"), { ssr: false });
 const SalesControllerPanel = dynamic(() => import("./SalesControllerPanel"), { ssr: false });
 
-type SalesTab = "leaderboard" | "enquiries" | "master" | "dispatch" | "calls" | "controller";
+type SalesTab = "leaderboard" | "enquiries" | "master" | "dispatch" | "calls" | "field" | "objections" | "controller";
 
 interface WorkspaceTab {
   key: SalesTab;
@@ -57,6 +59,17 @@ export default function SalesWorkspace() {
     if (canView(me, "telecalling") || canManage) {
       out.push({ key: "calls", label: "Calls", icon: "📞" });
     }
+    // Field Staff: daily visit tracking for the field force (mobile-web
+    // check-in + mill rows + expenses + follow-ups). Same audience as the
+    // leaderboard — agents log visits for field staff like field enquiries.
+    if (canView(me, "telecalling") || canManage) {
+      out.push({ key: "field", label: "Field Staff", icon: "🧑‍🌾" });
+    }
+    // Objections: what the field is hearing — same audience as the
+    // leaderboard, every agent sees every objection. Controller stays last.
+    if (canView(me, "telecalling") || canManage) {
+      out.push({ key: "objections", label: "Objections", icon: "🛡️" });
+    }
     // Controller is MIS/sales-head only and sits LAST so agents' tabs never shift.
     if (canManage) out.push({ key: "controller", label: "Controller", icon: "🎛️" });
     return out;
@@ -84,7 +97,7 @@ export default function SalesWorkspace() {
         <div>
           <h1 className="font-heading text-2xl font-bold tracking-tight text-[var(--text-primary)]">Sales</h1>
           <p className="mt-1 text-xs text-[var(--text-secondary)]">
-            Leaderboard, enquiry pipeline, customer book, region dispatch — one place.
+            Leaderboard, enquiry pipeline, customer book, region dispatch, field objections — one place.
           </p>
         </div>
       </header>
@@ -107,6 +120,8 @@ export default function SalesWorkspace() {
         {active === "master" && <MasterDataView />}
         {active === "dispatch" && <SalesDispatchPanel />}
         {active === "calls" && <CallsPanel />}
+        {active === "field" && <FieldStaffPanel />}
+        {active === "objections" && <SalesObjectionsPanel />}
         {active === "controller" && <SalesControllerPanel />}
       </div>
     </div>

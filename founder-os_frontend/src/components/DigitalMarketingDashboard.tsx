@@ -4,6 +4,7 @@ import React, { useMemo, useState } from "react";
 import { useLiveDashboard } from "@/hooks/useLiveData";
 import KraKpiCharts from "./DigitalMarketingCharts";
 import DigitalMarketingAds from "./DigitalMarketingAds";
+import DigitalMarketingOpenTasks from "./DigitalMarketingOpenTasks";
 import { useAuth } from "@/auth/AuthContext";
 import { TabBar } from "@/components/ui/TabBar";
 
@@ -166,15 +167,6 @@ function fmtShort(iso: string): string {
   if (!m) return iso;
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   return `${Number(m[3])} ${MONTHS[Number(m[2]) - 1] ?? m[2]}`;
-}
-
-/** from/to (YYYY-MM-DD) → "5 days" run duration for the Meta Ads Run banner. */
-function runDays(from: string, to: string): string {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test((from || "").slice(0, 10)) || !/^\d{4}-\d{2}-\d{2}$/.test((to || "").slice(0, 10))) return "";
-  const ms = Date.parse(to.slice(0, 10)) - Date.parse(from.slice(0, 10));
-  if (!Number.isFinite(ms) || ms < 0) return "";
-  const n = Math.round(ms / 86400000) + 1;
-  return `${n} day${n === 1 ? "" : "s"}`;
 }
 
 /** Match the signed-in user to a roster entry by NAME only (never email —
@@ -352,36 +344,17 @@ function TaskRow({ t, roster, identity, onLogged, today }: {
   };
 
   const files = t.attachments ?? [];
-  const isMetaRun = t.templateId === "dmm-06";
-  // Whatsapp / Email marketing (dmm-08/09): Done needs the data-source field
-  // filled + ≥1 proof attachment (server enforces; mirror here for guidance).
-  const needsMarketingProof = t.templateId === "dmm-08" || t.templateId === "dmm-09";
-  const dataSourceVal = String(
-    metrics.dataSource ?? t.metricsJson?.dataSource ?? ""
-  ).trim();
-  const missingDataSource = needsMarketingProof && !dataSourceVal;
-  const missingProofFile = needsMarketingProof && files.length === 0;
-  // Status bar with mandatory reason: a transition is only clickable when a
-  // remark is present (typed now or already recorded) — the server enforces it.
+  // dmm-06/08/09 retired (migration 0115) — remaining taskbar rows need only
+  // the standard remark reason; the marketing proof gate is gone.
   const hasReason = remark.trim() !== "" || String(t.remark || "").trim() !== "";
   const needReason = !hasReason ? " — add a remark (reason) first" : "";
-  const needProof = needsMarketingProof && (missingDataSource || missingProofFile)
-    ? ` — write which data was used${missingProofFile ? " + attach the data as proof" : ""}`
-    : "";
-  const doneBlocked = !hasReason || (needsMarketingProof && (missingDataSource || missingProofFile));
+  const doneBlocked = !hasReason;
 
   return (
-    <div className={isMetaRun
-      ? "rounded-2xl border-2 border-indigo-500/60 bg-gradient-to-br from-indigo-500/[0.12] via-indigo-500/[0.05] to-transparent p-3 sm:p-4 shadow-[0_0_24px_-8px_rgba(99,102,241,0.5)]"
-      : `rounded-xl border p-3 sm:p-4 ${isIncomplete && t.status !== "done" && t.status !== "skipped" ? "border-rose-500/40 bg-rose-500/[0.04]" : "border-zinc-200/80 dark:border-zinc-800/80 bg-zinc-50 dark:bg-zinc-900"}`}>
+    <div className={`rounded-xl border p-3 sm:p-4 ${isIncomplete && t.status !== "done" && t.status !== "skipped" ? "border-rose-500/40 bg-rose-500/[0.04]" : "border-zinc-200/80 dark:border-zinc-800/80 bg-zinc-50 dark:bg-zinc-900"}`}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          {isMetaRun && (
-            <div className="mb-1 inline-flex items-center gap-1 rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wider text-white">
-              📣 Meta Ads Run · Saturday campaign
-            </div>
-          )}
-          <div className={`font-semibold text-sm ${isMetaRun ? "text-indigo-600 dark:text-indigo-300 text-[15px]" : "text-zinc-900 dark:text-white"}`}>{t.title}</div>
+          <div className="font-semibold text-sm text-zinc-900 dark:text-white">{t.title}</div>
           {t.description && <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t.description}</div>}
           <div className="flex flex-wrap gap-1.5 mt-1.5">
             <FreqChip f={t.frequency} />
@@ -430,7 +403,7 @@ function TaskRow({ t, roster, identity, onLogged, today }: {
             <button disabled={busy || !t.logId || !hasReason} title={`Mark not done${needReason}`} onClick={() => save("not_done")} className="px-2.5 py-1.5 text-xs font-bold rounded-lg bg-rose-600 hover:bg-rose-500 text-white disabled:opacity-50 cursor-pointer border-0">✕ Not Done</button>
           )}
           {(t.status === "pending" || t.status === "overdue" || t.status === "inprogress" || t.status === "not_done") && (
-            <button disabled={busy || !t.logId || doneBlocked} title={`Mark done${needReason}${needProof}`} onClick={() => save("done")} className="px-2.5 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50 cursor-pointer border-0">✓ Done</button>
+            <button disabled={busy || !t.logId || doneBlocked} title={`Mark done${needReason}`} onClick={() => save("done")} className="px-2.5 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50 cursor-pointer border-0">✓ Done</button>
           )}
         </div>
       </div>
@@ -462,22 +435,11 @@ function TaskRow({ t, roster, identity, onLogged, today }: {
           ))}
         </div>
       )}
-      {t.templateId === "dmm-06" && (metrics.fromDate || metrics.toDate) && (
-        <div className="mt-1.5 text-[11px] font-semibold text-indigo-500 dark:text-indigo-300">
-          📣 Meta Ads Run{metrics.category ? ` · ${metrics.category}` : ""}{metrics.amountSpent ? ` · ₹${metrics.amountSpent}` : ""}{metrics.fromDate && metrics.toDate ? ` · ${metrics.fromDate} → ${metrics.toDate} (${runDays(metrics.fromDate, metrics.toDate)})` : ""}
-          {(t as any).campaignCarried && <span className="font-normal opacity-80"> · carried from campaign start — fill today's inquiries/leads below</span>}
-        </div>
-      )}
-      {needsMarketingProof && (missingDataSource || missingProofFile) && t.status !== "done" && (
-        <div className="mt-1.5 text-[11px] font-semibold text-amber-600 dark:text-amber-400">
-          ⚠ To mark Done: {missingDataSource ? "write which data was used (Data used field above)" : ""}{missingDataSource && missingProofFile ? " + " : ""}{missingProofFile ? "attach the data file as proof below" : ""}
-        </div>
-      )}
       <div className="flex gap-1.5 mt-2">
         <input
           value={remark}
           onChange={(e) => setRemark(e.target.value)}
-          placeholder="Remark — e.g. leads: 5 Meta, 3 B2B…"
+          placeholder="Remark — e.g. leads: 3 B2B…"
           className="flex-1 min-w-0 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2.5 py-1.5 text-xs outline-none focus:border-indigo-500"
         />
         <span title="Time taken to finish (hours + minutes) — optional, auto-saved" className="inline-flex items-center gap-1 shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-1.5 py-1 text-xs text-zinc-500">
@@ -515,7 +477,7 @@ function TaskRow({ t, roster, identity, onLogged, today }: {
   );
 }
 
-type DigitalMarketingView = "dashboard" | "tasks" | "ads" | "controller";
+type DigitalMarketingView = "dashboard" | "tasks" | "ads" | "open" | "controller";
 
   // NOTE: nav tabs are built per-viewer as `visibleTabs` inside the component
   // (MIS/root additionally see the Controller tab).
@@ -576,12 +538,14 @@ export default function AccountsDashboard() {
         { key: "dashboard", label: "Dashboard", icon: "📊" },
         { key: "tasks", label: "Tasks", icon: "📋" },
         { key: "ads", label: "ADS", icon: "📢" },
+        { key: "open", label: "Open Tasks", icon: "🗂️" },
         { key: "controller", label: "Controller", icon: "🎛️" },
       ]
       : [
         { key: "dashboard", label: "Dashboard", icon: "📊" },
         { key: "tasks", label: "Tasks", icon: "📋" },
         { key: "ads", label: "ADS", icon: "📢" },
+        { key: "open", label: "Open Tasks", icon: "🗂️" },
       ];
   const isTaskView = view === "tasks";
   const incompleteTray = useMemo(() => data?.incompleteList ?? data?.overdueList ?? [], [data]);
@@ -609,12 +573,6 @@ export default function AccountsDashboard() {
               {data.meta.computeV && <span className="text-zinc-400" title="Backend version that calculated these numbers">· {data.meta.computeV}</span>}
             </div>
           )}
-          {data?.metaAdsCampaign && (
-            <div className="mt-1.5 inline-flex flex-wrap items-center gap-1.5 rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-2 py-1 text-[11px] font-semibold text-indigo-500 dark:text-indigo-300">
-              📣 Meta Ads Run{data.metaAdsCampaign.category ? ` · ${data.metaAdsCampaign.category}` : ""}{data.metaAdsCampaign.amountSpent != null ? ` · ₹${data.metaAdsCampaign.amountSpent}` : ""} · {data.metaAdsCampaign.fromDate} → {data.metaAdsCampaign.toDate}{data.metaAdsCampaign.durationDays ? ` (${data.metaAdsCampaign.durationDays} days)` : ""}
-              <span className="font-normal opacity-80">· daily box stays open for inquiries/leads during the run</span>
-            </div>
-          )}
         </div>
       </div>
 
@@ -633,6 +591,7 @@ export default function AccountsDashboard() {
         <div className="flex-1 min-w-0">
           {data && view === "dashboard" && <KraKpiCharts />}
           {data && view === "ads" && <DigitalMarketingAds />}
+          {data && view === "open" && <DigitalMarketingOpenTasks />}
 
       {dash.loading && !data && <div className="py-16 text-center text-sm text-zinc-500 animate-pulse">Loading digital marketing taskbar…</div>}
       {Boolean((dash as any).error) && <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-4 text-sm text-rose-400">Failed to load: {String((dash as any).error)} <button onClick={() => dash.refresh()} className="ml-2 underline cursor-pointer">Retry</button></div>}
@@ -666,14 +625,7 @@ export default function AccountsDashboard() {
                 ))}
               </div>
               <div className="grid gap-3 md:grid-cols-2">
-                {(() => {
-                  const meta = visible.find((x) => x.templateId === "dmm-06");
-                  const rest = visible.filter((x) => x.templateId !== "dmm-06");
-                  return (<>
-                    {meta && <div className="md:col-span-2"><TaskRow key={meta.templateId} t={meta} roster={data.roster} identity={identity} onLogged={() => dash.refresh()} /></div>}
-                    {rest.map((t) => <TaskRow key={t.templateId} t={t} roster={data.roster} identity={identity} onLogged={() => dash.refresh()} />)}
-                  </>);
-                })()}
+                {visible.map((t) => <TaskRow key={t.templateId} t={t} roster={data.roster} identity={identity} onLogged={() => dash.refresh()} />)}
                 {visible.length === 0 && <div className="col-span-2 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-sm text-zinc-500">{statusFilter === "done" ? "Nothing marked done today — switch to History for past completions." : "No tasks pending today."}</div>}
               </div>
               {(data.unscheduled ?? []).filter(inUnscheduled).length > 0 && (

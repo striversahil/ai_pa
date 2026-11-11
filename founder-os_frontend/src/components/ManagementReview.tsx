@@ -8,9 +8,10 @@ import Modal from "@/components/Modal";
 import { Table, thClass, tdClass } from "@/components/ui/Table";
 import type { Enquiry } from "@/types";
 import { enquiryLabel, historyDateChip } from "@/types";
-import { itemNeedsDecision, isOpenSpecFlag, isManagementPendingEnquiry, isManagementHistoryEnquiry, itemHasUnreviewedQuotes, isZohoClosedStatus, ratesCoverage } from "@/enquiry/queue";
+import { itemNeedsDecision, isOpenSpecFlag, isManagementPendingEnquiry, isManagementHistoryEnquiry, itemHasUnreviewedQuotes, isZohoClosedStatus, ratesCoverage, hasOpenQuery, hasResolvedQuery, openLoops } from "@/enquiry/queue";
 import { matchesEnquiryQuery } from "@/enquiry/search";
 import { toEnquiry } from "@/enquiry/normalize";
+import { enquirySalesSignal } from "@/enquiry/sales-signal";
 import { preserveItemMedia } from "@/enquiry/merge";
 
 /** Only correct-spec, rate-UNAVAILABLE, rated-but-unfinalized items need a
@@ -66,14 +67,16 @@ export default function ManagementReview() {
   const scopes = me?.scopes ?? [];
   const allowed = !!me && (me.isAdmin || scopes.includes("mis"));
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  // Queue tabs: Active (awaiting YOUR decision) / Pending from Sales
-  // (spec-flagged — ball with sales) / Pending from Procurement (unquoted —
-  // ball with procurement) / History (fully decided). The two Pending tabs
-  // partition the old Unprocessed set (open + items + not actionable);
-  // Active rows are excluded from both (the Active tab owns them). Manual
-  // pick wins; otherwise land on the first non-empty queue.
-  type MgmtTab = "active" | "fromSales" | "fromProcurement" | "history";
+  // Queue tabs: Active (awaiting YOUR decision) / Query (sales asks — answer
+  // or forward to procurement) / Pending from Sales (spec-flagged — ball with
+  // sales) / Pending from Procurement (unquoted — ball with procurement) /
+  // History (fully decided). Active rows are excluded from the Pending tabs
+  // (the Active tab owns them). Manual pick wins; otherwise land on the first
+  // non-empty queue.
+  type MgmtTab = "active" | "query" | "fromSales" | "fromProcurement" | "history";
   const [tabPick, setTabPick] = useState<MgmtTab | null>(null);
+  // Query sub-filter: Needs action (open asks) | Resolved (recent answers).
+  const [queryFilter, setQueryFilter] = useState<"action" | "resolved">("action");
 
   // ── Data layer: KV-cached server queues (flat D1 cost) ──
   // Active + Unprocessed + item-less arrive COMPLETE from the cached
@@ -83,7 +86,7 @@ export default function ManagementReview() {
   // busted on every write).
   const byActivity = (a: Enquiry, b: Enquiry): number =>
     String(b.updatedAt ?? b.createdAt ?? "").localeCompare(String(a.updatedAt ?? a.createdAt ?? ""));
-  type QueuesPayload = { active: Enquiry[]; unprocessed: Enquiry[]; empty: Enquiry[]; historyTotal: number };
+  type QueuesPayload = { active: Enquiry[]; unprocessed: Enquiry[]; empty: Enquiry[]; historyTotal: number; query: Enquiry[]; queryResolved: Enquiry[] };
   const queues = useLiveDashboard<QueuesPayload>(async () => {
     const res = await fetch("/api/enquiries/queues", { cache: "no-store" });
     if (!res.ok) throw new Error(`Load failed (HTTP ${res.status})`);
@@ -93,6 +96,8 @@ export default function ManagementReview() {
       unprocessed: Array.isArray(d.unprocessed) ? (d.unprocessed as any[]).map(toEnquiry) : [],
       empty: Array.isArray(d.empty) ? (d.empty as any[]).map(toEnquiry) : [],
       historyTotal: Number(d.historyTotal ?? 0),
+      query: Array.isArray(d.query) ? (d.query as any[]).map(toEnquiry) : [],
+      queryResolved: Array.isArray(d.queryResolved) ? (d.queryResolved as any[]).map(toEnquiry) : [],
     };
   }, { pollMs: 60000 });
   const queuesLoaded = queues.data != null;
@@ -172,7 +177,7 @@ export default function ManagementReview() {
     // fully local; only a miss pays for the database round-trip below.
     const agentOf = (id: any) => (agents ?? []).find((a: any) => String(a.id) === String(id))?.name ?? "";
     const localHit = (e: any) => matchesEnquiryQuery(e, q, [agentOf((e as any).assignedAgentId)]);
-    const pool = [...(queues.data?.active ?? []), ...(queues.data?.unprocessed ?? []), ...(hist.data?.rows ?? []), ...(queues.data?.empty ?? [])];
+    const pool = [...(queues.data?.active ?? []), ...(queues.data?.unprocessed ?? []), ...(queues.data?.query ?? []), ...(queues.data?.queryResolved ?? []), ...(hist.data?.rows ?? []), ...(queues.data?.empty ?? [])];
     if (pool.some(localHit)) {
       searchAbortRef.current?.abort();
       searchAbortRef.current = null;
@@ -363,6 +368,30 @@ export default function ManagementReview() {
   // these are plain aliases (kept for symmetry with visibleHistoryPage).
   const visibleSales = salesBucket;
   const visibleProcurement = procurementBucket;
+  // Query: sales info/alternate asks — complete server sets (open + recently
+  // answered), split by the same predicates as the backend compute. Open asks
+  // show under Needs action with a with-management/with-procurement chip;
+  // answered ones under Resolved. Search folds in like the other tabs.
+  const queryBase = useMemo(() => [...(queues.data?.query ?? [])].sort(byActivity), [queues.data]);
+  const queryResolvedBase = useMemo(() => [...(queues.data?.queryResolved ?? [])].sort(byActivity), [queues.data]);
+  const queryBucket: Enquiry[] = useMemo(() => {
+    if (searchActive) {
+      return searchRows.filter((e) => hasOpenQuery(e as any)).sort(byActivity);
+    }
+    const q = searchQuery.trim();
+    if (!q) return queryBase;
+    return queryBase.filter((e) => matchesEnquiryQuery(e, q, [agentNameOf((e as any).assignedAgentId)]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchActive, searchRows, queryBase, searchQuery]);
+  const queryResolvedBucket: Enquiry[] = useMemo(() => {
+    if (searchActive) {
+      return searchRows.filter((e) => hasResolvedQuery(e as any)).sort(byActivity);
+    }
+    const q = searchQuery.trim();
+    if (!q) return queryResolvedBase;
+    return queryResolvedBase.filter((e) => matchesEnquiryQuery(e, q, [agentNameOf((e as any).assignedAgentId)]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchActive, searchRows, queryResolvedBase, searchQuery]);
   // Item-less rows sit in NO tab queue (every predicate needs items) — the
   // server ships them separately so a fresh enquiry is never invisible.
   // Closed requirements are dead/won — never "waiting on sales".
@@ -379,10 +408,12 @@ export default function ManagementReview() {
 
   const tab: MgmtTab = tabPick
     ?? (pending.length > 0 ? "active"
+      : queryBucket.length > 0 ? "query"
       : salesBucket.length > 0 ? "fromSales"
       : procurementBucket.length > 0 ? "fromProcurement" : "history");
   const tabs: Array<{ id: MgmtTab; label: string; count: number }> = [
     { id: "active", label: "Active", count: pending.length },
+    { id: "query", label: "Estimates Query", count: queryBucket.length },
     { id: "fromSales", label: "Pending from Sales", count: salesBucket.length },
     { id: "fromProcurement", label: "Pending from Procurement", count: procurementBucket.length },
     { id: "history", label: "History", count: historyTotal },
@@ -410,6 +441,10 @@ export default function ManagementReview() {
     const inHist = isManagementHistoryEnquiry(r as any);
     const hasItems = (((r as any).items ?? []) as any[]).length > 0;
     const inActive = !inHist && hasItems && isManagementPendingEnquiry(r as any);
+    // Query membership is orthogonal to the decision partition (same as the
+    // server compute): a row can sit in Active AND Query at once.
+    const inQuery = hasOpenQuery(r as any);
+    const inQueryResolved = hasResolvedQuery(r as any);
     queuesRef.current.setData((prev) => {
       if (!prev) return prev;
       const drop = (l: Enquiry[]) => (Array.isArray(l) ? l.filter((x) => x.id !== r.id) : l);
@@ -418,6 +453,8 @@ export default function ManagementReview() {
         active: inActive ? [r, ...drop(prev.active)] : drop(prev.active),
         unprocessed: !inHist && hasItems && !inActive ? [r, ...drop(prev.unprocessed)] : drop(prev.unprocessed),
         empty: !inHist && !hasItems ? [r, ...drop(prev.empty ?? [])] : drop(prev.empty ?? []),
+        query: inQuery ? [r, ...drop(prev.query ?? [])] : drop(prev.query ?? []),
+        queryResolved: inQueryResolved ? [r, ...drop(prev.queryResolved ?? [])] : drop(prev.queryResolved ?? []),
       };
     });
     histRef.current.setData((prev) => {
@@ -437,6 +474,8 @@ export default function ManagementReview() {
     const h = histRef.current.data;
     return (
       (q?.active ?? []).find((x) => x.id === id) ??
+      (q?.query ?? []).find((x) => x.id === id) ??
+      (q?.queryResolved ?? []).find((x) => x.id === id) ??
       (q?.unprocessed ?? []).find((x) => x.id === id) ??
       (q?.empty ?? []).find((x) => x.id === id) ??
       (h?.rows ?? []).find((x) => x.id === id) ??
@@ -555,7 +594,7 @@ export default function ManagementReview() {
     );
   }
 
-  const allOpenRows = useMemo(() => [...pending, ...unprocessedEnquiries, ...visibleHistory], [pending, unprocessedEnquiries, visibleHistory]);
+  const allOpenRows = useMemo(() => [...pending, ...queryBucket, ...queryResolvedBucket, ...unprocessedEnquiries, ...visibleHistory], [pending, queryBucket, queryResolvedBucket, unprocessedEnquiries, visibleHistory]);
   const selQueued = selectedId ? allOpenRows.find((e) => e.id === selectedId) ?? null : null;
   const sel = selFull && selFull.id === selectedId ? selFull : selQueued;
   if (!queuesLoaded) {
@@ -569,7 +608,9 @@ export default function ManagementReview() {
   const itemNames = (e: Enquiry): string => {
     const names = (e.items ?? []).map((it, idx) => {
       const n = it.name || `Item ${idx + 1}`;
-      return it.qty ? `${n} \u00d7 ${it.qty}` : n;
+      const sizes = [...new Set(((it.rates ?? []) as any[]).map((r) => String(r?.size ?? "").trim()).filter(Boolean))].slice(0, 3);
+      const sizeTxt = sizes.length ? ` · ${sizes.join(" / ").slice(0, 60)}` : "";
+      return it.qty ? `${n} \u00d7 ${it.qty}${sizeTxt}` : `${n}${sizeTxt}`;
     });
     if (names.length === 0) return "\u2014";
     const shown = names.slice(0, 3).join(" \u00b7 ");
@@ -584,10 +625,19 @@ export default function ManagementReview() {
     return { done, total: loop.length };
   };
 
-  const renderEnquiryRows = (list: Enquiry[], mode: "active" | "pending" | "history") => list.map((e) => {
+  const renderEnquiryRows = (list: Enquiry[], mode: "active" | "pending" | "history" | "query") => list.map((e) => {
     const items = e.items ?? [];
     const { done, total } = loopProgress(e);
     const held = items.filter((it) => isOpenSpecFlag(it)).length;
+    // Sales-query state for the Query tab (open asks + recent answers).
+    const openQueries = items.filter((it) => openLoops(it, 'query').length > 0);
+    const withProc = openQueries.filter((it) => openLoops(it, 'query', 'procurement').length > 0).length;
+    const withMgmt = openQueries.length - withProc;
+    const answeredCount = items.filter((it) => {
+      const loops = Array.isArray((it as any)?.loops) ? (it as any).loops : [];
+      return openLoops(it, 'query').length === 0
+        && loops.some((l: any) => l?.kind === 'query' && l?.status === 'answered');
+    }).length;
     // Rates coverage badge: did procurement quote every loop item?
     // True bypasses (rateAvailable/internal/notAvailable) are excluded, but
     // spec-HELD items still have no rates — they block green and show as
@@ -628,14 +678,26 @@ export default function ManagementReview() {
         <td className={tdClass}>
           <span className="font-bold text-[var(--text-primary)]">{items.length} item{items.length === 1 ? "" : "s"}</span>{covBadge}
           <span className="block text-[11px] text-[var(--text-secondary)] truncate max-w-[22rem]">{itemNames(e)}</span>
+          {(() => {
+            const sig = enquirySalesSignal(e as any);
+            return sig ? (
+              <span className="mt-0.5 block text-[10px] text-emerald-600 dark:text-emerald-400 whitespace-pre-wrap leading-relaxed border-l-2 border-emerald-500/30 pl-1.5 max-w-[22rem] line-clamp-2" title={sig}>
+                <span className="font-bold">For sales: </span>{sig.length > 90 ? `${sig.slice(0, 90)}…` : sig}
+              </span>
+            ) : null;
+          })()}
         </td>
         <td className={tdClass}>
           <span className="text-[11px] text-[var(--text-secondary)] whitespace-nowrap">
             {mode === "active"
               ? `${total - done} awaiting decision`
-              : mode === "pending"
-                ? (held > 0 ? `${held} held — with sales` : "awaiting rates — with procurement")
-                : `${done} decided`}
+              : mode === "query"
+                ? (openQueries.length > 0
+                  ? `${openQueries.length} quer${openQueries.length === 1 ? "y" : "ies"}${withMgmt > 0 ? ` · ${withMgmt} with you` : ""}${withProc > 0 ? ` · ${withProc} with procurement` : ""}`
+                  : `${answeredCount} answered ✓`)
+                : mode === "pending"
+                  ? (held > 0 ? `${held} held — with sales` : "awaiting rates — with procurement")
+                  : `${done} decided`}
             <span className="text-[var(--text-tertiary)]"> · {done}/{total} decided{held > 0 ? ` · ${held} held` : ""}</span>
           </span>
         </td>
@@ -646,7 +708,7 @@ export default function ManagementReview() {
     );
   });
 
-  const enquiryTable = (list: Enquiry[], mode: "active" | "pending" | "history") => (
+  const enquiryTable = (list: Enquiry[], mode: "active" | "pending" | "history" | "query") => (
     <Table stickyFirst>
       <thead>
         <tr>
@@ -779,6 +841,42 @@ export default function ManagementReview() {
                 <p className="mt-1 text-xs text-[var(--text-secondary)]">Every open item is quoted — the rest is either awaiting your decision or decided.</p>
               </div>
             )
+          )}
+
+          {tab === "query" && (
+            (() => {
+              const list = queryFilter === "action" ? queryBucket : queryResolvedBucket;
+              return list.length > 0 ? (
+                <section className="space-y-2">
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="flex-1 relative">
+                    <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--text-tertiary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M10 18a8 8 0 110-16 8 8 0 010 16z" /></svg>
+                    <input value={searchQuery} onChange={(e)=> setSearchQuery(e.target.value)} placeholder="Search EST No., enquiry no., client, item, vendor… (all enquiries)" className="w-full pl-8 pr-3 py-2 rounded-xl bg-[var(--bg-input)] border border-[var(--border-card)] text-xs focus:outline-none focus:border-brand-indigo" />
+                    {(searchQuery || searchActive) && <button type="button" onClick={clearSearch} className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)] hover:text-[var(--text-primary)] text-xs">×</button>}
+                  </div>
+                  <div className="flex gap-1 rounded-full bg-black/5 p-0.5">
+                    {(["action", "resolved"] as const).map((f) => (
+                      <button key={f} type="button" onClick={() => setQueryFilter(f)}
+                        className={`rounded-full px-3 py-1 text-[11px] font-extrabold cursor-pointer border-0 ${queryFilter === f ? "bg-[var(--color-brand-indigo)] text-white shadow" : "bg-transparent text-[var(--text-secondary)]"}`}>
+                        {f === "action" ? `Needs action (${queryBucket.length})` : `Resolved (${queryResolvedBucket.length})`}
+                      </button>
+                    ))}
+                  </div>
+                  {searching ? <span className="text-xs text-[var(--text-secondary)]">Searching…</span>
+                    : (searchActive || searchLocal) ? <span className="text-xs text-[var(--text-secondary)]">{list.length} match{list.length === 1 ? "" : "es"} across all{searchHasMore ? " · top 50" : ""}</span> : null}
+                </div>
+                {enquiryTable(list, "query")}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-3 border-t border-[var(--border-card)] mt-3">
+                  <span className="text-xs font-semibold text-[var(--text-secondary)]">{queryFilter === "action" ? `Showing all ${list.length} open sales quer${list.length === 1 ? "y" : "ies"} — answer them or send to procurement` : `Showing ${list.length} recently answered quer${list.length === 1 ? "y" : "ies"} (last ${30} days)`}</span>
+                </div>
+                 </section>
+              ) : (
+                <div className="rounded-2xl border border-[var(--border-card)] bg-[var(--bg-card)] p-10 text-center">
+                  <p className="text-sm font-bold text-[var(--text-primary)]">{queryFilter === "action" ? "No open sales queries" : "No answered queries yet"}</p>
+                  <p className="mt-1 text-xs text-[var(--text-secondary)]">{queryFilter === "action" ? "Sales info/alternate asks will land here for your answer or forward." : "Answered queries will appear here once sales asks are resolved."}</p>
+                </div>
+              );
+            })()
           )}
 
           {tab === "history" && (

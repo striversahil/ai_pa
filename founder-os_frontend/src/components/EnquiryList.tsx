@@ -3,7 +3,7 @@ import { Agent, Enquiry } from "../types";
 import CalendarRibbon from "./CalendarRibbon";
 import FilterControls from "./FilterControls";
 import EnquiryRowItem from "./EnquiryRowItem";
-import { hasOpenThread, needsActionThread } from "@/enquiry/queue";
+import { hasOpenLoop, needsActionThread } from "@/enquiry/queue";
 
 interface EnquiryListProps {
   enquiries: Enquiry[];
@@ -113,13 +113,13 @@ export default function EnquiryList({
   }, [enquiries, selectedDate]);
 
   // Open threads count — bilateral until resolved
-  const openThreadCount = useMemo(() => enquiries.filter(hasOpenThread as any).length, [enquiries]);
+  const openThreadCount = useMemo(() => enquiries.filter(hasOpenLoop as any).length, [enquiries]);
   // Needs action count — actionable subset (spec-fix + awaiting reply/approval)
   const needsActionCount = useMemo(() => enquiries.filter(needsActionThread as any).length, [enquiries]);
 
   // Filtered queries pipeline — search hits EST No. (with or without EST- prefix, partial digits), daily No, source, lead fields, title/description, items
   const filteredEnquiries = useMemo(() => {
-    const afterThread = threadTab === "open" ? enquiries.filter(hasOpenThread as any)
+    const afterThread = threadTab === "open" ? enquiries.filter(hasOpenLoop as any)
       : threadTab === "action" ? enquiries.filter(needsActionThread as any)
       : enquiries;
     const inQueue = queueToggle && queueOnly ? afterThread.filter(queueToggle.isPending) : afterThread;

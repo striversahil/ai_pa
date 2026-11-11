@@ -23,7 +23,27 @@ const onlyBe = Object.keys(be).filter((k) => isFn(be, k) && !isFn(fe, k));
 const onlyFe = Object.keys(fe).filter((k) => isFn(fe, k) && !isFn(be, k));
 
 // ── Shared fixture corpus: plain data exercising every predicate branch ──
+// Loop records are the ONLY loop mechanism — fixtures carry explicit records
+// (legacy text/thread fields no longer exist; migration is covered by the
+// backend lifecycle check, not the mirror).
 const rate = (over = {}) => ({ quotedAt: '2026-09-01T10:00:00+05:30', sharedWithSales: false, ...over });
+const NOW_ISO = new Date().toISOString();
+let lpN = 0;
+const loop = (over = {}) => ({
+  id: `lp_fixture_${++lpN}`,
+  kind: 'query',
+  text: 'ask',
+  openedBy: 'sales',
+  openedAt: '2026-09-01T10:00:00+05:30',
+  holder: 'management',
+  status: 'open',
+  ...over,
+});
+const answeredLoop = (over = {}) => ({
+  ...loop({ status: 'answered', closedAt: NOW_ISO }),
+  answer: { text: 'done', by: 'management', at: NOW_ISO },
+  ...over,
+});
 const ITEMS = [
   { name: 'bare item' },                                                              // all-absent
   { rateAvailable: true, rates: [rate()], finalRate: 100 },                            // decided+available
@@ -34,12 +54,15 @@ const ITEMS = [
   { rates: [rate({ quotedAt: '2026-09-05T10:00:00+05:30', sharedWithSales: true })], finalRate: 120, finalizedAt: '2026-09-02T10:00:00+05:30' }, // shared → reviewed
   { rates: [rate({ quotedAt: 'not-a-date' })], finalRate: 120, finalizedAt: '2026-09-02T10:00:00+05:30' }, // bad date → not pending
   { notAvailable: true },                                                              // unavailable
-  { notAvailableRequested: true },                                                     // awaiting approval
+  { loops: [loop({ kind: 'not_available', openedBy: 'procurement', holder: 'management', text: 'No stock' })] }, // awaiting approval
   { internalRates: true, rates: [rate()], finalRate: null },                           // internal, undecided
-  { specIssue: 'missing size' },                                                       // spec hold
-  { ratesRequested: true, rates: [rate()], finalRate: null },                          // re-requested
-  { variationRequest: 'other make please' },                                           // alternate request
-  { rates: [], finalRate: undefined, internalRates: false, specIssue: null },          // explicit nulls
+  { loops: [loop({ kind: 'spec', openedBy: 'procurement', holder: 'sales', text: 'missing size' })] }, // spec hold
+  { rates: [rate()], finalRate: null, loops: [loop({ kind: 'rates', openedBy: 'management', holder: 'procurement', text: 'need vendor' })] }, // re-requested
+  { loops: [loop({ kind: 'query', openedBy: 'sales', holder: 'management', text: 'other make please' })] }, // sales ask with management
+  { loops: [loop({ kind: 'query', openedBy: 'sales', holder: 'procurement', text: 'other make please', forwarded: { by: 'management', at: '2026-09-02T10:00:00+05:30', from: 'management', to: 'procurement' } })] }, // forwarded → procurement
+  { loops: [answeredLoop({ kind: 'query', openedBy: 'sales', holder: 'management' })] }, // answered query (resolved window)
+  { loops: [answeredLoop({ kind: 'note', openedBy: 'sales', holder: 'sales', text: 'called' })] }, // audit note, no queue effect
+  { rates: [], finalRate: undefined, internalRates: false },                            // explicit undefineds
 ];
 const ENQUIRIES = [
   {},
@@ -50,7 +73,7 @@ const ENQUIRIES = [
   { sentRevisionAt: '2026-09-04T10:00:00+05:30', items: [] },
   { rateStatus: 'finalized', items: [{ rates: [rate()], finalRate: 100 }] },
   {
-    items: [{ thread: [{ by: 'sales', kind: 'note', text: 'called' }], rates: [], comments: [{ content: 'x', visibility: 'sales' }] }],
+    items: [{ loops: [answeredLoop({ kind: 'note', openedBy: 'sales', holder: 'sales', text: 'called' })], rates: [], comments: [{ content: 'x', visibility: 'sales' }] }],
   },
 ];
 const STATUSES = ['draft', 'sent', 'cancelled', 'closed', 'CANCELLED', 'Sent', '', '  ', 'won', null];

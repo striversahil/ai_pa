@@ -10,11 +10,12 @@ import Modal from "@/components/Modal";
 import Lightbox from "@/components/Lightbox";
 import { Table, thClass, tdClass } from "@/components/ui/Table";
 import { ClosedDropdown } from "@/components/QueueGroups";
-import type { Enquiry, EnquiryItem, EnquiryItemRate } from "@/types";
+import type { Enquiry, EnquiryItem, EnquiryItemRate, LoopKind } from "@/types";
 import { enquiryLabel, historyDateChip } from "@/types";
-import { itemNeedsRates, isOpenSpecFlag, isProcurementPendingEnquiry, isProcurementHistoryEnquiry, isSubmitted, isFreshQuotableItem, isZohoCancelledStatus, isZohoClosedStatus, procurementSubmittable, hasOpenThread, hasPendingProcurementThread, hasAnySalesThread } from "@/enquiry/queue";
+import { itemNeedsRates, isOpenSpecFlag, isProcurementPendingEnquiry, isProcurementHistoryEnquiry, isSubmitted, isFreshQuotableItem, isZohoCancelledStatus, isZohoClosedStatus, procurementSubmittable, hasOpenLoop, hasPendingProcurementLoop, hasOpenSalesLoop, openLoops } from "@/enquiry/queue";
 import { matchesEnquiryQuery } from "@/enquiry/search";
 import { toEnquiry } from "@/enquiry/normalize";
+import { enquirySalesSignal } from "@/enquiry/sales-signal";
 
 /** Pending = items still needing rates. Empty enquiries (no items yet) wait
  *  on sales, not procurement — they render in their own section below. */
@@ -36,15 +37,15 @@ type EnquiryList = Enquiry[];
 function EnquiryStatus({ enquiry, mode }: { enquiry: Enquiry; mode: "active" | "history" }) {
   const items = enquiry.items ?? [];
   if (mode === "history") {
-    const n = items.filter((it) => (it.rates ?? []).length > 0 && !it.ratesRequested).length;
+    const n = items.filter((it) => (it.rates ?? []).length > 0 && openLoops(it, 'rates').length === 0).length;
     return (
       <span className="px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30">
         {n} quoted
       </span>
     );
   }
-  // Reactivated concluded with sales follow-up thread — highlight differently (only when procurement must answer)
-  if (isSubmitted(enquiry as any) && hasPendingProcurementThread(enquiry as any)) {
+  // Reactivated concluded with a procurement-held loop — highlight differently
+  if (isSubmitted(enquiry as any) && hasPendingProcurementLoop(enquiry as any)) {
     return (
       <span className="px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30 animate-pulse">
         Sales follow-up — needs answer
@@ -56,10 +57,10 @@ function EnquiryStatus({ enquiry, mode }: { enquiry: Enquiry; mode: "active" | "
   // flagged item keeps its quote (needs-rates goes false while the sales
   // fix is pending), but the chip must still name the blocker — otherwise
   // a quoted-but-flagged item misreads as "Needs rates".
-  const loopItems = items.filter((it) => !it.rateAvailable && !(it as any).notAvailable && !(it as any).notAvailableRequested && !it.internalRates);
+  const loopItems = items.filter((it) => !it.rateAvailable && !(it as any).notAvailable && openLoops(it, 'not_available').length === 0 && !it.internalRates);
   const flagged = loopItems.filter((it) => isOpenSpecFlag(it)).length;
-  const requested = loopItems.filter((it) => it.ratesRequested && !isOpenSpecFlag(it)).length;
-  const alternates = items.filter((it) => String((it as any)?.variationRequest ?? "").trim()).length;
+  const requested = loopItems.filter((it) => openLoops(it, 'rates').length > 0 && !isOpenSpecFlag(it)).length;
+  const alternates = items.filter((it) => openLoops(it, 'query', 'procurement').length > 0).length;
   if (alternates > 0) {
     return (
       <span className="px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30">
@@ -136,20 +137,22 @@ export default function ProcurementQueue() {
     </div>
   ) : null;
 
-  // Live intimations: management rate-requests (act on the item) and sales
-  // spec fixes (flagged item reshared with corrections/reference media).
-  const [toast, setToast] = useState<{ id: string; label: string; title: string; kind: "request" | "fixed" | "thread" } | null>(null);
+  // Live intimations: management rate asks (act on the item), sales spec
+  // fixes (held item answered), and new loop answers.
+  const [toast, setToast] = useState<{ id: string; label: string; title: string; kind: "request" | "fixed" | "loop" } | null>(null);
   const requestedRef = useRef<Record<string, number>>({});
   const flaggedRef = useRef<Record<string, number>>({});
-  const threadRef = useRef<Record<string, number>>({});
+  const loopRef = useRef<Record<string, number>>({});
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
+  const openRateAsks = (items: any[]): number => items.filter((it) => openLoops(it, 'rates').length > 0).length;
+  const loopTotal = (items: any[]): number => items.reduce((n, it) => n + (Array.isArray((it as any)?.loops) ? (it as any).loops.length : 0), 0);
   useEffect(() => {
     if (!loaded) return;
     for (const e of enquiries) {
-      if (requestedRef.current[e.id] === undefined) requestedRef.current[e.id] = (e.items ?? []).filter((it) => it.ratesRequested).length;
+      if (requestedRef.current[e.id] === undefined) requestedRef.current[e.id] = openRateAsks(e.items ?? []);
       if (flaggedRef.current[e.id] === undefined) flaggedRef.current[e.id] = (e.items ?? []).filter((it) => isOpenSpecFlag(it)).length;
-      if (threadRef.current[e.id] === undefined) threadRef.current[e.id] = (e.items ?? []).reduce((n, it) => n + ((it as any).thread ?? []).length, 0);
+      if (loopRef.current[e.id] === undefined) loopRef.current[e.id] = loopTotal(e.items ?? []);
     }
   }, [loaded, enquiries]);
   useLiveEvent((e: any) => {
@@ -165,7 +168,7 @@ export default function ProcurementQueue() {
     const title = String(s.title || "Untitled enquiry");
     const requested = typeof s.requestedCount === "number"
       ? s.requestedCount
-      : ((raw.items ?? []) as any[]).filter((it) => it?.ratesRequested).length;
+      : openRateAsks(((raw as any).items ?? []) as any[]);
     if (requestedRef.current[id] !== undefined && requested > requestedRef.current[id]) {
       if (toastTimer.current) clearTimeout(toastTimer.current);
       setToast({ id, label, title, kind: "request" });
@@ -181,18 +184,18 @@ export default function ProcurementQueue() {
       toastTimer.current = setTimeout(() => setToast(null), 10000);
     }
     flaggedRef.current[id] = flagged;
-    const threadCount = typeof s.threadCount === "number"
-      ? s.threadCount
-      : ((raw.items ?? []) as any[]).reduce((n, it) => n + ((it as any).thread ?? []).length, 0);
-    if (threadRef.current[id] !== undefined && threadCount > threadRef.current[id]) {
+    const loops = typeof s.loopCount === "number"
+      ? s.loopCount
+      : loopTotal(((raw as any).items ?? []) as any[]);
+    if (loopRef.current[id] !== undefined && loops > loopRef.current[id]) {
       const isPrivilegedToast = !!(me as any)?.isRoot || !!me?.isAdmin || (scopes ?? []).includes("mis");
       if (!isPrivilegedToast) {
         if (toastTimer.current) clearTimeout(toastTimer.current);
-        setToast({ id, label, title, kind: "thread" });
+        setToast({ id, label, title, kind: "loop" });
         toastTimer.current = setTimeout(() => setToast(null), 10000);
       }
     }
-    threadRef.current[id] = threadCount;
+    loopRef.current[id] = loops;
   });
 
   // Active search is local-first (same product rule as History): while the
@@ -299,30 +302,26 @@ export default function ProcurementQueue() {
     void patchItems(enquiryId, (items) => items.map((it, i) =>
       i === itemIdx ? { ...it, rates: (it.rates ?? []).map((r, j) => (j === rateIdx ? rate : r)) } : it)), [patchItems]);
 
-  const handleFlag = useCallback((enquiryId: string, itemIdx: number, reason: string) =>
+  // Loop intents (deterministic records — no thread). Procurement opens spec /
+  // not-available asks, answers records it holds, and adds notes. Answers
+  // need no separate action: adding/editing a rate or attaching reference
+  // media auto-answers server-side; the composer below is for text answers.
+  const handleLoopOpen = useCallback((enquiryId: string, itemIdx: number, kind: LoopKind, text: string, media?: EnquiryItem["media"]) =>
     void patchItems(enquiryId, (items) => items.map((it, i) =>
-      i === itemIdx ? { ...it, specIssue: reason, specFlaggedAt: new Date().toISOString() } : it)), [patchItems]);
+      i === itemIdx ? { ...it, loopOpen: { kind, text, media } } as any : it)), [patchItems]);
 
-  const handleNotAvailable = useCallback((enquiryId: string, itemIdx: number, reason: string) =>
+  const handleLoopAnswer = useCallback((enquiryId: string, itemIdx: number, id: string, text: string, media?: EnquiryItem["media"]) =>
     void patchItems(enquiryId, (items) => items.map((it, i) =>
-      i === itemIdx ? { ...(it as any), notAvailableRequested: reason || "Not available", notAvailableRequestedAt: new Date().toISOString() } as any : it)), [patchItems]);
+      i === itemIdx ? { ...it, loopAnswer: { id, text, media } } as any : it)), [patchItems]);
 
-  const handleClearNotAvailable = useCallback((enquiryId: string, itemIdx: number) =>
+  const handleLoopWithdraw = useCallback((enquiryId: string, itemIdx: number, id: string) =>
     void patchItems(enquiryId, (items) => items.map((it, i) =>
-      i === itemIdx ? { ...(it as any), notAvailableRequested: undefined, notAvailableRequestedAt: undefined } as any : it)), [patchItems]);
+      i === itemIdx ? { ...it, loopWithdraw: { id } } as any : it)), [patchItems]);
 
   const handleAddItemMedia = useCallback((enquiryId: string, itemIdx: number, media: EnquiryItem["media"]) =>
     void patchItems(enquiryId, (items) => items.map((it, i) =>
       i === itemIdx ? { ...it, media: [...(it.media ?? []), ...(media ?? [])] } : it)), [patchItems]);
 
-  const handlePostThread = useCallback((enquiryId: string, itemIdx: number, text: string, media: EnquiryItem["media"]) =>
-    void patchItems(enquiryId, (items) => items.map((it, i) =>
-      i === itemIdx ? { ...it, thread: [...(it.thread ?? []), { by: "procurement" as const, kind: "remark" as const, text: text.slice(0,2000), at: new Date().toISOString(), media: media?.length ? media : undefined }] } : it)), [patchItems]);
-
-  const handleResolveThread = useCallback((enquiryId: string, itemIdx: number) =>
-    void patchItems(enquiryId, (items) => items.map((it, i) => i === itemIdx ? { ...it, threadResolved: true } as any : it)), [patchItems]);
-  const handleReopenThread = useCallback((enquiryId: string, itemIdx: number) =>
-    void patchItems(enquiryId, (items) => items.map((it, i) => i === itemIdx ? { ...it, threadResolved: false } as any : it)), [patchItems]);
 
   // Enquiry Concluded: explicit procurement handoff — enquiry stays Active
   // (quoted) until this is clicked; management sees live rates the whole
@@ -376,14 +375,16 @@ export default function ProcurementQueue() {
     const items = e.items ?? [];
     const quoted = items.filter((it) => (it.rates ?? []).length > 0).length;
     const needRatesActive = items.filter(itemNeedsRates).length;
-    const flaggedActive = items.filter((it) => isOpenSpecFlag(it) && !(it as any)?.notAvailable && !(it as any)?.notAvailableRequested).length;
+    const flaggedActive = items.filter((it) => isOpenSpecFlag(it) && !(it as any)?.notAvailable && openLoops(it, 'not_available').length === 0).length;
     const isReady = mode === "active" && needRatesActive === 0 && procurementSubmittable(e).ok;
     const needRates = mode === "active"
       ? needRatesActive
-      : items.filter((it) => (it.rates ?? []).length > 0 && !it.ratesRequested).length;
+      : items.filter((it) => (it.rates ?? []).length > 0 && openLoops(it, 'rates').length === 0).length;
     const names = items.map((it, i) => {
       const n = it.name || `Item ${i + 1}`;
-      return it.qty ? `${n} × ${it.qty}` : n;
+      const sizes = [...new Set(((it.rates ?? []) as any[]).map((r) => String(r?.size ?? "").trim()).filter(Boolean))].slice(0, 3);
+      const sizeTxt = sizes.length ? ` · ${sizes.join(" / ").slice(0, 60)}` : "";
+      return it.qty ? `${n} × ${it.qty}${sizeTxt}` : `${n}${sizeTxt}`;
     });
     const shown = names.slice(0, 3).join(" · ");
     const rest = names.length > 3 ? ` +${names.length - 3} more` : "";
@@ -402,6 +403,14 @@ export default function ProcurementQueue() {
           {shown && (
             <span className="block text-[11px] text-[var(--text-secondary)] truncate max-w-[22rem]">{shown}{rest}</span>
           )}
+          {(() => {
+            const sig = enquirySalesSignal(e);
+            return sig ? (
+              <span className="mt-0.5 block text-[10px] text-emerald-600 dark:text-emerald-400 whitespace-pre-wrap leading-relaxed border-l-2 border-emerald-500/30 pl-1.5 max-w-[22rem] line-clamp-2" title={sig}>
+                <span className="font-bold">For sales: </span>{sig.length > 90 ? `${sig.slice(0, 90)}…` : sig}
+              </span>
+            ) : null;
+          })()}
         </td>
         <td className={tdClass}>
           <span className="text-[11px] text-[var(--text-secondary)] whitespace-nowrap">
@@ -453,15 +462,15 @@ export default function ProcurementQueue() {
 
       {toast && (
         <div className={`fixed bottom-5 right-5 z-50 max-w-sm rounded-2xl border p-4 shadow-2xl animate-scale-up bg-[var(--bg-card)] ${
-          toast.kind === "request" ? "border-indigo-500/40" : toast.kind === "thread" ? "border-sky-500/40" : "border-emerald-500/40"
+          toast.kind === "request" ? "border-indigo-500/40" : toast.kind === "loop" ? "border-sky-500/40" : "border-emerald-500/40"
         }`}>
           <div className="flex items-start gap-3">
             <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-base ${
-              toast.kind === "request" ? "bg-indigo-500/15" : toast.kind === "thread" ? "bg-sky-500/15" : "bg-emerald-500/15"
-            }`}>{toast.kind === "request" ? "📩" : toast.kind === "thread" ? "💬" : "✅"}</span>
+              toast.kind === "request" ? "bg-indigo-500/15" : toast.kind === "loop" ? "bg-sky-500/15" : "bg-emerald-500/15"
+            }`}>{toast.kind === "request" ? "📩" : toast.kind === "loop" ? "💬" : "✅"}</span>
             <div className="min-w-0 flex-1">
-              <p className={`text-xs font-extrabold ${toast.kind === "request" ? "text-indigo-500" : toast.kind === "thread" ? "text-sky-600 dark:text-sky-400" : "text-emerald-600 dark:text-emerald-400"}`}>
-                {toast.kind === "request" ? "Management requested more rates" : toast.kind === "thread" ? "New thread message" : "Spec fixed — item reshared"}
+              <p className={`text-xs font-extrabold ${toast.kind === "request" ? "text-indigo-500" : toast.kind === "loop" ? "text-sky-600 dark:text-sky-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                {toast.kind === "request" ? "Management requested more rates" : toast.kind === "loop" ? "New loop update" : "Spec fixed — item reshared"}
               </p>
               <p className="truncate text-sm font-bold text-[var(--text-primary)]">{toast.title}</p>
               <p className="text-[11px] font-semibold text-[var(--color-brand-indigo)]">{toast.label}</p>
@@ -642,12 +651,12 @@ export default function ProcurementQueue() {
               );
             }
             if (submitted && !lateQuoteEnquiry) {
-              if (hasAnySalesThread(selEnquiry as any)) {
+              if (hasOpenSalesLoop(selEnquiry as any)) {
                 const gate = procurementSubmittable(selEnquiry as any);
                 return (
                   <div className="space-y-2">
                     <p className="rounded-xl border border-sky-500/30 bg-sky-500/5 px-3 py-2 text-[11px] font-bold text-sky-600 dark:text-sky-400">
-                      Sales follow-up — sales wrote in thread. Answer and re-conclude.
+                      Sales follow-up — sales opened a loop. Answer and re-conclude.
                     </p>
                     <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border-card)] bg-[var(--bg-input)]/25 px-3 py-2">
                       <button type="button" disabled={!gate.ok} onClick={() => void handleSubmit(selEnquiry.id)} title={gate.ok ? "Mark enquiry as concluded — procurement is done" : gate.reason} className="px-3.5 py-2 bg-brand-indigo text-white font-bold text-xs rounded-xl cursor-pointer border-0 hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed">Enquiry Concluded</button>
@@ -714,7 +723,7 @@ export default function ProcurementQueue() {
               const lateQuoteEnquiry = selEnquiry.rateStatus === "finalized";
               const all = selEnquiry.items ?? [];
               // Bypassed lines (rate available / not available / internal)
-              // need no quoting — but their rates AND threads stay visible
+              // need no quoting — but their rates AND loops stay visible
               // read-only below, so sales conversation never vanishes.
               const isBypass = (it: EnquiryItem) => it.rateAvailable || (it as any).internalRates || (it as any).notAvailable;
               const hidden = all.map((it, idx) => ({ it, idx })).filter(({ it }) => isBypass(it));
@@ -727,14 +736,11 @@ export default function ProcurementQueue() {
                   lateQuote={false}
                   onAddRate={(rate) => handleAddRate(selEnquiry.id, itemIdx, rate)}
                   onEditRate={(ri, rate) => handleEditRate(selEnquiry.id, itemIdx, ri, rate)}
-                  onFlag={(reason) => handleFlag(selEnquiry.id, itemIdx, reason)}
-                  onNotAvailable={(reason) => handleNotAvailable(selEnquiry.id, itemIdx, reason)}
-                  onClearNotAvailable={() => handleClearNotAvailable(selEnquiry.id, itemIdx)}
+                  onLoopOpen={(kind, text, media) => handleLoopOpen(selEnquiry.id, itemIdx, kind, text, media)}
+                  onLoopAnswer={(id, text, media) => handleLoopAnswer(selEnquiry.id, itemIdx, id, text, media)}
+                  onLoopWithdraw={(id) => handleLoopWithdraw(selEnquiry.id, itemIdx, id)}
                   onOpenLightbox={handleOpenLightbox}
                   onAddItemMedia={(media) => handleAddItemMedia(selEnquiry.id, itemIdx, media)}
-                  onPostThread={(text, media) => handlePostThread(selEnquiry.id, itemIdx, text, media)}
-                  onResolveThread={() => handleResolveThread(selEnquiry.id, itemIdx)}
-                  onReopenThread={() => handleReopenThread(selEnquiry.id, itemIdx)}
                   readOnly
                 />
               );
@@ -753,15 +759,12 @@ export default function ProcurementQueue() {
                         lateQuote={lateQuoteEnquiry}
                         onAddRate={(rate) => handleAddRate(selEnquiry.id, itemIdx, rate)}
                         onEditRate={(ri, rate) => handleEditRate(selEnquiry.id, itemIdx, ri, rate)}
-                        onFlag={(reason) => handleFlag(selEnquiry.id, itemIdx, reason)}
-                        onNotAvailable={(reason) => handleNotAvailable(selEnquiry.id, itemIdx, reason)}
-                        onClearNotAvailable={() => handleClearNotAvailable(selEnquiry.id, itemIdx)}
+                        onLoopOpen={(kind, text, media) => handleLoopOpen(selEnquiry.id, itemIdx, kind, text, media)}
+                        onLoopAnswer={(id, text, media) => handleLoopAnswer(selEnquiry.id, itemIdx, id, text, media)}
+                        onLoopWithdraw={(id) => handleLoopWithdraw(selEnquiry.id, itemIdx, id)}
                         onOpenLightbox={handleOpenLightbox}
                         onAddItemMedia={(media) => handleAddItemMedia(selEnquiry.id, itemIdx, media)}
-                        onPostThread={(text, media) => handlePostThread(selEnquiry.id, itemIdx, text, media)}
-                        onResolveThread={() => handleResolveThread(selEnquiry.id, itemIdx)}
-                        onReopenThread={() => handleReopenThread(selEnquiry.id, itemIdx)}
-                        readOnly={(submitted && !isFreshQuotableItem(item) && !(item as any).variationRequest) || (item.finalRate !== undefined && item.finalRate !== null && !(item as any).variationRequest) || !!(item as any).notAvailable || !!(item as any).notAvailableRequested}
+                        readOnly={(submitted && !isFreshQuotableItem(item) && openLoops(item, 'query', 'procurement').length === 0) || (item.finalRate !== undefined && item.finalRate !== null && openLoops(item, 'query', 'procurement').length === 0) || !!(item as any).notAvailable || openLoops(item, 'not_available').length > 0}
                       />
                     ))
                   )}

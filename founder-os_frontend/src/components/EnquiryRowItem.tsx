@@ -1,5 +1,6 @@
 import React from "react";
 import { Agent, Enquiry, enquiryLabel } from "../types";
+import { isOpenSpecFlag } from "@/enquiry/queue";
 import { StatusBadge, PriorityBadge } from "./ui";
 import { companiesDiffer } from "@/enquiry/company";
 
@@ -22,7 +23,7 @@ export default function EnquiryRowItem({ enq, agent, hideIdentity = false, onVie
   const sent = !revising && ((enq.rateStatus ?? "") === "sent" || isZohoSent);
   // Rate available / not available overrides the hold — kept hidden in D1 (update.ts:239), UI must not show Fix Spec for it; sent is terminal (even flagged rows show Marked as Sent).
   // Resolved flags are audit trail only — the chip follows the OPEN flag.
-  const flagged = items.some((it) => it.specIssue && !(it as any).threadResolved && !it.rateAvailable && !(it as any).notAvailable && !(it as any).internalRates);
+  const flagged = items.some((it) => isOpenSpecFlag(it) && !it.rateAvailable && !(it as any).notAvailable && !(it as any).internalRates);
   const notAvailable = items.some((it) => (it as any).notAvailable);
   const hasPartialRates = !finalized && !sent && items.some((it) => it.finalRate !== undefined && it.finalRate !== null);
   // Overdue: not sent and older than 24h → chip in red (card stays neutral)

@@ -61,6 +61,9 @@ export interface EnquiryMedia {
 export interface EnquiryItemRate {
   vendor: string;
   rate: number;
+  /** Per-quote size (e.g. "8 x 32") — each vendor quotes their own size;
+   *  shown on every rate row in procurement + management views. */
+  size?: string;
   discountPercent?: number;
   description?: string;
   /** Only the selected vendor's salesNote is forwarded to sales. */
@@ -87,26 +90,23 @@ export interface EnquiryItem {
   finalRate?: number;
   finalDiscountPercent?: number;
   finalizedAt?: string;
-  specIssue?: string;
-  specFlaggedAt?: string;
   rateAvailable?: boolean;
   notAvailable?: boolean;
   notAvailableReason?: string;
   notAvailableAt?: string;
-  notAvailableRequested?: string;
-  notAvailableRequestedAt?: string;
   internalRates?: boolean;
   internalRatesAt?: string;
-  ratesRequested?: string;
-  ratesRequestedAt?: string;
-  variationRequest?: string;
-  variationRequestedAt?: string;
-  /** Common attachment for the variation/info request: sales example ↔ procurement fulfillment (merged). */
-  variationRequestMedia?: EnquiryMedia[];
-  thread?: FlagThreadEntry[];
-  threadResolved?: boolean;
-  threadResolvedBy?: FlagThreadBy;
-  threadResolvedAt?: string;
+  /** Deterministic loop records (spec flags, queries, rate requests,
+   *  not-available asks, notes). The ONLY loop mechanism — queues read
+   *  holder + status, never inference. See loops.ts. */
+  loops?: LoopRecord[];
+  /** Client → server loop verbs (open/answer/forward/withdraw/reject).
+   *  Validated + applied in normalizeItemWrites, never persisted. */
+  loopOpen?: { kind: LoopKind; text: string; media?: EnquiryMedia[] };
+  loopAnswer?: { id: string; text: string; media?: EnquiryMedia[] };
+  loopForward?: { id: string; to: LoopParty };
+  loopWithdraw?: { id: string };
+  loopReject?: { id: string; text?: string };
   aiPending?: boolean;
   expectedRate?: number;
   expectedNote?: string;
@@ -117,6 +117,12 @@ export interface EnquiryItem {
   kypComplete?: boolean;
 }
 
+/** Who acts in the enquiry loops. */
+export type LoopParty = 'sales' | 'procurement' | 'management';
+
+/** Legacy thread entry (read-only bridge): old rows carry free-form threads;
+ *  new code never writes them — migrateItemLoops converts them to records.
+ *  Kept so old payloads still parse. */
 export type FlagThreadBy = 'sales' | 'procurement' | 'management';
 export type FlagThreadKind = 'flag' | 'remark' | 'fix' | 'request' | 'quoted';
 
@@ -126,6 +132,33 @@ export interface FlagThreadEntry {
   text: string;
   at: string;
   media?: EnquiryMedia[];
+}
+
+/** Deterministic per-item loop record. Every back-and-forth — spec flags,
+ *  sales queries, rate requests, not-available asks, notes — is an explicit
+ *  record with a holder (who must act) and a status. Queues read ONLY these
+ *  fields; no last-entry inference, so a message for one desk can never
+ *  surface in another's queue. */
+export type LoopKind = 'spec' | 'query' | 'rates' | 'not_available' | 'note';
+export type LoopStatus = 'open' | 'answered' | 'withdrawn' | 'rejected';
+
+export interface LoopRecord {
+  id: string;
+  kind: LoopKind;
+  /** The ask / flag / note text. */
+  text: string;
+  media?: EnquiryMedia[];
+  openedBy: LoopParty;
+  openedAt: string;
+  /** Sole routing signal: this desk must act next. */
+  holder: LoopParty;
+  status: LoopStatus;
+  answer?: { text: string; media?: EnquiryMedia[]; by: LoopParty; at: string };
+  /** Query forwards (management → procurement → back). */
+  forwarded?: { by: LoopParty; at: string; from: LoopParty; to: LoopParty };
+  closedAt?: string;
+  /** Internal bookkeeping (late-quote notes, union notes): hidden from sales. */
+  internal?: boolean;
 }
 
 export interface Enquiry {

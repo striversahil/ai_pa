@@ -30,7 +30,7 @@ registry entry exists for the dashboard + scope). Live updates arrive via
 scope-safe `enquiries` summaries (counts only, never PII).
 
 ## What procurement can/can't write (server-enforced, `update.ts`)
-- CAN: `rates[]` (vendor + amount), `specIssue` flags, vendor reference media
+- CAN: `rates[]` (vendor + amount + per-quote `size`), `specIssue` flags, vendor reference media
   (append-only), remarks in `thread[]`.
 - CANNOT: item identity (name/qty/spec follow stored), `rateAvailable` /
   `expectedRate` (sales-owned), margins (`selectedVendor/markup/finalRate` —

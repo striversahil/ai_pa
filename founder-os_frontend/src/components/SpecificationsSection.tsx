@@ -6,7 +6,8 @@ import IntakeItemMeta from "./IntakeItemMeta";
 import AiProcessingLoader from "./AiProcessingLoader";
 import { missingForItem, unmatchedMissing, SHOW_INTAKE_REMARKS, type IntakeSuggestion } from "../hooks/useIntake";
 import { cleanQty, duplicateItem } from "./ItemBoxList";
-import FlagThread from "./FlagThread";
+import LoopCards from "@/components/LoopCards";
+import { openLoops } from "@/enquiry/loops";
 import { isOpenSpecFlag } from "@/enquiry/queue";
 import { filesToUploadedMedia, dragHasFiles } from "../lib/imageFiles";
 
@@ -36,39 +37,16 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
   const [draft, setDraft] = useState<EnquiryItem>({ name: "", qty: "", spec: "" });
   const [mediaError, setMediaError] = useState<string | null>(null);
   const [rateError, setRateError] = useState<string | null>(null);
-  const [remarkIdx, setRemarkIdx] = useState<number | null>(null);
-  const [remarkText, setRemarkText] = useState("");
   // Sales negotiation: client-side expected price + note per item.
   const [expOpen, setExpOpen] = useState<number | null>(null);
   const [expRate, setExpRate] = useState("");
   const [expNote, setExpNote] = useState("");
-  // Sales merged info/alternate request: text + common attachment (example pic)
-  // goes straight to procurement as variationRequest — NO management approval.
+  // Sales query ask: text + common attachment (example pic). Opens a query
+  // loop held by management first (Query tab); answers land in LoopCards.
   // Procurement fulfilling with a new rate OR new item media clears it; sales may withdraw anytime.
-  const [altReqOpen, setAltReqOpen] = useState<number | null>(null);
-  const [altReqText, setAltReqText] = useState("");
-  const [altReqImages, setAltReqImages] = useState<string[]>([]);
-  const altReqFileRef = React.useRef<HTMLInputElement>(null);
-  const handleAltReqImages = async (files: FileList | File[] | null) => {
-    if (!files || files.length === 0) return;
-    const list = Array.from(files);
-    const { media } = await import("../lib/imageFiles").then((m) => m.filesToUploadedMedia(list));
-    const urls = media.filter((m) => m.type === "image").map((m) => m.url);
-    if (urls.length > 0) setAltReqImages((prev) => [...prev, ...urls]);
-  };
-  // Common per-item thread — always open (even after sent), sales↔procurement
-  // except negotiation (expectedRate). Text+image back-and-forth per item.
-  const [threadComposeIdx, setThreadComposeIdx] = useState<number | null>(null);
-  const [threadComposeText, setThreadComposeText] = useState("");
-  const [threadComposeImages, setThreadComposeImages] = useState<string[]>([]);
-  const threadComposeFileRef = React.useRef<HTMLInputElement>(null);
-  const handleThreadComposeImages = async (files: FileList | File[] | null) => {
-    if (!files || files.length === 0) return;
-    const list = Array.from(files);
-    const { media } = await import("../lib/imageFiles").then((m) => m.filesToUploadedMedia(list));
-    const urls = media.filter((m) => m.type === "image").map((m) => m.url);
-    if (urls.length > 0) setThreadComposeImages((prev) => [...prev, ...urls]);
-  };
+
+  // Per-item loop records — always open (even after sent), sales↔procurement
+  // except negotiation (expectedRate). Ask/answer per item via LoopCards.
 
   const items = Array.isArray(selectedEnquiry.items) ? selectedEnquiry.items : [];
   // All writes below use the updater form: the mutation applies to the LATEST
@@ -82,13 +60,13 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
   // procurement ('edit') collects, management ('view') reviews. Sales
   // ('none') never sees vendor quotes — only the decided final rate per
   // item (partiality is shown once at the enquiry level) plus the
-  // management remarks in the thread below.
+  // management answers in the loop cards below.
   const ratesEditable = !!onUpdateItems && mode === "edit";
-  const [rateDrafts, setRateDrafts] = useState<Record<number, { vendor: string; description: string; rate: string; specMode: "same" | "diff"; specDiff: string }>>({});
+  const [rateDrafts, setRateDrafts] = useState<Record<number, { vendor: string; description: string; rate: string; size: string; specMode: "same" | "diff"; specDiff: string }>>({});
 
-  const blankRateDraft = () => ({ vendor: "", description: "", rate: "", specMode: "same" as const, specDiff: "" });
+  const blankRateDraft = () => ({ vendor: "", description: "", rate: "", size: "", specMode: "same" as const, specDiff: "" });
 
-  const patchRateDraft = (idx: number, patch: Partial<{ vendor: string; description: string; rate: string; specMode: "same" | "diff"; specDiff: string }>) =>
+  const patchRateDraft = (idx: number, patch: Partial<{ vendor: string; description: string; rate: string; size: string; specMode: "same" | "diff"; specDiff: string }>) =>
     setRateDrafts((prev) => {
       const cur = prev[idx] ?? blankRateDraft();
       return { ...prev, [idx]: { ...cur, ...patch } };
@@ -96,7 +74,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
 
   const addItemRate = (idx: number) => {
     if (!onUpdateItems) return;
-    const d = rateDrafts[idx] ?? { vendor: "", description: "", rate: "", specMode: "same" as const, specDiff: "" };
+    const d = rateDrafts[idx] ?? { vendor: "", description: "", rate: "", size: "", specMode: "same" as const, specDiff: "" };
     const vendor = d.vendor.trim();
     const rate = parseMoneyInput(d.rate);
     if (!vendor) {
@@ -112,12 +90,13 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
     saveItems((prev) => prev.map((it, i) => (i === idx ? { ...it, rates: [...(it.rates ?? []), {
       vendor,
       rate,
+      size: d.size.trim().slice(0, 120) || undefined,
       description: d.description.trim() || undefined,
       specSame,
       specDiff: !specSame && d.specDiff.trim() ? d.specDiff.trim() : undefined,
       quotedAt: new Date().toISOString(),
     }] } : it)));
-    setRateDrafts((prev) => ({ ...prev, [idx]: { vendor: "", description: "", rate: "", specMode: "same", specDiff: "" } }));
+    setRateDrafts((prev) => ({ ...prev, [idx]: { vendor: "", description: "", rate: "", size: "", specMode: "same", specDiff: "" } }));
   };
 
   // Explicit delete (same contract as management dropRate): the removed
@@ -201,14 +180,6 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
     saveItems((prev) => prev.map((it, i) => (i === editingIdx ? { ...draftRest, media: it.media ?? [] } : it)));
     setEditingIdx(null);
   };
-  const sendRemark = (idx: number) => {
-    const text = remarkText.trim();
-    if (!text || !onUpdateItems) return;
-    const entry = { by: "sales" as const, kind: "remark" as const, text: text.slice(0, 2000), at: new Date().toISOString() };
-    saveItems((prev) => prev.map((it, i) => (i === idx ? { ...it, thread: [...(it.thread ?? []), entry] } : it)));
-    setRemarkText("");
-    setRemarkIdx(null);
-  };
   const deleteItem = (idx: number) => {
     if (!onUpdateItems) return;
     saveItems((prev) => prev.filter((_, i) => i !== idx));
@@ -242,12 +213,11 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
     const text = rate !== undefined
       ? `Expected price set: ₹${rate.toLocaleString("en-IN")}${note ? ` — ${note}` : ""}`
       : "Expected price removed";
-    const entry = { by: "sales" as const, kind: "remark" as const, text: text.slice(0, 500), at: new Date().toISOString() };
     saveItems((prev) => prev.map((it, i) => (i === idx ? {
       ...it,
       expectedRate: rate,
       expectedNote: note || undefined,
-      thread: [...(it.thread ?? []), entry],
+      loopOpen: { kind: "note" as const, text: text.slice(0, 500) },
     } : it)));
     setExpOpen(null);
     setExpRate("");
@@ -260,44 +230,6 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
       return [...prev.slice(0, idx + 1), duplicateItem(prev[idx]), ...prev.slice(idx + 1)];
     });
   };
-  // Request info/alternate for item idx: saves variationRequest + common attachment.
-  const sendAlternateRequest = (idx: number) => {
-    const text = altReqText.trim().slice(0, 500);
-    if (!text || !onUpdateItems) return;
-    const media = altReqImages.map((url) => ({ type: "image" as const, url }));
-    saveItems((prev) => prev.map((it, i) => (i === idx ? { ...it, variationRequest: text, variationRequestMedia: media.length ? media : undefined } : it)));
-    setAltReqText("");
-    setAltReqImages([]);
-    setAltReqOpen(null);
-  };
-  // Withdraw a pending request (explicit "" clears server-side).
-  const withdrawAlternateRequest = (idx: number) => {
-    if (!onUpdateItems) return;
-    saveItems((prev) => prev.map((it, i) => (i === idx ? { ...it, variationRequest: "", variationRequestMedia: undefined } : it)));
-    setAltReqOpen(null);
-    setAltReqText("");
-    setAltReqImages([]);
-  };
-  // Common thread post per item — always open (even after sent), text+image.
-  const sendThread = (idx: number) => {
-    const text = threadComposeText.trim();
-    if ((!text && threadComposeImages.length === 0) || !onUpdateItems) return;
-    const media = threadComposeImages.map((url) => ({ type: "image" as const, url }));
-    const entry: any = { kind: "remark" as const, text: text.slice(0, 2000) || (media.length ? "Attachment" : ""), at: new Date().toISOString(), media: media.length ? media : undefined };
-    saveItems((prev) => prev.map((it, i) => (i === idx ? { ...it, thread: [...(it.thread ?? []), entry] } : it)));
-    setThreadComposeText("");
-    setThreadComposeImages([]);
-    setThreadComposeIdx(null);
-  };
-  const resolveThread = (idx: number) => {
-    if (!onUpdateItems) return;
-    saveItems((prev) => prev.map((it, i) => (i === idx ? { ...it, threadResolved: true } : it)));
-  };
-  const reopenThread = (idx: number) => {
-    if (!onUpdateItems) return;
-    saveItems((prev) => prev.map((it, i) => (i === idx ? { ...it, threadResolved: false } : it)));
-  };
-
   return (
     <div className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded-2xl p-5 shadow-sm space-y-4">
       <div className="border-b border-[var(--border-card)] pb-3 flex items-center justify-between gap-2">
@@ -567,39 +499,12 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                       {(it as any).kypComplete === false && (!intake || (intake.suggestions ?? []).filter((s: any) => Number(s.itemIndex) === idx).length === 0) && (
                         <p className="mt-1 text-[11px] font-medium text-amber-600 dark:text-amber-400">Complete the spec above to see price — lookup is gated on completeness.</p>
                       )}
-                      {!redacted && !isOpenSpecFlag(it) && (it.thread ?? []).length > 0 && (
-                        <FlagThread thread={it.thread ?? []} onOpenLightbox={onOpenLightbox} hideKinds={mode === "none" ? ["quoted", "request"] : []} />
-                      )}
                        {isOpenSpecFlag(it) && !redacted && !it.rateAvailable && !(it as any).notAvailable && (
                         <div className="mt-1.5 rounded-lg border border-red-500/30 bg-red-500/5 p-2 text-[11px] leading-relaxed">
                           <p className="font-extrabold text-red-500 uppercase tracking-wide text-[10px]">Spec flagged by Procurement — held from Management</p>
-                          <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{it.specIssue}</p>
+                          <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{openLoops(it, 'spec')[0]?.text ?? ""}</p>
                           <p className="mt-1 text-[var(--text-tertiary)]">Edit the spec below or attach the client-shared reference to resolve and release this item for rates.</p>
-                          <FlagThread thread={it.thread ?? []} onOpenLightbox={onOpenLightbox} hideKinds={mode === "none" ? ["quoted", "request"] : []} />
-                          {editable && (
-                            remarkIdx === idx ? (
-                              <div className="mt-2 space-y-1.5">
-                                <textarea
-                                  value={remarkText}
-                                  onChange={(e) => setRemarkText(e.target.value)}
-                                  placeholder="Remark for procurement (keeps the flag until the spec/reference is fixed)…"
-                                  rows={2}
-                                  className="w-full px-2.5 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-brand-indigo text-xs resize-y text-[var(--text-primary)]"
-                                />
-                                <div className="flex gap-2">
-                                  <button type="button" onClick={() => sendRemark(idx)} disabled={!remarkText.trim()}
-                                    className="px-3 py-1 bg-brand-indigo text-white font-bold text-[11px] rounded-lg cursor-pointer disabled:opacity-50">Send remark</button>
-                                  <button type="button" onClick={() => { setRemarkIdx(null); setRemarkText(""); }}
-                                    className="px-3 py-1 font-bold text-[11px] rounded-lg cursor-pointer border-0 bg-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]">Cancel</button>
-                                </div>
-                              </div>
-                            ) : (
-                              <button type="button" onClick={() => { setRemarkIdx(idx); setRemarkText(""); }}
-                                className="mt-1.5 text-[11px] font-bold text-brand-indigo hover:opacity-80 cursor-pointer bg-transparent border-0">
-                                Add remark
-                              </button>
-                            )
-                          )}
+
                         </div>
                       )}
                       {(it as any).notAvailable && !redacted && (
@@ -609,16 +514,22 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                             <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{String((it as any).notAvailableReason)}</p>
                           )}
                           <p className="mt-1 text-[var(--text-tertiary)]">Sales sees this item as not available.</p>
-                          <FlagThread thread={it.thread ?? []} onOpenLightbox={onOpenLightbox} hideKinds={mode === "none" ? ["quoted", "request"] : []} />
                         </div>
                       )}
-                      {/* Flagged AND already quoted (flags never delete quotes): none of the
-                          branches above render the trail, but the reply box below still
-                          shows — so history would vanish exactly when the back-and-forth
-                          matters most. Render it here. Open-flag only: resolved flags
-                          already render their trail above (no double render). */}
-                      {!redacted && isOpenSpecFlag(it) && !!(it as any).rateAvailable && (it.thread ?? []).length > 0 && (
-                        <FlagThread thread={it.thread ?? []} onOpenLightbox={onOpenLightbox} hideKinds={mode === "none" ? ["quoted", "request"] : []} />
+
+                      {!redacted && (
+                        <div className="mt-1.5">
+                          <LoopCards
+                            item={it}
+                            mode="sales"
+                            onOpen={(kind, text, media) => saveItems((prev) => prev.map((x, j) => (j === idx ? { ...x, loopOpen: { kind, text, media } } : x)))}
+                            onAnswer={() => {}}
+                            onWithdraw={(id) => saveItems((prev) => prev.map((x, j) => (j === idx ? { ...x, loopWithdraw: { id } } : x)))}
+                            onOpenLightbox={onOpenLightbox}
+                            askKinds={editable ? ["query", "note"] : []}
+                            askLabels={{ query: "Request info / alternate", note: "Add note" }}
+                          />
+                        </div>
                       )}
                       {it.qty && <div className="text-[11px] font-bold text-[var(--text-secondary)]">Qty: {it.qty}</div>}
                       {it.spec && <p className="text-xs md:text-sm text-[var(--text-secondary)] font-medium whitespace-pre-wrap leading-relaxed mt-0.5">{it.spec}</p>}
@@ -701,6 +612,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                             {hasRate && (
                               <p className="text-[11px] font-extrabold text-emerald-600 dark:text-emerald-400">
                                 {it.internalRates ? "Rate available internally" : "Rate Received"}: ₹{Number(it.finalRate).toLocaleString("en-IN")}
+                                {(selRate as any)?.size ? ` · Size: ${String((selRate as any).size).slice(0, 60)}` : ""}
                                 {/* discount hidden in enquiry-tracker (sales) — management-only */}
                                 {mode !== "none" && (it as any).finalDiscountPercent ? ` · ${(it as any).finalDiscountPercent}% off` : ""}
                               </p>
@@ -724,85 +636,28 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                                 ))}
                               </div>
                             )}
-                            {/* Alternates + alternate requests. The request UI stays
-                                visible while a request is pending even after the
-                                previous quotes are cleared for the fresh round
-                                (no finalRate/alts left to gate on). */}
-                            {(hasRate || String((it as any)?.variationRequest ?? "").trim()) && (alts.length > 0 || editable) && (
+                            {/* Management-shared alternates (same vendor, two makes). Query
+                                asks + answers live in LoopCards above — this block only
+                                shows the quoted alternates. */}
+                            {(hasRate || openLoops(it, 'query').length > 0) && alts.length > 0 && (
                               <div className="pt-1.5 mt-1 border-t border-emerald-500/10 space-y-1">
-                                {alts.length > 0 && (
-                                  <>
-                                    <p className="text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-tertiary)]">
-                                      Alternate option{alts.length === 1 ? "" : "s"} — quoted rate above stays default
+                                <p className="text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-tertiary)]">
+                                  Alternate option{alts.length === 1 ? "" : "s"} — quoted rate above stays default
+                                </p>
+                                {alts.map((a, ai) => {
+                                  const altFinal = (a as any)?.sharedFinalRate !== undefined && (a as any)?.sharedFinalRate !== null
+                                    ? Number((a as any).sharedFinalRate) : Number(a.rate);
+                                  return (
+                                  <div key={ai} className="space-y-0.5">
+                                    <p className="text-[11px] font-bold text-[var(--text-primary)]">
+                                      Alternate option {ai + 1} · <span className="font-mono font-extrabold text-emerald-600 dark:text-emerald-400">₹{altFinal.toLocaleString("en-IN")}</span>{(a as any)?.size ? ` · ${String((a as any).size).slice(0, 60)}` : ""}
                                     </p>
-                                    {alts.map((a, ai) => {
-                                      const altFinal = (a as any)?.sharedFinalRate !== undefined && (a as any)?.sharedFinalRate !== null
-                                        ? Number((a as any).sharedFinalRate) : Number(a.rate);
-                                      return (
-                                      <div key={ai} className="space-y-0.5">
-                                        <p className="text-[11px] font-bold text-[var(--text-primary)]">
-                                          Alternate option {ai + 1} · <span className="font-mono font-extrabold text-emerald-600 dark:text-emerald-400">₹{altFinal.toLocaleString("en-IN")}</span>
-                                        </p>
-                                        {(a as any)?.salesNote && (
-                                          <p className="text-xs text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{String((a as any).salesNote)}</p>
-                                        )}
-                                      </div>
-                                      );
-                                    })}
-                                  </>
-                                )}
-                                {editable && (
-                                  (it as any)?.variationRequest ? (
-                                    <p className="text-[11px] text-[var(--text-tertiary)]">
-                                      Info/alternate request pending with procurement — see the thread below for the full back-and-forth.{" "}
-                                      <button type="button" onClick={() => withdrawAlternateRequest(idx)}
-                                        className="font-bold text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer bg-transparent border-0 p-0">
-                                        Withdraw request
-                                      </button>
-                                    </p>
-                                  ) : altReqOpen === idx ? (
-                                    <div className="space-y-1.5 rounded-lg border border-dashed border-sky-500/40 p-2">
-                                      <textarea
-                                        value={altReqText}
-                                        onChange={(e) => setAltReqText(e.target.value)}
-                                        placeholder="Ask for alternate make or reference — e.g. ABB make, or need reference picture/datasheet…"
-                                        rows={2}
-                                        className="w-full px-2.5 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-sky-500 text-xs resize-y text-[var(--text-primary)]"
-                                      />
-                                      <input ref={altReqFileRef} type="file" accept="image/*,video/*,.pdf" multiple className="hidden" onChange={(e) => { void handleAltReqImages(e.target.files); e.target.value=""; }} />
-                                      <div className="flex flex-wrap items-center gap-2">
-                                        <button type="button" onClick={() => altReqFileRef.current?.click()} className="px-2.5 py-1 border border-dashed border-[var(--border-card)] rounded-lg text-[11px] font-bold text-[var(--text-secondary)] hover:bg-[var(--bg-input)] cursor-pointer bg-transparent">+ Attach reference</button>
-                                        <span className="text-[10px] text-[var(--text-tertiary)]">Common attachment for sales ↔ procurement</span>
-                                      </div>
-                                      {altReqImages.length > 0 && (
-                                        <div className="flex flex-wrap gap-1.5">
-                                          {altReqImages.map((url, i) => (
-                                            <div key={i} className="relative w-14 h-14 rounded-lg overflow-hidden border border-[var(--border-card)]">
-                                              <img src={url} alt={`req ${i+1}`} className="w-full h-full object-cover" />
-                                              <button type="button" onClick={() => setAltReqImages(prev => prev.filter((_, j) => j !== i))} className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/60 text-white text-[11px] cursor-pointer border-0">×</button>
-                                            </div>
-                                          ))}
-                                        </div>
-                                      )}
-                                      <div className="flex gap-2">
-                                        <button type="button" onClick={() => sendAlternateRequest(idx)} disabled={!altReqText.trim()}
-                                          className="px-3 py-1 bg-sky-600 hover:bg-sky-500 text-white font-bold text-[11px] rounded-lg cursor-pointer disabled:opacity-50 border-0">
-                                          Request info/alternate
-                                        </button>
-                                        <button type="button" onClick={() => { setAltReqOpen(null); setAltReqText(""); setAltReqImages([]); }}
-                                          className="px-3 py-1 font-bold text-[11px] rounded-lg cursor-pointer border-0 bg-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
-                                          Cancel
-                                        </button>
-                                      </div>
-                                      <p className="text-[10px] text-[var(--text-tertiary)]">Opens in the item thread as a sales flag — procurement replies there (text or photo) to clear this. No management queue.</p>
-                                    </div>
-                                  ) : (
-                                    <button type="button" onClick={() => { setAltReqOpen(idx); setAltReqText(""); setAltReqImages([]); }}
-                                      className="text-[11px] font-bold text-sky-600 dark:text-sky-400 hover:opacity-80 cursor-pointer bg-transparent border-0">
-                                      💬 Request info / alternate
-                                    </button>
-                                  )
-                                )}
+                                    {(a as any)?.salesNote && (
+                                      <p className="text-xs text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{String((a as any).salesNote)}</p>
+                                    )}
+                                  </div>
+                                  );
+                                })}
                               </div>
                             )}
                           </div>
@@ -813,7 +668,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                           {(it.rates ?? []).map((r, ri) => (
                             <div key={ri} className="rounded-lg border border-[var(--border-card)]/60 p-2 space-y-1">
                               <div className="flex items-center gap-2 text-[11px]">
-                                <span className="font-bold text-[var(--text-primary)] break-words flex-1">{r.vendor}</span>
+                                <span className="font-bold text-[var(--text-primary)] break-words flex-1">{r.vendor}{(r as any)?.size ? <span className="font-semibold text-[var(--text-secondary)]"> · {String((r as any).size).slice(0, 60)}</span> : ""}</span>
                                 {r.specSame === false && (
                                   <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide bg-amber-500/10 text-amber-500 border border-amber-500/30 flex-shrink-0">Spec differs</span>
                                 )}
@@ -856,6 +711,13 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                                   placeholder="Rate ₹"
                                   inputMode="decimal"
                                   className="flex-1 px-2.5 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-brand-indigo text-xs text-[var(--text-primary)]"
+                                />
+                                <input
+                                  value={rateDrafts[idx]?.size ?? ""}
+                                  onChange={(e) => patchRateDraft(idx, { size: e.target.value.slice(0, 120) })}
+                                  placeholder="Size"
+                                  title="This vendor's quoted size"
+                                  className="w-24 px-2.5 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-brand-indigo text-xs text-[var(--text-primary)]"
                                 />
                                 <div className="flex rounded-lg border border-[var(--border-card)] overflow-hidden text-[11px] font-bold">
                                   <button type="button"
@@ -938,45 +800,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                           ))}
                         </div>
                       )}
-                      {!redacted && !(it as any).threadResolved && (
-                        <div className="mt-2 pt-2 border-t border-[var(--border-card)]/60">
-                          {threadComposeIdx === idx ? (
-                            <div className="space-y-1.5">
-                              <textarea value={threadComposeText} onChange={(e) => setThreadComposeText(e.target.value)} placeholder="Ask / reply in thread — any question except negotiation, text + image…" rows={2} className="w-full px-2.5 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-brand-indigo text-xs resize-y text-[var(--text-primary)]" />
-                              <input ref={threadComposeFileRef} type="file" multiple accept="image/*,video/*,.pdf,application/pdf" className="hidden" onChange={(e) => { void handleThreadComposeImages(e.target.files); e.target.value=""; }} />
-                              <div className="flex flex-wrap items-center gap-2">
-                                <button type="button" onClick={() => threadComposeFileRef.current?.click()} className="px-2.5 py-1 border border-dashed border-[var(--border-card)] rounded-lg text-[11px] font-bold text-[var(--text-secondary)] hover:bg-[var(--bg-input)] cursor-pointer bg-transparent">+ Attach</button>
-                                {threadComposeImages.length > 0 && <span className="text-[11px] text-[var(--text-tertiary)]">{threadComposeImages.length} attached</span>}
-                              </div>
-                              {threadComposeImages.length > 0 && (
-                                <div className="flex flex-wrap gap-1.5">
-                                  {threadComposeImages.map((url, i) => (
-                                    <div key={i} className="relative w-14 h-14 rounded-lg overflow-hidden border border-[var(--border-card)]">
-                                      <img src={url} alt={`thread ${i+1}`} className="w-full h-full object-cover" />
-                                      <button type="button" onClick={() => setThreadComposeImages(prev => prev.filter((_, j) => j !== i))} className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/60 text-white text-[11px] cursor-pointer border-0">×</button>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                              <div className="flex gap-2">
-                                <button type="button" onClick={() => sendThread(idx)} disabled={!threadComposeText.trim() && threadComposeImages.length===0} className="px-3 py-1 bg-brand-indigo text-white font-bold text-[11px] rounded-lg cursor-pointer disabled:opacity-50">Send to thread</button>
-                                <button type="button" onClick={() => { setThreadComposeIdx(null); setThreadComposeText(""); setThreadComposeImages([]); }} className="px-3 py-1 font-bold text-[11px] rounded-lg cursor-pointer border-0 bg-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]">Cancel</button>
-                              </div>
-                              <p className="text-[10px] text-[var(--text-tertiary)]">Common channel per item — always open, even after sent. Procurement sees it live.</p>
-                            </div>
-                          ) : (
-                            <button type="button" onClick={() => { setThreadComposeIdx(idx); setThreadComposeText(""); setThreadComposeImages([]); }} className="text-[11px] font-bold text-brand-indigo hover:opacity-80 cursor-pointer bg-transparent border-0">💬 Thread — ask / reply (always open)</button>
-                          )}
-                        </div>
-                      )}
-                      {(it as any).threadResolved ? (
-                        <div className="mt-2 flex items-center gap-2 text-[11px] border border-emerald-500/20 bg-emerald-500/5 rounded-lg px-2.5 py-1.5">
-                          <span className="font-bold text-emerald-600">✓ Resolved by {(it as any).threadResolvedBy || "—"}</span>
-                          <button onClick={() => reopenThread(idx)} className="ml-auto text-[11px] font-bold text-brand-indigo hover:opacity-80 cursor-pointer bg-transparent border-0">Reopen</button>
-                        </div>
-                      ) : (
-                        !redacted && <button onClick={() => resolveThread(idx)} className="mt-2 text-[11px] font-bold text-[var(--text-tertiary)] hover:text-emerald-600 cursor-pointer bg-transparent border-0">✓ Mark thread as resolved</button>
-                      )}
+
                       {editable && (
                         <label className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold text-brand-indigo hover:opacity-80 cursor-pointer">
                           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">

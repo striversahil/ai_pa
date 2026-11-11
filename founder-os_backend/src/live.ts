@@ -74,6 +74,12 @@ export const LiveEvent = {
    */
   NeodoveCampaign: "neodove-campaign",
   /**
+   * Field Staff visit writes (check-in/ping/out, mill rows, expenses,
+   * follow-ups). The Field Staff board subscribes to this + the generic
+   * `data-changed` (enquiry auto-creates ride the Enquiries event).
+   */
+  FieldStaff: "field-staff",
+  /**
    * Generic "data changed somewhere" event, emitted automatically by the
    * auto-live middleware for ANY mutating /api/* request whose handler did not
    * already broadcast a typed event. Frontends that subscribe to everything

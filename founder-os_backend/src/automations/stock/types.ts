@@ -15,6 +15,10 @@ export interface StockItemRow {
   reorderLevel: number;
   minLevel: number;
   maxLevel: number;
+  avgDailyConsumption: number;
+  leadTimeDays: number;
+  safetyFactor: number;
+  moq: number;
   imageUrl: string;
   active: boolean;
 }
@@ -43,6 +47,8 @@ export interface StockLine extends StockItemRow {
   available: number;
   avgRate: number;
   stockValue: number;
+  /** MOQ-rounded fill-to-max suggestion — the file's `pending_stock` semantics. */
+  pendingToOrder: number;
   status: 'out' | 'low' | 'ok';
   abc: 'A' | 'B' | 'C';
   lastMoveDay: string;
@@ -51,10 +57,12 @@ export interface StockLine extends StockItemRow {
 
 export interface StockLocationRow { id: string; name: string; active: boolean }
 
+export interface StockPlanning { leadTimeDays: number; safetyFactor: number; moq: number; source: string }
+
 export interface StockPayload {
-  meta: { analysis: 'stock'; generatedAt: string; day: string; days: string[]; locations: StockLocationRow[] };
+  meta: { analysis: 'stock'; generatedAt: string; day: string; days: string[]; locations: StockLocationRow[]; planning: StockPlanning };
   items: StockLine[];
   closings: Record<string, Record<string, number>>;
-  totals: { skus: number; units: number; available: number; value: number; low: number; out: number; dead: number; pendingAdjust: number };
+  totals: { skus: number; units: number; available: number; value: number; low: number; out: number; dead: number; pendingAdjust: number; pendingToOrder: number };
   movements: StockMovementRow[];
 }

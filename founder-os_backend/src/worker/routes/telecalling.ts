@@ -147,8 +147,9 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
         neodoveUserName: body.neodoveUserName ?? null,
       },
     });
-    // Roster feeds the cached leaderboard region lists — invalidate + go live.
+    // Roster feeds the cached leaderboard region lists + field-staff picker — invalidate + go live.
     try { await invalidateRiskCache(); } catch { /* non-fatal */ }
+    try { const { invalidateFieldStaffCache } = await import('../../modules/field-visits/service'); await invalidateFieldStaffCache(); } catch { /* non-fatal */ }
     notifyLive(c, { type: LiveEvent.Telecalling });
     return c.json(tc, 201);
   });
@@ -210,6 +211,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     }
     const tc = await prisma.telecaller.update({ where: { id: c.req.param('id') }, data });
     try { await invalidateRiskCache(); } catch { /* non-fatal */ }
+    try { const { invalidateFieldStaffCache } = await import('../../modules/field-visits/service'); await invalidateFieldStaffCache(); } catch { /* non-fatal */ }
     notifyLive(c, { type: LiveEvent.Telecalling });
     return c.json(tc);
   });
@@ -223,6 +225,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
       data: { deleted: true, assignEstimateFollowUps: false },
     });
     try { await invalidateRiskCache(); } catch { /* non-fatal */ }
+    try { const { invalidateFieldStaffCache } = await import('../../modules/field-visits/service'); await invalidateFieldStaffCache(); } catch { /* non-fatal */ }
     notifyLive(c, { type: LiveEvent.Telecalling });
     return c.json({ ok: true });
   });

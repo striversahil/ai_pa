@@ -53,6 +53,9 @@ const BOOL_FIELDS: Record<string, string[]> = {
   DigitalMarketingTaskAttachment: [],
   DigitalMarketingAd: [],
   DigitalMarketingAdAttachment: [],
+  DigitalMarketingOpenTask: [],
+  DigitalMarketingOpenTaskEntry: [],
+  DigitalMarketingOpenTaskAttachment: [],
   HumanResourcesMember: ['deleted', 'active'],
   HumanResourcesTask: ['deleted'],
   HumanResourcesExpense: ['deleted'],
@@ -127,6 +130,9 @@ const DATE_FIELDS: Record<string, string[]> = {
   DigitalMarketingTaskAttachment: ['createdAt'],
   DigitalMarketingAd: ['createdAt', 'updatedAt'],
   DigitalMarketingAdAttachment: ['createdAt'],
+  DigitalMarketingOpenTask: ['createdAt', 'updatedAt'],
+  DigitalMarketingOpenTaskEntry: ['createdAt', 'updatedAt'],
+  DigitalMarketingOpenTaskAttachment: ['createdAt'],
   HumanResourcesMember: ['createdAt', 'salaryTemplateAppliedAt'],
   HumanResourcesTask: ['createdAt', 'updatedAt'],
   HumanResourcesExpense: ['createdAt', 'updatedAt'],
@@ -236,6 +242,9 @@ const ID_FIELDS: Record<string, string> = {
   DigitalMarketingTaskAttachment: 'id',
   DigitalMarketingAd: 'id',
   DigitalMarketingAdAttachment: 'id',
+  DigitalMarketingOpenTask: 'id',
+  DigitalMarketingOpenTaskEntry: 'id',
+  DigitalMarketingOpenTaskAttachment: 'id',
   HumanResourcesMember: 'id',
   HumanResourcesTask: 'id',
   HumanResourcesExpense: 'id',
@@ -300,6 +309,8 @@ const UNIQUE_FIELDS: Record<string, string[]> = {
   Vendor: ['name'],
   StockItem: ['sku'],
   ManualCallLog: ['telecallerId', 'day'],
+  DigitalMarketingOpenTaskEntry: ['taskId', 'date'],
+  DigitalMarketingOpenTaskAttachment: ['kvKey'],
   DeviceRegistration: ['tokenHash'],
   DeviceCall: ['idempotencyKey'],
 };
@@ -401,6 +412,18 @@ const RELATIONS: Record<string, Record<string, { model: string; fk: string; one?
   },
   DigitalMarketingAdAttachment: {
     ad: { model: 'DigitalMarketingAd', fk: 'adId', one: true },
+  },
+  DigitalMarketingOpenTask: {
+    entries: { model: 'DigitalMarketingOpenTaskEntry', fk: 'taskId' },
+    attachments: { model: 'DigitalMarketingOpenTaskAttachment', fk: 'taskId' },
+  },
+  DigitalMarketingOpenTaskEntry: {
+    task: { model: 'DigitalMarketingOpenTask', fk: 'taskId', one: true },
+    attachments: { model: 'DigitalMarketingOpenTaskAttachment', fk: 'entryId' },
+  },
+  DigitalMarketingOpenTaskAttachment: {
+    task: { model: 'DigitalMarketingOpenTask', fk: 'taskId', one: true },
+    entry: { model: 'DigitalMarketingOpenTaskEntry', fk: 'entryId', one: true },
   },
   HumanResourcesMember: {
     tasks: { model: 'HumanResourcesTask', fk: 'assignedToId' },
@@ -1005,6 +1028,9 @@ export class D1PrismaClient {
   get digitalMarketingTaskAttachment() { return this.model('DigitalMarketingTaskAttachment'); }
   get digitalMarketingAd() { return this.model('DigitalMarketingAd'); }
   get digitalMarketingAdAttachment() { return this.model('DigitalMarketingAdAttachment'); }
+  get digitalMarketingOpenTask() { return this.model('DigitalMarketingOpenTask'); }
+  get digitalMarketingOpenTaskEntry() { return this.model('DigitalMarketingOpenTaskEntry'); }
+  get digitalMarketingOpenTaskAttachment() { return this.model('DigitalMarketingOpenTaskAttachment'); }
   // Human Resources (ad-hoc tasks + fixed/variable expenses).
   get humanResourcesMember() { return this.model('HumanResourcesMember'); }
   get humanResourcesTask() { return this.model('HumanResourcesTask'); }

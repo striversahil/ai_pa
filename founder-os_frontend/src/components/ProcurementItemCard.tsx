@@ -2,10 +2,10 @@
 
 import React, { useState } from "react";
 import ItemRateForm from "@/components/ItemRateForm";
-import FlagThread from "@/components/FlagThread";
+import LoopCards from "@/components/LoopCards";
 import type { EnquiryItem, EnquiryItemRate } from "@/types";
 import { historyDateChip } from "@/types";
-import { isOpenSpecFlag } from "@/enquiry/queue";
+import { isOpenSpecFlag, openLoops } from "@/enquiry/queue";
 import { filesToUploadedMedia, dragHasFiles } from "@/lib/imageFiles";
 
 interface ProcurementItemCardProps {
@@ -13,14 +13,11 @@ interface ProcurementItemCardProps {
   itemIdx: number;
   onAddRate: (rate: EnquiryItemRate) => void;
   onEditRate: (rateIdx: number, rate: EnquiryItemRate) => void;
-  onFlag: (reason: string) => void;
-  onNotAvailable?: (reason: string) => void;
-  onClearNotAvailable?: () => void;
+  onLoopOpen: (kind: import("@/types").LoopKind, text: string, media?: import("@/types").EnquiryMedia[]) => void;
+  onLoopAnswer: (id: string, text: string, media?: import("@/types").EnquiryMedia[]) => void;
+  onLoopWithdraw: (id: string) => void;
   onOpenLightbox: (url: string, list?: string[], idx?: number) => void;
   onAddItemMedia?: (media: import("@/types").EnquiryMedia[]) => void;
-  onPostThread?: (text: string, media: import("@/types").EnquiryMedia[]) => void;
-  onResolveThread?: () => void;
-  onReopenThread?: () => void;
   /** History rendering: given rates visible, all mutation UI hidden. */
   readOnly?: boolean;
   /** Late-quote window: the row is finalized (committed) but still accepting
@@ -35,53 +32,25 @@ interface ProcurementItemCardProps {
 // its hold banner (held from Management) but still allows adding/editing
 // vendor rates while Sales fixes the spec — they queue until the fix clears.
 export default function ProcurementItemCard({
-  item, itemIdx, onAddRate, onEditRate, onFlag, onNotAvailable, onClearNotAvailable, onOpenLightbox, onAddItemMedia, onPostThread, onResolveThread, onReopenThread,
+  item, itemIdx, onAddRate, onEditRate, onLoopOpen, onLoopAnswer, onLoopWithdraw, onOpenLightbox, onAddItemMedia,
   readOnly = false,
   lateQuote = false,
 }: ProcurementItemCardProps) {
   const [showAdd, setShowAdd] = useState(false);
   const [editingRate, setEditingRate] = useState<number | null>(null);
-  const [showFlag, setShowFlag] = useState(false);
-  const [flagReason, setFlagReason] = useState("");
-  const [showNotAvailable, setShowNotAvailable] = useState(false);
-  const [notAvailableReason, setNotAvailableReason] = useState("");
   const [refError, setRefError] = useState<string | null>(null);
   const [refDropRi, setRefDropRi] = useState<number | null>(null);
-  const [threadOpen, setThreadOpen] = useState(false);
-  const [threadText, setThreadText] = useState("");
-  const [threadImages, setThreadImages] = useState<string[]>([]);
-  const threadFileRef = React.useRef<HTMLInputElement>(null);
-  const handleThreadImages = async (files: FileList | File[] | null) => {
-    if (!files || files.length===0) return;
-    const { media } = await filesToUploadedMedia(Array.from(files));
-    const urls = media.filter((m) => m.type === "image").map((m) => m.url);
-    if (urls.length) setThreadImages((prev) => [...prev, ...urls]);
-  };
 
   const rates = item.rates ?? [];
-  // Hold banner/chip follow the OPEN flag only — a resolved flag is audit
-  // trail (text stays in the thread), never a hold.
+  // Hold banner/chip follow the OPEN spec record only — answered asks are
+  // audit trail, never a hold.
   const flagged = isOpenSpecFlag(item);
-  const alternateRequested = !!String((item as any)?.variationRequest ?? "").trim();
+  const openQuery = openLoops(item, 'query')[0];
+  const alternateRequested = !!openQuery;
+  const alternateFromMgmt = openQuery?.holder === 'management';
   const locked = item.finalRate !== undefined && item.finalRate !== null;
   const media = item.media ?? [];
   const images = media.map((m) => m.url).filter(Boolean);
-
-  const submitFlag = () => {
-    const reason = flagReason.trim();
-    if (!reason) return;
-    onFlag(reason);
-    setFlagReason("");
-    setShowFlag(false);
-  };
-
-  const submitNotAvailable = () => {
-    const reason = notAvailableReason.trim();
-    if (!onNotAvailable) return;
-    onNotAvailable(reason);
-    setNotAvailableReason("");
-    setShowNotAvailable(false);
-  };
 
   // Per-vendor reference attachments: each quote carries its own photos /
   // drawings / PDFs. The selected vendor's refs forward to sales with the
@@ -121,7 +90,7 @@ export default function ProcurementItemCard({
               ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30"
               : "bg-zinc-500/10 text-zinc-500 border-zinc-500/30"
         }`}>
-          {flagged ? "Awaiting sales fix" : alternateRequested ? "Alternate requested" : rates.length === 0 ? "Needs rates" : `${rates.length} rate${rates.length === 1 ? "" : "s"}`}
+          {flagged ? "Awaiting sales fix" : alternateRequested ? (alternateFromMgmt ? "Query with management" : "Alternate requested") : rates.length === 0 ? "Needs rates" : `${rates.length} rate${rates.length === 1 ? "" : "s"}`}
         </span>
         {item.rateAvailable && (
           <span className="px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-indigo-500/10 text-indigo-500 border-indigo-500/30">
@@ -138,7 +107,7 @@ export default function ProcurementItemCard({
             Not available
           </span>
         )}
-        {(item as any).notAvailableRequested && !(item as any).notAvailable && (
+        {openLoops(item, 'not_available').length > 0 && !(item as any).notAvailable && (
           <span className="px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-amber-500/10 text-amber-600 border-amber-500/30">
             Not available requested
           </span>
@@ -160,47 +129,17 @@ export default function ProcurementItemCard({
         </div>
       )}
 
-      <FlagThread thread={item.thread ?? []} onOpenLightbox={onOpenLightbox} />
-      {(item as any).threadResolved ? (
-        <div className="mt-2 flex items-center gap-2 text-[11px] border border-emerald-500/20 bg-emerald-500/5 rounded-lg px-2.5 py-1.5">
-          <span className="font-bold text-emerald-600">✓ Resolved by {(item as any).threadResolvedBy || "—"}</span>
-          {onReopenThread && <button type="button" onClick={onReopenThread} className="ml-auto text-[11px] font-bold text-brand-indigo hover:opacity-80 cursor-pointer bg-transparent border-0">Reopen</button>}
-        </div>
-      ) : (
-        <>
-          {onPostThread && (
-            <div className="mt-2">
-              {threadOpen ? (
-                <div className="space-y-1.5 rounded-lg border border-[var(--border-card)] bg-[var(--bg-input)]/20 p-2">
-                  <textarea value={threadText} onChange={(e) => setThreadText(e.target.value)} placeholder="Reply in thread — any question except negotiation, text + image…" rows={2} className="w-full px-2.5 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-brand-indigo text-xs resize-y" />
-                  <input ref={threadFileRef} type="file" multiple accept="image/*,video/*,.pdf,application/pdf" className="hidden" onChange={async (e) => { await handleThreadImages(e.target.files); e.target.value=""; }} />
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button type="button" onClick={() => threadFileRef.current?.click()} className="px-2.5 py-1 border border-dashed border-[var(--border-card)] rounded-lg text-[11px] font-bold text-[var(--text-secondary)] hover:bg-[var(--bg-input)] cursor-pointer bg-transparent">+ Attach</button>
-                    {threadImages.length>0 && <span className="text-[11px] text-[var(--text-tertiary)]">{threadImages.length} attached</span>}
-                  </div>
-                  {threadImages.length>0 && (
-                    <div className="flex flex-wrap gap-1.5">
-                      {threadImages.map((url,i) => (
-                        <div key={i} className="relative w-14 h-14 rounded-lg overflow-hidden border border-[var(--border-card)]">
-                          <img src={url} alt={`thread ${i+1}`} className="w-full h-full object-cover" />
-                          <button type="button" onClick={() => setThreadImages(prev=>prev.filter((_,j)=>j!==i))} className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/60 text-white text-[11px] cursor-pointer border-0">×</button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <div className="flex gap-2">
-                    <button type="button" onClick={() => { if (!threadText.trim() && threadImages.length===0) return; const media = threadImages.map(url=>({type:"image" as const,url})); onPostThread(threadText.trim() || "Attachment", media); setThreadText(""); setThreadImages([]); setThreadOpen(false); }} disabled={!threadText.trim() && threadImages.length===0} className="px-3 py-1 bg-brand-indigo text-white font-bold text-[11px] rounded-lg cursor-pointer disabled:opacity-50">Send to thread</button>
-                    <button type="button" onClick={() => { setThreadOpen(false); setThreadText(""); setThreadImages([]); }} className="px-3 py-1 font-bold text-[11px] rounded-lg cursor-pointer border-0 bg-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]">Cancel</button>
-                  </div>
-                </div>
-              ) : (
-                <button type="button" onClick={() => setThreadOpen(true)} className="text-[11px] font-bold text-brand-indigo hover:opacity-80 cursor-pointer bg-transparent border-0">💬 Thread — ask / reply (always open)</button>
-              )}
-            </div>
-          )}
-          {onResolveThread && <button type="button" onClick={onResolveThread} className="mt-2 text-[11px] font-bold text-[var(--text-tertiary)] hover:text-emerald-600 cursor-pointer bg-transparent border-0">✓ Mark thread as resolved</button>}
-        </>
-      )}
+      <LoopCards
+        item={item}
+        mode="procurement"
+        readOnly={readOnly}
+        onOpen={(kind, text, media) => onLoopOpen(kind, text, media)}
+        onAnswer={(id, text, media) => onLoopAnswer(id, text, media)}
+        onWithdraw={(id) => onLoopWithdraw(id)}
+        onOpenLightbox={onOpenLightbox}
+        askKinds={["spec", "not_available", "note"]}
+        askLabels={{ spec: "Incorrect Spec", not_available: "Not Available", note: "Note" }}
+      />
 
       {media.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
@@ -222,16 +161,6 @@ export default function ProcurementItemCard({
         </div>
       )}
 
-      {flagged && (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-2.5 text-[11px] leading-relaxed">
-          <p className="font-extrabold text-red-500 uppercase tracking-wide text-[10px]">Incorrect spec — held from Management</p>
-          <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{item.specIssue}</p>
-          <p className="mt-1 text-[var(--text-tertiary)]">
-            Flagged {historyDateChip(item.specFlaggedAt) || "recently"} · Sales edits the spec to release this item.
-          </p>
-        </div>
-      )}
-
       {(item as any).notAvailable && (
         <div className="rounded-lg border border-[var(--border-card)] bg-[var(--surface-sunken)] p-2.5 text-[11px] leading-relaxed">
           <p className="font-extrabold text-[var(--text-secondary)] uppercase tracking-wide text-[10px]">Not available — visible to sales (approved by management)</p>
@@ -243,38 +172,6 @@ export default function ProcurementItemCard({
           </p>
         </div>
       )}
-
-      {(item as any).notAvailableRequested && !(item as any).notAvailable && (
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5 text-[11px] leading-relaxed">
-          <p className="font-extrabold text-amber-600 dark:text-amber-400 uppercase tracking-wide text-[10px]">Not available requested — awaiting management approval</p>
-          {(item as any).notAvailableRequested && (
-            <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{String((item as any).notAvailableRequested)}</p>
-          )}
-          <p className="mt-1 text-[var(--text-tertiary)]">
-            Requested {historyDateChip((item as any).notAvailableRequestedAt) || "recently"} · Management will review.
-          </p>
-          {!readOnly && onClearNotAvailable && (
-            <button type="button" onClick={() => onClearNotAvailable()} className="mt-2 text-[11px] font-bold text-amber-700 hover:text-amber-800 cursor-pointer bg-transparent border-0">↩ Withdraw request</button>
-          )}
-        </div>
-      )}
-
-      {item.ratesRequested && (
-        <div className="rounded-lg border border-indigo-500/30 bg-indigo-500/5 p-2.5 text-[11px] leading-relaxed">
-          <p className="font-extrabold text-indigo-500 uppercase tracking-wide text-[10px]">Management requested more vendor rates</p>
-          {item.ratesRequested.trim() && (
-            <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{item.ratesRequested}</p>
-          )}
-          <p className="mt-1 text-[var(--text-tertiary)]">
-            Add or edit a rate below to answer — the request clears automatically.
-          </p>
-        </div>
-      )}
-
-      {/* Sales info/alternate requests open IN THE THREAD above (as a sales
-          flag — same trail, same pending detection, same reply-to-resolve as
-          a procurement flag). Answer from the thread composer: text or
-          attachment both clear the request. No separate banner here. */}
 
       {rates.length > 0 && (
         <ul className="space-y-1">
@@ -297,7 +194,7 @@ export default function ProcurementItemCard({
                 />
               ) : (
                 <div className="flex items-center gap-2 text-[11px]">
-                  <span className="font-bold text-[var(--text-primary)] truncate flex-1 min-w-0">{r.vendor}</span>
+                  <span className="font-bold text-[var(--text-primary)] truncate flex-1 min-w-0">{r.vendor}{(r as any)?.size ? <span className="font-semibold text-[var(--text-secondary)]"> · {String((r as any).size).slice(0, 60)}</span> : ""}</span>
                   {r.specSame === false && (
                     <span className="px-1 py-0.5 rounded text-[8px] font-extrabold uppercase tracking-wide bg-amber-500/10 text-amber-500 border border-amber-500/30 flex-shrink-0">Spec differs</span>
                   )}
@@ -388,66 +285,10 @@ export default function ProcurementItemCard({
               />
             </div>
           ) : (
-            <button type="button" onClick={() => { setShowAdd(true); setShowFlag(false); setEditingRate(null); }}
+            <button type="button" onClick={() => { setShowAdd(true); setEditingRate(null); }}
               className="px-2.5 py-1.5 bg-brand-indigo/10 text-brand-indigo hover:bg-brand-indigo/20 font-bold text-[11px] rounded-lg cursor-pointer border-0">
               + Add vendor rate
             </button>
-          )}
-          {!flagged && !locked && !(item as any).notAvailable && !showAdd && !showNotAvailable && (
-            showFlag ? (
-              <div className="flex-1 min-w-[12rem] space-y-1.5 rounded-lg border border-dashed border-red-500/40 p-2">
-                <textarea
-                  value={flagReason}
-                  onChange={(e) => setFlagReason(e.target.value)}
-                  placeholder="What is incorrect in the spec? Be specific for Sales…"
-                  rows={2}
-                  className="w-full px-2.5 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-red-500 text-xs resize-y text-[var(--text-primary)]"
-                />
-                <div className="flex gap-2">
-                  <button type="button" onClick={submitFlag} disabled={!flagReason.trim()}
-                    className="px-3 py-1.5 bg-red-500/15 text-red-500 hover:bg-red-500/25 font-bold text-[11px] rounded-lg cursor-pointer border-0 disabled:opacity-40">
-                    Flag incorrect spec
-                  </button>
-                  <button type="button" onClick={() => { setShowFlag(false); setFlagReason(""); }}
-                    className="px-3 py-1.5 font-bold text-[11px] rounded-lg cursor-pointer border-0 bg-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <button type="button" onClick={() => setShowFlag(true)}
-                className="px-2.5 py-1.5 bg-transparent border border-red-500/40 text-red-500 hover:bg-red-500/10 font-bold text-[11px] rounded-lg cursor-pointer">
-                Incorrect Spec
-              </button>
-            )
-          )}
-          {!(item as any).notAvailable && !(item as any).notAvailableRequested && !flagged && !locked && !showAdd && !showFlag && onNotAvailable && (
-            showNotAvailable ? (
-              <div className="flex-1 min-w-[12rem] space-y-1.5 rounded-lg border border-dashed border-[var(--border-card)] p-2">
-                <textarea
-                  value={notAvailableReason}
-                  onChange={(e) => setNotAvailableReason(e.target.value)}
-                  placeholder="Reason not available (optional) — visible to sales…"
-                  rows={2}
-                  className="w-full px-2.5 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-zinc-500 text-xs resize-y text-[var(--text-primary)]"
-                />
-                <div className="flex gap-2">
-                  <button type="button" onClick={submitNotAvailable}
-                    className="px-3 py-1.5 bg-zinc-600 hover:bg-zinc-500 text-white font-bold text-[11px] rounded-lg cursor-pointer border-0">
-                    Mark not available
-                  </button>
-                  <button type="button" onClick={() => { setShowNotAvailable(false); setNotAvailableReason(""); }}
-                    className="px-3 py-1.5 font-bold text-[11px] rounded-lg cursor-pointer border-0 bg-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <button type="button" onClick={() => setShowNotAvailable(true)}
-                className="px-2.5 py-1.5 bg-transparent border border-[var(--border-card)] text-[var(--text-secondary)] hover:bg-[var(--surface-soft)] hover:text-[var(--text-primary)] font-bold text-[11px] rounded-lg cursor-pointer">
-                Not Available
-              </button>
-            )
           )}
         </div>
       )}

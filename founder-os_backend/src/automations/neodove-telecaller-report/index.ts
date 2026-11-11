@@ -17,7 +17,7 @@
  *
  * Individual KRA/KPI (benchmarks judged on today's live numbers):
  *   - ≥ 120 connected calls / agent / day
- *   - ≥ 5 leads generated / agent / day (true "leads generated" count from
+ *   - ≥ 10 leads generated / agent / day (true "leads generated" count from
  *     the get-leads API, see neodove-refresh / neodove-report-runner; older
  *     snapshots fall back to leadsInProgress + leadsConverted). NOTE: this is
  *     the STANDALONE NeoDove dashboard's numerator — the Telecalling boards
@@ -34,7 +34,7 @@ import { cached, cacheDel, cacheDelPrefix } from '../../shared/cache';
 import type { AutomationContext } from '../../modules/automation/types';
 
 export const CONNECTED_CALLS_PER_DAY = 120;
-export const LEADS_PER_AGENT_PER_DAY = 5;
+export const LEADS_PER_AGENT_PER_DAY = 10;
 
 export interface NeodoveAgentRow {
   userName: string;

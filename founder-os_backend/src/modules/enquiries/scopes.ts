@@ -107,12 +107,13 @@ export function stripMarginFields<T extends Record<string, any>>(enquiry: T, opt
           return shown;
         });
       }
-      // Thread is common channel — keep for sales but strip internal quoted vendor leaks.
-      // `request` entries are the management→procurement ask (internal) — hidden from sales.
-      if (Array.isArray((rest as any).thread)) {
-        (rest as any).thread = (rest as any).thread.filter((e: any) => {
-          if (e?.kind === 'quoted' && String(e?.by ?? '') !== 'sales') return false;
-          if (opts?.hideRequests && e?.kind === 'request') return false;
+      // Loop records are the shared channel — keep for every viewer, but hide
+      // management↔procurement internals from sales: rate asks and internal
+      // bookkeeping notes never leave the management/procurement surfaces.
+      if (Array.isArray((rest as any).loops)) {
+        (rest as any).loops = (rest as any).loops.filter((l: any) => {
+          if (!l || typeof l !== 'object') return false;
+          if (opts?.hideRequests && ((l as any)?.kind === 'rates' || (l as any)?.internal === true)) return false;
           return true;
         });
       }
@@ -177,7 +178,7 @@ export interface EnquiryLiveSummary {
   flaggedCount: number;
   specDiffCount: number;
   requestedCount: number;
-  threadCount: number;
+  loopCount: number;
 }
 
 export function summarizeEnquiry(e: any): EnquiryLiveSummary {
@@ -188,14 +189,15 @@ export function summarizeEnquiry(e: any): EnquiryLiveSummary {
   let requestedCount = 0;
   for (const it of items) {
     ratesCount += Array.isArray((it as any)?.rates) ? (it as any).rates.length : 0;
-    if ((it as any)?.specIssue) flaggedCount += 1;
-    if ((it as any)?.ratesRequested) requestedCount += 1;
+    const loops = Array.isArray((it as any)?.loops) ? (it as any).loops : [];
+    if (loops.some((l: any) => l && l.status === 'open' && l.kind === 'spec')) flaggedCount += 1;
+    if (loops.some((l: any) => l && l.status === 'open' && l.kind === 'rates')) requestedCount += 1;
     for (const r of (Array.isArray((it as any)?.rates) ? (it as any).rates : [])) {
       if ((r as any)?.specSame === false) specDiffCount += 1;
     }
   }
-  let threadCount = 0;
-  for (const it of items) threadCount += Array.isArray((it as any)?.thread) ? (it as any).thread.length : 0;
+  let loopCount = 0;
+  for (const it of items) loopCount += Array.isArray((it as any)?.loops) ? (it as any).loops.length : 0;
   return {
     id: String(e?.id ?? ''),
     dailyNo: e?.dailyNo === undefined || e?.dailyNo === null ? null : Number(e.dailyNo),
@@ -208,7 +210,7 @@ export function summarizeEnquiry(e: any): EnquiryLiveSummary {
     flaggedCount,
     specDiffCount,
     requestedCount,
-    threadCount,
+    loopCount,
   };
 }
 

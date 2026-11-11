@@ -1,9 +1,10 @@
 'use client';
 // DigitalMarketingCharts — KRA/KPI view for the DMM dashboard.
 //
-// Replaces the old leaderboard / today-by-frequency / done-this-week board:
-// day-wise graphical interpretation of the numbers that matter — Meta Ads
-// leads, B2B portal leads, Email + WhatsApp volumes. Data comes from
+// B2B portal leads, day wise (dmm-07). Meta / WhatsApp / Email recurring tasks
+// retired 2026-11-06 (migration 0115) — new ad runs live in the ADS registry
+// tab. The series endpoint still returns retired-channel history (fading), but
+// the charts show only the live recurring channel. Data comes from
 // GET /api/digital-marketing/metrics-series (KV-cached, busted on every log
 // write). All charts are hand-rolled SVG (no chart lib): gradient areas,
 // smooth curves, rounded bars, hover crosshair — fluid in both themes via
@@ -21,10 +22,6 @@ interface SeriesDay {
 interface SeriesPayload { days: SeriesDay[]; from: string; to: string; computedAt: string }
 
 const LEADS = '#10b981'; // leads are ALWAYS emerald, every card
-const INQ = '#6366f1';
-const SENT_MAIL = '#818cf8';
-const SENT_WA = '#14b8a6';
-const SPEND = '#f59e0b';
 const PORTALS = [
   { key: 'alibaba', label: 'Alibaba', color: '#0ea5e9' },
   { key: 'eexporter', label: 'eExporter', color: '#f97316' },
@@ -273,23 +270,16 @@ export default function KraKpiCharts() {
   }, [series.data, range]);
   const sum = useMemo(() => {
     const t = {
-      metaLeads: 0, metaInq: 0, metaSpend: 0,
       b2b: { alibaba: 0, eexporter: 0, indiamart: 0, tradeindia: 0, total: 0 },
-      waSent: 0, waLeads: 0, waSpend: 0,
-      mailSent: 0, mailLeads: 0,
     };
     for (const d of days) {
-      t.metaLeads += d.meta.leads; t.metaInq += d.meta.inquiries; t.metaSpend += d.meta.spend;
       t.b2b.alibaba += d.b2b.alibaba; t.b2b.eexporter += d.b2b.eexporter;
       t.b2b.indiamart += d.b2b.indiamart; t.b2b.tradeindia += d.b2b.tradeindia;
-      t.waSent += d.whatsapp.sent; t.waLeads += d.whatsapp.leads; t.waSpend += d.whatsapp.spend;
-      t.mailSent += d.email.sent; t.mailLeads += d.email.leads;
     }
     t.b2b.total = t.b2b.alibaba + t.b2b.eexporter + t.b2b.indiamart + t.b2b.tradeindia;
     return t;
   }, [days]);
-  const conv = (leads: number, vol: number) => (vol > 0 ? `${((leads / vol) * 100).toFixed(1)}%` : '—');
-  const empty = days.length > 0 && sum.metaLeads + sum.metaInq + sum.b2b.total + sum.waSent + sum.waLeads + sum.mailSent + sum.mailLeads === 0;
+  const empty = days.length > 0 && sum.b2b.total === 0;
 
   return (
     <div className="space-y-4">
@@ -306,74 +296,24 @@ export default function KraKpiCharts() {
       )}
       {empty && series.data && (
         <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-10 text-center">
-          <p className="text-sm font-bold text-zinc-700 dark:text-zinc-200">No metrics logged in the last {range} days</p>
-          <p className="mt-1 text-xs text-zinc-500">Numbers appear here automatically as Meta / B2B / WhatsApp / Email boxes are filled.</p>
+          <p className="text-sm font-bold text-zinc-700 dark:text-zinc-200">No B2B leads logged in the last {range} days</p>
+          <p className="mt-1 text-xs text-zinc-500">Numbers appear here automatically as the B2B box is filled. Ad runs now live in the ADS tab.</p>
         </div>
       )}
       {!empty && days.length > 0 && (
-        <>
-          <Card
-            title="📣 Meta Ads Run — leads generated, day wise"
-            sub="leads (area) · inquiries (line)"
-          >
-            <div className="flex flex-wrap gap-2 mb-3">
-              <Tile label="Leads" value={int(sum.metaLeads)} sub={`last ${range}d`} color={LEADS} />
-              <Tile label="Inquiries" value={int(sum.metaInq)} sub={`last ${range}d`} color={INQ} />
-              <Tile label="Spend logged" value={inr(sum.metaSpend)} sub={`last ${range}d`} color={SPEND} />
-            </div>
-            <FlowChart
-              days={days}
-              series={[
-                { get: (d) => d.meta.leads, color: LEADS, label: 'Leads', fill: true },
-                { get: (d) => d.meta.inquiries, color: INQ, label: 'Inquiries', fill: false },
-              ]}
-            />
-          </Card>
-          <div className="grid gap-4 lg:grid-cols-2">
-            <Card title="🏢 B2B portals — leads by portal, day wise" sub="stacked · hover a bar for the split">
-              <div className="flex flex-wrap gap-2 mb-3">
-                <Tile label="Total leads" value={int(sum.b2b.total)} sub={`last ${range}d`} color={LEADS} />
-                {PORTALS.map((p) => (
-                  <Tile key={p.key} label={p.label} value={int((sum.b2b as any)[p.key])} sub={`last ${range}d`} color={p.color} />
-                ))}
-              </div>
-              <DayBars
-                days={days}
-                stacked
-                groups={PORTALS.map((p) => ({ get: (d: SeriesDay) => (d.b2b as any)[p.key] as number, color: p.color, label: p.label }))}
-              />
-            </Card>
-            <Card title="✉️ Email marketing — sent vs leads, day wise" sub="volume → outcome">
-              <div className="flex flex-wrap gap-2 mb-3">
-                <Tile label="Emails sent" value={int(sum.mailSent)} sub={`last ${range}d`} color={SENT_MAIL} />
-                <Tile label="Leads" value={int(sum.mailLeads)} sub={`last ${range}d`} color={LEADS} />
-                <Tile label="Convert" value={conv(sum.mailLeads, sum.mailSent)} sub="leads ÷ sent" color={INQ} />
-              </div>
-              <DayBars
-                days={days}
-                groups={[
-                  { get: (d) => d.email.sent, color: SENT_MAIL, label: 'Sent' },
-                  { get: (d) => d.email.leads, color: LEADS, label: 'Leads' },
-                ]}
-              />
-            </Card>
+        <Card title="🏢 B2B portals — leads by portal, day wise" sub="stacked · hover a bar for the split">
+          <div className="flex flex-wrap gap-2 mb-3">
+            <Tile label="Total leads" value={int(sum.b2b.total)} sub={`last ${range}d`} color={LEADS} />
+            {PORTALS.map((p) => (
+              <Tile key={p.key} label={p.label} value={int((sum.b2b as any)[p.key])} sub={`last ${range}d`} color={p.color} />
+            ))}
           </div>
-          <Card title="💬 WhatsApp marketing — sent vs leads, day wise" sub="volume → outcome">
-            <div className="flex flex-wrap gap-2 mb-3">
-              <Tile label="Messages sent" value={int(sum.waSent)} sub={`last ${range}d`} color={SENT_WA} />
-              <Tile label="Leads" value={int(sum.waLeads)} sub={`last ${range}d`} color={LEADS} />
-              <Tile label="Convert" value={conv(sum.waLeads, sum.waSent)} sub="leads ÷ sent" color={INQ} />
-              {sum.waSpend > 0 && <Tile label="Spend logged" value={inr(sum.waSpend)} sub={`last ${range}d`} color={SPEND} />}
-            </div>
-            <DayBars
-              days={days}
-              groups={[
-                { get: (d) => d.whatsapp.sent, color: SENT_WA, label: 'Sent' },
-                { get: (d) => d.whatsapp.leads, color: LEADS, label: 'Leads' },
-              ]}
-            />
-          </Card>
-        </>
+          <DayBars
+            days={days}
+            stacked
+            groups={PORTALS.map((p) => ({ get: (d: SeriesDay) => (d.b2b as any)[p.key] as number, color: p.color, label: p.label }))}
+          />
+        </Card>
       )}
     </div>
   );

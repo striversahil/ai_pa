@@ -24,12 +24,9 @@ import type {
   EnquiryRequirement,
   CommentVisibility,
   EnquiryStore,
-  FlagThreadBy,
-  FlagThreadEntry,
 } from "./types";
 import { encodeEnquiryCursor } from "./types";
 import {
-  parseFlagThread,
   normalizeVisibility,
   isoOrUndefined,
   rateIdxOrUndefined,
@@ -44,6 +41,7 @@ import {
   parseRequirements,
   composeSearchText,
 } from "./parse";
+import { parseLoopRecords, migrateItemLoops } from "./loops";
 
 export {
   ENQUIRY_SOURCES,
@@ -51,7 +49,6 @@ export {
   istDayKey,
   nextDailyNo,
   enquiryLabelText,
-  parseFlagThread,
   normalizeVisibility,
   isoOrUndefined,
   rateIdxOrUndefined,
@@ -74,8 +71,6 @@ export type {
   EnquiryRequirement,
   CommentVisibility,
   EnquiryStore,
-  FlagThreadBy,
-  FlagThreadEntry,
 };
 export { MAX_ITEM_MEDIA_URL_CHARS, MAX_ITEM_MEDIA_COUNT } from "./parse";
 
@@ -178,25 +173,15 @@ export function sanitize(e: any): Enquiry {
           finalRate: numOrUndefined(r?.finalRate),
           finalDiscountPercent: parseDiscountPercent(r?.finalDiscountPercent),
         finalizedAt: isoOrUndefined(r?.finalizedAt),
-        specIssue: r?.specIssue ? String(r.specIssue).slice(0, 2000) : undefined,
-        specFlaggedAt: isoOrUndefined(r?.specFlaggedAt),
         rateAvailable: r?.rateAvailable === true,
         notAvailable: (r as any)?.notAvailable === true,
         notAvailableReason: (r as any)?.notAvailableReason ? String((r as any).notAvailableReason).slice(0, 500) : undefined,
         notAvailableAt: isoOrUndefined((r as any)?.notAvailableAt),
-        notAvailableRequested: (r as any)?.notAvailableRequested ? String((r as any).notAvailableRequested).slice(0, 500) : undefined,
-        notAvailableRequestedAt: isoOrUndefined((r as any)?.notAvailableRequestedAt),
         internalRates: r?.internalRates === true,
         internalRatesAt: isoOrUndefined(r?.internalRatesAt),
-        thread: parseFlagThread(r?.thread),
-        ratesRequested: r?.ratesRequested ? String(r.ratesRequested).slice(0, 500) : undefined,
-        ratesRequestedAt: isoOrUndefined(r?.ratesRequestedAt),
-        variationRequest: r?.variationRequest ? String(r.variationRequest).slice(0, 500) : undefined,
-        variationRequestedAt: isoOrUndefined(r?.variationRequestedAt),
-        variationRequestMedia: parseItemMedia((r as any)?.variationRequestMedia),
-        threadResolved: (r as any)?.threadResolved === true,
-        threadResolvedBy: (['sales','procurement','management'] as const).includes((r as any)?.threadResolvedBy) ? (r as any).threadResolvedBy : undefined,
-        threadResolvedAt: isoOrUndefined((r as any)?.threadResolvedAt),
+        // Loops migrate here too (defense in depth — normalizeItemWrites is
+        // the primary migration point; sanitize covers direct store writes).
+        loops: migrateItemLoops({ ...(r as any), loops: parseLoopRecords((r as any)?.loops) }),
         aiPending: r?.aiPending === true ? true : undefined,
         expectedRate: numOrUndefined(r?.expectedRate),
         expectedNote: r?.expectedNote ? String(r.expectedNote).slice(0, 500) : undefined,

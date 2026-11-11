@@ -1264,6 +1264,57 @@ model DigitalMarketingAdAttachment {
   @@index([adId])
 }
 
+// ── Digital Marketing Open Tasks (migration 0120, free-form tasks + daily progress) ──
+model DigitalMarketingOpenTask {
+  id          String   @id @default(uuid())
+  title       String   @default("")
+  description String   @default("")
+  startDate   String // YYYY-MM-DD (mandatory)
+  endDate     String // YYYY-MM-DD (mandatory, >= startDate)
+  status      String   @default("open") // open | done (manual tick, dates display-only)
+  doneAt      String?
+  createdBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  entries     DigitalMarketingOpenTaskEntry[]
+  attachments DigitalMarketingOpenTaskAttachment[]
+
+  @@index([startDate])
+  @@index([status])
+}
+
+model DigitalMarketingOpenTaskEntry {
+  id        String   @id @default(uuid())
+  taskId    String
+  task      DigitalMarketingOpenTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  date      String // YYYY-MM-DD, one editable note per day
+  note      String   @default("")
+  updatedBy String   @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  attachments DigitalMarketingOpenTaskAttachment[]
+
+  @@unique([taskId, date])
+  @@index([taskId])
+}
+
+model DigitalMarketingOpenTaskAttachment {
+  id         String   @id @default(uuid())
+  taskId     String
+  task       DigitalMarketingOpenTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  entryId    String?
+  entry      DigitalMarketingOpenTaskEntry? @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  fileName   String
+  mime       String   @default("application/octet-stream")
+  size       Int      @default(0)
+  kvKey      String   @unique
+  uploadedBy String   @default("")
+  createdAt  DateTime @default(now())
+
+  @@index([taskId])
+  @@index([entryId])
+}
+
 // ── Human Resources (ad-hoc delegated task list + fixed/variable expenses) ──
 model HumanResourcesMember {
   id                    String   @id @default(uuid())
