@@ -1098,6 +1098,16 @@ export class D1PrismaClient {
   get telecaller() { return this.model('Telecaller'); }
   get estimateAssignment() { return this.model('EstimateAssignment'); }
   get telecallerScoreEvent() { return this.model('TelecallerScoreEvent'); }
+  // ERP core (migrations 0125/0126). Editable shim — not part of the lock.
+  get coreEmployee() { return this.model('CoreEmployee'); }
+  get coreEmpPosition() { return this.model('CoreEmpPosition'); }
+  get coreEmpDept() { return this.model('CoreEmpDept'); }
+  get coreEmpRegion() { return this.model('CoreEmpRegion'); }
+  get coreRegion() { return this.model('CoreRegion'); }
+  get coreUserLink() { return this.model('CoreUserLink'); }
+  get coreAction() { return this.model('CoreAction'); }
+  get coreAuditEvent() { return this.model('CoreAuditEvent'); }
+  get coreSeries() { return this.model('CoreSeries'); }
   get waTask() { return this.model('WaTask'); }
   get messageLineage() { return this.model('MessageLineage'); }
   get waTaskHistory() { return this.model('WaTaskHistory'); }

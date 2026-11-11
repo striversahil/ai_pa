@@ -12,6 +12,7 @@ import { appendTaskLog } from './task-logs';
 import type { HrScope, HrSelf } from './types';
 import { getInventorySnapshot } from './inventory';
 import { createWithEmployeeCode } from './employee-codes';
+import { mirrorRosterRow } from '../../modules/core/sync';
 import { DATA_TTL_MS, DATA_CACHE_PREFIX, invalidateHumanResourcesCache } from './cache';
 
 export { invalidateHumanResourcesCache };
@@ -270,6 +271,7 @@ export async function createMember(input: Record<string, any>) {
     prisma.humanResourcesMember.create({ data: { ...data, employeeCode } }),
   );
   await invalidateHumanResourcesCache();
+  await mirrorRosterRow('human_resources_member', row);
   return row;
 }
 
@@ -279,6 +281,7 @@ export async function updateMember(id: string, input: Record<string, any>) {
   if (!current || current.deleted) throw new HrError('member not found', 404);
   const row = await prisma.humanResourcesMember.update({ where: { id }, data: patch });
   await invalidateHumanResourcesCache();
+  await mirrorRosterRow('human_resources_member', row);
   return row;
 }
 

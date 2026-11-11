@@ -3,6 +3,7 @@
  * The roster is the source of truth for estimate auto-assignment.
  */
 import { prisma } from '../../shared/prisma';
+import { mirrorRosterRemoved, mirrorRosterRow } from '../core/sync';
 
 export interface TelecallerInput {
   name: string;
@@ -30,7 +31,7 @@ export async function createTelecaller(input: TelecallerInput): Promise<any> {
   if (!input.name || !input.name.trim()) {
     throw new Error('name is required');
   }
-  return prisma.telecaller.create({
+  const row = await prisma.telecaller.create({
     data: {
       name: input.name.trim(),
       email: input.email ?? null,
@@ -40,6 +41,8 @@ export async function createTelecaller(input: TelecallerInput): Promise<any> {
       neodoveUserName: input.neodoveUserName ?? null,
     },
   });
+  await mirrorRosterRow('telecaller', row);
+  return row;
 }
 
 export async function updateTelecaller(id: string, input: Partial<TelecallerInput>): Promise<any> {
@@ -50,9 +53,12 @@ export async function updateTelecaller(id: string, input: Partial<TelecallerInpu
   if (input.order !== undefined) data.order = input.order;
   if (input.neodoveUserId !== undefined) data.neodoveUserId = input.neodoveUserId;
   if (input.neodoveUserName !== undefined) data.neodoveUserName = input.neodoveUserName;
-  return prisma.telecaller.update({ where: { id }, data });
+  const row = await prisma.telecaller.update({ where: { id }, data });
+  await mirrorRosterRow('telecaller', row);
+  return row;
 }
 
 export async function deleteTelecaller(id: string): Promise<void> {
   await prisma.telecaller.delete({ where: { id } });
+  await mirrorRosterRemoved('telecaller', id);
 }

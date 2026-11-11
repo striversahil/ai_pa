@@ -1,6 +1,7 @@
 import { prisma } from '../../shared/prisma';
 import { logger } from '../../shared/logger';
 import { cached, cacheDel } from '../../shared/cache';
+import { mirrorRosterRow } from '../../modules/core/sync';
 
 export const FREQUENCIES = ['daily', 'weekly', 'monthly', 'quarterly', 'yearly'] as const;
 export const OWNER_ROLES = ['senior', 'junior', 'either'] as const;
@@ -981,6 +982,7 @@ export async function createDigitalMarketingManager(input: Record<string, any>) 
     },
   });
   await invalidateDigitalMarketingCache();
+  await mirrorRosterRow('digital_marketing_manager', row);
   return row;
 }
 
@@ -999,6 +1001,7 @@ export async function updateDigitalMarketingManager(id: string, input: Record<st
   if (input.deleted !== undefined) data.deleted = !!input.deleted;
   const row = await prisma.digitalMarketingManager.update({ where: { id }, data });
   await invalidateDigitalMarketingCache();
+  await mirrorRosterRow('digital_marketing_manager', row);
   return row;
 }
 

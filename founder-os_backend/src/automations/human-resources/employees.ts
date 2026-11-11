@@ -6,6 +6,7 @@ import { cleanSalaryPlan } from './templates-parse';
 import { resolveSalary, round2 } from './salary';
 import { templateComponentsForCopy } from './templates';
 import { createWithEmployeeCode } from './employee-codes';
+import { mirrorRosterRemoved, mirrorRosterRow } from '../../modules/core/sync';
 import { DATA_CACHE_PREFIX, DATA_TTL_MS, invalidateHumanResourcesCache } from './cache';
 import type { SalaryComponentInput } from './types';
 
@@ -155,6 +156,7 @@ export async function createEmployee(input: Record<string, any>) {
     prisma.humanResourcesMember.create({ data: { ...data, employeeCode } }),
   );
   await invalidateHumanResourcesCache();
+  await mirrorRosterRow('human_resources_member', row);
   return employeeJson(row, []);
 }
 
@@ -169,6 +171,7 @@ export async function updateEmployee(id: string, input: Record<string, any>) {
   if (joining && exit && exit < joining) throw new HrError('exitDate cannot be before joiningDate');
   const row: any = await prisma.humanResourcesMember.update({ where: { id }, data: patch });
   await invalidateHumanResourcesCache();
+  await mirrorRosterRow('human_resources_member', row);
   return employeeJson(row, await componentsFor(id), await templateFor(row));
 }
 
@@ -177,6 +180,7 @@ export async function deleteEmployee(id: string) {
   if (!row || row.deleted) throw new HrError('employee not found', 404);
   await prisma.humanResourcesMember.update({ where: { id }, data: { deleted: true, active: false } });
   await invalidateHumanResourcesCache();
+  await mirrorRosterRemoved('human_resources_member', id);
 }
 
 async function validatePlanRows(memberId: string, rows: SalaryComponentInput[], inputMode: string, inputAmount: number) {

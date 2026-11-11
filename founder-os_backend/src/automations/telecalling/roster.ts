@@ -9,6 +9,7 @@
 import { prisma } from '../../shared/prisma';
 import { logger } from '../../shared/logger';
 import type { Telecaller } from '@prisma/client';
+import { mirrorRosterRow } from '../../modules/core/sync';
 import { getAllNeodoveAgents } from '../neodove-telecaller-report';
 
 
@@ -101,6 +102,9 @@ async function syncTelecallersFromNeodove(): Promise<void> {
               neodoveUserName: existingT.neodoveUserName || a.userName || null,
             },
           });
+          // Operational link fill only — never overwrites a hand link (guarded
+          // by the empty-check above). Mirrored straight into core (no confirm).
+          await mirrorRosterRow('telecaller', existingT.id);
         }
         continue;
       }
@@ -116,7 +120,7 @@ async function syncTelecallersFromNeodove(): Promise<void> {
           'NeoDove userId recycled across staff — new roster row created, stale row left untouched',
         );
       }
-      await prisma.telecaller.create({
+      const created = await prisma.telecaller.create({
         data: {
           name: a.userName,
           // New hires start as lead-gen only — they must be reviewed/flagged as
@@ -127,6 +131,7 @@ async function syncTelecallersFromNeodove(): Promise<void> {
           neodoveUserName: a.userName,
         },
       });
+      await mirrorRosterRow('telecaller', created);
     }
     logger.info({ agents: agents.length, created: writesNeeded }, 'Synced telecallers from NeoDove');
   } catch (e: any) {

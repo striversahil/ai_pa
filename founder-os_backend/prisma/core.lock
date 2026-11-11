@@ -1,6 +1,6 @@
 {
   "signedBy": "striversahil@gmail.com",
-  "signedAt": "2026-11-11T15:37:26.032Z",
+  "signedAt": "2026-11-11T15:45:12.887Z",
   "files": {
     "migrations/0125_core_foundation.sql": "3a2779be49f5e08160da2981b30ee924188f2cba2189074051bbfed24ec36fdc",
     "migrations/0126_core_identity.sql": "c4766e18acbea714405aaec811dee9c4f38896063d4f32195cb0477937044699",
@@ -13,6 +13,7 @@
     "src/modules/core/numbering.ts": "ca432934aaa063d4a17a68ca0fc3ff96a21002947b4f1c01aa084a3cf8ca8b78",
     "src/modules/core/permissions.ts": "e0081fbf257d1cef2a94aff1f4e248edc63f969fe1e01c8337bd2cb363066627",
     "src/modules/core/stages.ts": "90d4d088c2d049c86568c8529180f0c29d5d1f2b57642ccc4bd2a1f3d1d1a678",
+    "src/modules/core/sync.ts": "23f3cf2dbade835e2f1d4385498d3513f57469f72df63f88574fa18b470c9f51",
     "src/worker/routes/work.ts": "52c96fd86785258d61e111fc7ac097bc2d79625350d090c054394100add66808",
     "scripts/core-guard.mjs": "cc65f1e903bd2f2e3555c178ccacd2776c099f9707bbec73a7782d593bc03837"
   }
