@@ -48,6 +48,7 @@ import { registerAndroidRoutes } from './worker/routes/android';
 import { registerCallLogRoutes } from './worker/routes/call-log';
 import { registerFieldStaffRoutes } from './worker/routes/field-staff';
 import { registerSalesObjectionsRoutes } from './worker/routes/sales-objections';
+import { registerWorkRoutes } from './worker/routes/work';
 import { scheduled } from './worker/cron';
 
 const app = createApp();
@@ -89,6 +90,7 @@ registerAndroidRoutes(app);
 registerCallLogRoutes(app);
 registerFieldStaffRoutes(app);
 registerSalesObjectionsRoutes(app);
+registerWorkRoutes(app);
 
 export default {
   fetch: app.fetch,

@@ -18,6 +18,7 @@ const LOCK_FILE = 'prisma/core.lock';
 
 const LOCKED_PATHS = [
   'migrations/0125_core_foundation.sql',
+  'migrations/0126_core_identity.sql',
   'prisma/core',
   'src/modules/core',
   'src/worker/routes/work.ts',

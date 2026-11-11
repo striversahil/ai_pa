@@ -1,0 +1,243 @@
+// prisma/core/02-identity.prisma — CANONICAL identity tables (Phase 1).
+// NOT yet wired to the Prisma generator. D1 reality: 0126_core_identity.sql.
+// Locked by prisma/core.lock + scripts/core-guard.mjs — humans only.
+// Decisions 2026-11-11: UUID PK (reused roster id) + EMP-0001 employeeCode;
+// MD position + md VIEW-only role seeded dormant; unitCost MD-only (field policy).
+
+model CoreDepartment {
+  id        String   @id
+  code      String   @unique
+  name      String   @default("")
+  parentId  String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("core_department")
+}
+
+model CorePosition {
+  id           String   @id
+  code         String   @unique
+  name         String   @default("")
+  departmentId String?
+  rank         Int      @default(100)
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("core_position")
+}
+
+model CoreTeam {
+  id           String   @id
+  code         String   @unique
+  name         String   @default("")
+  departmentId String?
+  regionId     String?
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("core_team")
+}
+
+model CoreRegion {
+  id        String   @id
+  code      String   @unique
+  name      String   @default("")
+  states    String   @default("[]")
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("core_region")
+}
+
+model CoreEmployee {
+  id             String   @id
+  employeeCode   String?  @unique
+  fullName       String   @default("")
+  displayName    String?
+  workEmail      String?
+  phoneE164      String?
+  whatsappE164   String?
+  status         String   @default("ACTIVE")
+  sourceTable    String   @default("")
+  grade          String?
+  neodoveUserId  String?
+  neodoveUserName String?
+  absentSince    DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([workEmail])
+  @@index([status])
+  @@map("core_employee")
+}
+
+model CoreEmpDept {
+  id           String   @id
+  employeeId   String
+  departmentId String
+  isPrimary    Boolean  @default(true)
+  validFrom    DateTime @default(now())
+  validTo      DateTime?
+  reason       String?
+
+  @@index([employeeId, validTo])
+  @@map("core_emp_dept")
+}
+
+model CoreEmpPosition {
+  id         String   @id
+  employeeId String
+  positionId String
+  isPrimary  Boolean  @default(true)
+  validFrom  DateTime @default(now())
+  validTo    DateTime?
+  reason     String?
+
+  @@index([employeeId, validTo])
+  @@map("core_emp_position")
+}
+
+model CoreEmpRegion {
+  id             String   @id
+  employeeId     String
+  regionId       String
+  responsibility String   @default("PRIMARY")
+  validFrom      DateTime @default(now())
+  validTo        DateTime?
+  reason         String?
+
+  @@index([employeeId, validTo])
+  @@map("core_emp_region")
+}
+
+model CoreTeamMember {
+  id         String   @id
+  teamId     String
+  employeeId String
+  role       String   @default("MEMBER")
+  validFrom  DateTime @default(now())
+  validTo    DateTime?
+
+  @@map("core_team_member")
+}
+
+model CoreReportLine {
+  id         String   @id
+  employeeId String
+  managerId  String
+  type       String   @default("DIRECT")
+  validFrom  DateTime @default(now())
+  validTo    DateTime?
+
+  @@map("core_report_line")
+}
+
+model CoreUserLink {
+  authUserId String   @id
+  employeeId String   @unique
+  createdAt  DateTime @default(now())
+
+  @@map("core_user_link")
+}
+
+model CoreServiceAccount {
+  id          String    @id
+  key         String    @unique
+  name        String    @default("")
+  description String?
+  active      Boolean   @default(true)
+  lastUsedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@map("core_service_account")
+}
+
+model CoreRole {
+  id          String   @id
+  key         String   @unique
+  name        String   @default("")
+  description String?
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("core_role")
+}
+
+model CorePositionRole {
+  positionId String
+  roleId     String
+
+  @@id([positionId, roleId])
+  @@map("core_position_role")
+}
+
+model CoreEmpRole {
+  id         String   @id
+  employeeId String
+  roleId     String
+  reason     String?
+  validFrom  DateTime @default(now())
+  validTo    DateTime?
+
+  @@map("core_emp_role")
+}
+
+model CorePermRule {
+  id         String   @id
+  roleId     String
+  entityType String
+  fieldName  String   @default("*")
+  action     String
+  scope      String   @default("OWN")
+  effect     String   @default("ALLOW")
+  conditions String?
+  priority   Int      @default(100)
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([roleId, entityType, action])
+  @@map("core_perm_rule")
+}
+
+model CoreAccessConfig {
+  entityType      String   @id
+  ownerField      String?
+  regionField     String?
+  departmentField String?
+  customerField   String?
+  sensitivity     String   @default("NORMAL")
+  logViews        Boolean  @default(true)
+  updatedAt       DateTime @updatedAt
+
+  @@map("core_access_config")
+}
+
+model CoreFieldPolicy {
+  id                   String   @id
+  entityType           String
+  fieldName            String
+  editable             Boolean  @default(true)
+  derived              Boolean  @default(false)
+  requiresApprovalType String?
+  sensitivity          String   @default("NORMAL")
+  notes                String?
+  updatedAt            DateTime @updatedAt
+
+  @@unique([entityType, fieldName])
+  @@map("core_field_policy")
+}
+
+model CoreSeries {
+  key        String @id
+  nextNumber Int    @default(1)
+
+  @@map("core_series")
+}

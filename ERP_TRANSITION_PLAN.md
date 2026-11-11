@@ -222,12 +222,12 @@ Port `bui-crm-v2/scripts/schema-guard.mjs` → `founder-os_backend/scripts/core-
 
 ---
 
-## 13. Open decisions (need founder call)
+## 13. Open decisions — DECIDED 2026-11-11 with founder
 
-1. `core_employee` code format: keep roster UUIDs or new `EMP-0001` series? (Recommend: keep UUIDs, add human `employeeCode`.)
-2. Finance cut-over month: next 1st or next quarter 1st? (Recommend: next month 1st, parallel run starts now.)
-3. Cost/margin visibility: TL sees own-team margin? (Recommend: no — SENSITIVE, logged, head-only.)
-4. File bytes: stay in KV/R2 as today with metadata in `core_attachment`, or move to R2 only? (Recommend: stay, `storageKey` abstracts it.)
+1. `core_employee` code format: **UUID PK + human `employeeCode` (EMP-0001 series)** for display. Zero FK remapping.
+2. Finance cut-over: **parallel-run month starts 1 Dec 2026** (backfill + dual-write now; one month parallel; Zoho read-only from 1 Jan 2027). CA sign-off on chart of accounts, GST rates, e-invoice applicability due before 1 Dec.
+3. Cost/margin visibility: **unitCost/margin visible to MD-role person ONLY** — new `MD` position + `md` role seeded dormant in Phase 1 (no holder yet). Sales-head + TL see targets/revenue exactly as today's dashboard (no margin change).
+4. File bytes: **stay in KV/R2 as today**, `storageKey` abstracts. `core_attachment` holds metadata only.
 
 ---
 
