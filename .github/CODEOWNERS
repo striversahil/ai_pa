@@ -1,0 +1,7 @@
+# Core lock: every change under these paths requires owner review.
+# Agents must never loosen this file; proposals go in docs/core-change-requests/.
+/founder-os_backend/prisma/core/ @striversahil
+/founder-os_backend/migrations/0125_core_foundation.sql @striversahil
+/founder-os_backend/src/modules/core/ @striversahil
+/founder-os_backend/src/worker/routes/work.ts @striversahil
+/founder-os_backend/scripts/core-guard.mjs @striversahil

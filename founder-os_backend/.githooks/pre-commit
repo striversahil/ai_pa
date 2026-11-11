@@ -1,0 +1,7 @@
+#!/bin/sh
+# Pre-commit: enforce the ERP core lock. Blocks commits that touch locked
+# core files without a re-signed prisma/core.lock, or write core_* outside
+# src/modules/core/. Bypass NEVER (no --no-verify).
+set -e
+cd "$(git rev-parse --show-toplevel)/founder-os_backend" 2>/dev/null || exit 0
+node scripts/core-guard.mjs
