@@ -218,6 +218,7 @@ const DATE_FIELDS: Record<string, string[]> = {
   CoreEmpRole: ['validFrom', 'validTo'],
   CorePermRule: ['createdAt', 'updatedAt'],
   CoreAccessConfig: ['updatedAt'],
+  CoreCustomer: ['lastEstimateDate', 'lastSalesOrderDate', 'reviewedAt', 'createdAt', 'updatedAt'],
   CoreFieldPolicy: ['updatedAt'],
   HlpDashboard: ['createdAt', 'updatedAt'],
   HlpWidget: [],
@@ -360,6 +361,7 @@ const ID_FIELDS: Record<string, string> = {
   CoreEmpRole: 'id',
   CorePermRule: 'id',
   CoreAccessConfig: 'entityType',
+  CoreCustomer: 'id',
   CoreFieldPolicy: 'id',
   CoreSeries: 'key',
   HlpDashboard: 'id',
@@ -397,6 +399,7 @@ const UNIQUE_FIELDS: Record<string, string[]> = {
   CoreRole: ['key'],
   CoreServiceAccount: ['key'],
   CoreUserLink: ['employeeId'],
+  CoreCustomer: ['zohoCustomerId'],
   CoreFieldPolicy: ['entityType', 'fieldName'],
   DeviceRegistration: ['tokenHash'],
   DeviceCall: ['idempotencyKey'],
@@ -1107,6 +1110,7 @@ export class D1PrismaClient {
   get coreUserLink() { return this.model('CoreUserLink'); }
   get coreAction() { return this.model('CoreAction'); }
   get coreAuditEvent() { return this.model('CoreAuditEvent'); }
+  get coreCustomer() { return this.model('CoreCustomer'); }
   get coreSeries() { return this.model('CoreSeries'); }
   get waTask() { return this.model('WaTask'); }
   get messageLineage() { return this.model('MessageLineage'); }

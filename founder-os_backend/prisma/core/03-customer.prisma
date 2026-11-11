@@ -1,0 +1,55 @@
+// prisma/core/03-customer.prisma — CANONICAL customer spine (Phase 3a).
+// NOT yet wired to the Prisma generator. D1 reality: 0127_core_customer.sql.
+// Locked by prisma/core.lock + scripts/core-guard.mjs — humans only.
+//
+// core_customer.id REUSES MasterCustomer.id (Zoho customer id or synthetic
+// CB-… id). 1:1 mirror in Phase 3a — merging duplicate groups stays a human
+// review step. Hard-delete → status='DELETED' tombstone (never row-deleted).
+// Zoho identity lives in core_zoho_link (system='zoho', entityType='customer').
+
+model CoreCustomer {
+  id                  String  @id
+  zohoCustomerId      String  @unique
+  region              String  @default("")
+  zone                String  @default("")
+  subArea             String  @default("")
+  state               String  @default("")
+  pincode             String?
+  displayName         String  @default("")
+  companyName         String  @default("")
+  customerType        String  @default("")
+  customerTypeBase    String  @default("")
+  customerTypeTag     String  @default("")
+  status              String  @default("Active")
+  contactPerson       String?
+  designation         String?
+  phonesJson          String  @default("[]")
+  emailsJson          String  @default("[]")
+  billingAddress      String?
+  gstin               String?
+  owner               String?
+  pipelineStage       String  @default("")
+  estimateCount       Int     @default(0)
+  lastEstimateDate    DateTime?
+  salesOrderCount     Int     @default(0)
+  lastSalesOrderDate  DateTime?
+  cityZoho            String?
+  cityVerified        String?
+  citySource          String?
+  locationBasis       String?
+  duplicateGroup      String?
+  duplicateConfidence String?
+  suggestedAction     String?
+  duplicateReview     String  @default("open")
+  reviewedBy          String  @default("")
+  reviewedAt          DateTime?
+  notes               String  @default("")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([region])
+  @@index([state])
+  @@index([status])
+  @@index([duplicateGroup])
+  @@map("core_customer")
+}

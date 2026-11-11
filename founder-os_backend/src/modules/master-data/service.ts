@@ -20,6 +20,7 @@ import {
   MANAGER_ONLY_FIELDS, markDuplicateGroupRow, deleteCustomerRow, PATCH_COLUMNS, listCustomerIds,
   masterDb,
 } from './store';
+import { mirrorCustomers, mirrorCustomerRemoved } from '../core/customers';
 
 export const MASTER_CACHE_KEY = 'master:data:v2';
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -269,6 +270,8 @@ export async function updateCustomer(
   if (typeTouched) {
     try { await cacheDelPrefix('telecalling:dashboard'); } catch { /* non-fatal */ }
   }
+  // Phase 3a dual-write: project the edited row into core_customer (never throws).
+  await mirrorCustomers({ ids: [key] });
   return getCustomerDetail(key);
 }
 
@@ -287,6 +290,8 @@ export async function setDuplicateReview(
     detail: { review, rows: changed },
   });
   await invalidateMasterDataCache();
+  // Phase 3a dual-write: project the reviewed group into core_customer.
+  await mirrorCustomers({ group: g });
   return { group: g, review, changed };
 }
 
@@ -322,6 +327,8 @@ export async function deleteCustomer(
   });
   await invalidateMasterDataCache();
   try { await cacheDelPrefix('telecalling:dashboard'); } catch { /* non-fatal */ }
+  // Phase 3a dual-write: tombstone the core row (never row-deleted).
+  await mirrorCustomerRemoved(key, name);
   return { id: key, name };
 }
 
@@ -348,6 +355,8 @@ export async function importMasterData(json: unknown, actor: Actor): Promise<Mas
   }
   await upsertRegions(parsed.regions);
   await upsertCustomers(parsed.customers);
+  // Phase 3a dual-write: project the imported batch into core_customer.
+  await mirrorCustomers({ ids: parsed.customers.map((c) => c.id) });
   await insertAudit({
     actorId: actor.id, actorName: actor.name, action: 'import', entityId: 'master',
     detail: { received: parsed.customers.length, inserted, updated, skipped: parsed.skipped, regions: parsed.regions.length },
