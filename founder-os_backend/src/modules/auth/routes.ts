@@ -29,6 +29,11 @@ import {
   type RosterSnapshot,
 } from "./positions";
 import {
+  resolveCoreAutoPosition,
+  isCoreMismatch,
+  type CoreSnapshot,
+} from "./positions-shadow";
+import {
   cleanProfilePatch,
   setUserProfile as svcSetUserProfile,
 } from "./service";
@@ -310,10 +315,19 @@ export async function authUserPositions(
   store: AuthStore,
   cookieHeader: string | null,
   loadRosters: () => Promise<RosterSnapshot>,
+  loadCore?: () => Promise<CoreSnapshot | null>,
 ): Promise<AuthResult> {
   try {
     await asUserManager(store, cookieHeader);
     const rosters = await loadRosters();
+    // Phase 1 shadow: core-backed resolution for diff logging only. Served
+    // values stay roster-derived; mismatches gain an internal coreMismatch
+    // marker (never user-visible guidance). Null when core is unavailable
+    // (Express) or the read fails — shadow must never break the endpoint.
+    let core: CoreSnapshot | null = null;
+    try {
+      core = await loadCore?.() ?? null;
+    } catch { core = null; }
     const users = (await listUsers(store)).filter((u: any) => !isTargetRoot(u));
     const out: Record<string, {
       position: string;
@@ -322,6 +336,7 @@ export async function authUserPositions(
       auto: string;
       override: string | null;
       suggestedScopes: string[];
+      coreMismatch?: { auto: string; via: string };
     }> = {};
     for (const u of users as any[]) {
       const scopes: string[] = [...(u.scopes ?? [])];
@@ -334,7 +349,16 @@ export async function authUserPositions(
       } catch { /* snapshot best-effort — direct scopes still resolve */ }
       const override = (u.positionOverride ?? null) as string | null;
       const r = resolveOrgPosition({ email: u.email, scopes, override }, rosters);
-      out[u.id] = { ...r, override, suggestedScopes: POSITION_SUGGESTED_SCOPES[r.position] ?? [] };
+      const entry = { ...r, override, suggestedScopes: POSITION_SUGGESTED_SCOPES[r.position] ?? [] } as (typeof out)[string];
+      if (core) {
+        try {
+          const c = resolveCoreAutoPosition({ email: u.email, scopes, override }, core);
+          if (isCoreMismatch(r.auto, c)) {
+            entry.coreMismatch = { auto: c.position, via: c.via };
+          }
+        } catch { /* shadow compare never breaks the served value */ }
+      }
+      out[u.id] = entry;
     }
     return json(200, { positions: out });
   } catch (e: any) {

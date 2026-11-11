@@ -48,6 +48,31 @@ export function registerAuthRoutes(app: Hono<{ Bindings: Bindings }>): void {
         marketers: (mkts as any[]).map((r) => ({ email: r.email ?? null, name: r.name ?? null, role: r.role ?? null })),
         hrMembers: (hrs as any[]).map((r) => ({ email: r.email ?? null, loginEmail: r.loginEmail ?? null, name: r.name ?? null })),
       };
+    }, async () => {
+      // Phase 1 shadow: core-backed snapshot for diff logging only. Any
+      // failure → null → endpoint serves pure roster values as before.
+      try {
+        const { prisma } = deps();
+        const p: any = prisma as any;
+        if (typeof p.coreEmployee?.findMany !== 'function') return null;
+        const [emps, links] = await Promise.all([
+          p.coreEmployee.findMany({}).catch(() => []),
+          p.coreEmpPosition.findMany({}).catch(() => []),
+        ]);
+        const primaryByEmp = new Map<string, string>();
+        for (const a of links as any[]) {
+          if (a?.employeeId && a?.positionId && !a?.validTo && !primaryByEmp.has(a.employeeId)) {
+            primaryByEmp.set(a.employeeId, a.positionId);
+          }
+        }
+        return {
+          employees: (emps as any[]).map((e) => ({
+            workEmail: e.workEmail ?? null,
+            positionCode: String(primaryByEmp.get(e.id) ?? '').replace(/^pos-/, '').replace(/-/g, '_'),
+            grade: e.grade ?? null,
+          })),
+        };
+      } catch { return null; }
     });
     return c.json(r.body, r.status as any);
   });
