@@ -359,3 +359,130 @@ function hashSig(s: string): string {
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
   return h.toString(36);
 }
+
+// ── Phase 3e: close-credit dual ledger (1:1 mirror of TelecallerScoreEvent) ──
+// Single funnel: recordScoreEvent (scoring.ts) calls mirrorCreditRow with the
+// same id; deleteCloseHistory (reset purge) calls mirrorCreditPurge. Both are
+// best-effort and Dual-runtime safe (no-op wherever D1 is unavailable).
+
+export interface CreditRow {
+  id: string;
+  telecallerId: string;
+  estimateId: string;
+  kind: string;
+  delta: number;
+  day: string;
+  reason: string | null;
+  createdAt: string;
+}
+
+export async function mirrorCreditRow(row: CreditRow): Promise<void> {
+  try {
+    const db = getD1Database();
+    if (!db || !row.id) return;
+    await db.prepare(
+      `INSERT OR IGNORE INTO "core_credit" ("id", "telecallerId", "estimateId", "kind", "delta", "day", "reason", "createdAt") VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(row.id, String(row.telecallerId ?? ''), String(row.estimateId ?? ''), String(row.kind ?? ''),
+      Number(row.delta) || 0, String(row.day ?? ''), row.reason ?? null, row.createdAt).run();
+  } catch (e: any) {
+    try {
+      logger.warn({ err: e?.message }, 'mirrorCreditRow failed (non-blocking)');
+    } catch { /* never throw */ }
+  }
+}
+
+export async function mirrorCreditPurge(ids: string[]): Promise<void> {
+  try {
+    const db = getD1Database();
+    const clean = [...new Set((ids ?? []).map((s) => String(s ?? '')).filter(Boolean))];
+    if (!db || !clean.length) return;
+    for (let i = 0; i < clean.length; i += 50) {
+      const slice = clean.slice(i, i + 50);
+      await db.prepare(`DELETE FROM "core_credit" WHERE "id" IN (${slice.map(() => '?').join(',')})`)
+        .bind(...slice).run();
+    }
+  } catch (e: any) {
+    try {
+      logger.warn({ err: e?.message }, 'mirrorCreditPurge failed (non-blocking)');
+    } catch { /* never throw */ }
+  }
+}
+
+// ── Phase 3e: ledger shadow (per-estimate per-kind, paise-exact) ─────────────
+// Compares SUM(delta) GROUP BY (estimateId, kind) across the full history of
+// both ledgers. Pre-3c rows exist in both (backfilled) so the whole history
+// must match, not just new closes. Log-only `ledger-shadow` DIFF rows,
+// sig-deduped, throttled. The human-confirmed stop needs 7 days of closes
+// with zero DIFFs — reviewers check the `closesSeen` count, not just silence.
+
+let lastLedgerShadowAt = 0;
+
+async function ledgerSums(db: any, table: string): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  const idCol = table === 'core_credit' ? '"id"' : '"id"';
+  let cursor = '';
+  for (let page = 0; page < 40; page++) {
+    const res = await db.prepare(
+      `SELECT ${idCol} AS "i", "estimateId", "kind", "delta" FROM "${table}" WHERE "id" > ? ORDER BY "id" LIMIT 500`,
+    ).bind(cursor).all().catch(() => null);
+    const rows: any[] = ((res as any)?.results ?? []);
+    if (!rows.length) break;
+    for (const r of rows) {
+      const key = `${String(r.estimateId ?? '')}	${String(r.kind ?? '')}`;
+      out.set(key, (out.get(key) ?? 0) + (Number(r.delta) || 0));
+    }
+    cursor = String(rows[rows.length - 1]?.i ?? '');
+    if (rows.length < 500) break;
+  }
+  return out;
+}
+
+export async function shadowCompareLedger(): Promise<{ diffs: number; closesSeen: number }> {
+  const out = { diffs: 0, closesSeen: 0 };
+  try {
+    const now = Date.now();
+    if (now - lastLedgerShadowAt < 5 * 60 * 1000) return out;
+    lastLedgerShadowAt = now;
+    const db = getD1Database();
+    if (!db) return out;
+    const [legacy, core] = await Promise.all([ledgerSums(db, 'TelecallerScoreEvent'), ledgerSums(db, 'core_credit')]);
+    const keys = new Set([...legacy.keys(), ...core.keys()]);
+    const mismatches: Array<{ key: string; legacy: number; core: number }> = [];
+    for (const k of keys) {
+      const a = legacy.get(k) ?? 0;
+      const b = core.get(k) ?? 0;
+      if (a !== b) mismatches.push({ key: k, legacy: a, core: b });
+    }
+    out.diffs = mismatches.length;
+    // closesSeen: distinct estimates with a close-kind row in the last 7 days
+    // (the matching-week clock only advances when closes actually happen).
+    try {
+      const weekAgo = new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10);
+      const res = await db.prepare(
+        `SELECT COUNT(DISTINCT "estimateId") AS "n" FROM "TelecallerScoreEvent" WHERE "day" >= ? AND ("kind" IN ('generator', 'closer') OR ("kind" = '' AND "delta" > 0))`,
+      ).bind(weekAgo).all().catch(() => null);
+      out.closesSeen = Number(((res as any)?.results ?? [])[0]?.n ?? 0) || 0;
+    } catch { /* closesSeen best-effort */ }
+    if (!mismatches.length) return out; // quiet run
+    const sig = hashSig(JSON.stringify(mismatches));
+    const recent: any[] = await db.prepare(
+      `SELECT "detail" FROM "core_system_job" WHERE "key" = 'ledger-shadow' ORDER BY "startedAt" DESC LIMIT 5`,
+    ).all().then((r: any) => r?.results ?? []).catch(() => []);
+    for (const j of recent) {
+      try {
+        if (JSON.parse(String((j as any)?.detail ?? '{}')).sig === sig) return out;
+      } catch { /* keep looking */ }
+    }
+    await db.prepare(
+      `INSERT INTO "core_system_job" ("id", "key", "status", "startedAt", "finishedAt", "detail") VALUES (?, 'ledger-shadow', 'DIFF', ?, ?, ?)`,
+    ).bind(newId(), nowIso(), nowIso(), JSON.stringify({
+      sig, groups: keys.size, mismatches: mismatches.length, closesSeen: out.closesSeen,
+      sample: mismatches.slice(0, 50),
+    })).run();
+  } catch (e: any) {
+    try {
+      logger.warn({ err: e?.message }, 'shadowCompareLedger failed (non-blocking)');
+    } catch { /* never throw */ }
+  }
+  return out;
+}

@@ -53,3 +53,21 @@ model CoreEnquiry {
   @@index([status])
   @@map("core_enquiry")
 }
+
+// 1:1 mirror of TelecallerScoreEvent (Phase 3e). id reused. Legacy writes stop
+// only on human confirmation after a matching week — see sales-shadow/ledger.
+model CoreCredit {
+  id           String   @id
+  telecallerId String   @default("")
+  estimateId   String   @default("")
+  kind         String   @default("")
+  delta        Int      @default(0)
+  day          String   @default("")
+  reason       String?
+  createdAt    DateTime @default(now())
+
+  @@index([estimateId])
+  @@index([telecallerId])
+  @@index([day])
+  @@map("core_credit")
+}

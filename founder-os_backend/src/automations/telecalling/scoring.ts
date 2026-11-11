@@ -69,12 +69,22 @@ async function setEpochDate(day: string): Promise<void> {
 /**
  * Append a score event to the ledger. day is the IST date the event happened.
  * Idempotent callers guard duplicates at the call site.
+ * Phase 3e dual-write: the same row mirrors into core_credit (id reused, 1:1
+ * shape). The mirror never throws and no-ops off-Worker; legacy stays the
+ * read truth until the human-confirmed flip after a matching week.
  */
 async function recordScoreEvent(telecallerId: string, estimateId: string, kind: string, delta: number, day: string, reason: string | null = null): Promise<void> {
   try {
+    const g: any = globalThis as any;
+    const id = g.crypto?.randomUUID ? g.crypto.randomUUID() : `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
     await prisma.telecallerScoreEvent.create({
-      data: { telecallerId, estimateId, kind, delta, day, reason, createdAt: new Date() },
+      data: { id, telecallerId, estimateId, kind, delta, day, reason, createdAt: new Date() },
     });
+    // Phase 3e dual-write via the core service (the only core_* writer).
+    try {
+      const { mirrorCreditRow } = await import('../../modules/core/sales');
+      await mirrorCreditRow({ id, telecallerId, estimateId, kind, delta, day, reason, createdAt: new Date().toISOString() });
+    } catch { /* mirror best-effort — legacy row is already committed */ }
   } catch (e: any) {
     logger.warn({ err: e?.message, estimateId }, 'recordScoreEvent failed — continuing without event');
   }
@@ -198,6 +208,12 @@ export async function deleteCloseHistory(
           where: { id: { in: ids.slice(i, i + IN_BATCH) } },
         });
       }
+      // Phase 3e dual-write: a reset purge mirrors the purge in core_credit
+      // (same ids) so the shadow keeps comparing identical sets.
+      try {
+        const { mirrorCreditPurge } = await import('../../modules/core/sales');
+        await mirrorCreditPurge(ids);
+      } catch { /* mirror best-effort */ }
       await setEpochDate(istDate());
     }
     const epoch = dryRun ? await getEpochDate() : istDate();

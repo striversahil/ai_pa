@@ -221,6 +221,7 @@ const DATE_FIELDS: Record<string, string[]> = {
   CoreCustomer: ['lastEstimateDate', 'lastSalesOrderDate', 'reviewedAt', 'createdAt', 'updatedAt'],
   CoreSale: ['createdAt', 'updatedAt'],
   CoreEnquiry: ['createdAt', 'updatedAt'],
+  CoreCredit: ['createdAt'],
   CoreFieldPolicy: ['updatedAt'],
   HlpDashboard: ['createdAt', 'updatedAt'],
   HlpWidget: [],
@@ -366,6 +367,7 @@ const ID_FIELDS: Record<string, string> = {
   CoreCustomer: 'id',
   CoreSale: 'id',
   CoreEnquiry: 'id',
+  CoreCredit: 'id',
   CoreFieldPolicy: 'id',
   CoreSeries: 'key',
   HlpDashboard: 'id',
@@ -1117,6 +1119,7 @@ export class D1PrismaClient {
   get coreCustomer() { return this.model('CoreCustomer'); }
   get coreSale() { return this.model('CoreSale'); }
   get coreEnquiry() { return this.model('CoreEnquiry'); }
+  get coreCredit() { return this.model('CoreCredit'); }
   get coreSeries() { return this.model('CoreSeries'); }
   get waTask() { return this.model('WaTask'); }
   get messageLineage() { return this.model('MessageLineage'); }

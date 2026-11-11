@@ -1622,9 +1622,11 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   // live Estimate headers + close ledger vs score events. Served values never
   // change — diffs log as `sales-shadow` SystemJob rows. Flip gate: one
   // matching week (7 days of closes with zero DIFF rows).
+  // Phase 3e ledger shadow: per-estimate per-kind sums, legacy vs core_credit.
   try {
-    const { shadowCompareSales } = await import('../../modules/core/sales');
+    const { shadowCompareSales, shadowCompareLedger } = await import('../../modules/core/sales');
     await shadowCompareSales();
+    await shadowCompareLedger();
   } catch { /* never block the leaderboard */ }
   return {
     meta: {
