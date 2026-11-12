@@ -29,8 +29,8 @@ export default function InvoicesTab({
   const { order, move } = useColumnOrder("pt:invoice-columns:v2", DEFAULT_COLUMNS);
   const [zipBusy, setZipBusy] = useState(false);
   const [zipReport, setZipReport] = useState<null | {
-    total: number; attached: number; failed: { fileName: string; error: string }[];
-    ambiguous: { fileName: string; trailing: string }[]; unmapped: { fileName: string; trailing: string }[];
+    total: number; attached: number; skipped: number; failed: { fileName: string; error: string }[];
+    ambiguous: { fileName: string; trailing: string; fileFy: string }[]; unmapped: { fileName: string; trailing: string; fileFy: string; note: string }[];
   }>(null);
   const zipInput = useRef<HTMLInputElement | null>(null);
 
@@ -77,7 +77,7 @@ export default function InvoicesTab({
           failed.push({ fileName: name, error: e?.message ?? "upload failed" });
         }
       }
-      setZipReport({ total: origNames.length, attached, failed, ambiguous: plan.ambiguous, unmapped: plan.unmapped });
+      setZipReport({ total: origNames.length, attached, skipped: plan.skippedAlreadyAttached ?? 0, failed, ambiguous: plan.ambiguous, unmapped: plan.unmapped });
       onChanged?.();
     } catch (e: any) {
       alert(e?.message ?? "Zip upload failed");
@@ -287,6 +287,7 @@ export default function InvoicesTab({
             <span className="font-bold text-indigo-600 dark:text-indigo-300">
               Zip import: {zipReport.attached} attached of {zipReport.total}
             </span>
+            {zipReport.skipped > 0 && <span> · {zipReport.skipped} already had a PDF (skipped)</span>}
             {zipReport.failed.length > 0 && <span> · {zipReport.failed.length} failed</span>}
             {zipReport.ambiguous.length > 0 && <span> · {zipReport.ambiguous.length} ambiguous (open the invoice to attach manually)</span>}
             {zipReport.unmapped.length > 0 && <span> · {zipReport.unmapped.length} unmatched</span>}
@@ -294,8 +295,8 @@ export default function InvoicesTab({
               <details className="mt-1">
                 <summary className="cursor-pointer font-semibold text-indigo-500">Review files needing manual attach</summary>
                 <ul className="mt-1 max-h-40 space-y-0.5 overflow-auto font-mono text-[11px]">
-                  {zipReport.ambiguous.map((a) => <li key={a.fileName}>⚠ {a.fileName} — {a.trailing} matches several invoices</li>)}
-                  {zipReport.unmapped.map((u) => <li key={u.fileName}>○ {u.fileName} — no invoice ends in {u.trailing || "?"}</li>)}
+                  {zipReport.ambiguous.map((a) => <li key={a.fileName}>⚠ {a.fileName} — #{a.trailing || "?"} matches several FY{a.fileFy ? ` ${a.fileFy}` : ""} invoices</li>)}
+                  {zipReport.unmapped.map((u) => <li key={u.fileName}>○ {u.fileName} — {u.note || `no invoice ends in ${u.trailing || "?"}`}</li>)}
                 </ul>
               </details>
             )}

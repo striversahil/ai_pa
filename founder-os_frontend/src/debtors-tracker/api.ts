@@ -2,6 +2,9 @@
  * Debtors Tracker — dashboard mutations (row editor + corrections).
  * Mirrors the worker routes in
  * founder-os_backend/src/worker/routes/debtors-tracker.ts (accounts scope).
+ * `ZipPlan` mirrors `ZipMatchPlan` in
+ * founder-os_backend/src/automations/debtors-tracker/attachments.ts — keep
+ * the shapes identical (matching is FY + trailing number).
  */
 
 import type { CustomerLedger, CustomerRemark, DebtorsTrackerPayload } from "./types";
@@ -102,8 +105,9 @@ export async function deleteInvoiceAttachment(attachmentId: string): Promise<voi
 
 export interface ZipPlan {
   matched: { invoiceId: string; invoiceNo: string; customerName: string; fileName: string }[];
-  ambiguous: { fileName: string; trailing: string; candidates: { invoiceId: string; invoiceNo: string; customerName: string }[] }[];
-  unmapped: { fileName: string; trailing: string }[];
+  ambiguous: { fileName: string; trailing: string; fileFy: string; candidates: { invoiceId: string; invoiceNo: string; invoiceFy: string; customerName: string }[] }[];
+  unmapped: { fileName: string; trailing: string; fileFy: string; note: string }[];
+  skippedAlreadyAttached: number;
 }
 
 /** Bulk-zip step 1: send unzipped PDF filenames, get the match plan. */

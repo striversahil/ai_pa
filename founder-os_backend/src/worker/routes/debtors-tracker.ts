@@ -401,7 +401,8 @@ function registerDebtorsTrackerPrefix(app: Hono<{ Bindings: Bindings }>, prefix:
   });
 
   // Bulk ZIP import, step 1 (planning): the dashboard unzips locally (browser)
-  // and POSTs `{ files: [fileName...] }`. Matching is by trailing number;
+  // and POSTs `{ files: [fileName...] }`. Matching is FY + trailing number
+  // (serials restart every FY, so the number alone is not unique);
   // ambiguous/unmapped entries are reported for manual follow-up — the client
   // then uploads only the matched PDFs one by one to the single-attach route
   // above. Server-side zip parsing is avoided on purpose (Worker-safe).
