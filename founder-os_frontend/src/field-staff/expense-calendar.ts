@@ -12,8 +12,7 @@ const MONTHS_LONG = [
   "July", "August", "September", "October", "November", "December",
 ];
 
-export const inr = (n: number | null | undefined) =>
-  n === null || n === undefined || !Number.isFinite(n) ? "—" : `₹${Number(n).toLocaleString("en-IN")}`;
+export { inr } from "@/lib/format";
 
 export function inrShort(n: number | null | undefined): string {
   if (n === null || n === undefined || !Number.isFinite(n)) return "—";
@@ -43,11 +42,7 @@ export function istToday(): string {
 }
 
 /** "2026-11-05" → "5 Nov". */
-export function fmtDay(date: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(date);
-  if (!m) return date;
-  return `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]}`;
-}
+export { fmtDay } from "@/lib/format";
 
 export function fmtDayLong(date: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(date);

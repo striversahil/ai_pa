@@ -6,6 +6,7 @@
 import React, { useMemo, useState } from 'react';
 import { useLiveDashboard } from '@/hooks/useLiveData';
 import { useAuth } from '@/auth/AuthContext';
+import { fmtDayYear as fmtDay } from "@/lib/format";
 
 interface Attachment { id: string; entryId: string | null; fileName: string; mime: string; size: number; uploadedBy: string; createdAt: string; url: string; }
 interface Entry { id: string; date: string; note: string; updatedBy: string; createdAt: string; updatedAt: string; attachments: Attachment[]; }
@@ -15,12 +16,7 @@ interface Payload { rows: Row[]; total: number; generatedAt: string; }
 const inputCls = 'w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-3 py-2 text-sm outline-none focus:border-indigo-500';
 const labelCls = 'text-xs font-bold text-zinc-600 dark:text-zinc-300';
 
-function fmtDay(iso: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
-  if (!m) return String(iso || '—');
-  const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  return `${Number(m[3])} ${MO[Number(m[2]) - 1] ?? m[2]} ${m[1]}`;
-}
+
 function fmtDayNum(iso: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
   return m ? String(Number(m[3])) : '·';

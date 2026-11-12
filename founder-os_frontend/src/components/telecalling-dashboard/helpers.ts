@@ -313,13 +313,7 @@ export function convTier(
 
 // "2026-09-07" → "7 Sep" (short, human-friendly). Tolerates a missing/partial
 // date by returning the raw string unchanged.
-export function fmtDate(iso: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
-  if (!m) return iso;
-  const [, , mo, d] = m;
-  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  return `${Number(d)} ${MONTHS[Number(mo) - 1] ?? mo}`;
-}
+export { fmtDayMonth as fmtDate } from "@/lib/format";
 
 export const LIGHT_TEXT: Record<string, string> = {
   green: "text-emerald-400",

@@ -12,8 +12,4 @@ export function isProcurementPending(e: Enquiry): boolean {
 export const byNewest = (a: Enquiry, b: Enquiry): number =>
   String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? ""));
 
-export const fmtDate = (iso?: string): string => {
-  if (!iso) return "";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
-};
+export { fmtShortDate as fmtDate } from "@/lib/format";

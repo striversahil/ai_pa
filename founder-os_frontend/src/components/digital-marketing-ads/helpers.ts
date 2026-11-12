@@ -2,8 +2,7 @@
 // DigitalMarketingAds.tsx re-exports everything public here, so existing imports keep working.
 import type { AdType } from "./types";
 
-export const inr = (n: number | null | undefined) =>
-  n === null || n === undefined ? '—' : `₹${Math.round(n).toLocaleString('en-IN')}`;
+export { inrRounded as inr } from "@/lib/format";
 
 export const int = (n: number | null | undefined) =>
   n === null || n === undefined ? '—' : Math.round(n).toLocaleString('en-IN');
@@ -17,12 +16,7 @@ export const TYPE_META: Record<AdType, { label: string; icon: string; badge: str
   other: { label: 'Other', icon: '📌', badge: 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/30' },
 };
 
-export function fmtDay(iso: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
-  if (!m) return String(iso || '—');
-  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  return `${Number(m[3])} ${MONTHS[Number(m[2]) - 1] ?? m[2]} ${m[1]}`;
-}
+export { fmtDayYear as fmtDay } from "@/lib/format";
 
 export function todayIST(): string {
   try {

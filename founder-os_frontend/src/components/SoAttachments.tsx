@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import Lightbox from "@/components/Lightbox";
 import PdfViewer from "@/components/PdfViewer";
+import { fmtShortDate as fmtDate } from "@/lib/format";
 
 export type SoAttachmentKind =
   | "invoice"
@@ -54,12 +55,7 @@ const fmtSize = (n: number): string => {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 };
 
-const fmtDate = (iso?: string): string => {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "";
-  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
-};
+
 
 const isImage = (a: SoAttachment): boolean =>
   a.mime.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(a.fileName);

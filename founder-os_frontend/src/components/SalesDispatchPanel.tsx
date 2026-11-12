@@ -34,9 +34,9 @@ import { earliestCommittedDate, orderFlags } from "@/crm/queue";
 import { REGIONS } from "@/telecalling/regions";
 import { TabBar } from "@/components/ui";
 import { BTN, CARD, LABEL, NUM, PILL } from "@/components/telecalling/surface";
+import { inrWhole as inr } from "@/lib/format";
 
-const inr = (n: number | null | undefined) =>
-  `₹${Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
+
 
 /** "26 Oct 2026" — dates on the cards carry their year, like the SO panel. */
 const dayLabel = (d: string | null | undefined) => {

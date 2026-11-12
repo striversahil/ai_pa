@@ -18,8 +18,7 @@ export async function uploadProofFile(soNumber: string, kind: string, file: File
   return id;
 }
 
-export const inr = (n: number | null | undefined) =>
-  `₹${Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
+export { inrWhole as inr } from "@/lib/format";
 
 /** "26 Oct 2026" — every date in this panel carries its year. The dispatch
  *  window is 30 days wide, so day+month alone reads ambiguous at a glance. */

@@ -14,4 +14,4 @@ export function abcBadge(a: string) {
   return <span className={`px-1.5 py-0.5 text-[10px] font-bold rounded border ${c}`}>{a}</span>;
 }
 
-export const inr = (n: number) => `₹${Math.round(Number(n) || 0).toLocaleString('en-IN')}`;
+export { inrRoundedOrZero as inr } from "@/lib/format";

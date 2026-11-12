@@ -15,32 +15,15 @@ const MONTHS_LONG = [
   "July", "August", "September", "October", "November", "December",
 ];
 
-export const inr = (n: number | null | undefined) =>
-  n === null || n === undefined || !Number.isFinite(n) ? "—" : `₹${Number(n).toLocaleString("en-IN")}`;
+import { inr } from "@/lib/format";
+export { inr };
 
 /**
  * Compact rupee notation for tight surfaces (top tab bar badges): 46,099 → ₹46K,
  * 1,00,000 → ₹1L, 2,50,00,000 → ₹2.5Cr. Full figures stay in the tooltip.
  * Indian grouping: 1 lakh = 1e5, 1 crore = 1e7.
  */
-export function inrShort(n: number | null | undefined): string {
-  if (n === null || n === undefined || !Number.isFinite(n)) return "—";
-  const v = Number(n);
-  if (v === 0) return "₹0";
-  const abs = Math.abs(v);
-  const sign = v < 0 ? "-" : "";
-  const trim = (x: number) => (x >= 10 ? String(Math.round(x)) : String(Math.round(x * 10) / 10));
-  let scaled = abs;
-  let unit = "";
-  if (abs >= 1e7) { scaled = abs / 1e7; unit = "Cr"; }
-  else if (abs >= 1e5) { scaled = abs / 1e5; unit = "L"; }
-  else if (abs >= 1e3) { scaled = abs / 1e3; unit = "K"; }
-  else return `${sign}₹${Math.round(abs)}`;
-  // Promote when rounding carries into the next unit (99,999 → ₹1L, not ₹100K).
-  if (unit === "K" && Math.round(scaled) >= 100) { scaled /= 100; unit = "L"; }
-  if (unit === "L" && Math.round(scaled) >= 100) { scaled /= 100; unit = "Cr"; }
-  return `${sign}₹${trim(scaled)}${unit}`;
-}
+export { inrShort } from "@/lib/format";
 
 /** Today in IST as YYYY-MM-DD — the same clock the backend buckets with. */
 export function istToday(): string {
@@ -52,11 +35,7 @@ export function istToday(): string {
 }
 
 /** "2026-11-05" → "5 Nov". */
-export function fmtDay(date: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(date);
-  if (!m) return date;
-  return `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]}`;
-}
+export { fmtDay } from "@/lib/format";
 
 /** "2026-11-05" → "5 Nov 2026". */
 export function fmtDayLong(date: string): string {
