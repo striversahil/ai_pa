@@ -24,6 +24,7 @@ import { DASHBOARD_SLUGS } from '../modules/automation/dashboardSlugs';
 import { refreshNeodoveReport, istDateStr as neodoveTodayIst } from '../automations/neodove-refresh';
 import { isSystemGeneratedComment } from '../shared/systemComment';
 import { getEstimatesPayload } from '../shared/estimates-cache';
+import { getViewerMe } from './viewer';
 
 export type Bindings = {
   DB: D1Database;
@@ -273,7 +274,7 @@ export function isAuthorized(c: any): boolean {
 
 // ── Team chat (Discord-style channels) ──────────────────────────────────────
 export async function chatMe(c: any) {
-  return getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+  return getViewerMe(c);
 }
 export function chatSend(c: any, r: any) {
   if (r.live) broadcastLive(c, r.live.type, r.live.extra);
@@ -281,7 +282,7 @@ export function chatSend(c: any, r: any) {
 
 // ── Enquiry tracker (live sales pipeline) ───────────────────────────────────
 export async function enquiryMe(c: any) {
-  return getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+  return getViewerMe(c);
 }
 export function enquirySend(c: any, r: any) {
   if (r.live) broadcastLive(c, r.live.type, r.live.extra);
@@ -473,7 +474,7 @@ export function createApp(): Hono<{ Bindings: Bindings }> {
     if (!authEnabled(c.env)) return next();
     const path = new URL(c.req.url).pathname;
     if (isAuthExempt(path)) return next();
-    const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+    const me = await getViewerMe(c);
     if (!me) {
       if (c.req.header('upgrade')?.toLowerCase() === 'websocket') return c.body(null, 401);
       return c.json({ error: 'Authentication required' }, 401);

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-12T05:33:07.463Z",
+  "generatedAt": "2026-11-12T05:34:53.843Z",
   "metrics": {
     "fe.raw_fetch_api": 192,
     "fe.hardcoded_automation_data_url": 26,
@@ -8,7 +8,7 @@
     "fe.local_date_formatter": 12,
     "fe.adhoc_modal_overlay": 31,
     "fe.slug_alias_literal": 10,
-    "be.getme_boilerplate": 56,
+    "be.getme_boilerplate": 52,
     "be.autherror_catch_boilerplate": 8,
     "be.json_body_catch": 199,
     "be.local_parse_json": 2,

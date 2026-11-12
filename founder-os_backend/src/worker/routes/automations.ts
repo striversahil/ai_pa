@@ -5,37 +5,17 @@ import type { Hono } from 'hono';
 import { deps, getEntryOrReload, DASHBOARD_SLUGS, getMe, authStore, readSessionCookie, requireScope, type Bindings } from '../context';
 import { AuthError } from '../../modules/auth/types';
 import { AUTOMATION_SCOPES, accessScopesFor } from '../../modules/automation/registry-worker';
-import { resolveRosterMatch } from '../../modules/telecalling/self';
 
 function parseJson(value: string | null | undefined): unknown {
   if (!value) return null;
   try { return JSON.parse(value); } catch { return null; }
 }
 
-/**
- * Resolve the signed-in user to their Telecaller roster entry so non-admin
- * sales agents are scoped to their own telecalling data.
- *
- * Matching order:
- *   1. Exact email match (roster.email === signed-in email).
- *   2. Loose name match — normalize (lowercase, strip spaces) and accept when
- *      the signed-in name is a prefix of a roster name ("muskan" → "Muskan")
- *      or a unique short form of it ("samar" → "Samarjeet").
- *   3. No match → null (dashboard shows an empty/zero state for that user).
- */
-export async function resolveSelfTelecaller(c: any): Promise<string | null> {
-  const { prisma } = deps();
-  const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
-  if (!me) return null;
-
-  const tcs = await prisma.telecaller.findMany({ where: { deleted: false } });
-  if (tcs.length === 0) return null;
-
-  // Pure match (exact email → exact name → unique prefix → unique short form).
-  // Extracted so the CRM/sales dispatch route resolves the SAME agent identity.
-  const hit = resolveRosterMatch(tcs as any[], me);
-  return hit ? String((hit as any).id) : null;
-}
+// Moved to worker/viewer.ts (implementation: modules/telecalling/self-roster.ts).
+// Re-exported for existing importers (worker/routes/telecalling.ts,
+// modules/device-calls/scopes.ts).
+import { resolveSelfTelecaller } from '../viewer';
+export { resolveSelfTelecaller };
 
 export function registerAutomationRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.get('/api/automations', async (c) => {

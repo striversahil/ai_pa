@@ -33,3 +33,4 @@ first. Tracked as a follow-up; behavior preserved byte-for-byte here.
 
 | # | Phase | Commit | Metrics moved |
 |---|---|---|---|
+| 1 | P1 | `worker/http.ts` (readBody, authErrorResponse) + `worker/viewer.ts` (memoised getViewer); auth gate/chatMe/enquiryMe use it; resolveSelfTelecaller → `modules/telecalling/self-roster.ts` | getme 56→52 |
