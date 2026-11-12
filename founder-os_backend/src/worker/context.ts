@@ -508,6 +508,24 @@ export function createApp(): Hono<{ Bindings: Bindings }> {
     // batch create/finish paths broadcast a typed event instead, so a large
     // push doesn't fan out into a dashboard refetch per chunk.
     '/api/neodove/campaign/',
+    // Runner endpoints are secret-gated GH Actions calls, not user actions.
+    // Every runner path that actually changes dashboard data already broadcasts
+    // its own typed event (Digests / Tasks / Messages / Email / Brain /
+    // Enquiries / Telecalling / estimates), so the generic fallback here only
+    // ever fired for writes that change NOTHING a dashboard renders:
+    //   POST /api/runner/zoho/fingerprint     → one KV key
+    //   POST /api/runner/estimates/bulk-assign → {retired:true} no-op
+    //   POST /api/runner/telecalling/effort-sync → {retired:true} no-op
+    //   POST /api/runner/enquiry-intake/claim → Setting claim-lock rows
+    //   POST /api/runner/relay/register       → relay registry state
+    // Those run on the 5/10/15/30-min cron slots, so without this the whole app
+    // refetched every dashboard every few minutes for a no-op. A NEW runner path
+    // that changes dashboard data must broadcast typed — that is the contract.
+    '/api/runner/',
+    // /api/trigger/* dispatches already emit `automation`; the retired EOD
+    // stubs emit nothing and change nothing. Keep the prefix out of the
+    // dashboard fan-out.
+    '/api/trigger/',
   ];
   app.use('*', async (c, next) => {
     await next();

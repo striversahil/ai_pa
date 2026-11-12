@@ -559,7 +559,6 @@ export async function computeDashboard(
     junior: laneEnforced && laneRole !== 'junior' ? [] : split('junior'),
     items,
     overdueList,
-    incompleteList: overdueList,
     history,
     freqStats,
     unscheduled,

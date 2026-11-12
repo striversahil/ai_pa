@@ -51,6 +51,12 @@ export const LiveEvent = {
    */
   Reporting: "reporting",
   /**
+   * App settings writes (root-only key/value changes). Only the Settings
+   * dashboard subscribes — it must not refetch because an unrelated screen
+   * saved something, and no other dashboard renders settings.
+   */
+  Settings: "settings",
+  /**
    * Customer master writes (record edits, duplicate-group review, JSON
    * re-import, editor appointments). Dashboards listening on this type refetch;
    * the master table deliberately does NOT subscribe to the generic

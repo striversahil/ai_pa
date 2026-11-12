@@ -68,7 +68,7 @@ export function registerSettingsRoutes(app: Hono<{ Bindings: Bindings }>): void 
     } catch (e: any) {
       return c.json({ ok: false, error: String(e?.message ?? e).slice(0, 200) }, 400);
     }
-    try { notifyLive(c, { type: LiveEvent.DataChanged }); } catch { /* non-fatal */ }
+    try { notifyLive(c, { type: LiveEvent.Settings }); } catch { /* non-fatal */ }
     return c.json({ ok: true, key, value: String(body.value).trim() });
   });
 }

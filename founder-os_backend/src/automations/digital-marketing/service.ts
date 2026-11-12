@@ -675,7 +675,6 @@ async function computeDashboard(
     junior: laneEnforced && !dmLaneMatches(laneRole ?? '', 'junior') ? [] : split('junior'),
     items,
     overdueList,
-    incompleteList: overdueList,
     history,
     freqStats,
     unscheduled,
