@@ -49,11 +49,12 @@ describe('unified directory contract (view-first)', () => {
   });
 
   it('Worker-only: three routes registered, no Express mirror', () => {
-    for (const p of ['/api/auth/directory', '/api/auth/hidden-logins']) {
+    for (const p of ['/api/auth/directory', '/api/auth/hidden-logins', '/api/auth/core-assignments']) {
       assert.ok(worker.includes(`'${p}'`), `missing worker route ${p}`);
     }
     assert.ok(routes.includes('authDirectory'), 'routes.ts must re-export authDirectory');
     assert.ok(routes.includes('authGetHiddenLogins') && routes.includes('authSetHiddenLogins'), 'routes.ts must re-export hidden fns');
+    assert.ok(routes.includes('authCoreAssignments'), 'routes.ts must re-export authCoreAssignments');
   });
 
   it('email-exact roster links only (no name guessing)', () => {
@@ -65,5 +66,34 @@ describe('unified directory contract (view-first)', () => {
     const fe = readFileSync(join(BACKEND_DIR, '..', 'founder-os_frontend', 'src', 'auth', 'directory.ts'), 'utf8');
     assert.ok(fe.includes('hr:hiddenLoginEmails'), 'frontend must mirror the hidden key doc');
     assert.ok(fe.includes('modules/auth/directory.ts'), 'frontend must name its backend mirror');
+  });
+});
+
+describe('core assignments contract (read-only)', () => {
+  it('same gate + hidden filtering as the directory, root never listed', () => {
+    assert.ok(part.includes('authCoreAssignments'), 'assignments reader must exist');
+    assert.ok(part.includes('isTargetRoot'), 'root exclusion must be enforced');
+    assert.ok(part.includes('DIRECTORY_WIDE_SCOPES'), 'assignments must share the directory gate');
+  });
+
+  it('reads locked core tables, never writes them', () => {
+    assert.ok(!/INSERT INTO\s+"?core_|UPDATE\s+"?core_|DELETE FROM\s+"?core_/i.test(part), 'assignments reader must not write core_*');
+    assert.ok(part.includes('coreUnavailable'), 'core outage must degrade to empty, never 500 the panel');
+  });
+
+  it('one primary designation per login (history preserved)', () => {
+    assert.ok(part.includes('isPrimary === false'), 'non-primary rows must be skipped');
+    assert.ok(part.includes('validTo'), 'retired rows must be skipped');
+  });
+
+  it('catalog is department-grouped for the pickers', () => {
+    assert.ok(part.includes('departmentId'), 'positions must carry their department');
+  });
+
+  it('frontend mirror exists for shape + endpoint', () => {
+    const types = readFileSync(join(BACKEND_DIR, '..', 'founder-os_frontend', 'src', 'auth', 'core.ts'), 'utf8');
+    const api = readFileSync(join(BACKEND_DIR, '..', 'founder-os_frontend', 'src', 'auth', 'api.ts'), 'utf8');
+    assert.ok(types.includes('modules/auth/routes-parts/directory.ts'), 'frontend types must name their backend mirror');
+    assert.ok(api.includes('/api/auth/core-assignments'), 'domain api module must call the assignments endpoint');
   });
 });

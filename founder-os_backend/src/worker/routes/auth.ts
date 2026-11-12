@@ -111,6 +111,28 @@ export function registerAuthRoutes(app: Hono<{ Bindings: Bindings }>): void {
     });
     return c.json(r.body, r.status as any);
   });
+  // ── Core assignments (read-only; Worker-only, no Express mirror) ──────────
+  // Per-login primary designation from locked core tables + the department →
+  // designation catalog HR assigns from. Same gate as the directory; writes
+  // need a human (locked core — see docs/core-change-requests).
+  app.get('/api/auth/core-assignments', async (c) => {
+    const r = await AuthRoutes.authCoreAssignments(authStore(c), c.req.header('cookie') ?? null, loadHiddenEmails, async () => {
+      try {
+        const { prisma } = deps();
+        const p: any = prisma as any;
+        if (typeof p.corePosition?.findMany !== 'function') return null;
+        const [departments, positions, links, empPositions, empDepts] = await Promise.all([
+          p.coreDepartment.findMany({}).catch(() => []),
+          p.corePosition.findMany({}).catch(() => []),
+          p.coreUserLink.findMany({}).catch(() => []),
+          p.coreEmpPosition.findMany({}).catch(() => []),
+          p.coreEmpDept.findMany({}).catch(() => []),
+        ]);
+        return { departments, positions, links, empPositions, empDepts };
+      } catch { return null; }
+    });
+    return c.json(r.body, r.status as any);
+  });
   app.delete('/api/auth/users/:id', async (c) => {
     // Worker-only (Express is frozen — no mirror).
     const r = await AuthRoutes.authDeleteUser(authStore(c), c.req.header('cookie') ?? null, c.req.param('id') ?? null);

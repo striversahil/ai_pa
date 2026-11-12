@@ -1145,6 +1145,8 @@ export class D1PrismaClient {
   get coreEmpDept() { return this.model('CoreEmpDept'); }
   get coreEmpRegion() { return this.model('CoreEmpRegion'); }
   get coreRegion() { return this.model('CoreRegion'); }
+  get corePosition() { return this.model('CorePosition'); }
+  get coreDepartment() { return this.model('CoreDepartment'); }
   get coreUserLink() { return this.model('CoreUserLink'); }
   get coreAction() { return this.model('CoreAction'); }
   get coreAuditEvent() { return this.model('CoreAuditEvent'); }

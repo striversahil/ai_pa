@@ -121,4 +121,117 @@ export async function authSetHiddenLogins(
   }
 }
 
+/** Core assignment catalog + per-login primary designation (read-only).
+ *  Reads locked core tables (departments, positions, user links, primary
+ *  emp_position/emp_dept rows) — never writes. Same gate + hidden filtering
+ *  as the directory: managers + HR holders read, HR read-only, root sees
+ *  hidden too. Assignment WRITES need a human (locked core) — see
+ *  docs/core-change-requests/2026-11-12-core-assignment-write.md. */
+export interface CoreCatalogPosition {
+  id: string;
+  code: string;
+  name: string;
+  rank: number;
+}
+
+export interface CoreCatalogDepartment {
+  id: string;
+  code: string;
+  name: string;
+  positions: CoreCatalogPosition[];
+}
+
+export interface CoreAssignmentRow {
+  departmentId: string;
+  departmentCode: string;
+  department: string;
+  positionId: string;
+  positionCode: string;
+  designation: string;
+}
+
+export async function authCoreAssignments(
+  store: AuthStore,
+  cookieHeader: string | null,
+  loadHidden: () => Promise<unknown>,
+  loadCore: () => Promise<{
+    departments: any[];
+    positions: any[];
+    links: any[];
+    empPositions: any[];
+    empDepts: any[];
+  } | null>,
+): Promise<AuthResult> {
+  try {
+    const me = await requireUser(store, cookieHeader);
+    const root = (me as any).isRoot === true;
+    const scopes: string[] = [...((me as any).scopes ?? [])];
+    try {
+      const snap = await store.getAuthSnapshot((me as any).user.id);
+      for (const rs of Object.values(snap.roleScopes ?? {})) {
+        for (const s of rs as string[]) if (!scopes.includes(s)) scopes.push(s);
+      }
+    } catch { /* snapshot best-effort */ }
+    const wide = root || hasAnyScope(scopes, DIRECTORY_WIDE_SCOPES);
+    if (!wide) return json(403, { error: "Requires HR or user-management access" });
+    const canManage = root || hasAnyScope(scopes, ["admin", "user-admin"]);
+    const [hiddenRaw, core] = await Promise.all([loadHidden().catch(() => []), loadCore().catch(() => null)]);
+    if (!core) return json(200, { assignments: {}, catalog: { departments: [] }, canManage, coreUnavailable: true });
+    const hidden = new Set(normalizeHiddenEmails(hiddenRaw));
+    const posById = new Map((core.positions as any[]).map((p) => [String(p.id), p]));
+    const deptById = new Map((core.departments as any[]).map((d) => [String(d.id), d]));
+    const empByUser = new Map((core.links as any[]).map((l) => [String(l.authUserId), String(l.employeeId)]));
+    const primaryPos = new Map<string, any>();
+    for (const ap of core.empPositions as any[]) {
+      if (ap?.validTo || ap?.isPrimary === false) continue;
+      if (!primaryPos.has(String(ap.employeeId))) primaryPos.set(String(ap.employeeId), ap);
+    }
+    const primaryDept = new Map<string, any>();
+    for (const ad of core.empDepts as any[]) {
+      if (ad?.validTo || ad?.isPrimary === false) continue;
+      if (!primaryDept.has(String(ad.employeeId))) primaryDept.set(String(ad.employeeId), ad);
+    }
+    const users = (await listUsers(store)).filter((u: any) => !isTargetRoot(u));
+    const assignments: Record<string, CoreAssignmentRow> = {};
+    for (const u of users as any[]) {
+      const email = String(u.email ?? "");
+      if (hidden.has(email.trim().toLowerCase()) && !root) continue;
+      const empId = empByUser.get(String(u.id));
+      if (!empId) continue;
+      const ap = primaryPos.get(empId);
+      if (!ap) continue;
+      const pos = posById.get(String(ap.positionId));
+      if (!pos) continue;
+      const ad = primaryDept.get(empId);
+      const dept = ad ? deptById.get(String(ad.departmentId)) : null;
+      const deptFromPos = !dept && (pos as any).departmentId ? deptById.get(String((pos as any).departmentId)) : null;
+      const d = dept ?? deptFromPos;
+      assignments[String(u.id)] = {
+        departmentId: d ? String(d.id) : "",
+        departmentCode: d ? String(d.code ?? "") : "",
+        department: d ? String(d.name ?? "") : "",
+        positionId: String(pos.id),
+        positionCode: String(pos.code ?? ""),
+        designation: String(pos.name ?? ""),
+      };
+    }
+    const catalog: CoreCatalogDepartment[] = (core.departments as any[])
+      .filter((d) => d?.active !== false)
+      .map((d) => ({
+        id: String(d.id),
+        code: String(d.code ?? ""),
+        name: String(d.name ?? ""),
+        positions: (core.positions as any[])
+          .filter((p) => p?.active !== false && String(p.departmentId ?? "") === String(d.id))
+          .map((p) => ({ id: String(p.id), code: String(p.code ?? ""), name: String(p.name ?? ""), rank: Number(p.rank ?? 100) || 100 }))
+          .sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name)),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return json(200, { assignments, catalog: { departments: catalog }, canManage });
+  } catch (e: any) {
+    const err = e instanceof AuthError ? e : new AuthError("FORBIDDEN", e?.message);
+    return json(err.status, { error: err.message });
+  }
+}
+
 export { DIRECTORY_HIDDEN_KEY };
