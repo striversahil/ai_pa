@@ -9,7 +9,7 @@ interface Props {
   baselineDate: string;
   movement: Movement;
   pending?: boolean;
-  /** Active Zoho Books sales orders created today (live from /api/automations/zoho-sent-analyzer/data). */
+  /** Active Zoho Books sales orders created today (live from the zoho-sent-analyzer workspace data). */
   salesOrdersToday?: number | null;
   salesOrdersTodayValue?: number | null;
   /** Today's sales order rows: { so, ref, customer, total, status, time } */

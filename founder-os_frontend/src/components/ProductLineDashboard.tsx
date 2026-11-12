@@ -9,6 +9,7 @@ import {
 import { useLiveDashboard } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
 import ProductCopilot from "./ProductCopilot";
+import { workspaceDataUrl } from "@/workspaces/api";
 
 // Mirror: founder-os_backend/src/automations/product-line/types.ts
 interface ProductRow { id: string; category: string; name: string; aliases: string[]; active: boolean; guideCount: number; rateCount: number; }
@@ -93,7 +94,7 @@ export default function ProductLineDashboard() {
   // plus MIS/admin. Products/guide/vendors stay MIS-only.
   const canQuote = !!me && (!!me.isAdmin || (me.scopes ?? []).includes("mis") || (me.scopes ?? []).includes("product-line"));
   const dash = useLiveDashboard<Payload>(async () => {
-    const res = await fetch("/api/automations/product-line/data");
+    const res = await fetch(workspaceDataUrl("product-line"));
     if (!res.ok) throw new Error("failed to load product line");
     return res.json();
   });

@@ -7,6 +7,7 @@ import type {
   ReportOrigin, ReportSection, ReportingCapabilities, ReportingPayload,
   TelecallerRow,
 } from "./types";
+import { workspaceDataUrl } from "@/workspaces/api";
 
 async function jsonOrThrow<T>(res: Response): Promise<T> {
   const body = await res.json().catch(() => ({}));
@@ -17,7 +18,7 @@ async function jsonOrThrow<T>(res: Response): Promise<T> {
 /** Viewer-filtered weekly payload (departments the session may open). */
 export async function getReportingSheet(period?: string): Promise<ReportingPayload> {
   const qs = period ? `?period=${encodeURIComponent(period)}` : "";
-  const res = await fetch(`/api/automations/reporting-sheet/data${qs}`, { cache: "no-store" });
+  const res = await fetch(`${workspaceDataUrl("reporting-sheet")}${qs}`, { cache: "no-store" });
   return jsonOrThrow<ReportingPayload>(res);
 }
 

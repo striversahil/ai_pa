@@ -7,6 +7,7 @@ import DigitalMarketingAds from "./DigitalMarketingAds";
 import DigitalMarketingOpenTasks from "./DigitalMarketingOpenTasks";
 import { useAuth } from "@/auth/AuthContext";
 import { TabBar } from "@/components/ui/TabBar";
+import { workspaceDataUrl } from "@/workspaces/api";
 
 interface FileItem {
   id: string;
@@ -502,7 +503,7 @@ export default function AccountsDashboard() {
   // the 30s hook timeout turns it into an error and the next poll recovers.
   // Loading renders non-destructively (spinner only before first payload).
   const dash = useLiveDashboard<DashData>(async () => {
-    const res = await fetch(`/api/automations/digital-marketing/data`, { cache: "no-store" });
+    const res = await fetch(workspaceDataUrl("digital-marketing"), { cache: "no-store" });
     if (!res.ok) throw new Error(`Load failed (HTTP ${res.status})`);
     return res.json();
   }, { pollMs: 60000 });

@@ -7,6 +7,7 @@ import { TabBar } from "@/components/ui/TabBar";
 import PaymentDues, { type PaymentDueRow, type PaymentSummary } from "@/components/accounts/PaymentDues";
 import DispatchCash, { type CashEntry, type CashSummary } from "@/components/accounts/DispatchCash";
 import { inr, inrShort } from "@/components/accounts/payment-calendar";
+import { workspaceDataUrl } from "@/workspaces/api";
 
 interface FileItem {
   id: string;
@@ -496,7 +497,7 @@ export default function AccountsDashboard() {
   const dash = useLiveDashboard<DashData>(async () => {
     // Identity rides along so the backend scopes the payload to the viewer's
     // own lane (MIS/root skip scoping server-side).
-    const res = await fetch(`/api/automations/accounts/data${actorPick ? `?as=${encodeURIComponent(actorPick)}` : ""}`, { cache: "no-store" });
+    const res = await fetch(`${workspaceDataUrl("accounts")}${actorPick ? `?as=${encodeURIComponent(actorPick)}` : ""}`, { cache: "no-store" });
     if (!res.ok) throw new Error(`Load failed (HTTP ${res.status})`);
     return res.json();
   }, { pollMs: 60000 });

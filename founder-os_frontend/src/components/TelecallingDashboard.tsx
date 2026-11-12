@@ -17,6 +17,7 @@ import { CARD } from "@/components/telecalling/surface";
 import type { BoardBucket, BoardRegion, BoardStaff } from "@/telecalling/view-types";
 import type { RegionTarget, TeamTarget } from "@/telecalling/targets";
 import { DAILY_REGION_TARGET } from "@/telecalling/targets";
+import { workspaceDataUrl } from "@/workspaces/api";
 
 interface LeaderRow {
   id: string;
@@ -1144,7 +1145,7 @@ export default function TelecallingDashboard() {
   ];
   const dash = useLiveQuery<DashData>(
     async () => {
-      const res = await fetch(`/api/automations/telecalling/data?period=${period}`);
+      const res = await fetch(`${workspaceDataUrl("telecalling")}?period=${period}`);
       if (!res.ok) throw new Error(`Failed to load leaderboard (HTTP ${res.status})`);
       return adaptDashData(await res.json());
     },
@@ -1156,7 +1157,7 @@ export default function TelecallingDashboard() {
   // Dashboard's filter.
   const convDash = useLiveQuery<DashData>(
     async () => {
-      const res = await fetch("/api/automations/telecalling/data");
+      const res = await fetch(workspaceDataUrl("telecalling"));
       if (!res.ok) throw new Error("Conversion load failed");
       return adaptDashData(await res.json());
     },
@@ -1169,7 +1170,7 @@ export default function TelecallingDashboard() {
   const [genPeriod, setGenPeriod] = useState<typeof period>("today");
   const genDash = useLiveQuery<DashData>(
     async () => {
-      const res = await fetch(`/api/automations/telecalling/data?period=${genPeriod}`);
+      const res = await fetch(`${workspaceDataUrl("telecalling")}?period=${genPeriod}`);
       if (!res.ok) throw new Error("Gen load failed");
       return adaptDashData(await res.json());
     },
@@ -1211,7 +1212,7 @@ export default function TelecallingDashboard() {
       const entries = await Promise.all(
         keys.map(async (key) => {
           try {
-            const res = await fetch(`/api/automations/telecalling/data?region=${encodeURIComponent(regionQuery(key))}`);
+            const res = await fetch(`${workspaceDataUrl("telecalling")}?region=${encodeURIComponent(regionQuery(key))}`);
             return [key, res.ok ? adaptAgentView(await res.json()) : null] as const;
           } catch {
             return [key, null] as const;
@@ -1281,7 +1282,7 @@ export default function TelecallingDashboard() {
   const refreshOneAgent = useCallback(async (key: string | null) => {
     if (!key) { agentViews.refresh(); return; }
     try {
-      const res = await fetch(`/api/automations/telecalling/data?region=${encodeURIComponent(regionQuery(key))}`);
+      const res = await fetch(`${workspaceDataUrl("telecalling")}?region=${encodeURIComponent(regionQuery(key))}`);
       if (!res.ok) return;
       const view = adaptAgentView(await res.json());
       agentViews.setData((prev) => ({ ...(prev ?? {}), [key]: view }));

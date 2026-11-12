@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { useLiveRefresh } from "@/hooks/useLiveEvents";
+import { workspaceDataUrl } from "@/workspaces/api";
 
 type LeadStats = {
   total: number;
@@ -96,7 +97,7 @@ export default function WhatsAppMarketingDashboard() {
 
   const fetchDashboard = useCallback(async () => {
     try {
-      const res = await fetch("/api/automations/whatsapp-marketing/data");
+      const res = await fetch(workspaceDataUrl("whatsapp-marketing"));
       if (res.ok) setData(await res.json());
     } catch (e) {
       setError("Failed to load dashboard");

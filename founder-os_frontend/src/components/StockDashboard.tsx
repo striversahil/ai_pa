@@ -7,6 +7,7 @@ import { TabBar } from "@/components/ui/TabBar";
 import InventoryTable from "./stock/InventoryTable";
 import AlertsReports from "./stock/AlertsReports";
 import { inr } from "./stock/shared";
+import { workspaceDataUrl } from "@/workspaces/api";
 
 interface Payload { meta: { analysis: string; generatedAt: string; day: string; days: string[]; locations: { id: string; name: string }[]; planning?: { leadTimeDays: number; safetyFactor: number; moq: number; source: string } }; items: any[]; closings: Record<string, Record<string, number>>; totals: { skus: number; units: number; available: number; value: number; low: number; out: number; dead: number; pendingAdjust: number; pendingToOrder: number }; movements: any[]; }
 
@@ -23,7 +24,7 @@ async function api(path: string, method: string, body?: unknown) {
 
 export default function StockDashboard() {
   const dash = useLiveDashboard<Payload>(async () => {
-    const res = await fetch("/api/automations/stock/data?days=14");
+    const res = await fetch(`${workspaceDataUrl("stock")}?days=14`);
     if (!res.ok) throw new Error("load failed");
     return res.json();
   });

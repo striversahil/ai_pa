@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { useLiveRefresh } from "@/hooks/useLiveEvents";
+import { workspaceDataUrl } from "@/workspaces/api";
 
 type Kpi = {
   label: string;
@@ -74,7 +75,7 @@ export default function SheetAnalysisDashboard({ slug }: { slug: string }) {
       if (startDate) params.set("start", startDate);
       if (endDate) params.set("end", endDate);
       const qs = params.toString();
-      const res = await fetch(`/api/automations/${slug}/data${qs ? `?${qs}` : ""}`);
+      const res = await fetch(`${workspaceDataUrl(slug)}${qs ? `?${qs}` : ""}`);
       if (!res.ok) {
         setError(`Dashboard not available (HTTP ${res.status}).`);
         setData(null);
@@ -98,7 +99,7 @@ export default function SheetAnalysisDashboard({ slug }: { slug: string }) {
         if (startDate) params.set("start", startDate);
         if (endDate) params.set("end", endDate);
         const qs = params.toString();
-        const res = await fetch(`/api/automations/${slug}/data${qs ? `?${qs}` : ""}`);
+        const res = await fetch(`${workspaceDataUrl(slug)}${qs ? `?${qs}` : ""}`);
         if (!res.ok) {
           if (!cancelled) {
             setError(`Dashboard not available (HTTP ${res.status}).`);

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { useLiveRefresh } from "@/hooks/useLiveEvents";
+import { workspaceDataUrl } from "@/workspaces/api";
 
 type QuoteItem = {
   itemName: string;
@@ -26,7 +27,7 @@ export default function DppPricesDashboard() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/automations/dpp-prices-dashboard/data");
+      const res = await fetch(workspaceDataUrl("dpp-prices-dashboard"));
       if (!res.ok) {
         setError(`Dashboard not available (HTTP ${res.status}). DPP chat config may be empty.`);
         setData(null);
@@ -46,7 +47,7 @@ export default function DppPricesDashboard() {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch("/api/automations/dpp-prices-dashboard/data");
+        const res = await fetch(workspaceDataUrl("dpp-prices-dashboard"));
         if (!res.ok) {
           if (!cancelled) {
             setError(`Dashboard not available (HTTP ${res.status}). DPP chat config may be empty.`);

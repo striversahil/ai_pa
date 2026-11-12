@@ -18,6 +18,7 @@ import RehomeEstimateSection from "@/components/telecalling/RehomeEstimateSectio
 import SalesHolidaysSection from "@/components/telecalling/SalesHolidaysSection";
 import ClientSegmentSection from "@/components/telecalling/ClientSegmentSection";
 import { adaptDashData, fmtNum, type DailyRow, type DashData, type RosterRow } from "./TelecallingDashboard";
+import { workspaceDataUrl } from "@/workspaces/api";
 
 /** Live events that refresh controller data (same set as the leaderboard). */
 const TELECALLING_EVENTS = ["automation", "telecalling", "estimates", "baseline"];
@@ -45,7 +46,7 @@ export default function SalesControllerPanel() {
   // Period-free telecalling read: unmapped bucket + epoch (never the leaderboard).
   const tele = useLiveQuery<any>(
     async () => {
-      const res = await fetch("/api/automations/telecalling/data");
+      const res = await fetch(workspaceDataUrl("telecalling"));
       if (!res.ok) throw new Error("Controller load failed");
       return res.json();
     },
@@ -894,7 +895,7 @@ function ExportDataSection({ rosterRows, showRisk }: { rosterRows: RosterRow[]; 
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/automations/telecalling/data?period=${period}&daily=1`);
+      const res = await fetch(`${workspaceDataUrl("telecalling")}?period=${period}&daily=1`);
       if (!res.ok) throw new Error(`Failed to load telecalling data (HTTP ${res.status})`);
       const data: DashData = adaptDashData(await res.json());
       const wanted = subsetRows();
@@ -1064,7 +1065,7 @@ function ExportDataSection({ rosterRows, showRisk }: { rosterRows: RosterRow[]; 
       };
       const [estRes, convRes] = await Promise.all([
         fetch("/api/estimates"),
-        fetch(`/api/automations/telecalling/data?converters=1&since=${since}`),
+        fetch(`${workspaceDataUrl("telecalling")}?converters=1&since=${since}`),
       ]);
       if (!estRes.ok) throw new Error(`Failed to load estimates (HTTP ${estRes.status})`);
       if (!convRes.ok) throw new Error(`Failed to load converters (HTTP ${convRes.status})`);

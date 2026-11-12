@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useLiveRefresh } from "@/hooks/useLiveEvents";
 import { useAuth } from "@/auth/AuthContext";
+import { workspaceDataUrl } from "@/workspaces/api";
 
 type TrafficLight = "green" | "amber" | "red";
 
@@ -208,7 +209,7 @@ export default function NeodoveTelecallerDashboard() {
     try {
       const { from, to } = rangeRef.current;
       const qs = from && to ? `?from=${from}&to=${to}` : "";
-      const res = await fetch(`/api/automations/neodove-telecaller-report/data${qs}`, { cache: "no-store" });
+      const res = await fetch(`${workspaceDataUrl("neodove-telecaller-report")}${qs}`, { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json: DataResponse = await res.json();
       setData(json);

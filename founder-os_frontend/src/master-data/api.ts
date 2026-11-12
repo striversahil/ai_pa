@@ -7,6 +7,7 @@ import type {
   CustomerPatch, EditorEntry, MasterCapabilities, MasterCustomerDetail,
   MasterDataPayload, MasterImportResult, DuplicateReview, TypeBaseEntry,
 } from "./types";
+import { workspaceDataUrl } from "@/workspaces/api";
 
 async function jsonOrThrow<T>(res: Response): Promise<T> {
   const body = await res.json().catch(() => ({}));
@@ -16,7 +17,7 @@ async function jsonOrThrow<T>(res: Response): Promise<T> {
 
 /** Dashboard payload — one KV-cached read of the whole book. */
 export async function getMasterData(): Promise<MasterDataPayload> {
-  const res = await fetch("/api/automations/master-data/data", { cache: "no-store" });
+  const res = await fetch(workspaceDataUrl("master-data"), { cache: "no-store" });
   return jsonOrThrow<MasterDataPayload>(res);
 }
 

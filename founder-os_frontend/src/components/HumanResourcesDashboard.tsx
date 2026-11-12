@@ -13,6 +13,7 @@ import ExpensesTab from "./human-resources/ExpensesTab";
 import InventoryTab from "./human-resources/InventoryTab";
 import type { HrDashboardData } from "@/hr/types";
 import { currentMonthIST, monthLabel, shiftMonth } from "@/hr/format";
+import { workspaceDataUrl } from "@/workspaces/api";
 
 type HrView = "employees" | "hiring-kit" | "delegation" | "attendance" | "leaves" | "payroll" | "expenses" | "inventory";
 
@@ -45,7 +46,7 @@ export default function HumanResourcesDashboard({ onNavigate }: { onNavigate?: (
   const [month, setMonth] = useState(currentMonthIST());
 
   const dash = useLiveDashboard<HrDashboardData>(async () => {
-    const res = await fetch(`/api/automations/human-resources/data?month=${encodeURIComponent(month)}`, { cache: "no-store" });
+    const res = await fetch(`${workspaceDataUrl("human-resources")}?month=${encodeURIComponent(month)}`, { cache: "no-store" });
     if (!res.ok) throw new Error(`Load failed (HTTP ${res.status})`);
     return res.json();
   }, { deps: [month], pollMs: 60000 });

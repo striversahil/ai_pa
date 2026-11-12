@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { useLiveRefresh } from "@/hooks/useLiveEvents";
+import { workspaceDataUrl } from "@/workspaces/api";
 
 type Kpi = {
   label: string;
@@ -81,7 +82,7 @@ export default function WaEngineDashboard() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/automations/wa-engine-monitor/data?windowDays=${days}`);
+      const res = await fetch(`${workspaceDataUrl("wa-engine-monitor")}?windowDays=${days}`);
       if (!res.ok) {
         setError(`Dashboard not available (HTTP ${res.status}).`);
         setData(null);
@@ -100,7 +101,7 @@ export default function WaEngineDashboard() {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch(`/api/automations/wa-engine-monitor/data?windowDays=${windowDays}`);
+        const res = await fetch(`${workspaceDataUrl("wa-engine-monitor")}?windowDays=${windowDays}`);
         if (!res.ok) {
           if (!cancelled) {
             setError(`Dashboard not available (HTTP ${res.status}).`);

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { useLiveRefresh } from "@/hooks/useLiveEvents";
+import { workspaceDataUrl } from "@/workspaces/api";
 
 type AutopilotAction = {
   id: string;
@@ -88,7 +89,7 @@ export default function AutopilotDashboard() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/automations/whatsapp-autopilot/data");
+      const res = await fetch(workspaceDataUrl("whatsapp-autopilot"));
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setData(await res.json());
     } catch (e: unknown) {
