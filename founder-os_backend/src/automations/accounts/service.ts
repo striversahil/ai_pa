@@ -1693,19 +1693,31 @@ export async function payDue(
   if (String(inst.status) === 'done') {
     // Idempotent re-pay: already paid — refresh amount/ref instead of erroring,
     // so a double-click or retry can never create a duplicate cycle.
-    return logTask(
+    const r = await logTask(
       String(inst.id),
       { status: 'done', paidAmount: input.paidAmount, paidRef: input.paidRef, remark: input.remark },
       actor,
       identity,
     );
+    // Phase 5a dual-write: keep the core due row paid too.
+    try {
+      const { markReceiptPaid } = await import('../../modules/core/finance');
+      await markReceiptPaid(String(templateId), String(dueDate));
+    } catch { /* non-fatal */ }
+    return r;
   }
-  return logTask(
+  const done = await logTask(
     String(inst.id),
     { status: 'done', paidAmount: input.paidAmount, paidRef: input.paidRef, remark: input.remark },
     actor,
     identity,
   );
+  // Phase 5a dual-write: keep the core due row paid too.
+  try {
+    const { markReceiptPaid } = await import('../../modules/core/finance');
+    await markReceiptPaid(String(templateId), String(dueDate));
+  } catch { /* non-fatal */ }
+  return done;
 }
 
 // ── Proof attachments (bytes in CHAT_FILES KV; rows here) ────────────────────

@@ -94,6 +94,21 @@ export async function upsertDueReceipts(rows: DueReceiptInput[]): Promise<void> 
   }
 }
 
+/** Mark a due receipt paid (payDue funnel — the only paid transition). */
+export async function markReceiptPaid(templateId: string, dueDate: string): Promise<void> {
+  try {
+    const db = getD1Database();
+    if (!db || !templateId || !dueDate) return;
+    await db.prepare(
+      `UPDATE "core_receipt" SET "status" = 'paid', "updatedAt" = ? WHERE "origin" = 'due' AND "templateId" = ? AND "dueDate" = ?`,
+    ).bind(nowIso(), String(templateId), String(dueDate).slice(0, 10)).run();
+  } catch (e: any) {
+    try {
+      logger.warn({ err: e?.message }, 'markReceiptPaid failed (non-blocking)');
+    } catch { /* never throw */ }
+  }
+}
+
 /** Convergent refresh of receivable rows from open debtor invoices. */
 export async function mirrorReceivables(invoiceIds?: string[]): Promise<void> {
   try {
