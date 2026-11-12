@@ -93,6 +93,8 @@ export const LiveEvent = {
   Stock: "stock",
   /** In-app notifications (Phase 6a): new core_notification rows for the reader. */
   Notifications: "notifications",
+  /** Lead ledger writes (Phase 7): qualify/drop + new unqualified rows. */
+  Leads: "leads",
 } as const;
 
 export type LiveEventType = (typeof LiveEvent)[keyof typeof LiveEvent];

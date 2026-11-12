@@ -305,6 +305,11 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
       const { mirrorSales } = await import('../../modules/core/sales');
       await mirrorSales([estimateId]);
     } catch { /* non-fatal */ }
+    // Phase 7b dual-write: re-home moves the lead region too.
+    try {
+      const { mirrorLeadsForEstimates } = await import('../../modules/core/leads');
+      await mirrorLeadsForEstimates([estimateId]);
+    } catch { /* non-fatal */ }
     notifyLive(c, { type: LiveEvent.Telecalling });
     return c.json({ ok: true, estimateId, region, wasUnmapped: linked, estimate: est as any });
   });

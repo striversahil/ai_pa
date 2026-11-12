@@ -118,5 +118,11 @@ export async function applyStatusUpdates(
       await mirrorEnquiriesForSales(touched);
     }
   } catch { /* non-fatal — the D1 write above is already committed */ }
+  // Phase 7b dual-write: declines/accepts move the lead outcome (lost/won).
+  try {
+    const { mirrorLeadsForEstimates } = await import('../core/leads');
+    const touched = [...new Set((updates || []).map((u) => String(u?.estimateId ?? '')).filter(Boolean))];
+    if (touched.length) await mirrorLeadsForEstimates(touched);
+  } catch { /* non-fatal */ }
   return { updated, closesCredited, enquiriesAutoSent } as any;
 }

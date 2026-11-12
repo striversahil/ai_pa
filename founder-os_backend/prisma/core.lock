@@ -1,6 +1,6 @@
 {
   "signedBy": "striversahil@gmail.com",
-  "signedAt": "2026-11-12T02:00:35.043Z",
+  "signedAt": "2026-11-12T02:07:49.913Z",
   "files": {
     "migrations/0125_core_foundation.sql": "3a2779be49f5e08160da2981b30ee924188f2cba2189074051bbfed24ec36fdc",
     "migrations/0126_core_identity.sql": "c4766e18acbea714405aaec811dee9c4f38896063d4f32195cb0477937044699",
@@ -18,7 +18,7 @@
     "src/modules/core/events.ts": "a772e724473283066110ab806751f2fcb6434a1dba41415500e2e83a50b2e35e",
     "src/modules/core/finance-parse.ts": "75926b33ffa595849fa75301f1c0e88701aa0a9d5e80af59dcbaeb20e8e87d82",
     "src/modules/core/finance.ts": "90a96a468571a95aedde20242ad4bd39531fc63baa0345fa942978d5f14a3c5b",
-    "src/modules/core/leads.ts": "ee52b0c3620ee15b79d3fa8061e44695842e22812a1359b75f9d850ac282a939",
+    "src/modules/core/leads.ts": "25b0b2b82df56bc2d7650a6886dfb201b5effe396e8c29a1e88c4268e53dd562",
     "src/modules/core/notify.ts": "1d5c88fa3dc1be96200317b466e3088ab9fdcc2e9470e85caab3a2a59a811509",
     "src/modules/core/numbering.ts": "ca432934aaa063d4a17a68ca0fc3ff96a21002947b4f1c01aa084a3cf8ca8b78",
     "src/modules/core/orders.ts": "8883112e5cc9a34890641ace997c4279aced0847536819b8b8008dd4cd9af355",

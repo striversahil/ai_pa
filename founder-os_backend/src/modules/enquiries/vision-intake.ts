@@ -526,6 +526,14 @@ export async function runAgnesVisionIntake(
   const kypItems: (string | undefined)[] = kypHits.map((h) => h?.item ?? undefined);
   const nUncat = cats.filter((c) => c === 'Uncategorized').length;
   console.log(`[vision-intake] ${id}: lookup alias=${nAlias} token=${nToken} grade=${nGrade} llm=${nLlm} uncategorized=${nUncat}/${lines.length}`);
+  // Phase 7b dual-write: nothing matchable = never worth quoting — record the
+  // out-of-scope unqualified lead (insert-only, idempotent, never throws).
+  if (lines.length > 0 && nUncat === lines.length) {
+    try {
+      const { mirrorAiIntakeReject } = await import('../core/leads');
+      await mirrorAiIntakeReject(id, lines.map((l: any) => String(l?.verbatim ?? '')));
+    } catch { /* non-fatal */ }
+  }
 
   // Call-2.5 — spec completeness per matched item (one batched LLM call).
   // Required checklist comes from the LIVE KypGuide rows for each matched

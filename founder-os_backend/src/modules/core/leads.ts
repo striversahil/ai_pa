@@ -241,6 +241,10 @@ export async function mirrorLeadsForEnquiries(enquiryIds: string[]): Promise<voi
         const row = await buildEnquiryLead(db, id);
         if (!row) continue;
         await upsertLeadRow(db, row);
+        if (String(row.id ?? '').startsWith('lead-est:')) {
+          // Converged via its estimate row — the ai_intake reject (if any) retires.
+          await db.prepare(`DELETE FROM "core_lead" WHERE "id" = ?`).bind(`lead-ai:${id}`).run().catch(() => null);
+        }
       } catch { /* per-row best-effort */ }
     }
     await writeAudit(ids[0], 'lead-mirror', { ids: ids.length }, 'lead-dual-write: projected enquiry leads');
@@ -315,5 +319,126 @@ export async function shadowCompareLeads(): Promise<void> {
     try {
       logger.warn({ err: e?.message }, 'shadowCompareLeads failed (non-blocking)');
     } catch { /* never throw */ }
+  }
+}
+
+// ── Phase 7b: AI-intake reject (all lines Uncategorized, ≥1 line) ───────────
+// captureKind='ai_intake', status unqualified, outcome open, reason
+// out_of_scope. Idempotent on dedupKey `ai:<enquiryId>`. If the enquiry later
+// links to an estimate, the estimate row (`lead-est:`) owns it and this row
+// is removed by mirrorLeadsForEnquiries. Never throws.
+export async function mirrorAiIntakeReject(enquiryId: string, verbatims: string[]): Promise<void> {
+  try {
+    const db = getD1Database();
+    const eid = String(enquiryId ?? '');
+    if (!db || !eid) return;
+    const eres: any = await db.prepare(`SELECT * FROM "Enquiry" WHERE "id" = ?`).bind(eid).all().catch(() => null);
+    const e: any = ((eres as any)?.results ?? [])[0];
+    if (!e) return;
+    const num = String(e.estNumber ?? '').trim();
+    if (num) {
+      try {
+        const sres: any = await db.prepare(`SELECT "estimateId" FROM "Estimate" WHERE "estimateNumber" = ? LIMIT 1`).bind(num).all().catch(() => null);
+        if (((sres as any)?.results ?? [])[0]?.estimateId) {
+          await db.prepare(`DELETE FROM "core_lead" WHERE "id" = ?`).bind(`lead-ai:${eid}`).run().catch(() => null);
+          return;
+        }
+      } catch { /* fall through to insert */ }
+    }
+    const texts = (verbatims ?? []).map((v) => String(v ?? '').trim()).filter(Boolean);
+    if (!texts.length) return; // empty text stays out — human triage via Enquiries
+    const now = nowIso();
+    const id = `lead-ai:${eid}`;
+    await db.prepare(
+      `INSERT OR IGNORE INTO "core_lead" ("id", "dedupKey", "leadNo", "captureKind", "customerName", "clientCompany", "contactName", "contactPhone", "contactEmail", "location", "region", "assignedAgentId", "sourceName", "sourceRaw", "sourceRef", "productText", "productId", "qtyText", "specText", "expectedRateAmount", "expectedRateUnit", "quotedRateAmount", "quotedRateUnit", "status", "outcome", "qualifiedBy", "qualifiedByRole", "qualifiedAt", "qualifyNote", "disqualifyReason", "reasonDetail", "lostAt", "wonAt", "enquiryId", "estimateId", "estNumber", "occurredAt", "createdAt", "updatedAt") VALUES (?, ?, '', 'ai_intake', ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, '', '', '', NULL, '', NULL, '', 'unqualified', 'open', '', '', '', '', 'out_of_scope', '', '', '', ?, '', ?, ?, ?, ?)`,
+    ).bind(id, `ai:${eid}`,
+      firstNonBlank(e.contactName, e.clientCompany), String(e.clientCompany ?? ''),
+      String(e.contactName ?? ''), String(e.contactPhone ?? ''), String(e.contactEmail ?? ''),
+      String(e.location ?? ''), String(e.assignedAgentId ?? ''),
+      normalizeLeadSource(e.source, ''), String(e.source ?? ''), String(e.enquiryNumber ?? ''),
+      texts.join(' ‖ ').slice(0, 500),
+      eid, num, now.slice(0, 10), now, now).run();
+    await db.prepare(`UPDATE "core_lead" SET "productText" = ?, "updatedAt" = ? WHERE "id" = ?`)
+      .bind(texts.join(' ‖ ').slice(0, 500), now, id).run();
+    await writeAudit(id, 'lead-mirror', { kind: 'ai_intake_reject' }, 'lead-dual-write: all-Uncategorized intake');
+  } catch (e: any) {
+    try {
+      logger.warn({ err: e?.message }, 'mirrorAiIntakeReject failed (non-blocking)');
+    } catch { /* never throw */ }
+  }
+}
+
+// ── Phase 7c: qualification gate (server-enforced) ──────────────────────────
+// qualifyLead: unqualified → qualified (outcome untouched). dropLead: open →
+// dropped + reason. Callers enforce requireLeadQualifier first; region scoping
+// for TLs is enforced HERE (defence in depth — never trust the route alone).
+
+export interface LeadActor {
+  name: string;
+  role: string;
+  regions: string[] | null; // null = all-power (root/MIS/sales-head)
+}
+
+function istDay(): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+  } catch { return new Date().toISOString().slice(0, 10); }
+}
+
+export const LEAD_DROP_REASONS = new Set([
+  'no_response', 'wrong_number', 'price_too_high', 'no_budget', 'not_genuine',
+  'out_of_scope', 'duplicate', 'competitor_won', 'client_cancelled', 'other',
+]);
+
+async function loadLeadRow(db: any, id: string): Promise<any | null> {
+  try {
+    const r: any = await db.prepare(`SELECT * FROM "core_lead" WHERE "id" = ?`).bind(String(id)).all();
+    return (r?.results ?? [])[0] ?? null;
+  } catch { return null; }
+}
+
+export async function qualifyLead(id: string, actor: LeadActor, note: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const db = getD1Database();
+    if (!db) return { ok: false, error: 'unavailable' };
+    const row = await loadLeadRow(db, id);
+    if (!row) return { ok: false, error: 'no such lead' };
+    if (String(row.status ?? '') !== 'unqualified') return { ok: false, error: 'already qualified' };
+    if (actor.regions) {
+      const lr = String(row.region ?? '');
+      if (!lr || !actor.regions.includes(lr)) return { ok: false, error: 'outside your regions' };
+    }
+    const now = nowIso();
+    await db.prepare(
+      `UPDATE "core_lead" SET "status" = 'qualified', "qualifiedBy" = ?, "qualifiedByRole" = ?, "qualifiedAt" = ?, "qualifyNote" = ?, "updatedAt" = ? WHERE "id" = ?`,
+    ).bind(String(actor.name ?? ''), String(actor.role ?? ''), istDay(), String(note ?? '').slice(0, 500), now, String(id)).run();
+    await writeAudit(String(id), 'lead-qualify', { by: actor.name, role: actor.role }, 'lead-gate: TL/head qualified the lead — quotation unlocked');
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? 'qualify failed' };
+  }
+}
+
+export async function dropLead(id: string, actor: LeadActor, reason: string, detail: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const db = getD1Database();
+    if (!db) return { ok: false, error: 'unavailable' };
+    const row = await loadLeadRow(db, id);
+    if (!row) return { ok: false, error: 'no such lead' };
+    if (String(row.outcome ?? '') !== 'open') return { ok: false, error: 'already closed' };
+    const r = String(reason ?? 'other');
+    if (!LEAD_DROP_REASONS.has(r)) return { ok: false, error: 'bad reason' };
+    if (actor.regions) {
+      const lr = String(row.region ?? '');
+      if (!lr || !actor.regions.includes(lr)) return { ok: false, error: 'outside your regions' };
+    }
+    const now = nowIso();
+    await db.prepare(
+      `UPDATE "core_lead" SET "outcome" = 'dropped', "disqualifyReason" = ?, "reasonDetail" = ?, "updatedAt" = ? WHERE "id" = ?`,
+    ).bind(r, String(detail ?? '').slice(0, 500), now, String(id)).run();
+    await writeAudit(String(id), 'lead-drop', { by: actor.name, reason: r }, 'lead-gate: lead dropped with reason');
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? 'drop failed' };
   }
 }

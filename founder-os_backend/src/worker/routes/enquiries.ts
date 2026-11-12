@@ -480,6 +480,11 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
         const { mirrorEnquiries } = await import('../../modules/core/sales');
         await mirrorEnquiries([String((r.body as any).id)]);
       } catch { /* non-fatal */ }
+      // Phase 7b dual-write: new enquiry = unqualified lead until quoted.
+      try {
+        const { mirrorLeadsForEnquiries } = await import('../../modules/core/leads');
+        await mirrorLeadsForEnquiries([String((r.body as any).id)]);
+      } catch { /* non-fatal */ }
     }
     return c.json(r.body, r.status as any);
   });
@@ -507,6 +512,11 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
       try {
         const { mirrorEnquiries } = await import('../../modules/core/sales');
         await mirrorEnquiries([eid]);
+      } catch { /* non-fatal */ }
+      // Phase 7b dual-write: edits converge the lead (linked rows via estimate).
+      try {
+        const { mirrorLeadsForEnquiries } = await import('../../modules/core/leads');
+        await mirrorLeadsForEnquiries([eid]);
       } catch { /* non-fatal */ }
     }
     return c.json(r.body, r.status as any);

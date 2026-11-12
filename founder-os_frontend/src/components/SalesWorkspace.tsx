@@ -25,9 +25,10 @@ const CallsPanel = dynamic(() => import("./CallsPanel"), { ssr: false });
 const FieldStaffPanel = dynamic(() => import("./FieldStaffPanel"), { ssr: false });
 const SalesObjectionsPanel = dynamic(() => import("./SalesObjectionsPanel"), { ssr: false });
 const MyWorkPanel = dynamic(() => import("./MyWorkPanel"), { ssr: false });
+const LeadsPanel = dynamic(() => import("./LeadsPanel"), { ssr: false });
 const SalesControllerPanel = dynamic(() => import("./SalesControllerPanel"), { ssr: false });
 
-type SalesTab = "mywork" | "leaderboard" | "enquiries" | "master" | "dispatch" | "calls" | "field" | "objections" | "controller";
+type SalesTab = "mywork" | "leads" | "leaderboard" | "enquiries" | "master" | "dispatch" | "calls" | "field" | "objections" | "controller";
 
 interface WorkspaceTab {
   key: SalesTab;
@@ -73,6 +74,11 @@ export default function SalesWorkspace() {
     // leaderboard, every agent sees every objection. Controller stays last.
     if (canView(me, "telecalling") || canManage) {
       out.push({ key: "objections", label: "Objections", icon: "🛡️" });
+    }
+    // Leads: unqualified triage queue + lost-quote rates. Same audience as
+    // My Work (server scopes every row); qualify buttons are TL/head-only.
+    if (canView(me, "telecalling") || canManage) {
+      out.push({ key: "leads", label: "Leads", icon: "🎯" });
     }
     // Controller is MIS/sales-head only and sits LAST so agents' tabs never shift.
     if (canManage) out.push({ key: "controller", label: "Controller", icon: "🎛️" });
@@ -127,6 +133,7 @@ export default function SalesWorkspace() {
         {active === "calls" && <CallsPanel />}
         {active === "field" && <FieldStaffPanel />}
         {active === "objections" && <SalesObjectionsPanel />}
+        {active === "leads" && <LeadsPanel />}
         {active === "controller" && <SalesControllerPanel />}
       </div>
     </div>

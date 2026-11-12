@@ -398,6 +398,13 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
       const ids = Array.isArray(estimates) ? estimates.map((e: any) => String(e?.estimateId ?? '')).filter(Boolean) : [];
       if (ids.length) await mirrorSales(ids);
     } catch { /* non-fatal */ }
+    // Phase 7b dual-write: same batch into core_lead (estimate rows own the
+    // lead; outcome derives from live status — idempotent).
+    try {
+      const { mirrorLeadsForEstimates } = await import('../../modules/core/leads');
+      const ids = Array.isArray(estimates) ? estimates.map((e: any) => String(e?.estimateId ?? '')).filter(Boolean) : [];
+      if (ids.length) await mirrorLeadsForEstimates(ids);
+    } catch { /* non-fatal */ }
     notifyLive(c, { type: 'estimates' });
     if (upserted > 0 || lastSyncAt) {
       const { invalidateDerivedEstimateCaches } = require('../../shared/estimates-cache');
