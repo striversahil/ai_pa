@@ -1,0 +1,23 @@
+{
+  "generatedAt": "2026-11-12T05:33:07.463Z",
+  "metrics": {
+    "fe.raw_fetch_api": 192,
+    "fe.hardcoded_automation_data_url": 26,
+    "fe.hardcoded_automations_nav": 3,
+    "fe.local_inr_formatter": 14,
+    "fe.local_date_formatter": 12,
+    "fe.adhoc_modal_overlay": 31,
+    "fe.slug_alias_literal": 10,
+    "be.getme_boilerplate": 56,
+    "be.autherror_catch_boilerplate": 8,
+    "be.json_body_catch": 199,
+    "be.local_parse_json": 2,
+    "be.local_ist_helper": 11,
+    "be.slug_branch_in_route": 8,
+    "be.slug_alias_literal": 6,
+    "fe.files_over_400_lines": 35,
+    "be.files_over_400_lines": 46,
+    "be.non_registry_routes_in_automations_ts": 8,
+    "be.session_route_registry_leaks": 0
+  }
+}
