@@ -11,6 +11,7 @@ import { runAgnesVisionIntake } from '../../modules/enquiries/vision-intake';
 import { isZohoClosedStatus, procurementSubmittable } from '../../modules/enquiries/queues';
 import { getManagementQueues, invalidateManagementQueues } from '../../modules/enquiries/queues-cache';
 import { canManageRates } from '../../modules/enquiries/scopes';
+import { readBody } from '../http';
 
 // Fire-and-forget queue-cache bust (never blocks the response): the next
 // queues read recomputes once, coalesced across isolates.
@@ -460,7 +461,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.post('/api/enquiries', async (c) => {
     const me = await enquiryMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     // Lead auto-detect: no selector in the form — the creator's roster row
     // (matched by login email, telecalling creator-first pattern) owns it.
     if (!String(body?.assignedAgentId ?? '').trim()) {
@@ -491,7 +492,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.patch('/api/enquiries/:id', async (c) => {
     const me = await enquiryMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
-    const patchBody = await c.req.json().catch(() => ({}));
+    const patchBody = await readBody(c);
     const r = await EnquiryRoutes.enquiryUpdate(createEnquiryStore(c.env), me, c.req.param('id') ?? '', patchBody);
     enquirySend(c, r);
     if ((r as any).status === 200 && (r.body as any)?.id) {
@@ -524,7 +525,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.post('/api/enquiries/:id/additional-requirements', async (c) => {
     const me = await enquiryMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
-    const r = await EnquiryRoutes.enquiryAddRequirement(createEnquiryStore(c.env), me, c.req.param('id') ?? '', await c.req.json().catch(() => ({})));
+    const r = await EnquiryRoutes.enquiryAddRequirement(createEnquiryStore(c.env), me, c.req.param('id') ?? '', await readBody(c));
     enquirySend(c, r);
     if ((r as any).status === 201) {
       // Requirement arrives as an aiPending raw item — split inline, same as Add-via-AI.
@@ -589,7 +590,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.post('/api/enquiries/:id/chat', async (c) => {
     const me = await enquiryMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const message = String(body?.message ?? '').trim().slice(0, 2000);
     if (!message) return c.json({ error: 'message required' }, 400);
     try {
@@ -624,7 +625,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     }
   });
   app.post('/api/debug/chat-test', async (c) => {
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const msg = String(body?.message ?? 'ping').slice(0, 500);
     try {
       const gw = getGateway(c.env as any);
@@ -709,7 +710,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
   // Debug: real copilot without auth (for owner testing only — no PII leak, just this enquiry)
   app.post('/api/debug/enquiry-chat/:id', async (c) => {
     const id = c.req.param('id') ?? '';
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const message = String(body?.message ?? 'Say hello').slice(0, 500);
     // Mock privileged user (bypasses Google OAuth for debug)
     const me: any = { user: { email: 'debug@local', id: 'debug' }, scopes: ['admin','mis','sales','enquiry-tracker'] };
@@ -725,7 +726,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.post('/api/enquiries/:id/chat/stream', async (c) => {
     const me = await enquiryMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const message = String(body?.message ?? '').trim().slice(0, 2000);
     if (!message) return c.json({ error: 'message required' }, 400);
     const { streamChatTurn } = await import('../../modules/enquiries/chat');
@@ -766,7 +767,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.post('/api/enquiries/:id/chat/execute', async (c) => {
     const me = await enquiryMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const action = (body?.action && typeof body.action === 'object' ? body.action : {}) as Record<string, any>;
       const { result, applied } = await executeProposal(
@@ -789,7 +790,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.post('/api/enquiries/:id/comments', async (c) => {
     const me = await enquiryMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
-    const r = await EnquiryRoutes.enquiryAddComment(createEnquiryStore(c.env), me, c.req.param('id') ?? '', await c.req.json().catch(() => ({})));
+    const r = await EnquiryRoutes.enquiryAddComment(createEnquiryStore(c.env), me, c.req.param('id') ?? '', await readBody(c));
     enquirySend(c, r);
     if ((r as any).status === 201) await runEnquiryAi(c, String(c.req.param('id') ?? ''), false);
     return c.json(r.body, r.status as any);
@@ -801,7 +802,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const me = await enquiryMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
     const id = c.req.param('id') ?? '';
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const store = createEnquiryStore(c.env);
       const enquiry: any = await store.getEnquiry(id).catch(() => null);

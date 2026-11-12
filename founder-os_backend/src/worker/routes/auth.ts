@@ -6,6 +6,7 @@ import { authStore, deps, publicOrigin, isSecure, AuthRoutes, type Bindings } fr
 import { listAccountants } from '../../automations/accounts/service';
 import { listDigitalMarketingManagers } from '../../automations/digital-marketing/service';
 import { listEmployees } from '../../automations/human-resources/employees';
+import { readBody } from '../http';
 
 export function registerAuthRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.get('/api/auth/google', async (c) => {
@@ -86,7 +87,7 @@ export function registerAuthRoutes(app: Hono<{ Bindings: Bindings }>): void {
     return c.json(r.body, r.status as any);
   });
   app.post('/api/auth/scopes', async (c) => {
-    const r = await AuthRoutes.authCreateScope(authStore(c), c.req.header('cookie') ?? null, await c.req.json().catch(() => ({})));
+    const r = await AuthRoutes.authCreateScope(authStore(c), c.req.header('cookie') ?? null, await readBody(c));
     return c.json(r.body, r.status as any);
   });
   app.delete('/api/auth/scopes/:key', async (c) => {
@@ -94,7 +95,7 @@ export function registerAuthRoutes(app: Hono<{ Bindings: Bindings }>): void {
     return c.json(r.body, r.status as any);
   });
   app.put('/api/auth/users/:id/scopes', async (c) => {
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const r = await AuthRoutes.authSetUserScopes(authStore(c), c.req.header('cookie') ?? null, c.req.param('id') ?? null, body.keys || []);
     return c.json(r.body, r.status as any);
   });
@@ -103,7 +104,7 @@ export function registerAuthRoutes(app: Hono<{ Bindings: Bindings }>): void {
     return c.json(r.body, r.status as any);
   });
   app.post('/api/auth/roles', async (c) => {
-    const r = await AuthRoutes.authCreateRole(authStore(c), c.req.header('cookie') ?? null, await c.req.json().catch(() => ({})));
+    const r = await AuthRoutes.authCreateRole(authStore(c), c.req.header('cookie') ?? null, await readBody(c));
     return c.json(r.body, r.status as any);
   });
   app.delete('/api/auth/roles/:key', async (c) => {
@@ -111,14 +112,14 @@ export function registerAuthRoutes(app: Hono<{ Bindings: Bindings }>): void {
     return c.json(r.body, r.status as any);
   });
   app.put('/api/auth/users/:id/roles', async (c) => {
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const r = await AuthRoutes.authSetUserRoles(authStore(c), c.req.header('cookie') ?? null, c.req.param('id') ?? null, body.keys || []);
     return c.json(r.body, r.status as any);
   });
   app.put('/api/auth/users/:id/profile', async (c) => {
     // Worker-only (Express is frozen — no mirror). Identity overrides:
     // display name + position. Display/grouping only, never access.
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const r = await AuthRoutes.authSetUserProfile(authStore(c), c.req.header('cookie') ?? null, c.req.param('id') ?? null, body ?? {});
     return c.json(r.body, r.status as any);
   });

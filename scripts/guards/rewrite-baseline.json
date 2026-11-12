@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-12T05:57:04.715Z",
+  "generatedAt": "2026-11-12T05:58:11.357Z",
   "metrics": {
     "fe.raw_fetch_api": 168,
     "fe.hardcoded_automation_data_url": 0,
@@ -10,7 +10,7 @@
     "fe.slug_alias_literal": 1,
     "be.getme_boilerplate": 2,
     "be.autherror_catch_boilerplate": 5,
-    "be.json_body_catch": 199,
+    "be.json_body_catch": 4,
     "be.local_parse_json": 2,
     "be.local_ist_helper": 11,
     "be.slug_branch_in_route": 0,

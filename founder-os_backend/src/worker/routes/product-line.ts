@@ -7,6 +7,7 @@ import type { Hono } from 'hono';
 import { requireMisScope, misScopeError, notifyLive, LiveEvent, type Bindings } from '../context';
 import { AuthError } from '../../modules/auth/types';
 import { getViewerMe } from '../viewer';
+import { readBody } from '../http';
 
 /** Quote writes: whoever holds the `product-line` scope (granted from the
  *  Admin panel), plus MIS/admin. Products/guide/vendors stay MIS-only. */
@@ -84,7 +85,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
     try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
     try {
       const { createProduct } = await import('../../automations/product-line/update');
-      const row = await createProduct(await c.req.json().catch(() => ({})));
+      const row = await createProduct(await readBody(c));
       notifyLive(c, { type: LiveEvent.ProductLine });
       return c.json(row, 201);
     } catch (e: any) { return writeError(c, e); }
@@ -93,7 +94,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
     try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
     try {
       const { updateProduct } = await import('../../automations/product-line/update');
-      const row = await updateProduct(c.req.param('id') ?? '', await c.req.json().catch(() => ({})));
+      const row = await updateProduct(c.req.param('id') ?? '', await readBody(c));
       notifyLive(c, { type: LiveEvent.ProductLine });
       return c.json(row);
     } catch (e: any) { return writeError(c, e); }
@@ -112,7 +113,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
     try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
     try {
       const { createGuide } = await import('../../automations/product-line/update');
-      const row = await createGuide(await c.req.json().catch(() => ({})));
+      const row = await createGuide(await readBody(c));
       notifyLive(c, { type: LiveEvent.ProductLine });
       return c.json(row, 201);
     } catch (e: any) { return writeError(c, e); }
@@ -121,7 +122,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
     try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
     try {
       const { updateGuide } = await import('../../automations/product-line/update');
-      const row = await updateGuide(c.req.param('id') ?? '', await c.req.json().catch(() => ({})));
+      const row = await updateGuide(c.req.param('id') ?? '', await readBody(c));
       notifyLive(c, { type: LiveEvent.ProductLine });
       return c.json(row);
     } catch (e: any) { return writeError(c, e); }
@@ -140,7 +141,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
     try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
     try {
       const { createVendor } = await import('../../automations/product-line/update');
-      const row = await createVendor(await c.req.json().catch(() => ({})));
+      const row = await createVendor(await readBody(c));
       notifyLive(c, { type: LiveEvent.ProductLine });
       return c.json(row, 201);
     } catch (e: any) { return writeError(c, e); }
@@ -149,7 +150,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
     try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
     try {
       const { updateVendor } = await import('../../automations/product-line/update');
-      const row = await updateVendor(c.req.param('id') ?? '', await c.req.json().catch(() => ({})));
+      const row = await updateVendor(c.req.param('id') ?? '', await readBody(c));
       notifyLive(c, { type: LiveEvent.ProductLine });
       return c.json(row);
     } catch (e: any) { return writeError(c, e); }
@@ -168,7 +169,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
     try { await requireQuoteScope(c); } catch (e) { return misScopeError(c, e); }
     try {
       const { createRate } = await import('../../automations/product-line/update');
-      const row = await createRate(await c.req.json().catch(() => ({})));
+      const row = await createRate(await readBody(c));
       notifyLive(c, { type: LiveEvent.ProductLine });
       return c.json(row, 201);
     } catch (e: any) { return writeError(c, e); }
@@ -176,7 +177,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
   app.patch('/api/product-line/rates/:id', async (c) => {
     try { await requireQuoteScope(c); } catch (e) { return misScopeError(c, e); }
     try {
-      const body = await c.req.json().catch(() => ({}));
+      const body = await readBody(c);
       if ((body as any)?.active !== undefined && Object.keys(body as any).length === 1) {
         const { setRateActive } = await import('../../automations/product-line/update');
         const out = await setRateActive(c.req.param('id') ?? '', (body as any).active !== false);

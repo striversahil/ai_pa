@@ -11,6 +11,7 @@ import { getCopilot } from '../../copilot/registry';
 import { appendHistoryNote, appliedNote, cleanSession, clearState, runTurn, streamTurn } from '../../copilot/engine';
 import type { CopilotReply } from '../../copilot/types';
 import { getViewerMe } from '../viewer';
+import { readBody } from '../http';
 
 function sseResponse(gen: AsyncGenerator<{ type: string; data: any }, CopilotReply, unknown>): Response {
   const stream = new ReadableStream({
@@ -48,7 +49,7 @@ export function registerCopilotRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if (!def) return c.json({ error: 'unknown copilot' }, 404);
     const denied = def.checkAccess(me);
     if (denied) return c.json({ error: denied.error }, denied.status as any);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     // No input cap (founder decision): full pastes ride to the model.
     const message = String(body?.message ?? '').trim();
     if (!message) return c.json({ error: 'message required' }, 400);
@@ -65,7 +66,7 @@ export function registerCopilotRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if (!def) return c.json({ error: 'unknown copilot' }, 404);
     const denied = def.checkAccess(me);
     if (denied) return c.json({ error: denied.error }, denied.status as any);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     // No input cap (founder decision): full pastes ride to the model.
     const message = String(body?.message ?? '').trim();
     if (!message) return c.json({ error: 'message required' }, 400);
@@ -85,7 +86,7 @@ export function registerCopilotRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const denied = def.checkAccess(me);
     if (denied) return c.json({ error: denied.error }, denied.status as any);
     try {
-      const clearBody = await c.req.json().catch(() => ({}));
+      const clearBody = await readBody(c);
       const ctx = await def.buildCtx(c.env as any, me, { session: cleanSession(clearBody?.session) });
       await clearState(def, ctx);
       return c.json({ ok: true });
@@ -101,7 +102,7 @@ export function registerCopilotRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const denied = def.checkAccess(me);
     if (denied) return c.json({ error: denied.error }, denied.status as any);
     if (!def.executeProposal) return c.json({ error: 'this copilot is read-only', applied: 'none' }, 400);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const ctx = await def.buildCtx(c.env as any, me, { session: cleanSession(body?.session) });
       const action = (body?.action && typeof body.action === 'object' ? body.action : {}) as Record<string, any>;

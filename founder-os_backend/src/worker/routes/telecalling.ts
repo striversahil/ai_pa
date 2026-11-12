@@ -28,6 +28,7 @@ import {
 } from '../../automations/telecalling/client-segments';
 import { normalizeAgentPhone } from '../../automations/telecalling/util';
 import { getViewerMe } from '../viewer';
+import { readBody } from '../http';
 
 /** Root/MIS/sales-head gate for the region-model management writes. Accepts
  * the scope or the role itself, so a sales-head role holder is authorized even
@@ -111,7 +112,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     // sales-head holds complete authority inside sales, same as MIS).
     if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head, MIS or root only' }, 403);
     const { prisma } = deps();
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     if (!body?.name) return c.json({ error: 'name required' }, 400);
     if (body.type !== undefined && body.type !== '' && body.type !== 'telecaller' && body.type !== 'field_staff' && body.type !== 'team_lead') {
       return c.json({ error: "type must be 'telecaller', 'field_staff' or 'team_lead'" }, 400);
@@ -159,7 +160,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     // Sales roster writes are sales-head/MIS writes (see POST above).
     if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head, MIS or root only' }, 403);
     const { prisma } = deps();
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const data: Record<string, unknown> = {};
     if (body.name !== undefined) data.name = String(body.name).trim();
     if (body.email !== undefined) data.email = body.email;
@@ -286,7 +287,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
       return c.json({ error: 'sales-head, MIS or root can set estimate regions' }, 403);
     }
     const { prisma } = deps();
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     if (!isValidRegion(body.region)) return c.json({ error: 'region must be R1–R4' }, 400);
     const estimateId = c.req.param('id');
     const current = await prisma.estimate.findUnique({
@@ -353,7 +354,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
       return c.json({ error: 'sales-head, MIS or root only' }, 403);
     }
     const me: any = await getViewerMe(c).catch(() => null);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const { holiday, created } = await markSalesHoliday({
         day: body?.day,
@@ -408,7 +409,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
       return c.json({ error: 'sales-head, MIS or root only' }, 403);
     }
     const me: any = await getViewerMe(c).catch(() => null);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const result = await setManualSegment(body?.clientKey ?? body?.key, body?.segment, {
         masterCustomerId: body?.masterCustomerId,
@@ -428,7 +429,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
       return c.json({ error: 'sales-head, MIS or root only' }, 403);
     }
     const me: any = await getViewerMe(c).catch(() => null);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const rules = Array.isArray(body?.rules) ? body.rules : [{ typeBase: body?.typeBase, segment: body?.segment }];
     try {
       const saved: Array<{ base: string; segment: unknown }> = [];
@@ -463,7 +464,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
 
   app.put('/api/telecalling/manual-calls/mode', async (c) => {
     if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head, MIS or root only' }, 403);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const { setCallSource } = await import('../../automations/telecalling/call-source');
       const mode = await setCallSource(body?.mode);
@@ -502,7 +503,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
 
   app.post('/api/telecalling/manual-calls', async (c) => {
     const { prisma } = deps();
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const telecallerId = String(body?.telecallerId ?? '').trim();
     const day = String(body?.day ?? '').trim();
     const connected = Math.floor(Number(body?.connectedCalls ?? NaN));
@@ -680,7 +681,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
   // whole region now — no personal assignment).
   app.put('/api/estimates/:id/call-tag', async (c) => {
     const { prisma } = deps();
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     let actorTelecallerId: string | null = null;
     let isManager = false;
     try {
@@ -756,7 +757,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
   // region-or-manager scoping as call tags above.
   app.put('/api/estimates/:id/next-step', async (c) => {
     const { prisma } = deps();
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     let isManager = false;
     let actorTelecallerId: string | null = null;
     try {

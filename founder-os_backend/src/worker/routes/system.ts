@@ -4,6 +4,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import { deps, isAuthorized, bootStatus, enrichWaEngineMedia, LiveEvent, broadcastLive, type Bindings } from '../context';
+import { readBody } from '../http';
 
 export function registerSystemRoutes(app: Hono<{ Bindings: Bindings }>): void {
   // ── Health ──────────────────────────────────────────────────────────────────
@@ -154,7 +155,7 @@ export function registerSystemRoutes(app: Hono<{ Bindings: Bindings }>): void {
   // ── Brain ───────────────────────────────────────────────────────────────────
   app.post('/api/brain/query', async (c) => {
     const { BrainService } = deps();
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const question = body.question;
     if (!question) return c.json({ error: 'Missing question in request body' }, 400);
     const result = await BrainService.query(question, body.entityFilter);
@@ -162,7 +163,7 @@ export function registerSystemRoutes(app: Hono<{ Bindings: Bindings }>): void {
   });
   app.post('/api/ask-founder-ai', async (c) => {
     const { BrainService } = deps();
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const question = body.question;
     if (!question) return c.json({ error: 'Missing question in request body' }, 400);
     const result = await BrainService.query(question, body.entityFilter);

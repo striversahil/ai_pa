@@ -14,6 +14,7 @@ import type { Hono } from 'hono';
 import { deps, notifyLive, LiveEvent, type Bindings } from '../context';
 import { resolveCaller } from '../../modules/core/permissions';
 import { getViewerMe } from '../viewer';
+import { readBody } from '../http';
 
 function shapeLead(r: any): any {
   return {
@@ -155,7 +156,7 @@ export function registerLeadRoutes(app: Hono<{ Bindings: Bindings }>): void {
       const q = await qualifier(c, v.me);
       if (q.error) return q.error;
       const { qualifyLead } = await import('../../modules/core/leads');
-      const body = await c.req.json().catch(() => ({}));
+      const body = await readBody(c);
       const r = await qualifyLead(c.req.param('id') ?? '', q.actor, String((body as any)?.note ?? ''));
       if (!r.ok) return c.json({ error: r.error ?? 'qualify failed' }, 400);
       notifyLive(c, { type: LiveEvent.Leads });
@@ -172,7 +173,7 @@ export function registerLeadRoutes(app: Hono<{ Bindings: Bindings }>): void {
       const q = await qualifier(c, v.me);
       if (q.error) return q.error;
       const { dropLead } = await import('../../modules/core/leads');
-      const body = await c.req.json().catch(() => ({}));
+      const body = await readBody(c);
       const r = await dropLead(c.req.param('id') ?? '', q.actor,
         String((body as any)?.reason ?? 'other'), String((body as any)?.detail ?? ''));
       if (!r.ok) return c.json({ error: r.error ?? 'drop failed' }, 400);

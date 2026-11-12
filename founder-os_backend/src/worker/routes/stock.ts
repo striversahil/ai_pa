@@ -6,6 +6,7 @@ import type { Hono } from 'hono';
 import { misScopeError, notifyLive, LiveEvent, type Bindings } from '../context';
 import { AuthError } from '../../modules/auth/types';
 import { getViewerMe } from '../viewer';
+import { readBody } from '../http';
 
 async function requireStockScope(c: any): Promise<void> {
   const me = await getViewerMe(c);
@@ -30,7 +31,7 @@ export function registerStockRoutes(app: Hono<{ Bindings: Bindings }>): void {
     try { await requireStockScope(c); } catch (e) { return misScopeError(c, e); }
     try {
       const { createStockItem } = await import('../../automations/stock/update');
-      const row = await createStockItem(await c.req.json().catch(() => ({})));
+      const row = await createStockItem(await readBody(c));
       notifyLive(c, { type: LiveEvent.Stock });
       return c.json(row, 201);
     } catch (e: any) { return writeError(c, e); }
@@ -39,7 +40,7 @@ export function registerStockRoutes(app: Hono<{ Bindings: Bindings }>): void {
     try { await requireStockScope(c); } catch (e) { return misScopeError(c, e); }
     try {
       const { updateStockItem } = await import('../../automations/stock/update');
-      const row = await updateStockItem(c.req.param('id') ?? '', await c.req.json().catch(() => ({})));
+      const row = await updateStockItem(c.req.param('id') ?? '', await readBody(c));
       notifyLive(c, { type: LiveEvent.Stock });
       return c.json(row);
     } catch (e: any) { return writeError(c, e); }
@@ -50,7 +51,7 @@ export function registerStockRoutes(app: Hono<{ Bindings: Bindings }>): void {
       const me = await getViewerMe(c);
       const { postStockMovement } = await import('../../automations/stock/update');
       const actor = (me as any)?.user?.name ?? (me as any)?.user?.email ?? '';
-      const row = await postStockMovement(await c.req.json().catch(() => ({})), actor);
+      const row = await postStockMovement(await readBody(c), actor);
       notifyLive(c, { type: LiveEvent.Stock });
       return c.json(row, 201);
     } catch (e: any) { return writeError(c, e); }
@@ -68,7 +69,7 @@ export function registerStockRoutes(app: Hono<{ Bindings: Bindings }>): void {
     try { await requireStockScope(c); } catch (e) { return misScopeError(c, e); }
     try {
       const { createLocation } = await import('../../automations/stock/update');
-      const row = await createLocation(String((await c.req.json().catch(() => ({})))?.name ?? ''));
+      const row = await createLocation(String((await readBody(c))?.name ?? ''));
       notifyLive(c, { type: LiveEvent.Stock });
       return c.json(row, 201);
     } catch (e: any) { return writeError(c, e); }
@@ -79,7 +80,7 @@ export function registerStockRoutes(app: Hono<{ Bindings: Bindings }>): void {
       const me = await getViewerMe(c);
       const { reserveStock } = await import('../../automations/stock/update');
       const actor = (me as any)?.user?.name ?? (me as any)?.user?.email ?? '';
-      const row = await reserveStock(await c.req.json().catch(() => ({})), actor);
+      const row = await reserveStock(await readBody(c), actor);
       notifyLive(c, { type: LiveEvent.Stock });
       return c.json(row, 201);
     } catch (e: any) { return writeError(c, e); }

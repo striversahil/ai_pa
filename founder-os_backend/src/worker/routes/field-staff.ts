@@ -34,6 +34,7 @@ import {
 } from '../../modules/field-visits/store';
 import { getFieldStaffData, invalidateFieldStaffCache, suggestMillMatch } from '../../modules/field-visits/service';
 import { getViewerMe } from '../viewer';
+import { readBody } from '../http';
 
 function istToday(): string {
   return new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
@@ -89,7 +90,7 @@ export function registerFieldStaffRoutes(app: Hono<{ Bindings: Bindings }>): voi
   app.post('/api/field-staff/check-in', async (c) => {
     const me = await viewer(c);
     if (!me) return c.json({ error: 'authentication required' }, 401);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const staffId = String(body?.telecallerId ?? body?.staffId ?? '').trim();
     const city = String(body?.city ?? '').trim().slice(0, 200);
     if (!staffId) return c.json({ error: 'telecallerId required' }, 400);
@@ -124,7 +125,7 @@ export function registerFieldStaffRoutes(app: Hono<{ Bindings: Bindings }>): voi
   app.post('/api/field-staff/check-out', async (c) => {
     const me = await viewer(c);
     if (!me) return c.json({ error: 'authentication required' }, 401);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const visitId = String(body?.visitId ?? '').trim();
     if (!visitId) return c.json({ error: 'visitId required' }, 400);
     const ok = await checkoutVisit(c.env.DB, visitId);
@@ -140,7 +141,7 @@ export function registerFieldStaffRoutes(app: Hono<{ Bindings: Bindings }>): voi
     const visitId = c.req.param('id') ?? '';
     const visit: any = await getVisit(c.env.DB, visitId).catch(() => null);
     if (!visit) return c.json({ error: 'visit not found' }, 404);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const fields: Record<string, string> = {};
     for (const k of ['millName', 'keyContact', 'designation', 'phone', 'rollerPlantNos', 'attaChakkiNos', 'chakkiSize', 'runningTime', 'products', 'millAgeYrs', 'machineBrand', 'requirement']) {
       fields[k] = String(body?.[k] ?? '');
@@ -298,7 +299,7 @@ export function registerFieldStaffRoutes(app: Hono<{ Bindings: Bindings }>): voi
   app.put('/api/field-staff/mills/:id/flag', async (c) => {
     const me = await viewer(c);
     if (!me) return c.json({ error: 'authentication required' }, 401);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     // null clears back to the auto suggestion; followUpNeeded=true creates a
     // dated follow-up row (date-first), false cancels the mill's open rows.
     const isNew = body?.isNew === null || body?.isNew === undefined ? null : body.isNew === true;
@@ -342,7 +343,7 @@ export function registerFieldStaffRoutes(app: Hono<{ Bindings: Bindings }>): voi
     const visitId = c.req.param('id') ?? '';
     const visit: any = await getVisit(c.env.DB, visitId).catch(() => null);
     if (!visit) return c.json({ error: 'visit not found' }, 404);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const amount = Number(body?.amount ?? NaN);
     const description = String(body?.description ?? '').trim();
     if (!Number.isFinite(amount) || amount < 0) return c.json({ error: 'amount must be a non-negative number' }, 400);
@@ -373,7 +374,7 @@ export function registerFieldStaffRoutes(app: Hono<{ Bindings: Bindings }>): voi
   app.post('/api/field-staff/expenses', async (c) => {
     const me = await viewer(c);
     if (!me) return c.json({ error: 'authentication required' }, 401);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const amount = Number(body?.amount ?? NaN);
     const description = String(body?.description ?? '').trim();
     const day = String(body?.day ?? '').slice(0, 10);
@@ -401,7 +402,7 @@ export function registerFieldStaffRoutes(app: Hono<{ Bindings: Bindings }>): voi
     const visitId = c.req.param('id') ?? '';
     const visit: any = await getVisit(c.env.DB, visitId).catch(() => null);
     if (!visit) return c.json({ error: 'visit not found' }, 404);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const due = String(body?.dueDate ?? '').slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(due)) return c.json({ error: 'follow-up date required (YYYY-MM-DD)' }, 400);
     if (due < istToday()) return c.json({ error: 'follow-up date cannot be in the past' }, 400);
@@ -437,7 +438,7 @@ export function registerFieldStaffRoutes(app: Hono<{ Bindings: Bindings }>): voi
   app.post('/api/field-staff/followups', async (c) => {
     const me = await viewer(c);
     if (!me) return c.json({ error: 'authentication required' }, 401);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const note = String(body?.note ?? '').trim();
     if (!note) return c.json({ error: 'note required' }, 400);
     const actor = actorOf(me);
@@ -488,7 +489,7 @@ export function registerFieldStaffRoutes(app: Hono<{ Bindings: Bindings }>): voi
   app.patch('/api/field-staff/followups/:id', async (c) => {
     const me = await viewer(c);
     if (!me) return c.json({ error: 'authentication required' }, 401);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const status = String(body?.status ?? '').trim();
     if (!['open', 'done', 'cancelled'].includes(status)) return c.json({ error: 'status must be open|done|cancelled' }, 400);
     const ok = await setFollowupStatus(c.env.DB, c.req.param('id') ?? '', status);

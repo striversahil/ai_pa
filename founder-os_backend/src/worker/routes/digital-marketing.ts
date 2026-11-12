@@ -14,6 +14,7 @@ import {
 import { getDigitalMarketingAds, createAd, updateAd, deleteAd, createAdAttachment, getAdAttachment, deleteAdAttachment, toAdAttachmentJson } from '../../automations/digital-marketing/ads';
 import { getDigitalMarketingOpenTasks, getOpenTaskById, createOpenTask, updateOpenTask, deleteOpenTask, upsertOpenTaskEntry, ensureEntryForDate, createOpenTaskAttachment, getOpenTaskAttachment, deleteOpenTaskAttachment, toOpenTaskAttachmentJson } from '../../automations/digital-marketing/open-tasks';
 import { getViewerMe } from '../viewer';
+import { readBody } from '../http';
 
 async function actorName(c: any): Promise<string | null> {
   try {
@@ -35,7 +36,7 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
 
   app.post('/api/digital-marketing/roster', async (c) => {
     try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await createDigitalMarketingManager(body || {});
       notifyLive(c, { type: LiveEvent.DigitalMarketing });
@@ -45,7 +46,7 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
 
   app.put('/api/digital-marketing/roster/:id', async (c) => {
     try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await updateDigitalMarketingManager(c.req.param('id'), body || {});
       notifyLive(c, { type: LiveEvent.DigitalMarketing });
@@ -69,7 +70,7 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
 
   app.post('/api/digital-marketing/templates', async (c) => {
     try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await createTemplate(body || {});
       notifyLive(c, { type: LiveEvent.DigitalMarketing });
@@ -79,7 +80,7 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
 
   app.put('/api/digital-marketing/templates/:id', async (c) => {
     try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await updateTemplate(c.req.param('id'), body || {});
       notifyLive(c, { type: LiveEvent.DigitalMarketing });
@@ -123,7 +124,7 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
   });
 
   app.post('/api/digital-marketing/ads', async (c) => {
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const actor = await actorName(c);
       const row = await createAd(body || {}, actor);
@@ -133,7 +134,7 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
   });
 
   app.patch('/api/digital-marketing/ads/:id', async (c) => {
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await updateAd(c.req.param('id'), body || {});
       notifyLive(c, { type: LiveEvent.DigitalMarketing });
@@ -236,7 +237,7 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
   });
 
   app.post('/api/digital-marketing/open-tasks', async (c) => {
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const actor = await actorName(c);
       const row = await createOpenTask(body || {}, actor);
@@ -246,7 +247,7 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
   });
 
   app.patch('/api/digital-marketing/open-tasks/:id', async (c) => {
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await updateOpenTask(c.req.param('id'), body || {});
       notifyLive(c, { type: LiveEvent.DigitalMarketing });
@@ -279,7 +280,7 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
   });
 
   app.put('/api/digital-marketing/open-tasks/:id/entries', async (c) => {
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const actor = await actorName(c);
       const row = await upsertOpenTaskEntry(c.req.param('id'), String((body as any)?.date ?? ''), (body as any)?.note ?? '', actor);
@@ -379,7 +380,7 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
   // Who is inferred server-side (session → roster, declared `as` first) —
   // the client never declares attribution.
   app.patch('/api/digital-marketing/logs/:id', async (c) => {
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const me = await getViewerMe(c).catch(() => null);
       const self = await resolveSelfDigitalMarketingManager(

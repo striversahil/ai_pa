@@ -10,6 +10,7 @@ import { prisma } from '../../shared/prisma';
 import { logger } from '../../shared/logger';
 import { cacheGet, cacheSet, cacheDel } from '../../shared/cache';
 import { RELAY_ACTIVE_KEY, RELAY_ACTIVE_KEY_BAK, RELAY_TTL_MS } from '../../shared/ai-gateway';
+import { readBody } from '../http';
 
 export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
   // ── agnes-relay lane (on-demand GH egress for Agnes 1015 storms) ──────────
@@ -18,7 +19,7 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
   // fresh. TTL-bounded, so a killed run stops attracting traffic on its own.
   app.post('/api/runner/relay/register', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const lane = String(body?.lane ?? 'primary') === 'bak' ? 'bak' : 'primary';
     const key = lane === 'bak' ? RELAY_ACTIVE_KEY_BAK : RELAY_ACTIVE_KEY;
     const runId = String(body?.runId ?? '');
@@ -82,7 +83,7 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.post('/api/runner/digests', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
     const { StorageRepository } = deps();
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     if (!body.chatId || !body.summary) return c.json({ error: 'chatId + summary required' }, 400);
     const digest = await StorageRepository.saveDigest({
       chatId: body.chatId,
@@ -101,7 +102,7 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.post('/api/runner/tasks', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
     const { StorageRepository } = deps();
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     if (!body.title) return c.json({ error: 'title required' }, 400);
     let deadline: Date | null = null;
     if (body.deadline) { const d = new Date(body.deadline); if (!isNaN(d.getTime())) deadline = d; }
@@ -120,7 +121,7 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.post('/api/runner/pending-items', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
     const { StorageRepository } = deps();
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     if (!body.chatId || !body.description) return c.json({ error: 'chatId + description required' }, 400);
     let dueDate: Date | null = null;
     if (body.dueDate) { const d = new Date(body.dueDate); if (!isNaN(d.getTime())) dueDate = d; }
@@ -137,7 +138,7 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.post('/api/runner/messages/mark-processed', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
     const { StorageRepository } = deps();
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const ids = Array.isArray(body.ids) ? body.ids.map(String).filter(Boolean) : [];
     if (!ids.length) return c.json({ ok: true, count: 0 });
     await StorageRepository.markMessagesProcessed(ids);
@@ -162,7 +163,7 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.post('/api/runner/founder-notes', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
     const { StorageRepository } = deps();
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     if (!body.content) return c.json({ error: 'content required' }, 400);
     const note = await StorageRepository.saveFounderNote(String(body.content));
     broadcastLive(c, LiveEvent.FounderNotes);
@@ -196,7 +197,7 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
   // request path.
   app.post('/api/runner/zoho/salesorders-today', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     if (typeof body?.date !== 'string' || typeof body?.count !== 'number') {
       return c.json({ error: 'date (YYYY-MM-DD) and count (number) required' }, 400);
     }
@@ -263,7 +264,7 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.post('/api/runner/zoho/fingerprint', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
     const { cacheSet }: { cacheSet: <T>(key: string, value: T, ttlMs: number) => Promise<void> } = require('../../shared/cache');
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const fp = typeof body?.fingerprint === 'string' && body.fingerprint ? body.fingerprint : null;
     if (fp) await cacheSet(ZOHO_FP_KEY, fp, ZOHO_FP_TTL_MS);
     return c.json({ ok: true });
@@ -272,7 +273,7 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.post('/api/runner/zoho/comments', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
     const { prisma } = deps();
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const comments = Array.isArray(body.comments) ? body.comments : [];
     const incoming = comments.filter((cm: any) => cm?.commentId);
     const existing = new Map<string, any>();
@@ -325,7 +326,7 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
 
   app.post('/api/runner/zoho/status', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const updates = Array.isArray(body.updates) ? body.updates : [];
     const { applyStatusUpdates } = await import('../../modules/estimates/status-sync');
     const { updated, enquiriesAutoSent } = (await applyStatusUpdates(updates)) as any;
@@ -352,7 +353,7 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.post('/api/runner/zoho/classification', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
     const { prisma } = deps();
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const { estimateId, classification } = body;
     if (!estimateId || !classification) return c.json({ error: 'estimateId + classification required' }, 400);
     const now = new Date();
@@ -421,7 +422,7 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.post('/api/runner/emails', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
     const { StorageRepository } = deps();
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const emails = Array.isArray(body.emails) ? body.emails : [];
     let saved = 0;
     for (const e of emails) {
@@ -449,7 +450,7 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
 
   app.post('/api/runner/brain/context', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const rows = Array.isArray(body.rows) ? body.rows : [];
     const db = c.env.DB;
     if (!db || !db.batch) return c.json({ ok: true, count: 0 });
@@ -644,7 +645,7 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
   // POST claim: stake out ids for this runner (best-effort, idempotent).
   app.post('/api/runner/enquiry-intake/claim', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const ids = (Array.isArray(body?.ids) ? body.ids : []).map((v: any) => String(v ?? '')).filter(Boolean).slice(0, 25);
     if (ids.length === 0) return c.json({ claimed: [] });
     const now = new Date().toISOString();
@@ -674,7 +675,7 @@ export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
   // suggestions + missing slots go to KV for the sales UI. Never prices.
   app.post('/api/runner/enquiry-intake/result', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const enquiryId = String(body?.enquiryId ?? '');
     if (!enquiryId) return c.json({ error: 'enquiryId required' }, 400);
     const store = createEnquiryStore(c.env);

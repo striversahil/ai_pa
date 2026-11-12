@@ -16,6 +16,7 @@ import type { Hono } from 'hono';
 import { notifyLive, requireSecret, type Bindings } from '../context';
 import { syncOrders, syncState, type SyncedOrder } from '../../modules/crm/store';
 import { istToday } from '../../modules/crm/types';
+import { readBody } from '../http';
 
 /** Zoho list row → the store's normalized shape. Keeps the runner payload thin. */
 function normalizeOrder(o: any): SyncedOrder | null {
@@ -69,7 +70,7 @@ export function registerCrmSyncRoutes(app: Hono<{ Bindings: Bindings }>): void {
   // refreshes lastSeenAt (so a retry after a network error is harmless).
   app.post('/api/runner/crm/orders/sync', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const raw = Array.isArray(body?.orders) ? body.orders : [];
     const orders = raw.map(normalizeOrder).filter((o): o is SyncedOrder => !!o);
     if (!orders.length) {

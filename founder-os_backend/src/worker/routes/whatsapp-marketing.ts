@@ -6,6 +6,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import { deps, type Bindings } from '../context';
+import { readBody } from '../http';
 
 // ── WhatsApp Marketing (port of routes/whatsapp-marketing.ts) ───────────────
 const PHONE_ALIASES = ['phone', 'phoneno', 'phonenumber', 'mobile', 'mobileno', 'number', 'whatsapp', 'whatsappno', 'contact', 'contactno', 'cell', 'cellno', 'telephone'];
@@ -109,7 +110,7 @@ export function registerMarketingRoutes(app: Hono<{ Bindings: Bindings }>): void
 
   app.post('/api/whatsapp-marketing/campaigns', async (c) => {
     const { prisma } = deps();
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const data = buildCampaignData(body);
     if (!data.name) return c.json({ error: 'name is required' }, 400);
     const campaign = await prisma.marketingCampaign.create({ data });
@@ -133,7 +134,7 @@ export function registerMarketingRoutes(app: Hono<{ Bindings: Bindings }>): void
     const id = c.req.param('id');
     const existing = await prisma.marketingCampaign.findUnique({ where: { id } });
     if (!existing) return c.json({ error: 'campaign not found' }, 404);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const campaign = await prisma.marketingCampaign.update({ where: { id }, data: buildCampaignData(body) });
     return c.json(campaign);
   });
@@ -175,7 +176,7 @@ export function registerMarketingRoutes(app: Hono<{ Bindings: Bindings }>): void
     const id = c.req.param('id');
     const campaign = await prisma.marketingCampaign.findUnique({ where: { id } });
     if (!campaign) return c.json({ error: 'campaign not found' }, 404);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const limit = body?.leadLimit ? Number(body.leadLimit) : 100;
     const result = await executeCampaign(campaign.id, { leadLimit: limit });
     return c.json({ ok: result.status !== 'failed', result });

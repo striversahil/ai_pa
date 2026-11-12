@@ -17,6 +17,7 @@ import {
   setLoggingOnly,
   summary,
 } from '../../modules/device-calls/store';
+import { readBody } from '../http';
 
 function filters(c: any, telecallerId: string | null) {
   return {
@@ -80,7 +81,7 @@ export function registerCallLogRoutes(app: Hono<{ Bindings: Bindings }>): void {
 
   app.post('/api/call-log/devices/pair-code', async (c) => {
     if (!(await requireCallManager(c))) return c.json({ error: 'sales-head, MIS or root only' }, 403);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const telecallerId = String(body?.telecallerId ?? '').trim();
     if (!telecallerId) return c.json({ error: 'telecallerId required' }, 400);
     const tc: any = await c.env.DB.prepare('SELECT id, deleted FROM Telecaller WHERE id = ? LIMIT 1').bind(telecallerId).first();
@@ -92,7 +93,7 @@ export function registerCallLogRoutes(app: Hono<{ Bindings: Bindings }>): void {
 
   app.patch('/api/call-log/devices/:id', async (c) => {
     if (!(await requireCallManager(c))) return c.json({ error: 'sales-head, MIS or root only' }, 403);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     if (typeof body?.loggingOnly !== 'boolean') return c.json({ error: 'loggingOnly boolean required' }, 400);
     const ok = await setLoggingOnly(c.env.DB, c.req.param('id'), body.loggingOnly);
     if (!ok) return c.json({ error: 'device not found' }, 404);

@@ -13,6 +13,7 @@ import { isApproved, notifyLive, requireMisScope, type Bindings } from '../conte
 import { addReply, createObjection, getObjection, listObjections, setObjectionStatus } from '../../modules/sales-objections/store';
 import { cleanObjectionInput } from '../../modules/sales-objections/types';
 import { getViewerMe } from '../viewer';
+import { readBody } from '../http';
 
 async function viewer(c: any): Promise<any | null> {
   const me: any = await getViewerMe(c).catch(() => null);
@@ -57,7 +58,7 @@ export function registerSalesObjectionsRoutes(app: Hono<{ Bindings: Bindings }>)
   app.post('/api/sales-objections', async (c) => {
     const me = await viewer(c);
     if (!me) return c.json({ error: 'authentication required' }, 401);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const parsed = cleanObjectionInput(body);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     const actor = actorOf(me);
@@ -74,7 +75,7 @@ export function registerSalesObjectionsRoutes(app: Hono<{ Bindings: Bindings }>)
     const me = await viewer(c);
     if (!me) return c.json({ error: 'authentication required' }, 401);
     if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head, MIS or root only' }, 403);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const text = String(body?.text ?? '').trim().slice(0, 2000);
     if (!text) return c.json({ error: 'reply text required' }, 400);
     const actor = actorOf(me);
@@ -93,7 +94,7 @@ export function registerSalesObjectionsRoutes(app: Hono<{ Bindings: Bindings }>)
     const me = await viewer(c);
     if (!me) return c.json({ error: 'authentication required' }, 401);
     if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head, MIS or root only' }, 403);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const status = String(body?.status ?? '').trim();
     if (status !== 'open' && status !== 'resolved') return c.json({ error: 'status must be open|resolved' }, 400);
     const row = await setObjectionStatus(c.env.DB, c.req.param('id') ?? '', status);

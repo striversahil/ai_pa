@@ -22,6 +22,7 @@ import {
 import { MAX_RECORDING_BYTES, PART_MINUTES, MAX_CALL_MINUTES } from '../../modules/device-calls/types';
 import { cacheGet, cacheSet } from '../../shared/cache';
 import { invalidateDeviceCallCaches } from '../../automations/telecalling/device-calls';
+import { readBody } from '../http';
 
 const DEFAULT_CONFIG = {
   loggingOnlyFallback: false,
@@ -57,7 +58,7 @@ export function registerAndroidRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if (hits >= 10) return c.json({ error: 'Too many pairing attempts — retry in a minute' }, 429);
     await cacheSet(rateKey, hits + 1, 60_000).catch(() => null);
 
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const code = normalizePairCode(body?.code);
     const deviceId = String(body?.deviceId ?? '').trim().slice(0, 64);
     const label = String(body?.label ?? '').trim().slice(0, 120);
@@ -97,7 +98,7 @@ export function registerAndroidRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.post('/api/android/heartbeat', async (c) => {
     const auth = await requireDevice(c);
     if (!auth) return c.json({ error: 'unauthorized' }, 401);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const appVersion = String(body?.appVersion ?? body?.deviceId ?? '').slice(0, 40);
     await touchDevice(c.env.DB, auth.device.id, appVersion || undefined).catch(() => null);
     if (body?.consent === true && !auth.device.consentAt) {
@@ -126,7 +127,7 @@ export function registerAndroidRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.post('/api/android/calls', async (c) => {
     const auth = await requireDevice(c);
     if (!auth) return c.json({ error: 'unauthorized' }, 401);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const parsed = await parseBatch(body, auth.device.deviceId);
     if (parsed.calls.length === 0) return c.json({ accepted: 0, duplicates: 0, errors: parsed.errors }, 400);
     const accepted = await insertCalls(c.env.DB, parsed.calls, auth.telecallerId);

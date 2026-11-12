@@ -9,6 +9,7 @@ import { requireSecret, notifyLive, type Bindings } from '../context';
 import { prisma } from '../../shared/prisma';
 import { cacheGet, cacheDel } from '../../shared/cache';
 import { oauthStartUrl, oauthCallback, publishPost, connectionStatus } from '../../automations/linkedin/post';
+import { readBody } from '../http';
 
 // atob-based base64 → bytes (no Buffer dependency — edge Buffer support for
 // binary builtins proved unreliable live; atob is universal in workers).
@@ -96,7 +97,7 @@ export function registerLinkedinRoutes(app: Hono<{ Bindings: Bindings }>): void 
   app.post('/api/linkedin/regenerate', async (c) => {
     const token = String(c.env.GITHUB_ACCESS_TOKEN ?? '');
     if (!token) return c.json({ ok: false, error: 'GitHub dispatch not configured' }, 500);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const topic = String(body?.topic ?? '').trim().slice(0, 80);
     const { linkedinRegenBusy, dispatchLinkedinRegen } = await import('../cron');
     if (await linkedinRegenBusy(token)) {
@@ -113,7 +114,7 @@ export function registerLinkedinRoutes(app: Hono<{ Bindings: Bindings }>): void 
   });
   // Founder picks 1 of 5 (others stay draft for reuse; picked → approved).
   app.post('/api/linkedin/pick', async (c) => {
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const id = String(body?.id ?? '');
     if (!id) return c.json({ ok: false, error: 'id required' }, 400);
     const row = await (prisma as any).linkedinPost.findUnique({ where: { id } });
@@ -128,7 +129,7 @@ export function registerLinkedinRoutes(app: Hono<{ Bindings: Bindings }>): void 
 
   // Mark the picked post as posted (manual LinkedIn post done).
   app.post('/api/linkedin/posted', async (c) => {
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const id = String(body?.id ?? '');
     if (!id) return c.json({ ok: false, error: 'id required' }, 400);
     await (prisma as any).linkedinPost.update({
@@ -181,7 +182,7 @@ export function registerLinkedinRoutes(app: Hono<{ Bindings: Bindings }>): void 
 
   // Post NOW — publish a draft to the connected personal profile.
   app.post('/api/linkedin/post-now', async (c) => {
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const id = String(body?.id ?? '');
     if (!id) return c.json({ ok: false, error: 'id required' }, 400);
     const row = await (prisma as any).linkedinPost.findUnique({ where: { id } });
@@ -208,7 +209,7 @@ export function registerLinkedinRoutes(app: Hono<{ Bindings: Bindings }>): void 
   // Organize: delete a draft (row + KV visual). Posted rows are protected —
   // history stays intact; only drafts die.
   app.post('/api/linkedin/delete', async (c) => {
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const id = String(body?.id ?? '');
     if (!id) return c.json({ ok: false, error: 'id required' }, 400);
     const row = await (prisma as any).linkedinPost.findUnique({ where: { id } });
@@ -227,7 +228,7 @@ export function registerLinkedinRoutes(app: Hono<{ Bindings: Bindings }>): void 
   // Body { ideaId? } — P001..P200, or empty = runner auto-picks one HIGH,
   // rotation-aware idea. Lands via normal batch ingest → live event.
   app.post('/api/linkedin/generate-one', async (c) => {
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const ideaId = String(body?.ideaId ?? '').trim().toUpperCase();
     if (ideaId && !/^P\d{1,3}$/.test(ideaId)) {
       return c.json({ ok: false, error: 'ideaId looks like P001–P200' }, 400);
@@ -251,7 +252,7 @@ export function registerLinkedinRoutes(app: Hono<{ Bindings: Bindings }>): void 
   // Runner ingest: full 5-post batch (idempotent per batchDate+topic).
   app.post('/api/runner/linkedin/batch', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const batchDate = String(body?.batchDate ?? istDateString(new Date()));
     const posts = Array.isArray(body?.posts) ? body.posts : [];
     if (!posts.length) return c.json({ ok: false, error: 'posts required' }, 400);

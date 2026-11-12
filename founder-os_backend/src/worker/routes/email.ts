@@ -20,6 +20,7 @@ import { ROOT_EMAIL } from '../../modules/auth/types';
 import type { EmailEnv } from '../../automations/email/service';
 import * as svc from '../../automations/email/service';
 import * as store from '../../automations/email/store';
+import { readBody } from '../http';
 
 function kvStore(env: Bindings) {
   const KV = (env as any).CACHE_KV as any;
@@ -65,7 +66,7 @@ export function registerEmailRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const denied = await rootOnly(c);
     if (denied) return denied;
     try {
-      const body = await c.req.json().catch(() => ({}));
+      const body = await readBody(c);
       const acc = await svc.connectWithToken(
         emailEnv(c.env as any), String(body?.label ?? ''), String(body?.refreshToken ?? ''));
       notifyLive(c, { type: 'email' });
@@ -114,7 +115,7 @@ export function registerEmailRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const denied = await rootOnly(c);
     if (denied) return denied;
     try {
-      await svc.disconnect(emailEnv(c.env as any), String((await c.req.json().catch(() => ({})))?.accountId ?? ''));
+      await svc.disconnect(emailEnv(c.env as any), String((await readBody(c))?.accountId ?? ''));
       notifyLive(c, { type: 'email' });
       return c.json({ ok: true });
     } catch (e: any) { return c.json({ ok: false, error: e?.message ?? 'disconnect failed' }, 400); }
@@ -125,7 +126,7 @@ export function registerEmailRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const denied = await rootOnly(c);
     if (denied) return denied;
     try {
-      const body = await c.req.json().catch(() => ({}));
+      const body = await readBody(c);
       const r = await svc.sendNow(emailEnv(c.env as any), String(body?.accountId ?? ''), body);
       notifyLive(c, { type: 'email' });
       return c.json({ ok: true, gmailId: r.gmailId });
@@ -137,7 +138,7 @@ export function registerEmailRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const denied = await rootOnly(c);
     if (denied) return denied;
     try {
-      const body = await c.req.json().catch(() => ({}));
+      const body = await readBody(c);
       const r = await svc.saveDraft(emailEnv(c.env as any), String(body?.accountId ?? ''), body);
       notifyLive(c, { type: 'email' });
       return c.json({ ok: true, draftId: r.draftId });
@@ -169,7 +170,7 @@ export function registerEmailRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const denied = await rootOnly(c);
     if (denied) return denied;
     try {
-      const body = await c.req.json().catch(() => ({}));
+      const body = await readBody(c);
       const item = await svc.scheduleMail(emailEnv(c.env as any),
         String(body?.accountId ?? ''), body,
         { sendAt: body?.sendAt, repeatDailyAt: body?.repeatDailyAt });

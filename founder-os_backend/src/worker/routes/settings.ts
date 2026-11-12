@@ -11,6 +11,7 @@ import { ROOT_EMAIL } from '../../modules/auth/types';
 import { APP_SETTINGS, getAppSettings, setAppSetting } from '../../shared/app-settings';
 import { resolveChatChain, resolveChatModel, resolveIntakeChain, resolveLegModel } from '../../shared/intake-chain';
 import { getViewerMe } from '../viewer';
+import { readBody } from '../http';
 
 async function rootDenial(c: any): Promise<any | null> {
   try {
@@ -60,7 +61,7 @@ export function registerSettingsRoutes(app: Hono<{ Bindings: Bindings }>): void 
     const denied = await rootDenial(c);
     if (denied) return denied;
     const key = String(c.req.param('key') ?? '');
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     if (typeof body?.value !== 'string') return c.json({ ok: false, error: 'value string required' }, 400);
     try {
       await setAppSetting(key, body.value);

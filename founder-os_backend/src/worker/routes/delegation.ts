@@ -22,6 +22,7 @@ import {
 } from '../../automations/human-resources/delegation';
 import { createTask, updateMember } from '../../automations/human-resources/service';
 import { getViewerMe } from '../viewer';
+import { readBody } from '../http';
 
 function actorLabel(me: any): string | null {
   return me?.user?.name ?? me?.user?.email ?? null;
@@ -80,7 +81,7 @@ export function registerDelegationRoutes(app: Hono<{ Bindings: Bindings }>): voi
   app.post('/api/delegation/tasks', async (c) => {
     const v = await viewer(c);
     if (v.error) return v.error;
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       // HR/MIS users assign work through the same form the HR dashboard uses;
       // everyone else can only add a task to their own list.
@@ -95,7 +96,7 @@ export function registerDelegationRoutes(app: Hono<{ Bindings: Bindings }>): voi
   app.patch('/api/delegation/tasks/:id', async (c) => {
     const v = await viewer(c);
     if (v.error) return v.error;
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await updateDelegationTask(
         c.req.param('id') ?? '', body || {}, v.me, actorLabel(v.me),
@@ -121,7 +122,7 @@ export function registerDelegationRoutes(app: Hono<{ Bindings: Bindings }>): voi
     if (!isHrManager(v.me)) {
       return c.json({ error: 'Only HR/MIS users can link logins' }, 403);
     }
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await updateMember(c.req.param('id') ?? '', {
         loginEmail: body?.loginEmail ?? null,

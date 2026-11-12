@@ -7,6 +7,7 @@
 import type { Hono } from 'hono';
 import { deps, requireSecret, requireMisScope, misScopeError, notifyLive, LiveEvent, kolkataDateStr, getEstimatesPayload, refreshNeodoveReport, isApproved, type Bindings } from '../context';
 import { getViewerMe } from '../viewer';
+import { readBody } from '../http';
 
 export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void {
   // ── Estimates ───────────────────────────────────────────────────────────────
@@ -34,7 +35,7 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
   // the manual change and the points diff scores it automatically.
   app.post('/api/crm/actions', async (c) => {
     try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const soNumber = String(body?.soNumber || '').trim();
     const action = String(body?.action || '').trim().toLowerCase();
     const toStage = String(body?.toStage || action || '').trim().toLowerCase();
@@ -117,7 +118,7 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
   app.post('/api/runner/neodove-refresh', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
     try {
-      const body = await c.req.json().catch(() => ({}));
+      const body = await readBody(c);
       // Probe mode (founder 2026-11-05): inventory the NeoDove API shape for
       // agent phone data (keys only, no PII) without storing anything.
       if ((body as any)?.probe) {
@@ -147,7 +148,7 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
         const t = new Date(Date.UTC(y, m - 1, d + n));
         return t.toISOString().slice(0, 10);
       };
-      const body = await c.req.json().catch(() => ({}));
+      const body = await readBody(c);
       const { getLatestNeodoveDay } = await import('../../automations/neodove-telecaller-report/index');
       const today = kolkataDateStr();
       const latest = await getLatestNeodoveDay().catch(() => null);
@@ -172,7 +173,7 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
   app.post('/api/runner/neodove/report', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
     const { prisma } = deps();
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const reportDate = String(body?.reportDate || kolkataDateStr());
     if (!/^\d{4}-\d{2}-\d{2}$/.test(reportDate)) return c.json({ error: 'reportDate must be YYYY-MM-DD' }, 400);
     const rows = body?.report?.rows;
@@ -284,7 +285,7 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
   // Express alt-runtime); this route is auth + broadcast + invalidation only.
   app.post('/api/runner/estimates/lead-details', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const rows = Array.isArray(body.rows) ? body.rows : [];
     const { applyLeadDetails } = await import('../../modules/estimates/lead-details');
     const { updated, attempted, failed } = await applyLeadDetails(rows);

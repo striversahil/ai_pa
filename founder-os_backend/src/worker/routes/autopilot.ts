@@ -4,6 +4,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import { deps, requireSecret, broadcastLive, LiveEvent, type Bindings } from '../context';
+import { readBody } from '../http';
 
 const AUTOPILOT_TASK_STATUSES = ['open', 'waiting', 'needs_clarification', 'needs_review', 'completed', 'cancelled'];
 const AUTOPILOT_OPEN_STATUSES = ['open', 'waiting', 'needs_clarification', 'needs_review'];
@@ -84,7 +85,7 @@ export function registerAutopilotRoutes(app: Hono<{ Bindings: Bindings }>): void
   app.post('/api/runner/autopilot/lineage', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
     const { prisma } = deps();
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const rows = Array.isArray(body.rows) ? body.rows : [];
     let upserted = 0;
     for (const r of rows) {
@@ -124,7 +125,7 @@ export function registerAutopilotRoutes(app: Hono<{ Bindings: Bindings }>): void
   app.post('/api/runner/autopilot/watermark', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
     const { prisma } = deps();
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     if (!body.watermark) return c.json({ error: 'watermark required' }, 400);
     await prisma.setting.upsert({
       where: { key: 'autopilot:message_watermark' },
@@ -137,7 +138,7 @@ export function registerAutopilotRoutes(app: Hono<{ Bindings: Bindings }>): void
   app.post('/api/runner/autopilot/tasks/create', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
     const { prisma } = deps();
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     if (!body.chatId) return c.json({ error: 'chatId required' }, 400);
     const item = body.item ? String(body.item) : null;
     if (item) {
@@ -181,7 +182,7 @@ export function registerAutopilotRoutes(app: Hono<{ Bindings: Bindings }>): void
   app.post('/api/runner/autopilot/tasks/transition', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
     const { prisma } = deps();
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const { taskId, expectedVersion, transition } = body;
     if (!taskId || !transition || typeof expectedVersion !== 'number') {
       return c.json({ error: 'taskId + expectedVersion + transition required' }, 400);
@@ -230,7 +231,7 @@ export function registerAutopilotRoutes(app: Hono<{ Bindings: Bindings }>): void
   app.post('/api/runner/autopilot/actions', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
     const { prisma } = deps();
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const actions = Array.isArray(body.actions) ? body.actions : [];
     let created = 0;
     for (const a of actions) {
@@ -322,7 +323,7 @@ export function registerAutopilotRoutes(app: Hono<{ Bindings: Bindings }>): void
   app.post('/api/autopilot/tasks/:id/review', async (c) => {
     const { prisma } = deps();
     const taskId = c.req.param('id');
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const resolution = String(body.resolution || '');
     const VALID = ['open', 'waiting', 'needs_clarification', 'completed', 'cancelled'];
     if (!VALID.includes(resolution)) return c.json({ error: `resolution must be one of ${VALID.join('|')}` }, 400);
@@ -363,7 +364,7 @@ export function registerAutopilotRoutes(app: Hono<{ Bindings: Bindings }>): void
   app.post('/api/autopilot/actions/:id/decide', async (c) => {
     const { prisma } = deps();
     const actionId = c.req.param('id');
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const decision = String(body.decision || '');
     const VALID = ['approve', 'reject', 'execute_manual'];
     if (!VALID.includes(decision)) return c.json({ error: `decision must be one of ${VALID.join('|')}` }, 400);

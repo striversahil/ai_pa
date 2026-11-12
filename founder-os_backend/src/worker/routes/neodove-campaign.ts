@@ -23,6 +23,7 @@ import {
   runBatchChunk, setAgentCampaignUrl, getCampaignTypes,
 } from '../../modules/neodove-campaign/service';
 import { getViewerMe } from '../viewer';
+import { readBody } from '../http';
 
 async function meFor(c: any) {
   return getViewerMe(c);
@@ -90,7 +91,7 @@ export function registerNeodoveCampaignRoutes(app: Hono<{ Bindings: Bindings }>)
   app.post('/api/neodove/campaign/push', async (c) => {
     try {
       const me: any = await requireCampaignManager(c);
-      const body = await c.req.json().catch(() => ({}));
+      const body = await readBody(c);
       const batch = await createPush(c.env, {
         region: body?.region,
         state: body?.state,
@@ -109,7 +110,7 @@ export function registerNeodoveCampaignRoutes(app: Hono<{ Bindings: Bindings }>)
   app.post('/api/neodove/campaign/push/:id/run', async (c) => {
     try {
       await requireCampaignManager(c);
-      const body = await c.req.json().catch(() => ({}));
+      const body = await readBody(c);
       const progress = await runBatchChunk(c.env, c.req.param('id'), Number(body?.chunk ?? 20));
       if (progress.complete) {
         notifyLive(c, { type: LiveEvent.NeodoveCampaign, batchId: progress.id, status: progress.status, done: true });
@@ -138,7 +139,7 @@ export function registerNeodoveCampaignRoutes(app: Hono<{ Bindings: Bindings }>)
   app.put('/api/neodove/campaign/agents/:key/url', async (c) => {
     try {
       await requireCampaignManager(c);
-      const body = await c.req.json().catch(() => ({}));
+      const body = await readBody(c);
       const result = await setAgentCampaignUrl(
         c.env,
         c.req.param('key'),

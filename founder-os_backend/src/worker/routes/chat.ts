@@ -4,6 +4,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import { chatMe, chatSend, ChatRoutes, createChatStore, resolveLinkedSender, broadcastLive, LiveEvent, isApproved, MAX_ATTACHMENT_BYTES, type Bindings } from '../context';
+import { readBody } from '../http';
 type ChatApp = Hono<{ Bindings: Bindings }>;
 
 export function registerChatRoutes(app: ChatApp): void {
@@ -23,14 +24,14 @@ export function registerChatRoutes(app: ChatApp): void {
   app.post('/api/chat/dm', async (c) => {
     const me = await chatMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const r = await ChatRoutes.chatCreateDm(createChatStore(c.env), me, body.userId);
     return c.json(r.body, r.status as any);
   });
   app.post('/api/chat/channels', async (c) => {
     const me = await chatMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
-    const r = await ChatRoutes.chatCreateChannel(createChatStore(c.env), me, await c.req.json().catch(() => ({})));
+    const r = await ChatRoutes.chatCreateChannel(createChatStore(c.env), me, await readBody(c));
     chatSend(c, r);
     return c.json(r.body, r.status as any);
   });
@@ -52,7 +53,7 @@ export function registerChatRoutes(app: ChatApp): void {
   app.post('/api/chat/channels/:id/messages', async (c) => {
     const me = await chatMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const channelId = c.req.param('id') ?? '';
     const text = String(body.body || '').trim();
     const attachments = Array.isArray(body.attachments) ? body.attachments : [];
@@ -87,7 +88,7 @@ export function registerChatRoutes(app: ChatApp): void {
   app.post('/api/chat/channels/:id/read', async (c) => {
     const me = await chatMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const r = await ChatRoutes.chatMarkRead(createChatStore(c.env), me, c.req.param('id') ?? '', body.lastReadId ? Number(body.lastReadId) : null);
     return c.json(r.body, r.status as any);
   });
@@ -100,7 +101,7 @@ export function registerChatRoutes(app: ChatApp): void {
   app.post('/api/chat/channels/:id/members', async (c) => {
     const me = await chatMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const r = await ChatRoutes.chatAddChannelMembers(createChatStore(c.env), me, c.req.param('id') ?? '', body.userIds || []);
     return c.json(r.body, r.status as any);
   });
@@ -113,7 +114,7 @@ export function registerChatRoutes(app: ChatApp): void {
   app.patch('/api/chat/messages/:id', async (c) => {
     const me = await chatMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
-    const r = await ChatRoutes.chatUpdateMessage(createChatStore(c.env), me, c.req.param('id') ?? '', await c.req.json().catch(() => ({})));
+    const r = await ChatRoutes.chatUpdateMessage(createChatStore(c.env), me, c.req.param('id') ?? '', await readBody(c));
     chatSend(c, r);
     return c.json(r.body, r.status as any);
   });
@@ -133,7 +134,7 @@ export function registerChatRoutes(app: ChatApp): void {
   app.post('/api/chat/messages/:id/reactions', async (c) => {
     const me = await chatMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const r = await ChatRoutes.chatToggleReaction(createChatStore(c.env), me, c.req.param('id') ?? '', String(body.emoji || ''));
     chatSend(c, r);
     return c.json(r.body, r.status as any);
@@ -143,7 +144,7 @@ export function registerChatRoutes(app: ChatApp): void {
   app.post('/api/chat/typing', async (c) => {
     const me = await chatMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const channelId = String(body.channelId || '');
     if (!channelId) return c.json({ error: 'channelId required' }, 400);
     broadcastLive(c, LiveEvent.Chat, {

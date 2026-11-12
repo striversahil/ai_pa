@@ -39,6 +39,7 @@ import { normalizeView } from '../../modules/crm/types';
 import { normalizeRegionFilter } from '../../modules/crm/region';
 import { resolveRosterMatch } from '../../modules/telecalling/self';
 import { getViewerMe } from '../viewer';
+import { readBody } from '../http';
 
 interface Viewer {
   id: string;
@@ -238,7 +239,7 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.post('/api/crm/orders/:id/schedule', async (c) => {
     const v = await requireDispatchWrite(c);
     if (v instanceof Response) return v;
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const entries = Array.isArray(body?.items) ? body.items : [];
     try {
       const res = await scheduleOrder({
@@ -276,7 +277,7 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
           return denial(c, 'This sales order belongs to another region.');
         }
       }
-      const body = await c.req.json().catch(() => ({}));
+      const body = await readBody(c);
       const entries = Array.isArray(body?.items) ? body.items : [];
       const res = await scheduleOrder({
         idOrSo,
@@ -299,7 +300,7 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.post('/api/crm/orders/:id/reschedule', async (c) => {
     const v = await requireDispatchWrite(c);
     if (v instanceof Response) return v;
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const entries = Array.isArray(body?.items) ? body.items : [];
     try {
       const res = await rescheduleOrder({
@@ -325,7 +326,7 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.post('/api/crm/orders/:id/dispatch', async (c) => {
     const v = await requireDispatchWrite(c);
     if (v instanceof Response) return v;
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const entries = Array.isArray(body?.items) ? body.items : [];
     const proof = body?.proof && typeof body.proof === 'object' ? body.proof : null;
     try {
@@ -363,7 +364,7 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
   const attachProofHandler = async (c: any) => {
     const v = await requireDispatchWrite(c);
     if (v instanceof Response) return v;
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const res = await attachProofDocs({
         idOrSo: c.req.param('id'),
@@ -391,7 +392,7 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.put('/api/crm/orders/:id/items', async (c) => {
     const v = await requireDispatchWrite(c);
     if (v instanceof Response) return v;
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const res = await amendOrderItems({
         idOrSo: c.req.param('id'),
@@ -423,7 +424,7 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.post('/api/crm/orders/:id/cancel-local', async (c) => {
     const v = await requireDispatchWrite(c);
     if (v instanceof Response) return v;
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const res = await cancelOrderLocal({
         idOrSo: c.req.param('id'),
@@ -469,7 +470,7 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.put('/api/crm/orders/:id/addresses', async (c) => {
     const v = await requireDispatchWrite(c);
     if (v instanceof Response) return v;
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const res = await updateAddresses({
         idOrSo: c.req.param('id'),

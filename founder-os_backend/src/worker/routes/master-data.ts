@@ -27,6 +27,7 @@ import {
 } from '../../modules/master-data/editors';
 import type { CustomerPatch, DuplicateReview } from '../../modules/master-data/types';
 import { getViewerMe } from '../viewer';
+import { readBody } from '../http';
 
 async function meFor(c: any) {
   return getViewerMe(c);
@@ -94,7 +95,7 @@ export function registerMasterDataRoutes(app: Hono<{ Bindings: Bindings }>): voi
   app.patch('/api/master-data/customers/:id', async (c) => {
     try {
       const me = await requireEdit(c);
-      const body = await c.req.json().catch(() => ({}));
+      const body = await readBody(c);
       const customer = await updateCustomer(
         c.req.param('id'),
         body as CustomerPatch,
@@ -125,7 +126,7 @@ export function registerMasterDataRoutes(app: Hono<{ Bindings: Bindings }>): voi
   app.patch('/api/master-data/duplicates/:group', async (c) => {
     try {
       const me = await requireEdit(c);
-      const body = await c.req.json().catch(() => ({}));
+      const body = await readBody(c);
       const result = await setDuplicateReview(
         c.req.param('group'),
         String(body?.review ?? 'open') as DuplicateReview,
@@ -170,7 +171,7 @@ export function registerMasterDataRoutes(app: Hono<{ Bindings: Bindings }>): voi
   app.put('/api/master-data/editors/:userId', async (c) => {
     try {
       const me = await requireManager(c);
-      const body = await c.req.json().catch(() => ({}));
+      const body = await readBody(c);
       const canEdit = body?.canEdit === true;
       const entry = await setEditor(authStore(c), c.req.param('userId'), canEdit, actorOf(me));
       notifyLive(c, { type: LiveEvent.MasterData, editor: entry.userId, canEdit });

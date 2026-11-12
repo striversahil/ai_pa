@@ -20,6 +20,7 @@ import {
 } from '../../automations/debtors-tracker/service';
 import { parseCollectionsTsv, parseDebtorsTsv } from '../../automations/debtors-tracker/parse';
 import { getViewerMe } from '../viewer';
+import { readBody } from '../http';
 
 const TRACKER_SCOPES = ['debtors-tracker', 'payment-tracker', 'accounts'];
 
@@ -93,7 +94,7 @@ function registerDebtorsTrackerPrefix(app: Hono<{ Bindings: Bindings }>, prefix:
     try {
       await requireTrackerRead(c);
     } catch (e) { return scopeError(c, e); }
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const rowCount = Number((body as any)?.rowCount) || 0;
     try {
       const stats = await recordReceivablesExport({
@@ -109,7 +110,7 @@ function registerDebtorsTrackerPrefix(app: Hono<{ Bindings: Bindings }>, prefix:
     try {
       await requireAccountsScope(c);
     } catch (e) { return scopeError(c, e); }
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const text = String((body as any)?.text ?? '');
     const kind = (body as any)?.kind === 'collections' ? 'collections' : 'debtors';
     try {
@@ -124,7 +125,7 @@ function registerDebtorsTrackerPrefix(app: Hono<{ Bindings: Bindings }>, prefix:
     try {
       await requireAccountsScope(c);
     } catch (e) { return scopeError(c, e); }
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const text = String((body as any)?.text ?? '');
     if (text.trim().length < 8) return c.json({ error: 'Nothing pasted' }, 400);
     const importedBy = await actorName(c);
@@ -145,7 +146,7 @@ function registerDebtorsTrackerPrefix(app: Hono<{ Bindings: Bindings }>, prefix:
     try {
       await requireAccountsScope(c);
     } catch (e) { return scopeError(c, e); }
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const text = String((body as any)?.text ?? '');
     if (text.trim().length < 8) return c.json({ error: 'Nothing pasted' }, 400);
     const importedBy = await actorName(c);
@@ -185,7 +186,7 @@ function registerDebtorsTrackerPrefix(app: Hono<{ Bindings: Bindings }>, prefix:
       me = await requireTrackerRead(c);
     } catch (e) { return scopeError(c, e); }
     const allowed = hasAccounts(me) ? INVOICE_EDITABLE_FIELDS : FOLLOW_UP_FIELDS;
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const patch: Record<string, unknown> = {};
     for (const field of allowed) {
       if (body && typeof body === 'object' && field in (body as any)) {
@@ -244,7 +245,7 @@ function registerDebtorsTrackerPrefix(app: Hono<{ Bindings: Bindings }>, prefix:
     try {
       me = await requireTrackerRead(c);
     } catch (e) { return scopeError(c, e); }
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const key = String((body as any)?.customerKey ?? '');
     const patch: Record<string, unknown> = {};
     const allowed = hasAccounts(me)
@@ -265,7 +266,7 @@ function registerDebtorsTrackerPrefix(app: Hono<{ Bindings: Bindings }>, prefix:
     try {
       await requireTrackerRead(c);
     } catch (e) { return scopeError(c, e); }
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const key = String((body as any)?.customerKey ?? '');
     const patch: Record<string, unknown> = {};
     for (const field of ['situation', 'situationRemarks', 'promisedDays', 'promisedDate']) {
@@ -297,7 +298,7 @@ function registerDebtorsTrackerPrefix(app: Hono<{ Bindings: Bindings }>, prefix:
     try {
       await requireTrackerRead(c);
     } catch (e) { return scopeError(c, e); }
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const remark = await addCustomerRemark({
         customerKey: c.req.param('customerKey'),
@@ -406,7 +407,7 @@ function registerDebtorsTrackerPrefix(app: Hono<{ Bindings: Bindings }>, prefix:
   // above. Server-side zip parsing is avoided on purpose (Worker-safe).
   app.post(`${prefix}/invoices/plan-zip`, async (c) => {
     try { await requireAccountsScope(c); } catch (e) { return scopeError(c, e); }
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const files = Array.isArray((body as any)?.files) ? (body as any).files : [];
     if (files.length === 0) return c.json({ error: 'files[] required (unzip the archive in the browser first)' }, 400);
     if (files.length > 2000) return c.json({ error: 'Too many files (max 2000)' }, 400);

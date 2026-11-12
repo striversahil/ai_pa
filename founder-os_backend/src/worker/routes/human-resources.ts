@@ -34,6 +34,7 @@ import {
   defaultDocTitle, isHiringDocKind, isPdfUpload, MAX_HIRING_DOC_BYTES,
 } from '../../automations/human-resources/hiring-positions-parse';
 import { getViewerMe } from '../viewer';
+import { readBody } from '../http';
 
 function actorLabel(me: any): string | null {
   return me?.user?.name ?? me?.user?.email ?? null;
@@ -79,7 +80,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.post('/api/human-resources/members', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await createEmployee(body || {});
       notifyLive(c, { type: LiveEvent.HumanResources });
@@ -90,7 +91,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.patch('/api/human-resources/members/:id', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await updateEmployee(c.req.param('id') ?? '', body || {});
       notifyLive(c, { type: LiveEvent.HumanResources });
@@ -111,7 +112,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.put('/api/human-resources/members/:id/salary-components', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await saveSalaryComponents(c.req.param('id') ?? '', body?.salaryComponents);
       notifyLive(c, { type: LiveEvent.HumanResources });
@@ -122,7 +123,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.put('/api/human-resources/members/:id/salary-plan', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await applySalaryPlan(c.req.param('id') ?? '', body || {});
       notifyLive(c, { type: LiveEvent.HumanResources });
@@ -158,7 +159,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.post('/api/human-resources/salary-templates', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await createTemplate(body || {}, actorLabel(a.me));
       notifyLive(c, { type: LiveEvent.HumanResources });
@@ -169,7 +170,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.post('/api/human-resources/salary-templates/preview', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try { return c.json(await previewSalary(body || {})); }
     catch (e) { return errorResponse(c, e); }
   });
@@ -177,7 +178,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.patch('/api/human-resources/salary-templates/:id', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await updateTemplate(c.req.param('id') ?? '', body || {}, actorLabel(a.me));
       notifyLive(c, { type: LiveEvent.HumanResources });
@@ -226,7 +227,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.put('/api/human-resources/attendance', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const out = await saveAttendance(body?.rows, actorLabel(a.me));
       notifyLive(c, { type: LiveEvent.HumanResources });
@@ -248,7 +249,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.post('/api/human-resources/leaves', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await createLeave(body || {}, actorLabel(a.me));
       notifyLive(c, { type: LiveEvent.HumanResources });
@@ -259,7 +260,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.patch('/api/human-resources/leaves/:id', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await updateLeave(c.req.param('id') ?? '', body || {}, actorLabel(a.me));
       notifyLive(c, { type: LiveEvent.HumanResources });
@@ -288,7 +289,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.post('/api/human-resources/holidays', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await createHoliday(body || {});
       notifyLive(c, { type: LiveEvent.HumanResources });
@@ -299,7 +300,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.patch('/api/human-resources/holidays/:id', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await updateHoliday(c.req.param('id') ?? '', body || {});
       notifyLive(c, { type: LiveEvent.HumanResources });
@@ -329,7 +330,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.post('/api/human-resources/payroll/generate', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const out = await generatePayroll(body?.month, actorLabel(a.me));
       notifyLive(c, { type: LiveEvent.HumanResources });
@@ -340,7 +341,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.patch('/api/human-resources/payroll/slips/:id', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const id = c.req.param('id') ?? '';
       const row = body?.action
@@ -356,7 +357,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
     const a = await access(c);
     if (a.error) return a.error;
     if (!a.canManage) return c.json({ error: 'Only HR/MIS users can create or assign HR tasks' }, 403);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await createTask(body || {}, actorLabel(a.me));
       notifyLive(c, { type: LiveEvent.HumanResources });
@@ -367,7 +368,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.patch('/api/human-resources/tasks/:id', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const self = a.canManage
         ? null
@@ -416,7 +417,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
     const a = await access(c);
     if (a.error) return a.error;
     if (!a.canManage) return c.json({ error: 'Only HR/MIS users can add inventory items' }, 403);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await createInventoryItem(body || {}, actorLabel(a.me));
       notifyLive(c, { type: LiveEvent.HumanResources });
@@ -428,7 +429,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
     const a = await access(c);
     if (a.error) return a.error;
     if (!a.canManage) return c.json({ error: 'Only HR/MIS users can edit inventory items' }, 403);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await updateInventoryItem(c.req.param('id') ?? '', body || {});
       notifyLive(c, { type: LiveEvent.HumanResources });
@@ -458,7 +459,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.post('/api/human-resources/inventory/transactions', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const out = await recordInventoryTransaction(body || {}, actorLabel(a.me), { canManage: a.canManage });
       notifyLive(c, { type: LiveEvent.HumanResources });
@@ -481,7 +482,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.post('/api/human-resources/expenses', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await createExpense(body || {}, actorLabel(a.me));
       notifyLive(c, { type: LiveEvent.HumanResources });
@@ -492,7 +493,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.patch('/api/human-resources/expenses/:id', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await updateExpense(
         c.req.param('id') ?? '', body || {}, actorLabel(a.me), { canManage: a.canManage },
@@ -516,7 +517,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.post('/api/human-resources/fund-topups', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await createFundTxn(body || {}, actorLabel(a.me));
       notifyLive(c, { type: LiveEvent.HumanResources });
@@ -527,7 +528,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.patch('/api/human-resources/fund-topups/:id', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await updateFundTxn(
         c.req.param('id') ?? '', body || {}, actorLabel(a.me), { canManage: a.canManage },
@@ -563,7 +564,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
     const a = await access(c);
     if (a.error) return a.error;
     if (!a.canManage) return c.json({ error: 'Only HR/MIS users can add positions' }, 403);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await createHiringPosition(body || {}, actorLabel(a.me));
       notifyLive(c, { type: LiveEvent.HumanResources });
@@ -575,7 +576,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
     const a = await access(c);
     if (a.error) return a.error;
     if (!a.canManage) return c.json({ error: 'Only HR/MIS users can add positions' }, 403);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const out = await importHiringPositions(body?.names, actorLabel(a.me));
       notifyLive(c, { type: LiveEvent.HumanResources });
@@ -587,7 +588,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
     const a = await access(c);
     if (a.error) return a.error;
     if (!a.canManage) return c.json({ error: 'Only HR/MIS users can rename positions' }, 403);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await renameHiringPosition(c.req.param('id') ?? '', body || {});
       notifyLive(c, { type: LiveEvent.HumanResources });

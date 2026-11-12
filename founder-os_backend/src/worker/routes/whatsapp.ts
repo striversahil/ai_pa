@@ -4,12 +4,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import { deps, requireSecret, validateChatId, broadcastLive, LiveEvent, type Bindings } from '../context';
+import { readBody } from '../http';
 
 export function registerWhatsappRoutes(app: Hono<{ Bindings: Bindings }>): void {
   // ── WhatsApp webhook (founder-os ingest path) ───────────────────────────────
   app.post('/api/whatsapp/webhook', async (c) => {
     const { WhatsAppController } = deps();
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     await WhatsAppController.handleWebhook(body);
     broadcastLive(c, LiveEvent.Messages);
     broadcastLive(c, LiveEvent.Contacts);
@@ -48,7 +49,7 @@ export function registerWhatsappRoutes(app: Hono<{ Bindings: Bindings }>): void 
       if (!viaKey) return c.text('Unauthorized', 401);
     }
     const { prisma } = deps();
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const source = String(body?.source || '').trim().toLowerCase();
     const token = body?.token;
     const metadata = body?.metadata ? JSON.stringify(body.metadata) : null;
@@ -85,7 +86,7 @@ export function registerWhatsappRoutes(app: Hono<{ Bindings: Bindings }>): void 
   // ── WhatsApp send ───────────────────────────────────────────────────────────
   app.post('/api/whatsapp/send', async (c) => {
     const { StorageRepository, WhatsAppService, OutboundService, MessageQueueService } = deps();
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const { chatId: rawChatId, message_body } = body;
     if (!rawChatId || !message_body) return c.json({ error: 'Missing chatId or message_body' }, 400);
     let trimmed = String(rawChatId).trim();
@@ -121,7 +122,7 @@ export function registerWhatsappRoutes(app: Hono<{ Bindings: Bindings }>): void 
 
   app.post('/api/whatsapp-proxy/send', async (c) => {
     const { StorageRepository, WhatsAppService, OutboundService, MessageQueueService } = deps();
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const chatId = body.chatId;
     const message_body = body.message_body;
     if (!chatId || !message_body) return c.json({ error: 'Missing chatId or message_body' }, 400);
@@ -164,7 +165,7 @@ export function registerWhatsappRoutes(app: Hono<{ Bindings: Bindings }>): void 
   app.put('/api/whatsapp/contacts/:contactUid/picture', async (c) => {
     const { StorageRepository } = deps();
     const chatId = c.req.param('contactUid');
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const picture = String(body?.picture ?? '').trim() || null;
     await StorageRepository.updateContactPicture(chatId, picture);
     broadcastLive(c, LiveEvent.Contacts, { chatId });
@@ -181,7 +182,7 @@ export function registerWhatsappRoutes(app: Hono<{ Bindings: Bindings }>): void 
   app.put('/api/whatsapp/contacts/:contactUid/note', async (c) => {
     const { StorageRepository } = deps();
     const chatId = c.req.param('contactUid');
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const content = String(body?.content ?? '').trim();
     const note = await StorageRepository.upsertChatNote(chatId, content);
     broadcastLive(c, LiveEvent.Contacts, { chatId });

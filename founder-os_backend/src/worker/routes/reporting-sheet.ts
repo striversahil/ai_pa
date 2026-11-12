@@ -27,6 +27,7 @@ import {
 import { DEPARTMENTS, type ReportDepartment, type ReportSection } from '../../modules/reporting/types';
 import { currentWeekKey } from '../../modules/reporting/period';
 import { getViewerMe } from '../viewer';
+import { readBody } from '../http';
 
 async function meFor(c: any) {
   return getViewerMe(c);
@@ -75,7 +76,7 @@ export function registerReportingSheetRoutes(app: Hono<{ Bindings: Bindings }>):
       const period = validPeriod(c.req.param('period'));
       const dept = c.req.param('dept') as ReportDepartment;
       const section = c.req.param('section') as ReportSection;
-      const body = await c.req.json().catch(() => ({}));
+      const body = await readBody(c);
       const entry = await saveReportSection({
         me, actor: actorOf(me), period, dept, section,
         payload: body?.payload,

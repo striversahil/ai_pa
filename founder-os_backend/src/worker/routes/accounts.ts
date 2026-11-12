@@ -14,6 +14,7 @@ import {
   listCashEntries, createCashEntry, updateCashEntry, deleteCashEntry,
 } from '../../automations/accounts/cash';
 import { getViewerMe } from '../viewer';
+import { readBody } from '../http';
 
 async function actorName(c: any): Promise<string | null> {
   try {
@@ -35,7 +36,7 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
 
   app.post('/api/accounts/roster', async (c) => {
     try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await createAccountant(body || {});
       notifyLive(c, { type: LiveEvent.Accounts });
@@ -45,7 +46,7 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
 
   app.put('/api/accounts/roster/:id', async (c) => {
     try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await updateAccountant(c.req.param('id'), body || {});
       notifyLive(c, { type: LiveEvent.Accounts });
@@ -69,7 +70,7 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
 
   app.post('/api/accounts/templates', async (c) => {
     try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await createTemplate(body || {});
       notifyLive(c, { type: LiveEvent.Accounts });
@@ -79,7 +80,7 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
 
   app.put('/api/accounts/templates/:id', async (c) => {
     try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await updateTemplate(c.req.param('id'), body || {});
       notifyLive(c, { type: LiveEvent.Accounts });
@@ -111,7 +112,7 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
       const msg = String(e?.message ?? '');
       return c.json({ error: msg }, msg.includes('Authentication') ? 401 : 403);
     }
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await createTemplate({ ...(body || {}), kind: 'payment' });
       notifyLive(c, { type: LiveEvent.Accounts });
@@ -124,7 +125,7 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
       const msg = String(e?.message ?? '');
       return c.json({ error: msg }, msg.includes('Authentication') ? 401 : 403);
     }
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const existing: any = await listTemplates(true).then((ts) => ts.find((t: any) => String(t.id) === c.req.param('id')));
       if (!existing) return c.json({ error: 'payment due not found' }, 404);
@@ -162,7 +163,7 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
       const msg = String((e as any)?.message ?? '');
       return c.json({ error: msg }, msg.includes('Authentication') ? 401 : 403);
     }
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const self = await resolveSelfAccountant(
         (body as any)?.as ?? c.req.query('as') ?? null, me as any,
@@ -215,7 +216,7 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
       const msg = String(e?.message ?? '');
       return c.json({ error: msg }, msg.includes('Authentication') ? 401 : 403);
     }
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await createCashEntry(body || {}, me?.user?.name ?? me?.user?.email ?? null);
       notifyLive(c, { type: LiveEvent.Accounts });
@@ -228,7 +229,7 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
       const msg = String(e?.message ?? '');
       return c.json({ error: msg }, msg.includes('Authentication') ? 401 : 403);
     }
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const row = await updateCashEntry(c.req.param('id'), body || {});
       notifyLive(c, { type: LiveEvent.Accounts });
@@ -261,7 +262,7 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
   // Who is inferred server-side (session → roster, declared `as` first) —
   // the client never declares attribution.
   app.patch('/api/accounts/logs/:id', async (c) => {
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     try {
       const me = await getViewerMe(c).catch(() => null);
       const self = await resolveSelfAccountant(

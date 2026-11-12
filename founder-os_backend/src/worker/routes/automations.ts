@@ -23,6 +23,7 @@ function parseJson(value: string | null | undefined): unknown {
 // Re-exported for existing importers (worker/routes/telecalling.ts,
 // modules/device-calls/scopes.ts).
 import { resolveSelfTelecaller, getViewerMe } from '../viewer';
+import { readBody } from '../http';
 export { resolveSelfTelecaller };
 
 export function registerAutomationRoutes(app: Hono<{ Bindings: Bindings }>): void {
@@ -86,7 +87,7 @@ export function registerAutomationRoutes(app: Hono<{ Bindings: Bindings }>): voi
     const { prisma, AutomationEngine } = deps();
     const me = await getViewerMe(c);
     if (!me?.isAdmin) return c.json({ error: 'Forbidden' }, 403);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await readBody(c);
     const data: Record<string, unknown> = {};
     if (typeof body.enabled === 'boolean') { data.enabled = body.enabled; AutomationEngine.setEnabled(c.req.param('slug'), body.enabled); }
     if (typeof body.cooldownMs === 'number') { data.cooldownMs = Math.max(0, Math.floor(body.cooldownMs)); }
