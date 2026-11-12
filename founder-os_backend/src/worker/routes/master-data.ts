@@ -19,9 +19,10 @@ import { authStore, notifyLive, LiveEvent, type Bindings } from '../context';
 import { AuthError } from '../../modules/auth/types';
 import {
   getCustomerDetail, updateCustomer, deleteCustomer, setDuplicateReview, importMasterData,
-  getAllowedTypeBases,
+  getAllowedTypeBases, invalidateMasterDataCache,
   MasterDataError, type Actor,
 } from '../../modules/master-data/service';
+import { setMasterReadCore } from '../../modules/master-data/read-source';
 import {
   canEditMaster, canViewMaster, isMasterManager, isSalesHead, listEditors, setEditor,
 } from '../../modules/master-data/editors';
@@ -134,6 +135,24 @@ export function registerMasterDataRoutes(app: Hono<{ Bindings: Bindings }>): voi
       );
       notifyLive(c, { type: LiveEvent.MasterData, group: result.group, review: result.review });
       return c.json(result);
+    } catch (e) {
+      return fail(c, e);
+    }
+  });
+
+  // ── Read-source flip (Phase 3a: core_customer display cutover) ──────────
+  // Manager-only. Default OFF (legacy book). Flip only after a quiet
+  // `customer-shadow` week + human confirmation; the payload self-falls-back
+  // to legacy on any core error or count mismatch, and the flip busts the
+  // cache so the next read already follows the new source.
+  app.put('/api/master-data/read-source', async (c) => {
+    try {
+      await requireManager(c);
+      const body = await readBody(c);
+      const readCore = await setMasterReadCore(body?.core);
+      await invalidateMasterDataCache();
+      notifyLive(c, { type: LiveEvent.MasterData });
+      return c.json({ ok: true, readCore });
     } catch (e) {
       return fail(c, e);
     }

@@ -7,9 +7,9 @@ Founder OS: WhatsApp + Zoho Estimates + telecalling CRM behind a Next.js dashboa
 - `founder-os_backend/src/modules/*` and `src/automations/*` are imported by BOTH the Cloudflare Worker and the Express server. Don't add Node-only deps to shared modules — the Worker build (`scripts/build-worker.mjs`) bundles them for the edge and redirects Node-bound modules to `*-worker.ts` twins via an esbuild plugin (see `REDIRECTS` map).
 - **Worker** = thin JSON API over D1. `src/worker.ts` is now a ~40-line entry that registers route modules; real code lives in `src/worker/`:
   - `context.ts` — `Bindings` type, `bootstrapEnv`, `deps()`, boot, auth guards, `broadcastLive`, `createApp()` (middleware).
-  - `routes/*.ts` — one module per domain (auth, chat, enquiries, system, estimates, whatsapp, triggers, runner, autopilot, automations, events).
+  - `routes/*.ts` — one module per domain (~40; the registration list in `src/worker.ts` is the inventory). `http.ts` (`readBody`), `viewer.ts` (`getViewer`/`getViewerMe`), `workspace-data.ts` are the shared request helpers.
   - `cron.ts` — the `* * * * *` cron router (see Cron below).
-- **Express `src/routes/` is a PARALLEL implementation** of the same endpoints. Adding an endpoint usually means touching both the Worker route module and the Express router (mirror the route). Keep handlers thin; heavy/AI work goes to a GH Actions runner.
+- **Express `src/routes/` is a legacy PARALLEL implementation** of older endpoints (see the freeze below — never extend it). Keep handlers thin; heavy/AI work goes to a GH Actions runner.
 - **Express is FROZEN (deprecation track, founder decision): new endpoints are Worker-only** — do not add new Express mirrors. Shared cores (`src/shared/*`, `src/modules/*`) stay dual-runtime; existing Express mirrors are maintained until removal. First deprecations landed: Express `/api/estimates` now delegates to `getEstimatesPayload()` (was a stale parallel query); dead `src/routes/estimates.ts` removed.
 
 ## Cron / scheduling (Cloudflare-only dispatch)
@@ -20,7 +20,7 @@ Founder OS: WhatsApp + Zoho Estimates + telecalling CRM behind a Next.js dashboa
 - Heavy AI runs in GH Actions runners: `scripts/*-runner.js` (zoho-sent-runner, morning-brief-runner, eod-summary-runner, neodove-report-runner, whatsapp-digest-runner, whatsapp-autopilot-runner, email-brain-index-runner). They call worker `/api/runner/*` endpoints (Bearer SHARED_SECRET) and the LLM via the **unified AI gateway** — `getGateway(env).complete()/completeJson()` (`src/shared/ai-gateway.ts` for Worker/Express, JS port `scripts/ai-gateway.js` for runners, thin wrappers `groq`/`groqJson` in `runner-lib.js`). Gateway owns the key pool: multi-provider (groq keys NEVER loaded — founder decision 2026-09-21, hallucination quality; deepseek/together/openai keys accepted but route to groq; legacy omniroute ignored), `AI_KEYS=provider:key:label,...` (auto-detect from prefix; `GROQ_API_KEYS` + `OPENROUTER_API_KEYS`/`OPENROUTER_API_KEY` also merged), sticky `sessionKey` conversations (consistent-hash pin, no mid-chat hopping) + random spread for one-shots, **plain-429→cool key + rotate (escalating 60s→8min) / 1015→fail-fast / 401→disabled / hang-past-timeoutMs→model fallback (`FALLBACK_MODEL`, KV-flagged 10 min; never rotates keys for a hang)**, placeholder keys ignored. OpenRouter calls send `reasoning: { enabled: true }`. Agnes calls go proxy-first (home-egress/ tunnel); direct Cloudflare egress is the fallback when the proxy faults or is unconfigured. A proxy 429 is a real upstream answer (rotation handles it); only proxy faults and proxy 403s fall through, never penalising keys.
 - GH secrets used by workflows: `WORKER_URL`, `SHARED_SECRET`, `AI_KEYS` (or legacy `GROQ_API_KEYS`/`OPENROUTER_API_KEYS`/`DEEPSEEK_API_KEYS` + `OMNIROUTE_*` fallback), `NEODOVE_USER_IDS`.
 - **Telecalling is production-live and deterministic (no LLM)**: `runLeadConversion()` in `src/automations/telecalling/service.ts`; daily `POST /api/trigger/telecalling` at 08:00 IST (region sweep + NeoDove attribution). The 21:00 EOD deduction, effort-sync, snatch/cover/bulk machinery are RETIRED (2026-10-22, founder decision) — those routes are `{retired:true}` stubs and the 15:30 cron slot is gone. The dashboard is now the **Salaasses Leaderboard**: region ownership (R1–R4), 20% generator (automatic, `kind='generator'`) / 80% closer (sales-head pick via `PUT /api/telecalling/closer-pick`), history reset epoch (Setting `salesboard:epoch`).
-- **Quiet hours 21:00–09:00 IST**: Zoho/NeoDove-backed analysis pauses via `isOpsWindow()` in cron.ts — every-10min + every-15min dispatches skipped (effort-sync + crm + zoho-sent-analyzer all live in the 15-min workflow, serial group), every-5min fires (WhatsApp + light triggers only, never pings Zoho), daily fires with `run_neodove=false`, native neodove-refresh skipped. Manual dispatch defaults both inputs true.
+- **Quiet hours 21:00–09:00 IST**: Zoho/NeoDove-backed analysis pauses via `isOpsWindow()` in cron.ts — every-10min + every-15min dispatches skipped (crm + zoho-sent-analyzer live in the 15-min workflow, serial group), every-5min fires (WhatsApp + light triggers only, never pings Zoho), daily fires with `run_neodove=false`, native neodove-refresh skipped. Manual dispatch defaults both inputs true.
 - Worker secret needed for dispatch: `GITHUB_ACCESS_TOKEN` (set via `printf '%s' "$TOKEN" | npx wrangler secret put GITHUB_ACCESS_TOKEN` — `echo` adds a trailing newline and breaks GitHub auth). GitHub rejects the dispatch POST without a `User-Agent` header (403, empty body from CF egress) — already handled in cron.ts.
 
 ## Deploy policy (standing instruction from founder)
@@ -31,13 +31,15 @@ Founder OS: WhatsApp + Zoho Estimates + telecalling CRM behind a Next.js dashboa
 - Never `source ../.env` (contains `$@` in SSH password) — export only the needed vars via grep/python.
 
 ## Commands
-- Worker build+deploy: `cd founder-os_backend && set -a; source ../.env; set +a; node scripts/build-worker.mjs && npx wrangler deploy`
+- Cloudflare creds (never `source .env`): `export CLOUDFLARE_API_TOKEN=$(grep -E '^CLOUDFLARE_API_TOKEN=' ../.env | cut -d= -f2-) CLOUDFLARE_ACCOUNT_ID=$(grep -E '^CLOUDFLARE_ACCOUNT_ID=' ../.env | cut -d= -f2-)`
+- Worker build+deploy: `cd founder-os_backend && <creds> && node scripts/build-worker.mjs && node scripts/smoke-worker.mjs && npx wrangler deploy`
 - Worker smoke test (no DB/LLM): `cd founder-os_backend && node scripts/smoke-worker.mjs`
-- Frontend build+deploy: `cd founder-os_frontend && NODE_ENV=production npm run build && set -a; source ../.env; set +a; npx wrangler pages deploy out --project-name founder-os-frontend`
+- Frontend build+deploy: `cd founder-os_frontend && <creds> && NODE_ENV=production npm run build && npx wrangler pages deploy out --project-name founder-os-frontend`
 - Frontend dev: use `./run-dev.sh` (Next 16 Turbopack leaks memory and OOMs; the wrapper forces `--webpack`). Plain `npm run dev` uses Turbopack — avoid.
 - **Frontend production build MUST use webpack** — `package.json` `build` now runs `next build --webpack`. Next 16 defaults to Turbopack for `next build`, and Turbopack **drops the nested dynamic-import chunks** (e.g. `page → Automations → TelecallingDashboard`): the chips/Export section silently vanish from the deployed bundle even though the source has them. Always rebuild via `npm run build` (webpack) and confirm the deployed index has no `turbopack` chunk.
-- **There is no test suite** (`npm test` errors). Verification = `smoke-worker.mjs` + live curl of `/health`, `/api/status`, and dashboard endpoints. `NODE_ENV=production npm run build` in the frontend is the only reliable static-export path.
-- Typecheck backend: `cd founder-os_backend && npx tsc --noEmit`. Expect pre-existing errors in `durable/*.ts` (missing CF types) and `automations/zoho-sent-analyzer/service.ts` (4 known `null → number` errors) — leave those untouched.
+- **No unit-test framework** (`npm test` errors). Verification = the zero-dep guard suite `node --test "scripts/guards/*.test.mjs"` (runs in CI, `.github/workflows/guards.yml`) + `node founder-os_backend/scripts/core-guard.mjs` + `smoke-worker.mjs` + live curl of `/health`, `/api/status`, and dashboard endpoints. Data-path parity: `founder-os_backend/scripts/{workspace-parity,route-parity,session-e2e}.mjs`; UI: `scripts/e2e/`. `NODE_ENV=production npm run build` in the frontend is the only reliable static-export path.
+- Typecheck backend: `cd founder-os_backend && npx tsc --noEmit`. Pre-existing errors (baseline in `docs/rewrite-log.md`: `durable/*.ts`, `zoho-sent-analyzer`, ungenerated prisma client) — gate is **no NEW errors**; leave the old ones untouched.
+- Duplication: `node scripts/dup-audit.mjs .` (ratchet metrics) and, for a full clone report, `npx -y jscpd@4.0.5 --min-lines 6 --min-tokens 50 --format typescript,tsx,javascript founder-os_frontend/src founder-os_backend/src scripts`.
 
 ## D1 / Prisma (the live DB for the Worker)
 - Runtime uses **`src/shared/prisma-d1.ts`** (a hand-rolled shim over D1), NOT the real Prisma client — even though types come from `@prisma/client`. After editing `prisma/schema.prisma`, run `npx prisma generate`, then register new models/fields in the shim's `BOOL_FIELDS`, `DATE_FIELDS`, `ID_FIELDS`, `RELATIONS` registries, or the D1 queries won't handle them.
@@ -91,6 +93,46 @@ Founder OS: WhatsApp + Zoho Estimates + telecalling CRM behind a Next.js dashboa
   Verify every structural change with `build-worker.mjs` + `smoke-worker.mjs` (+ frontend `tsc` /
   `npm run build` when touched) and deploy per policy.
 
+## Coding practices — every change (2026-11-12, always follow this)
+Full rulebook: skill `.claude/skills/ai-pa-code-discipline/SKILL.md` (supersedes the missing
+`founder-os-codekeeper` skill). The failure mode in this repo is **agents adding new code instead of
+reusing existing code** — these are the non-negotiables:
+- **Search before you write.** Check `docs/REUSABLE_COMPONENTS.md` (generated catalog) and the shared kits
+  — FE `@/components/ui` (Badge/Card/KpiCard/Table/TabBar/Modal/ConfirmDialog/Popover…), `@/lib/format`,
+  `@/workspaces`, `hooks/useLiveData` (`useLiveDashboard`, `useOptimisticMutation`), `api/client.ts`;
+  BE `worker/http.ts`, `worker/viewer.ts`, `shared/cache.ts`, `shared/ai-gateway.ts`, `modules/workspaces/`
+  — then `rg` the concept. Reuse or extend; create only when nothing fits and say why.
+- **Never fork for a new department/feature.** No `FooV2`, `NewFoo`, `<dept>-dashboard/` copy of another
+  dept's folder. Generalize the existing piece with props/config (defaults keep the old caller identical).
+  **Known debt, do not copy a third time:** Accounts ↔ Digital Marketing task boards are a ~1.6k-line fork
+  (`components/accounts-dashboard/` ≡ `digital-marketing-dashboard/`, `worker/routes/accounts.ts` ≡
+  `digital-marketing.ts`); the next task-board department must generalize this kit instead.
+- **Mirrors carry a guard.** A backend↔frontend copy (allowed by "Code structure") needs a `mirror:` comment
+  naming the other path AND a parity test in `scripts/guards/`. Unguarded today (add the guard when you touch
+  one): debtors-tracker `parse`/`types`, hr `salary-formula`/`salary`, reporting types, master-data /
+  sales-objections / crm types, stock `queue`, `org-positions`, enquiry `loops`. Money math first.
+- **Pure vs I/O.** Backend `pure.ts` = synchronous, no DB/cache/network; `io.ts` = everything else; `pure` never
+  imports `io`. New frontend components never call `fetch` — go through the domain hook / `api.ts`
+  (`fe.raw_fetch_api` is ratcheted).
+- **Thin handlers (≤ ~20 lines).** Body via `readBody(c)`, user via `getViewerMe(c)`, logic in the module.
+  Don't re-inline try → service → `notifyLive` → `c.json` / catch boilerplate in new handlers.
+- **One change = one concern.** A behavior-identical refactor and a feature never share a commit; unrelated
+  cleanups go to the follow-up list, not into this diff. No whole-file rewrites to change a few lines.
+- **Leave it smaller or equal.** Delete what your change obsoleted (`rg` the symbol/path first). The ratchet
+  (`node scripts/dup-audit.mjs .`) must never grow; after lowering a number, refresh the baseline and log it in
+  `docs/rewrite-log.md`. Files over ~400 lines get split (extract + re-export) before adding more.
+- **Founder decisions are law, and dated.** When the founder sets a business rule, record it in the matching
+  section here as `(founder decision YYYY-MM-DD)`. Never reopen a dated decision on your own. Ambiguous money /
+  attribution / access rules → ask, don't guess.
+- **Docs move with code.** A behavior change updates its AGENTS.md line (rules + gotchas, keep it terse) and the
+  architecture.md section (how it works) in the same commit. Don't create a second architecture doc.
+- **Definition of done**, in order: checks green (guards · core-guard · build-worker + smoke · `tsc` no new errors
+  · frontend `tsc` + `npm run build` if touched) → deployed (backend first) → live check (curl / page) → report:
+  `Reused · Added (why nothing fit) · Removed · Moved to shared · Verified by · Deployed · Follow-ups`.
+- **Git hygiene.** One concern per commit; the message says what + why (re-read it — a tool's error text once
+  landed as a commit message, `963b566`). Never commit stray/generated files (`* (1).*`, zips, ad-hoc JSON dumps);
+  never `--no-verify`.
+
 ## Domain quirks worth knowing
 - **Unified Sales workspace (2026-11-03, migration 0100)**: the `sales` automation (scope `telecalling`) mounts Leaderboard / Enquiries / Customer Master / Dispatch / Call Log / Controller behind ONE sticky horizontal tab bar (pick persists in localStorage; active pill ringed). The legacy dashboards are gone as dashboards: `telecalling` + `master-data` stay registered as headless data providers (leaderboard/Controller read `/api/automations/telecalling/data`, Customer Master reads `/api/automations/master-data/data` — the engine requires registration); `enquiry-tracker` is fully retired (migration 0101 deleted its row; registry RULE + module + overview feed removed, Enquiries renders from `/api/enquiries/*`). `crm` (Dispatch Floor) is restored as a full dashboard. Old `telecalling`/`enquiry-tracker`/`master-data` links land on Sales. Enquiries + Customer Master stay global; Dispatch is region-owned: `CrmSalesOrder.region` is DERIVED every sync tick from `referenceNumber` → `Estimate.region` (org-preferring, BUI/DPG latest-date tiebreak), so a Controller re-home lands within one tick. Buckets: **Incomplete** = active, not cancelled, payment not complete (unscheduled → dated → dispatched); **Completed** = paid in full (`paidStatus='paid'`, or closed with nothing outstanding; a partially-paid closed order stays Incomplete). Cancelled/void/source-deleted belong to neither. Agents are locked server-side to their `Telecaller.region` (no roster row/region ⇒ zero orders, never another region's) and may only `PATCH /api/crm/orders/:id/promise` (dates + delay reasons); dispatch/reschedule/addresses stay `dispatch`/MIS/root. Root/MIS/sales-head/`crm`/`dispatch` see all regions + chips. `typecheck`/guard: `scripts/guards/crm-lifecycle.test.mjs` locks the bucket split backend↔frontend.
 - **Lead imports (traders + conveyor belt, 2026-11-04)**: `scripts/build-lead-import.mjs` converts the two founder-supplied files to a canonical `{customers:[...]}` payload for the Import JSON button — file R-keys IGNORED, regions re-derived from the book (UP belt via Sub-Area/city table, Vidarbha split for MH, city-table rescue when state blank, else Unmapped). Conveyor IDs are synthetic `CB-<group>-<sno>`, deduped on phone-then-email with requirements merged into `notes`. Import `notes` seed ONLY when stored notes are empty (store.prepareUpsert CASE-WHEN) — hand-written notes always survive re-imports.
@@ -141,3 +183,4 @@ Founder OS: WhatsApp + Zoho Estimates + telecalling CRM behind a Next.js dashboa
 - **Locked (humans only, guard-enforced):** `prisma/core/`, `src/modules/core/`, `src/worker/routes/work.ts`, `0125` migration, `scripts/core-guard.mjs`. Verify with `node scripts/core-guard.mjs`; re-sign with `--sign` (human only, never `--no-verify`).
 - **Helpers are free:** `prisma/helpers/`, `hlp_*` tables — reference core by id only, never duplicate business facts, never write `core_*` outside `src/modules/core/`.
 - Core change needed? Write a proposal in `docs/core-change-requests/` — never edit core directly as an agent.
+- **Phase 3a flip (flag live, default off):** `masterdata:readCore` Setting switches the Customer Master payload to `core_customer` (`PUT /api/master-data/read-source`, manager-only); the payload self-falls-back to legacy on any error/count mismatch; guard `scripts/guards/master-data-core-parity.test.mjs`. Flip ON only after a quiet `customer-shadow` week + human confirmation.

@@ -73,6 +73,40 @@ export async function countCustomers(): Promise<number> {
   return Number((row as any)?.n ?? 0) || 0;
 }
 
+// ── Core read path (Phase 3a flip, flag-gated in service.ts) ───────────────
+// Same columns + same keyset pagination as the legacy readers above, so the
+// payload shape is identical whichever source serves it. DELETED tombstones
+// are excluded: legacy hard-deletes remove rows outright, so serving a
+// tombstone would surface a customer the legacy book no longer has.
+const CORE_LIVE_WHERE = `("status" IS NULL OR "status" <> 'DELETED')`;
+
+/** Every live core_customer row (tombstones excluded), keyset-paginated. */
+export async function listAllCustomersCore(): Promise<any[]> {
+  const db = masterDb();
+  if (!db) return [];
+  const out: any[] = [];
+  let cursor = '';
+  for (let page = 0; page < 40; page++) {
+    const res = await db
+      .prepare(`SELECT ${LIST_COLUMNS} FROM core_customer WHERE id > ? AND ${CORE_LIVE_WHERE} ORDER BY id LIMIT 500`)
+      .bind(cursor)
+      .all();
+    const rows: any[] = res?.results ?? [];
+    if (rows.length === 0) break;
+    out.push(...rows);
+    cursor = String(rows[rows.length - 1]?.id ?? '');
+    if (rows.length < 500) break;
+  }
+  return out;
+}
+
+export async function countCustomersCore(): Promise<number> {
+  const db = masterDb();
+  if (!db) return 0;
+  const row = await db.prepare(`SELECT COUNT(*) AS n FROM core_customer WHERE ${CORE_LIVE_WHERE}`).first();
+  return Number((row as any)?.n ?? 0) || 0;
+}
+
 // ── Writes ──────────────────────────────────────────────────────────────────
 
 /** Column whitelist: patch key → MasterCustomer column. Anything else is

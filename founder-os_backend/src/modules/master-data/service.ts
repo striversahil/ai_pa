@@ -21,6 +21,7 @@ import {
   masterDb,
 } from './store';
 import { mirrorCustomers, mirrorCustomerRemoved } from '../core/customers';
+import { readBookRows, readBookCount } from './read-source';
 
 export const MASTER_CACHE_KEY = 'master:data:v2';
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -82,10 +83,12 @@ export function computeTotals(rows: ReturnType<typeof toCustomer>[]): MasterData
 }
 
 async function computePayload(): Promise<MasterDataPayload> {
-  const [regions, rawRows, updatedAt] = await Promise.all([
+  // readBookRows: legacy book while the flip flag is OFF; verified core rows
+  // when ON (per-compute legacy COUNT(*) check, legacy fallback on drift).
+  const [regions, updatedAt, rawRows] = await Promise.all([
     listRegions(),
-    listAllCustomers(),
     lastAuditAt(),
+    readBookRows(),
   ]);
   const rows = rawRows.map(toCustomer).sort((a, b) => a.name.localeCompare(b.name));
   return {
@@ -103,9 +106,10 @@ export async function getMasterDataPayload(): Promise<MasterDataPayload> {
 }
 
 /** Header stamp: last import or edit. Cheap enough to sit outside the payload
- *  cache (single-row read) but folded into it to keep the route to one call. */
+ *  cache (single-row read) but folded into it to keep the route to one call.
+ *  Follows the read-source flag so the count always matches the served book. */
 export async function getMasterDataStamp(): Promise<{ updatedAt: string; count: number }> {
-  const [updatedAt, count] = await Promise.all([lastAuditAt(), countCustomers()]);
+  const [updatedAt, count] = await Promise.all([lastAuditAt(), readBookCount()]);
   return { updatedAt, count };
 }
 
