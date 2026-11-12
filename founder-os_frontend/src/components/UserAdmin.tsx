@@ -5,7 +5,7 @@ import { useAuth } from "@/auth/AuthContext";
 import { USER_ADMIN_SCOPE } from "@/auth/permissions";
 import { POSITION_META, POSITION_ORDER, displayNameOf, positionOf, type PositionInfo } from "@/auth/org-positions";
 import AdminTable from "./admin/AdminTable";
-import DirectoryTab from "./user-admin/DirectoryTab";
+import CoreTab from "./user-admin/CoreTab";
 import { Drawer, UserDrawer, RoleDrawer } from "./admin/AdminDrawers";
 import type { ScopeRow, RoleRow, UserRow, DashboardRow } from "./admin/AdminDrawers";
 import type { Tab } from "./user-admin/types";
@@ -49,16 +49,16 @@ export default function UserAdmin() {
   const isRoot = !!me?.isRoot;
   const canManage = isRoot || !!me?.scopes.includes(USER_ADMIN_SCOPE);
   const isHR = !!me?.scopes.includes("human-resources");
-  // Directory viewers: managers (existing Users portal) + HR holders (read-only
-  // width on the new directory endpoint; manage powers stay user-admin gated).
+  // Core viewers: managers (existing Users portal) + HR holders (read-only
+  // width on the Core tab; manage powers stay user-admin gated).
   const canViewDirectory = canManage || isHR;
 
   useEffect(() => {
     if (me && canManage) void load();
   }, [me, canManage, load]);
-  // HR-only viewers land on the directory (they have no Users/Roles/Scopes
+  // HR-only viewers land on Core (they have no Users/Roles/Scopes
   // tabs) — derived during render, no setState-in-effect.
-  const viewTab: Tab = !canManage && isHR ? "directory" : tab;
+  const viewTab: Tab = !canManage && isHR ? "core" : tab;
   const reload = useCallback(() => { void load(); void refresh(); }, [load, refresh]);
   const isAdminRole = (scopeKeys: string[]) => scopeKeys.map((s) => s.toLowerCase()).includes("admin");
   // Top-down delegation: a non-root manager may only pass on scopes root
@@ -203,7 +203,7 @@ export default function UserAdmin() {
   if (!me || !canViewDirectory) return <div className="p-8 text-zinc-500">Admin access required.</div>;
 
   const tabs: { key: Tab; label: string; count?: number }[] = [
-    { key: "directory", label: "Directory" },
+    { key: "core", label: "Core" },
     ...(canManage ? [
       { key: "users" as Tab, label: "Users", count: users.length },
       ...(isRoot ? [{ key: "roles" as Tab, label: "Roles", count: roles.length }] : []),
@@ -218,7 +218,7 @@ export default function UserAdmin() {
         <p className="text-sm text-zinc-500 dark:text-zinc-400">
           {isRoot ? `Root: ${me.user.email}.` : canManage ? `Signed in as ${me.user.email} (user manager).` : `Signed in as ${me.user.email} (HR directory).`} {canManage && "Assign roles to users; a role grants the automation dashboards you define for it."}
           {!isRoot && canManage && " You can only grant dashboards root gave you — the root user, admin/user-manager roles, and anything outside your own access are root-only."}
-          {!canManage && " Read-only directory of every login except root and root-hidden emails."}
+          {!canManage && " Read-only Core people view: assigned designations, roster links, every login except root and root-hidden emails."}
         </p>
       </div>
 
@@ -248,8 +248,8 @@ export default function UserAdmin() {
         ))}
       </div>
 
-      {viewTab === "directory" && (
-        <DirectoryTab canManage={canManage} isRoot={isRoot} onManage={(id) => setManagingId(id)} />
+      {viewTab === "core" && (
+        <CoreTab canManage={canManage} isRoot={isRoot} onManage={(id) => setManagingId(id)} />
       )}
 
       {viewTab === "users" && canManage && (
