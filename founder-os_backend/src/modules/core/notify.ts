@@ -58,8 +58,7 @@ export async function notifyUsers(items: NotifyItem[], actorId?: string | null):
 }
 
 /** Mark one notification READ (owner-only — callers check employeeId first). */
-export async function markNotificationRead(id: string): Promise<boolean> {
-  try {
+export async function markNotificationRead(id: string): Promise<boolean> {  try {
     const db = getD1Database();
     if (!db || !id) return false;
     const res = await db.prepare(
@@ -69,4 +68,22 @@ export async function markNotificationRead(id: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Shadow heartbeat: one row per shadow per IST day proving the compare RAN
+ * (quiet runs otherwise leave no trace, making "zero DIFFs" indistinguishable
+ * from "never ran"). Flip gates read these: N days of heartbeats + zero DIFFs
+ * = a quiet week. Idempotent (INSERT OR IGNORE on a deterministic id).
+ */
+export async function shadowHeartbeat(key: string): Promise<void> {
+  try {
+    const db = getD1Database();
+    if (!db || !key) return;
+    const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+    const now = new Date().toISOString();
+    await db.prepare(
+      `INSERT OR IGNORE INTO "core_system_job" ("id", "key", "status", "startedAt", "finishedAt", "detail") VALUES (?, 'shadow-heartbeat', 'OK', ?, ?, ?)`,
+    ).bind(`hb:${key}:${day}`, now, now, JSON.stringify({ shadow: key, day })).run();
+  } catch { /* never throw */ }
 }

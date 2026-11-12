@@ -9,6 +9,7 @@
 import { prisma } from '../../shared/prisma';
 import { getD1Database } from '../../shared/prisma-d1';
 import { logger } from '../../shared/logger';
+import { shadowHeartbeat } from './notify';
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -192,7 +193,7 @@ export async function shadowCompareFinance(liveDues: CalendarDue[]): Promise<voi
     const lt = Number(liveRecv[0]?.t ?? 0), ct = Number(coreRecv[0]?.t ?? 0);
     if (Math.abs(lt - ct) > 1) recvDiff.push(`total ${lt} != ${ct}`);
     if (Number(liveRecv[0]?.n ?? 0) !== Number(coreRecv[0]?.n ?? 0)) recvDiff.push(`count ${liveRecv[0]?.n} != ${coreRecv[0]?.n}`);
-    if (!dueDiffs.length && !recvDiff.length) return;
+    if (!dueDiffs.length && !recvDiff.length) { await shadowHeartbeat('finance-shadow'); return; }
     const sig = hashSig(JSON.stringify({ dueDiffs, recvDiff }));
     const recent: any[] = await db.prepare(
       `SELECT "detail" FROM "core_system_job" WHERE "key" = 'finance-shadow' ORDER BY "startedAt" DESC LIMIT 5`,

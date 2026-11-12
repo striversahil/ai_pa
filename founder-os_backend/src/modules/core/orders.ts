@@ -11,6 +11,7 @@
 import { prisma } from '../../shared/prisma';
 import { getD1Database } from '../../shared/prisma-d1';
 import { logger } from '../../shared/logger';
+import { shadowHeartbeat } from './notify';
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -227,7 +228,7 @@ export async function shadowCompareFloor(): Promise<void> {
         if (fields.length) lineDiffs.push({ soId: String(l.soId), lineKey: String(l.lineKey), fields });
       }
     }
-    if (!missing.length && !extra.length && !changed.length && !lineDiffs.length) return;
+    if (!missing.length && !extra.length && !changed.length && !lineDiffs.length) { await shadowHeartbeat('floor-shadow'); return; }
     const sig = hashSig(JSON.stringify({ missing, extra, changed, lineDiffs }));
     const recent: any[] = await db.prepare(
       `SELECT "detail" FROM "core_system_job" WHERE "key" = 'floor-shadow' ORDER BY "startedAt" DESC LIMIT 5`,

@@ -7,6 +7,7 @@
 import { prisma } from '../../shared/prisma';
 import { getD1Database } from '../../shared/prisma-d1';
 import { logger } from '../../shared/logger';
+import { shadowHeartbeat } from './notify';
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -162,7 +163,7 @@ export async function shadowCompareStock(): Promise<void> {
       if (!c) { whDiffs.push(`missing ${w.id}`); continue; }
       if (String((c as any).name) !== String(w.name) || Number((c as any).active ? 1 : 0) !== Number(w.active ? 1 : 0)) whDiffs.push(`changed ${w.id}`);
     }
-    if (!sumDiffs.length && !resDiffs.length && !whDiffs.length) return;
+    if (!sumDiffs.length && !resDiffs.length && !whDiffs.length) { await shadowHeartbeat('stock-shadow'); return; }
     const sig = hashSig(JSON.stringify({ sumDiffs, resDiffs, whDiffs }));
     const recent: any[] = await db.prepare(
       `SELECT "detail" FROM "core_system_job" WHERE "key" = 'stock-shadow' ORDER BY "startedAt" DESC LIMIT 5`,

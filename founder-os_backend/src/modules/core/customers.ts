@@ -8,6 +8,7 @@
 import { prisma } from '../../shared/prisma';
 import { getD1Database } from '../../shared/prisma-d1';
 import { logger } from '../../shared/logger';
+import { shadowHeartbeat } from './notify';
 
 const MIRROR_COLUMNS = [
   'id', 'zohoCustomerId', 'region', 'zone', 'subArea', 'state', 'pincode',
@@ -174,7 +175,7 @@ export async function shadowCompareCustomers(): Promise<void> {
       if (fields.length) changed.push({ id, fields });
     }
     for (const id of core.keys()) if (!master.has(id)) extra.push(id);
-    if (!missing.length && !extra.length && !changed.length) return; // quiet run: nothing logged
+    if (!missing.length && !extra.length && !changed.length) { await shadowHeartbeat('customer-shadow'); return; } // quiet run: heartbeat only
     const sig = hashSig(JSON.stringify({ missing, extra, changed }));
     const recent: any[] = await db.prepare(
       `SELECT "detail" FROM "core_system_job" WHERE "key" = 'customer-shadow' ORDER BY "startedAt" DESC LIMIT 5`,

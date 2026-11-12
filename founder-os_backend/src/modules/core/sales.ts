@@ -10,6 +10,7 @@
 import { prisma } from '../../shared/prisma';
 import { getD1Database } from '../../shared/prisma-d1';
 import { logger } from '../../shared/logger';
+import { shadowHeartbeat } from './notify';
 
 const SALE_COLS = [
   'id', 'estimateNumber', 'customerName', 'masterCustomerId', 'organizationId',
@@ -327,7 +328,7 @@ export async function shadowCompareSales(): Promise<void> {
         }
       } catch { /* per-row best-effort */ }
     }
-    if (!missing.length && !extra.length && !changed.length && !ledger.length) return; // quiet run
+    if (!missing.length && !extra.length && !changed.length && !ledger.length) { await shadowHeartbeat('sales-shadow'); return; } // quiet run: heartbeat only
     const sig = hashSig(JSON.stringify({ missing, extra, changed, ledger }));
     const recent: any[] = await db.prepare(
       `SELECT "detail" FROM "core_system_job" WHERE "key" = 'sales-shadow' ORDER BY "startedAt" DESC LIMIT 5`,
@@ -463,7 +464,7 @@ export async function shadowCompareLedger(): Promise<{ diffs: number; closesSeen
       ).bind(weekAgo).all().catch(() => null);
       out.closesSeen = Number(((res as any)?.results ?? [])[0]?.n ?? 0) || 0;
     } catch { /* closesSeen best-effort */ }
-    if (!mismatches.length) return out; // quiet run
+    if (!mismatches.length) { await shadowHeartbeat('ledger-shadow'); return out; } // quiet run: heartbeat only
     const sig = hashSig(JSON.stringify(mismatches));
     const recent: any[] = await db.prepare(
       `SELECT "detail" FROM "core_system_job" WHERE "key" = 'ledger-shadow' ORDER BY "startedAt" DESC LIMIT 5`,
