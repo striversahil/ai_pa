@@ -8,10 +8,7 @@ import { deleteCollection, getDebtorsTrackerData, recordReceivablesExport, reset
 import { buildOverdueReceivableRows, downloadOverdueReceivablesCsv } from "@/debtors-tracker/receivables-export";
 import { TabBar } from "@/components/ui/TabBar";
 import ImportModal, { type ImportKind } from "./debtors-tracker/ImportModal";
-import InvoiceEditModal from "./debtors-tracker/InvoiceEditModal";
-import CustomerContactModal from "./debtors-tracker/CustomerContactModal";
-import CustomerSituationModal from "./debtors-tracker/CustomerSituationModal";
-import CustomerLedgerModal from "./debtors-tracker/CustomerLedgerModal";
+import DashboardModals from "./debtors-tracker/DashboardModals";
 import AccountsTab from "./debtors-tracker/tabs/AccountsTab";
 import SummaryTab from "./debtors-tracker/tabs/SummaryTab";
 import AgeingTab from "./debtors-tracker/tabs/AgeingTab";
@@ -334,56 +331,20 @@ export default function DebtorsTrackerDashboard() {
         />
       )}
 
-      <ImportModal
-        kind={importKind}
-        onClose={() => setImportKind(null)}
-        onDone={(msg) => {
-          setImportKind(null);
-          setToast(msg);
-          refreshAfterMutation();
-        }}
-      />
-
-      <InvoiceEditModal
-        key={editing?.id ?? "none"}
-        invoice={editing}
+      <DashboardModals
+        importKind={importKind}
+        editing={editing}
+        contact={contact}
+        situation={situation}
+        ledgerCustomer={ledgerCustomer}
         canAccounts={canAccounts}
-        onClose={() => setEditing(null)}
-        onSaved={(msg) => {
-          setEditing(null);
-          setToast(msg);
-          refreshAfterMutation();
-        }}
-      />
-
-      <CustomerContactModal
-        key={contact?.customerKey ?? "none"}
-        customer={contact}
-        canAccounts={canAccounts}
-        onClose={() => setContact(null)}
-        onSaved={(msg) => {
-          setContact(null);
-          setToast(msg);
-          refreshAfterMutation();
-        }}
-      />
-
-      <CustomerSituationModal
-        key={situation?.customerKey ?? "none"}
-        customer={situation}
-        canAccounts={canAccounts}
-        onClose={() => setSituation(null)}
-        onSaved={(msg) => {
-          // Stays open so several daily remarks / promise edits can be added.
-          setToast(msg);
-          refreshAfterMutation();
-        }}
-      />
-
-      <CustomerLedgerModal
-        key={ledgerCustomer?.customerKey ?? "none"}
-        customer={ledgerCustomer}
-        onClose={() => setLedgerCustomer(null)}
+        onCloseImport={() => setImportKind(null)}
+        onCloseEditing={() => setEditing(null)}
+        onCloseContact={() => setContact(null)}
+        onCloseSituation={() => setSituation(null)}
+        onCloseLedger={() => setLedgerCustomer(null)}
+        onSaved={(msg) => setToast(msg)}
+        onChanged={refreshAfterMutation}
       />
 
       {toast && (
