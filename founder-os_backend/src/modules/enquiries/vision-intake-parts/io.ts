@@ -1,0 +1,688 @@
+// Extracted verbatim from vision-intake.ts by scripts/refactor/split-module.mjs.
+// vision-intake.ts re-exports everything public here, so existing imports keep working.
+import { getProductIndex, getProductDetail } from "../../../automations/product-line/service";
+import type { MatchProduct } from "../../../automations/product-line/match";
+import type { EnquiryStore } from "../store";
+import { getGateway, buildVisionUserContent } from "../../../shared/ai-gateway";
+import { getAppSetting } from "../../../shared/app-settings";
+import { resolveIntakeChain, resolveLegModel } from "../../../shared/intake-chain";
+import { cacheSet } from "../../../shared/cache";
+import { matchGradeRule } from "../intake-grade-rules";
+import type { LiveCatalog, KypKey } from "./types";
+import { normTok, ROUTER_SYSTEM, isRateLimited, lookupDeterministic, lookupToken, LOOKUP_FALLBACK_SYSTEM, buildLookupList, SPEC_CHECK_SYSTEM } from "./pure";
+
+export async function loadLiveCatalog(): Promise<LiveCatalog> {
+  const rows = await getProductIndex().catch(() => []);
+  const products: MatchProduct[] = rows.map((p) => ({
+    id: String(p.id),
+    category: String(p.category ?? ''),
+    name: String(p.name ?? ''),
+    aliases: [...(p.aliases ?? [])],
+    active: p.active !== false,
+  }));
+  const cats = [...new Set(products.map((p) => p.category).filter(Boolean))].sort();
+  const itemsByCat = new Map<string, Set<string>>(
+    cats.map((c) => [c, new Set(products.filter((p) => p.category === c).map((p) => normTok(p.name)))]),
+  );
+  const index: KypKey[] = products.map((p) => ({
+    productId: p.id,
+    category: p.category,
+    item: p.name,
+    keys: new Set([normTok(p.name), ...p.aliases.map(normTok)]),
+  }));
+  return { products, cats, itemsByCat, index };
+}
+
+export async function runAgnesVisionIntake(
+  env: Record<string, unknown>,
+  store: EnquiryStore,
+  id: string,
+  onStage?: (stage: 'split' | 'classified') => void | Promise<void>,
+  /** Force a single provider leg ('agnes' for bulk backfills — skips paid). */
+  forceProvider?: string,
+): Promise<{ lines: any[]; provider: string } | null> {
+  let enquiry: any;
+  try { enquiry = await store.getEnquiry(id); } catch (e: any) {
+    // Never die silently here — a dropped initial read used to masquerade as
+    // "kick never fired" with zero log output. Surface it for `wrangler tail`.
+    console.error(`[vision-intake] ${id}: initial read failed (${String(e?.message ?? e).slice(0, 160)}) — intake aborted`);
+    return null;
+  }
+  if (!enquiry) {
+    console.error(`[vision-intake] ${id}: row not found — intake aborted`);
+    return null;
+  }
+
+  const gateway = getGateway(env as any);
+  // Intake chain (resolveIntakeChain): primary pool first (root-controlled
+  // `intake:primary_provider` Setting, default Agnes), the other leg as
+  // fallback — free leg dropped for determinism. forceProvider pins one
+  // leg (bulk backfills — no failover, no paid spend).
+  const intakePrimary = await getAppSetting('intake:primary_provider').catch(() => 'agnes');
+  const intakeOpenrouterModel = await getAppSetting('intake:openrouter_model').catch(() => '');
+  const intakeModels = { openrouterModel: intakeOpenrouterModel };
+  const chain = resolveIntakeChain(env as any, forceProvider, { primary: intakePrimary });
+  if (chain.length === 0) {
+    console.warn(`[vision-intake] no Agnes/paid key${forceProvider ? ` (forced '${forceProvider}' has no key)` : ''} — skipping`);
+    return null;
+  }
+
+  // Determine text to split: aiBulkText (Add via AI) takes precedence, otherwise description.
+  const items: any[] = Array.isArray(enquiry.items) ? enquiry.items : [];
+  const aiBulkText = items.filter((it: any) => it?.aiPending === true).map((it: any) => String(it?.spec ?? '').trim()).filter(Boolean).join('\n\n').slice(0, 3000);
+  const text = aiBulkText
+    ? `New items to split (ignore everything else):\n${aiBulkText.slice(0, 3000)}`
+    : `Enquiry text:\n${String(enquiry.description || '').slice(0, 3000)}`;
+
+  // Collect images: enquiry-level imageUrls (string[] data-URI/https) + per-item media (cap 4)
+  const rawImageUrls: any = (enquiry as any).imageUrls ?? (enquiry as any).enquiryImages;
+  const enquiryImages: string[] = Array.isArray(rawImageUrls)
+    ? rawImageUrls.map((m: any) => typeof m === 'string' ? m : String(m?.url ?? '')).filter(Boolean)
+    : [];
+  const itemImages: string[] = [];
+  for (const it of items) for (const m of (it.media || [])) if (m?.url) itemImages.push(String(m.url));
+  // Add-via-AI / additional-requirement re-run: the prompt says "ignore
+  // everything else", so old enquiry photos must not be re-described (their
+  // lines would merge in as duplicates). Only media attached to the pending
+  // items themselves is in scope; full photo context applies to the
+  // description-based pass only.
+  const pendingMedia: string[] = [];
+  if (aiBulkText) {
+    for (const it of items) {
+      if (it?.aiPending !== true) continue;
+      for (const m of (it.media || [])) if (m?.url) pendingMedia.push(String(m.url));
+    }
+  }
+  const allImages = (aiBulkText ? pendingMedia : [...enquiryImages, ...itemImages]).slice(0, 4);
+  const content = buildVisionUserContent(text, allImages, 4) as any;
+  const attachedImgs = Array.isArray(content) ? content.filter((b: any) => b && b.type === 'image_url').length : 0;
+  if (allImages.length > 0 && attachedImgs === 0) {
+    console.log(`[vision-intake] ${id}: WARNING ${allImages.length} image(s) present but none attached to vision call`);
+  }
+
+  let routed: any = null;
+  let lastErr: any = null;
+  let successProvider = chain[0] ?? 'agnes';
+  // Content-drop gate (Oct 2026: ~half of runs across 3 days persisted
+  // names-only lines — client-written sizes/quantities never reached any
+  // dashboard). A weak provider sometimes "splits" names while dropping every
+  // measurable field. Detected by LENGTH, not regex: a line whose verbatim is
+  // substantially longer than name+qty+dims+spec lost content in transit.
+  // Dropped runs retry on the next provider immediately (same as 1015/429);
+  // if every provider drops, the best attempt still persists (never the
+  // worst), and the drop is logged for `wrangler tail`.
+  const countDroppedLines = (rawLines: any[]): { dropped: number; total: number } => {
+    let dropped = 0, total = 0;
+    for (const l of (Array.isArray(rawLines) ? rawLines : [])) {
+      const name = String(l?.name ?? l?.verbatim ?? '').trim();
+      if (!name) continue;
+      total++;
+      const kept = String(l?.name ?? '').length + String(l?.qty ?? '').length
+        + String(l?.dims ?? '').length + String(l?.spec ?? '').length;
+      const verbatim = String(l?.verbatim ?? '').length;
+      // Numbering/separators account for ~a dozen chars; beyond that, content died.
+      if (verbatim > kept + 12) dropped++;
+    }
+    return { dropped, total };
+  };
+  let bestRouted: any = null;
+  let bestProvider = '';
+  let bestDropped = Number.POSITIVE_INFINITY;
+  let bestTotal = 0;
+  let acceptedDropped = 0;
+  // Try each provider in chain until one succeeds (handles Agnes 1015 WAF without empty poison)
+  outer: for (const prov of chain) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const ac = new AbortController();
+        const t = setTimeout(() => ac.abort(), 20_000);
+        try {
+          routed = await gateway.completeJson<any>({
+            messages: [{ role: 'system', content: ROUTER_SYSTEM }, { role: 'user', content }],
+            temperature: 0, json: true, maxTokens: 24000, provider: prov, model: resolveLegModel(prov, intakeModels), signal: ac.signal as any,
+            // Never burn 100s on doomed direct-Agnes attempts: relay lane if
+            // warm, else fail fast to the next provider (OpenRouter).
+            agnesRelayOnly: true,
+            // Strict pin: a starved provider fails over to the next chain leg
+            // explicitly — never a silent weak-model substitution.
+            strictProvider: true,
+            // Splitting lines needs no chain-of-thought — thinking tokens are
+            // billed output with zero UI use on this path.
+            reasoningOff: true,
+          });
+        } finally { clearTimeout(t); }
+        const gate = countDroppedLines((routed as any)?.lines);
+        if (gate.total > 0 && gate.dropped > 0 && gate.dropped / gate.total >= 0.5) {
+          console.log(`[vision-intake] ${id}: provider=${prov} attempt ${attempt + 1}/2 dropped content (${gate.dropped}/${gate.total} lines names-only) — trying next provider`);
+          if (!bestRouted || gate.dropped < bestDropped || (gate.dropped === bestDropped && gate.total > bestTotal)) {
+            bestRouted = routed; bestProvider = prov; bestDropped = gate.dropped; bestTotal = gate.total;
+          }
+          routed = null;
+          lastErr = new Error('router-dropped-content');
+          break; // next provider (don't hammer the same weak one)
+        }
+        acceptedDropped = gate.dropped;
+        lastErr = null;
+        successProvider = prov;
+        break outer;
+      } catch (e: any) {
+        lastErr = e;
+        const msg = String(e?.message ?? e);
+        const is429 = isRateLimited(e);
+        const is1015 = /1015/i.test(msg);
+        console.log(`[vision-intake] ${id}: provider=${prov} attempt ${attempt + 1}/2 failed (${msg.slice(0, 120)})${is1015 ? ' [1015 WAF]' : ''}`);
+        if (is429) {
+          // For 1015/429, try next provider immediately (don't hammer same provider)
+          break;
+        }
+        if (attempt === 0) await new Promise((r) => setTimeout(r, 800));
+      }
+    }
+  }
+  // Every provider dropped content: persist the best attempt, never the worst
+  // (a partial split still beats names-only poison — and the next edit
+  // re-runs intake cleanly). Logged so dropped runs stay visible in tail.
+  if (!routed && bestRouted) {
+    routed = bestRouted;
+    successProvider = bestProvider;
+    acceptedDropped = bestDropped;
+    lastErr = null;
+    console.warn(`[vision-intake] ${id}: all providers dropped content — persisting best attempt (${bestProvider}, ${bestDropped}/${bestTotal} lines names-only)`);
+  }
+  if (lastErr && !routed) {
+    const is429 = isRateLimited(lastErr);
+    if (is429) {
+      console.warn(`[vision-intake] ${id}: all providers rate-limited (${chain.join('→')}) — writing empty intake so UI unsticks; flags stay set so the next edit or the 15-min intake-sweep retries`);
+      try {
+        await cacheSet(`enquiry:intake:${id}`, { at: new Date().toISOString(), suggestions: [], missing: [], candidates: [] }, 7 * 24 * 60 * 60 * 1000);
+        try {
+          const db: any = (env as any)?.DB;
+          if (db) {
+            const nowIso = new Date().toISOString();
+            const doneAt = String((enquiry as any)?.updatedAt ?? nowIso);
+            const expired = new Date(Date.now() - 10 * 60 * 1000 - 1000).toISOString();
+            await db.batch([
+              db.prepare(`INSERT INTO Setting(key, value, updatedAt) VALUES(?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`).bind('enquiry:intake:done:' + id, doneAt, nowIso),
+              db.prepare(`INSERT INTO Setting(key, value, updatedAt) VALUES(?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`).bind('enquiry:intake:claim:' + id, expired, nowIso),
+            ]);
+          }
+        } catch {}
+      } catch {}
+    } else {
+      console.error(`[vision-intake] ${id}: vision failed on all providers ${chain.join('→')}: ${String(lastErr?.message ?? lastErr).slice(0, 300)}`);
+    }
+    if (is429) return null;
+    try { await cacheSet(`enquiry:intake:${id}`, { at: new Date().toISOString(), suggestions: [], missing: [], candidates: [] }, 7 * 24 * 60 * 60 * 1000); } catch {}
+    // Terminal failure (non-429): NEVER leave aiPending set with no retry.
+    // Clear the flags (raw items stay, same as the zero-lines path) and mark
+    // done so the UI stops spinning. Re-read fresh first — the row may have
+    // been edited during the vision call and a stale write must not clobber it.
+    try {
+      let fresh: any = null;
+      try { fresh = await store.getEnquiry(id); } catch { fresh = null; }
+      const exItems = Array.isArray(fresh?.items) ? fresh.items : [];
+      const { applyIntakeBulkResult } = await import('../update');
+      const cleared = (applyIntakeBulkResult as any)(exItems, []);
+      if (cleared) {
+        try { await store.updateEnquiry(id, { items: cleared }).catch(() => null); } catch {}
+      }
+    } catch {}
+    try {
+      const db: any = (env as any)?.DB;
+      if (db) {
+        const nowIso = new Date().toISOString();
+        let doneAt = nowIso;
+        try { const cur: any = await store.getEnquiry(id).catch(() => null); doneAt = String((cur as any)?.updatedAt ?? nowIso); } catch {}
+        const expired = new Date(Date.now() - 10 * 60 * 1000 - 1000).toISOString();
+        await db.batch([
+          db.prepare(`INSERT INTO Setting(key, value, updatedAt) VALUES(?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`).bind('enquiry:intake:done:' + id, doneAt, nowIso),
+          db.prepare(`INSERT INTO Setting(key, value, updatedAt) VALUES(?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`).bind('enquiry:intake:claim:' + id, expired, nowIso),
+        ]);
+      }
+    } catch {}
+    return null;
+  }
+  if (!routed || !Array.isArray(routed.lines) || routed.lines.length === 0) {
+    console.log(`[vision-intake] ${id}: router returned 0 lines (lead: ${JSON.stringify(routed?.lead || {}).slice(0, 300)})`);
+    // Still write empty intake so UI doesn't spin forever on this id
+  }
+  const lines = (Array.isArray(routed.lines) ? routed.lines : []).slice(0, 30).map((l: any) => ({
+    verbatim: String(l.verbatim || l.spec || l.name || '').slice(0, 500),
+    name: String(l.name || l.verbatim || '').slice(0, 300),
+    qty: String(l.qty || '').slice(0, 120),
+    dims: String(l.dims || '').slice(0, 500),
+    spec: String(l.spec || '').slice(0, 2000),
+    category: String(l.category || 'Uncategorized').slice(0, 120),
+  })).filter((l: any) => l.verbatim || l.qty || l.dims || l.spec || l.name);
+
+  const leadRaw = (routed.lead && typeof routed.lead === 'object') ? routed.lead : {};
+  const fields: Record<string, string> = {};
+  for (const f of ['clientCompany', 'contactName', 'contactEmail', 'contactPhone', 'location', 'sourceLead']) {
+    const v = String((leadRaw as any)[f] ?? '').trim().slice(0, 300);
+    if (v) fields[f] = v;
+  }
+
+  // ── Phase 1: persist the SPLIT immediately so dashboards render the items
+  // the moment the router succeeds — lookup + spec-check (below) stream
+  // classification afterwards via a second write + event, instead of holding
+  // the whole save hostage. Split fields only (name/qty/spec/verbatim);
+  // category/kyp* merge in phase 2. Same result path the runner used
+  // (fill-empty-only fields, bulk-merge items, KV intake for UI).
+  const tSplit = Date.now();
+  const splitItems = lines.map((l: any) => ({
+    name: l.name || l.verbatim.split('|')[0].trim().slice(0, 300) || l.verbatim.slice(0, 300),
+    qty: l.qty,
+    spec: [l.dims, l.spec].filter(Boolean).join(' | ').slice(0, 2000),
+    verbatim: l.verbatim.slice(0, 500),
+  }));
+  // RETIRED: Pinecone price-memory removed — pricing comes exclusively from
+  // live product-line VendorRates via the sales chat matcher. Suggestions and
+  // candidates stay empty; the KV shape is unchanged for the sales UI.
+  const suggestions: any[] = [];
+  const candidates: any[] = [];
+  const existing: any = enquiry;
+  const updates: Record<string, any> = {};
+  for (const f of ['title', 'clientCompany', 'contactName', 'contactEmail', 'contactPhone', 'location', 'sourceLead'] as const) {
+    const v = String((fields as any)[f] ?? '').trim();
+    if (!v || String(existing[f] ?? '').trim()) continue;
+    if (f === 'sourceLead' && /sales|lead\s*of|agent/i.test(v)) continue;
+    (updates as any)[f] = v.slice(0, 300);
+  }
+  const existingItems = Array.isArray(existing.items) ? existing.items : [];
+  if (existingItems.length === 0 && splitItems.length > 0) {
+    (updates as any).items = splitItems.slice(0, 50).map((it: any) => ({
+      name: it.name, qty: it.qty, spec: it.spec, media: [], verbatim: it.verbatim,
+    }));
+  } else if (existingItems.length > 0) {
+    // NOTE: no `splitItems.length > 0` guard — on zero router lines the helper
+    // clears the aiPending flags (raw items stay) so a spent job can never
+    // wedge the row, per its contract. Null = no pending block, keep as-is.
+    // Category/kyp keys are absent here by construction (phase-2 merges them),
+    // so phase-1 rows read "unclassified" until the second write lands.
+    const { applyIntakeBulkResult } = await import('../update');
+    const merged: any = (applyIntakeBulkResult as any)(existingItems, splitItems);
+    if (merged) (updates as any).items = merged;
+    else console.log(`[vision-intake] ${id}: ${splitItems.length} lines discarded, no aiPending item stored`);
+  }
+  if (String((existing as any)?.rateStatus ?? '') === 'finalized') {
+    const mergedItems = Array.isArray((updates as any).items) ? (updates as any).items : existingItems;
+    const loop = mergedItems.filter((it: any) => !it?.specIssue && !it?.rateAvailable && !it?.internalRates);
+    const done = loop.filter((it: any) => it?.finalRate !== undefined && it?.finalRate !== null && Number.isFinite(Number(it?.finalRate)));
+    const loopDone = loop.length === 0 ? mergedItems.length > 0 : done.length === loop.length;
+    if (!loopDone) (updates as any).rateStatus = 'rates_received';
+  }
+  let updated: any = existing;
+  if (Object.keys(updates).length > 0) {
+    try { updated = await store.updateEnquiry(id, updates).catch(() => null) ?? existing; } catch {}
+  }
+  try {
+    await cacheSet(`enquiry:intake:${id}`, {
+      at: new Date().toISOString(),
+      suggestions: suggestions.slice(0, 25),
+      missing: [],
+      candidates: candidates.slice(0, 10),
+    }, 7 * 24 * 60 * 60 * 1000);
+  } catch {}
+  try { await onStage?.('split'); } catch { /* stage signal never fails the run */ }
+  console.log(`[vision-intake] ${id}: phase-1 split persisted (${splitItems.length} lines, ${Date.now() - tSplit}ms since router)`);
+
+  // Verbatim items + Call-2 lookup (category side-field only — the client's
+  // exact wording is never renamed). Live catalogue first: deterministic
+  // alias-index (fed the FULL line: verbatim + spec + name + dims + qty),
+  // then the shared token tier, then one batched LLM fallback for the misses
+  // on the provider that won Call 1.
+  const catalog = await loadLiveCatalog().catch(() => null);
+  const liveProducts: MatchProduct[] = catalog?.products ?? [];
+  const liveCats: string[] = catalog?.cats ?? [];
+  const liveItemsByCat: Map<string, Set<string>> = catalog?.itemsByCat ?? new Map();
+  const liveIndex: KypKey[] = catalog?.index ?? [];
+  if (liveProducts.length === 0) console.warn(`[vision-intake] ${id}: live catalogue empty — all lines Uncategorized this run`);
+  let nAlias = 0;
+  let nToken = 0;
+  let nGrade = 0;
+  let nLlm = 0;
+  let nMisses = 0;
+  const kypHits: (KypKey | null)[] = lines.map((l: any) => {
+    const extra = `${String(l.name || '')} ${String(l.dims || '')} ${String(l.qty || '')}`;
+    const hit = lookupDeterministic(String(l.verbatim || ''), String(l.spec || ''), extra, liveIndex);
+    if (hit) { nAlias++; return hit; }
+    const fullText = `${String(l.verbatim || '')} ${String(l.spec || '')} ${extra}`;
+    const tok = lookupToken(normTok(fullText), liveProducts, liveIndex);
+    if (tok) { nToken++; return tok; }
+    // Founder-editable grade rules (intake-grade-rules.ts): grade-only lines
+    // ("20 GG", "9xxx") are always that product — deterministic, no LLM call.
+    const gr = matchGradeRule(fullText, liveIndex);
+    if (gr) { nGrade++; return gr; }
+    nMisses++;
+    return null;
+  });
+  if (nMisses > 0) {
+    try {
+      const idx: number[] = [];
+      kypHits.forEach((h, i) => { if (!h) idx.push(i); });
+      const input = idx.map((i, k) => `${k}. ${[lines[i].verbatim, lines[i].name, lines[i].dims, lines[i].spec, lines[i].qty].filter(Boolean).join(' | ')}`.slice(0, 600)).join('\n');
+      const ac2 = new AbortController();
+      const t2 = setTimeout(() => ac2.abort(), 20_000);
+      let out: any;
+      try {
+          out = await gateway.completeJson<any>({
+            messages: [
+              { role: 'system', content: `${LOOKUP_FALLBACK_SYSTEM}\nCatalogue (category NUMBER. Category: Item[aliases]; ...):\n${buildLookupList(liveCats, liveProducts)}` },
+              { role: 'user', content: `Match each line:\n${input}` },
+            ],
+            temperature: 0, json: true, maxTokens: 24000, provider: successProvider, model: resolveLegModel(successProvider, intakeModels), signal: ac2.signal as any,
+            agnesRelayOnly: true,
+            strictProvider: true,
+            reasoningOff: true,
+          });
+      } finally { clearTimeout(t2); }
+      const matches = Array.isArray(out?.matches) ? out.matches : [];
+      idx.forEach((lineIdx, k) => {
+        const m = matches[k] || {};
+        const raw = String((m as any).category ?? '').trim();
+        const n = /^\d{1,2}$/.test(raw) ? parseInt(raw, 10) : NaN;
+        const conf = Number((m as any).confidence);
+        const itemName = String((m as any).item || '');
+        if (!itemName || !Number.isFinite(conf) || conf < 0.65) {
+          kypHits[lineIdx] = null;
+          return;
+        }
+        if (Number.isFinite(n) && n >= 1 && n <= liveCats.length
+          && (liveItemsByCat.get(liveCats[n - 1]) || new Set()).has(normTok(itemName))) {
+          const cat = liveCats[n - 1];
+          const hit = liveIndex.find((e) => e.category === cat && normTok(e.item) === normTok(itemName)) ?? null;
+          kypHits[lineIdx] = hit;
+          if (hit) nLlm++;
+        } else {
+          // Forgiving resolve: the model returned an alias or near-name
+          // instead of the exact item_name — map it back through the same
+          // deterministic tiers rather than discarding to Uncategorized.
+          const back = lookupDeterministic(itemName, '', '', liveIndex) ?? lookupToken(itemName, liveProducts, liveIndex);
+          kypHits[lineIdx] = back;
+          if (back) nLlm++;
+        }
+      });
+    } catch (e: any) {
+      console.log(`[vision-intake] ${id}: lookup fallback failed (${String(e?.message ?? e).slice(0, 120)}) — ${nMisses} line(s) Uncategorized`);
+      // leave misses as null → Uncategorized
+    }
+  }
+  const cats: string[] = kypHits.map((h) => h?.category ?? 'Uncategorized');
+  const kypItems: (string | undefined)[] = kypHits.map((h) => h?.item ?? undefined);
+  const nUncat = cats.filter((c) => c === 'Uncategorized').length;
+  console.log(`[vision-intake] ${id}: lookup alias=${nAlias} token=${nToken} grade=${nGrade} llm=${nLlm} uncategorized=${nUncat}/${lines.length}`);
+  // Phase 7b dual-write: nothing matchable = never worth quoting — record the
+  // out-of-scope unqualified lead (insert-only, idempotent, never throws).
+  if (lines.length > 0 && nUncat === lines.length) {
+    try {
+      const { mirrorAiIntakeReject } = await import('../../core/leads');
+      await mirrorAiIntakeReject(id, lines.map((l: any) => String(l?.verbatim ?? '')));
+    } catch { /* non-fatal */ }
+  }
+
+  // Call-2.5 — spec completeness per matched item (one batched LLM call).
+  // Required checklist comes from the LIVE KypGuide rows for each matched
+  // product (same source the sales chat's stepped form uses); falls back
+  // to "all missing" if the call fails. Uncategorized → no checklist.
+  const guideCache = new Map<string, string[]>();
+  async function liveAttrs(productId: string): Promise<string[]> {
+    if (guideCache.has(productId)) return guideCache.get(productId)!;
+    let qs: string[] = [];
+    try {
+      const detail = await getProductDetail(productId).catch(() => null);
+      qs = (((detail as any)?.guide ?? []) as any[])
+        .filter((g: any) => g && g.active !== false && g.active !== 0 && (g.isRequired === true || g.isRequired === 1))
+        .sort((a: any, b: any) => Number(a.sortOrder ?? 0) - Number(b.sortOrder ?? 0))
+        .map((g: any) => String(g.question ?? '').trim())
+        .filter(Boolean);
+    } catch { /* treat as no checklist */ }
+    guideCache.set(productId, qs);
+    return qs;
+  }
+  const perItemAttrs: string[][] = await Promise.all(kypHits.map(async (h) => {
+    if (!h) return [];
+    const raw = await liveAttrs(h.productId);
+    // Conditional fallbacks like "If the client is unsure of the grade, request a picture..." are
+    // not hard requirements when the primary spec is already given. Filter them from the
+    // completeness gate so a fully-specified item can actually reach complete.
+    return raw.filter((a) => {
+      const low = a.toLowerCase();
+      if (low.includes('if the client is unsure of the grade')) return false;
+      if (low.includes('request a picture or a physical swatch')) return false;
+      // Generic "request a picture" fallbacks that are conditional on not knowing the spec
+      if (low.startsWith('if the client is unsure') && low.includes('request a picture')) return false;
+      return true;
+    });
+  }));
+  // kypMissing per line (subset of required_attributes that are still missing)
+  let kypMissing: (string[] | undefined)[] = kypHits.map(() => undefined);
+  let kypComplete: (boolean | undefined)[] = kypHits.map(() => undefined);
+  const checkableIdx: number[] = [];
+  kypHits.forEach((h, i) => { if (h && perItemAttrs[i].length > 0) checkableIdx.push(i); });
+  if (checkableIdx.length > 0) {
+    const checksInput = checkableIdx.map((i, k) => {
+      const specText = [lines[i].verbatim, lines[i].dims, lines[i].spec, lines[i].qty].filter(Boolean).join(' | ').slice(0, 800);
+      const checklist = perItemAttrs[i].map((a, ai) => `${ai}. ${a}`).join('\n');
+      return `Item ${k} spec: "${specText}"\nChecklist:\n${checklist}`;
+    }).join('\n\n---\n\n');
+    try {
+      const ac3 = new AbortController();
+      const t3 = setTimeout(() => ac3.abort(), 20_000);
+      let raw: any;
+      try {
+        raw = await gateway.completeJson<any>({
+          messages: [
+            { role: 'system', content: SPEC_CHECK_SYSTEM },
+            { role: 'user', content: checksInput },
+          ],
+          temperature: 0, json: true, maxTokens: 24000, provider: successProvider, model: resolveLegModel(successProvider, intakeModels), signal: ac3.signal as any,
+          agnesRelayOnly: true,
+          strictProvider: true,
+          reasoningOff: true,
+        });
+      } finally { clearTimeout(t3); }
+      const checks = Array.isArray(raw?.checks) ? raw.checks : [];
+      checkableIdx.forEach((lineIdx, k) => {
+        const c = checks[k] || {};
+        const idxs: number[] = Array.isArray(c.missing) ? c.missing.map((n: any) => Number(n)).filter((n: number) => Number.isFinite(n) && n >= 0 && n < perItemAttrs[lineIdx].length) : [];
+        let missing = idxs.map((n) => perItemAttrs[lineIdx][n]).filter(Boolean);
+        // Deterministic fix for the micron/flour alternative: the single checklist entry covers
+        // "micron opening if known, else flour type". If spec already has "micron 80" or
+        // "maida"/"suji"/"rava"/"bran"/"chokar", that entry is satisfied regardless of LLM.
+        const hay = [lines[lineIdx].verbatim, lines[lineIdx].dims, lines[lineIdx].spec, lines[lineIdx].qty].join(' ').toLowerCase();
+        missing = missing.filter((m) => {
+          const low = m.toLowerCase();
+          if (low.includes('micron opening') && low.includes('flour it is sifting')) {
+            if (hay.includes('micron') || hay.includes('maida') || hay.includes('suji') || hay.includes('rava') || hay.includes('bran') || hay.includes('chokar')) return false;
+          }
+          return true;
+        });
+        kypMissing[lineIdx] = missing;
+        kypComplete[lineIdx] = missing.length === 0;
+      });
+      // Any checkable line not returned → treat as all-missing
+      checkableIdx.forEach((lineIdx) => {
+        if (kypMissing[lineIdx] === undefined) {
+          kypMissing[lineIdx] = [...perItemAttrs[lineIdx]];
+          kypComplete[lineIdx] = false;
+        }
+      });
+    } catch (e: any) {
+      console.log(`[vision-intake] ${id}: spec-check failed (${String(e?.message ?? e).slice(0, 120)}) — marking all checkable as incomplete`);
+      checkableIdx.forEach((lineIdx) => {
+        kypMissing[lineIdx] = [...perItemAttrs[lineIdx]];
+        kypComplete[lineIdx] = false;
+      });
+    }
+  }
+  // Matched items with empty checklist (should not happen) → complete
+  kypHits.forEach((h, i) => {
+    if (!h) { kypMissing[i] = undefined; kypComplete[i] = undefined; return; }
+    if (kypMissing[i] === undefined) {
+      kypMissing[i] = [];
+      kypComplete[i] = true;
+    }
+  });
+  const nComplete = kypComplete.filter((v) => v === true).length;
+  const nIncomplete = kypComplete.filter((v) => v === false).length;
+  if (checkableIdx.length > 0) console.log(`[vision-intake] ${id}: spec-check complete=${nComplete} incomplete=${nIncomplete}/${checkableIdx.length}`);
+  // ── Phase 2: merge CLASSIFICATION onto the stored rows (category/kyp*
+  // fields only). Fresh-read + occurrence-order name matching + a
+  // both-undefined guard: a mid-flight user edit can never be clobbered, and
+  // drifted rows are skipped (they re-classify on the next re-intake). The
+  // caller re-broadcasts via onStage('classified') so chips stream into the
+  // already-visible items.
+  // Unicode-aware: Devanagari (जाली) and other scripts survive (the old
+  // [^a-z0-9] erased non-Latin names to '' so those rows could never pair —
+  // observed live on the जाली lines). Latin behavior unchanged.
+  const normPhaseName = (s: unknown): string => String(s ?? '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ');
+  try {
+    const storedNow: any = await store.getEnquiry(id).catch(() => null);
+    const storedItems: any[] = Array.isArray(storedNow?.items) ? storedNow.items : [];
+    const lineQueues = new Map<string, number[]>();
+    lines.forEach((l: any, i: number) => {
+      const k = normPhaseName((l as any)?.name || (l as any)?.verbatim);
+      if (!k) return;
+      if (!lineQueues.has(k)) lineQueues.set(k, []);
+      lineQueues.get(k)!.push(i);
+    });
+    // Four-pass matching so a prefix fallback can never steal a line an
+    // exact-name row still needs (passes run in order, occurrence-ordered):
+    //  1. exact normalized-name equality;
+    //  2. longest "stored starts with line-name" (stored names often carry
+    //     dims/spec suffixes the router split off — "Lift Bend 4 118 MM Dia
+    //     X 5 MM Thickness" vs line "Lift Bend");
+    //  3. product-gated merge for leftover rows — the line's hit must be
+    //     ABOUT the stored row: either the stored name is grade-like and the
+    //     line hit the same grade product (stored "XXX" vs line "11 XXX" →
+    //     Milling Fabric, position-independent), or the line name starts
+    //     with the stored name and every stored token appears in the hit
+    //     product's name ("Airlock" vs "Airlock 6 ..." → product "Airlock").
+    //     Guards generic words ("Pipe" never merges a "Pipe Ring" line whose
+    //     product is about something else);
+    //  4. identical-twin reuse: a stored name exactly equal to an
+    //     already-consumed line key re-applies that line's classification
+    //     (two identical stored rows, one router line).
+    const eligible = storedItems.map((it: any) => {
+      const cat = (it as any)?.category;
+      return !((cat !== undefined && cat !== 'Uncategorized') || (it as any)?.kypComplete !== undefined);
+    });
+    const matchIdx: number[] = new Array(storedItems.length).fill(-1);
+    // consumedKey remembers every drained line key for pass-4 twin reuse.
+    const consumedKey = new Map<string, number>();
+    storedItems.forEach((it: any, si: number) => {
+      if (!eligible[si]) return;
+      const sname = normPhaseName((it as any)?.name);
+      const q = lineQueues.get(sname);
+      if (q && q.length) { matchIdx[si] = q.shift()!; consumedKey.set(sname, matchIdx[si]); }
+    });
+    storedItems.forEach((it: any, si: number) => {
+      if (!eligible[si] || matchIdx[si] >= 0) return;
+      const sname = normPhaseName((it as any)?.name);
+      let bestKey = '';
+      for (const k of lineQueues.keys()) {
+        if (k && sname.startsWith(k + ' ') && k.length > bestKey.length) bestKey = k;
+      }
+      const bq = bestKey ? lineQueues.get(bestKey) : undefined;
+      if (bq && bq.length) { matchIdx[si] = bq.shift()!; consumedKey.set(bestKey, matchIdx[si]); }
+    });
+    storedItems.forEach((it: any, si: number) => {
+      if (!eligible[si] || matchIdx[si] >= 0) return;
+      const sname = normPhaseName((it as any)?.name);
+      if (!sname) return;
+      // Grade signal reads name + spec: bare-grade names ('जाली') often keep
+      // the grade in spec ('XXX, बींस मीटर') — either side may fire.
+      const gradeHit = matchGradeRule(`${sname} ${normPhaseName((it as any)?.spec)}`, liveIndex);
+      const sToks = sname.split(' ').filter(Boolean);
+      let bestKey = '';
+      let bestLi = -1;
+      for (const [k, q] of lineQueues) {
+        if (!k || !q.length) continue;
+        const li = q[0];
+        const hitItem = li >= 0 && li < kypItems.length ? kypItems[li] : undefined;
+        if (!hitItem) continue;
+        if (gradeHit) {
+          // Grade-like stored row: take the first line that hit the same
+          // grade product (occurrence order — same product either way).
+          if (hitItem !== gradeHit.item) continue;
+        } else if (k.startsWith(sname + ' ')) {
+          const prodToks = new Set(normPhaseName(hitItem).split(' ').filter(Boolean));
+          if (!sToks.every((t) => prodToks.has(t))) continue;
+          if (k.length <= bestKey.length) continue;
+        } else if (k.length >= 6 && sname.includes(k)) {
+          // Stored row carries prefix noise the router split off ("ALASKA
+          // BRAND - PVC BUCKET - 5 INCH ..." vs line "PVC BUCKET"): the
+          // line sits INSIDE the stored name and the hit product covers
+          // every line token — same product either way. Guards: ≥2 tokens
+          // (never bare "belt"/"oven"/"tee") and longest-key wins.
+          const kToks = k.split(' ').filter(Boolean);
+          if (kToks.length < 2) continue;
+          const prodToks = new Set(normPhaseName(hitItem).split(' ').filter(Boolean));
+          if (!kToks.every((t) => prodToks.has(t))) continue;
+          if (k.length <= bestKey.length) continue;
+        } else continue;
+        bestKey = k;
+        bestLi = li;
+      }
+      if (bestLi >= 0) {
+        matchIdx[si] = lineQueues.get(bestKey)!.shift()!;
+        consumedKey.set(bestKey, bestLi);
+      }
+    });
+    storedItems.forEach((it: any, si: number) => {
+      if (!eligible[si] || matchIdx[si] >= 0) return;
+      const sname = normPhaseName((it as any)?.name);
+      if (sname && consumedKey.has(sname)) matchIdx[si] = consumedKey.get(sname)!;
+    });
+    let applied = 0;
+    const mergedItems = storedItems.map((it: any, si: number) => {
+      // 'Uncategorized' is NOT a classification — rows stuck with it (every
+      // writer stamps the string explicitly) must re-attempt lookup on the
+      // next re-intake against the current catalogue. Real categories and
+      // grounded rows are never clobbered.
+      const li = matchIdx[si];
+      if (li < 0 || li >= cats.length) return it;
+      applied++;
+      return {
+        ...(it as any),
+        category: cats[li] || 'Uncategorized',
+        kypItem: kypItems[li],
+        kypMissing: kypMissing[li],
+        kypComplete: kypComplete[li],
+      };
+    });
+    if (applied > 0) {
+      await store.updateEnquiry(id, { items: mergedItems }).catch(() => null);
+      console.log(`[vision-intake] ${id}: phase-2 classification merged onto ${applied}/${storedItems.length} stored rows`);
+    } else {
+      console.log(`[vision-intake] ${id}: phase-2 classification matched 0 stored rows (drifted?) — leaving split as-is`);
+    }
+  } catch { /* phase-2 merge never fails the run */ }
+  try {
+    await cacheSet(`enquiry:intake:${id}`, {
+      at: new Date().toISOString(),
+      suggestions: suggestions.slice(0, 25),
+      missing: [],
+      candidates: candidates.slice(0, 10),
+    }, 7 * 24 * 60 * 60 * 1000);
+  } catch {}
+  try { await onStage?.('classified'); } catch { /* stage signal never fails the run */ }
+  // Mark done/claim markers so the old runner queue skips this id
+  try {
+    const db: any = (env as any)?.DB;
+    if (db) {
+      const nowIso = new Date().toISOString();
+      const doneAt = String((updated as any)?.updatedAt ?? existing.updatedAt ?? nowIso);
+      const expired = new Date(Date.now() - 10 * 60 * 1000 - 1000).toISOString();
+      const INTAKE_DONE = 'enquiry:intake:done:';
+      const INTAKE_CLAIM = 'enquiry:intake:claim:';
+      await db.batch([
+        db.prepare(`INSERT INTO Setting(key, value, updatedAt) VALUES(?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`).bind(INTAKE_DONE + id, doneAt, nowIso),
+        db.prepare(`INSERT INTO Setting(key, value, updatedAt) VALUES(?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`).bind(INTAKE_CLAIM + id, expired, nowIso),
+      ]);
+    }
+  } catch {}
+  console.log(`[vision-intake] ${id}: provider=${successProvider} items=${lines.length} dropped=${acceptedDropped} fields=${Object.keys(fields).join(',') || 'none'} fallbackChain=${chain.join('→')}`);
+  // Returned for diagnostics (debug endpoint) — callers otherwise ignore it.
+  return { lines, provider: successProvider };
+}

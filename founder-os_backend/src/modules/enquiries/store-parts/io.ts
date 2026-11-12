@@ -1,0 +1,175 @@
+// Extracted verbatim from store.ts by scripts/refactor/split-module.mjs.
+// store.ts re-exports everything public here, so existing imports keep working.
+import { encodeEnquiryCursor, istDayKey, nextDailyNo } from "../types";
+import type { EnquiryStore, Enquiry, EnquiryComment } from "../types";
+import { normalizeVisibility } from "../parse";
+import { mapEnquiry, mapComment, sanitize, newId } from "./pure";
+
+// ── D1 (Cloudflare Worker) ───────────────────────────────────────────────────
+export class D1EnquiryStore implements EnquiryStore {
+  constructor(private db: any) {}
+
+  async listEnquiries() {
+    const { results } = await this.db.prepare("SELECT * FROM Enquiry ORDER BY createdAt DESC").all();
+    return ((results || []) as any[]).map(mapEnquiry).filter(Boolean) as Enquiry[];
+  }
+  async listEnquiriesPaged(offset: number, limit: number) {
+    const off = Math.max(0, Math.floor(offset));
+    const lim = Math.min(100, Math.max(1, Math.floor(limit)));
+    const [page, count] = await Promise.all([
+      this.db.prepare("SELECT * FROM Enquiry ORDER BY createdAt DESC LIMIT ? OFFSET ?").bind(lim, off).all(),
+      this.db.prepare("SELECT COUNT(*) AS total FROM Enquiry").first(),
+    ]);
+    return {
+      rows: (((page as any).results || []) as any[]).map(mapEnquiry).filter(Boolean) as Enquiry[],
+      total: Number((count as any)?.total ?? 0),
+    };
+  }
+  async listEnquiriesCursor(cursor: { createdAt: string; id: string } | null, limit: number) {
+    const lim = Math.min(100, Math.max(1, Math.floor(limit)));
+    const take = lim + 1; // one extra row proves hasMore without a COUNT(*) scan
+    const res = cursor
+      ? await this.db
+          .prepare(
+            "SELECT * FROM Enquiry WHERE (createdAt < ? OR (createdAt = ? AND id < ?)) ORDER BY createdAt DESC, id DESC LIMIT ?",
+          )
+          .bind(cursor.createdAt, cursor.createdAt, cursor.id, take)
+          .all()
+      : await this.db
+          .prepare("SELECT * FROM Enquiry ORDER BY createdAt DESC, id DESC LIMIT ?")
+          .bind(take)
+          .all();
+    const slice = (((res as any).results || []) as any[]).map(mapEnquiry).filter(Boolean) as Enquiry[];
+    const rows = slice.slice(0, lim);
+    const last = rows[rows.length - 1];
+    return {
+      rows,
+      nextCursor: slice.length > lim && last ? encodeEnquiryCursor(last.createdAt, last.id) : null,
+    };
+  }
+  async searchEnquiries(query: string, limit: number) {
+    // Single tight-column sweep: `searchText` (write-maintained identity mark,
+    // KBs/row) instead of the old 11-column LIKE over `items` (megabytes of
+    // base64 per row) + `description`. Same exclusions Zoho enforces in COQL
+    // criteria. Numeric fast path (dailyNo =) stays indexed; D1 caps LIKE
+    // patterns at 50 bytes — byte-truncate upstream (routes.ts fits to 48).
+    const lim = Math.min(50, Math.max(1, Math.floor(limit)));
+    const q = String(query ?? "").toLowerCase();
+    const pattern = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    const conds = [`searchText LIKE ? ESCAPE '\\'`];
+    const binds: any[] = [pattern];
+    if (/^\d{1,9}$/.test(q.trim())) {
+      conds.push("dailyNo = ?");
+      binds.push(Number(q.trim()));
+    }
+    const take = lim + 1;
+    const { results } = await this.db
+      .prepare(
+        `SELECT * FROM Enquiry WHERE (${conds.join(" OR ")}) ORDER BY createdAt DESC, id DESC LIMIT ?`,
+      )
+      .bind(...binds, take)
+      .all();
+    const found = (((results as any) || []) as any[]).map(mapEnquiry).filter(Boolean) as Enquiry[];
+    return { rows: found.slice(0, lim), hasMore: found.length > lim };
+  }
+  async listCommentsFor(enquiryIds: string[]) {
+    if (!enquiryIds.length) return [];
+    // D1 caps bound parameters at 100 per statement — chunk large sets
+    // (complete-queue fetches pass 100+ ids) so the query can never blow up.
+    const out: EnquiryComment[] = [];
+    for (let i = 0; i < enquiryIds.length; i += 90) {
+      const chunk = enquiryIds.slice(i, i + 90);
+      const placeholders = chunk.map(() => "?").join(",");
+      const { results } = await this.db.prepare(
+        `SELECT * FROM EnquiryComment WHERE enquiryId IN (${placeholders}) ORDER BY createdAt ASC`,
+      ).bind(...chunk).all();
+      for (const c of (((results || []) as any[]).map(mapComment).filter(Boolean) as EnquiryComment[])) out.push(c);
+    }
+    return out.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+  async allocateDailyNo(now: Date = new Date()): Promise<number> {
+    const key = `enquiry:daily:${istDayKey(now)}`;
+    const at = new Date().toISOString();
+    await this.db.prepare(
+      `INSERT INTO Setting(key, value, updatedAt) VALUES(?, '1', ?) ` +
+      `ON CONFLICT(key) DO UPDATE SET value = CAST(Setting.value AS INTEGER) + 1, updatedAt = excluded.updatedAt`,
+    ).bind(key, at).run();
+    const row: any = await this.db.prepare(`SELECT value FROM Setting WHERE key = ?`).bind(key).first();
+    const n = Number(row?.value ?? 1);
+    if (Number.isFinite(n) && n >= 1) return Math.floor(n);
+    const all = await this.listEnquiries().catch(() => [] as Enquiry[]);
+    return nextDailyNo(all, now);
+  }
+  async getStaffAttribution(id: string) {
+    const row: any = await this.db
+      .prepare("SELECT id, name, type, region, deleted, absentSince FROM Telecaller WHERE id = ?")
+      .bind(id)
+      .first();
+    if (!row) return null;
+    return {
+      id: String(row.id),
+      name: String(row.name ?? ''),
+      region: String(row.region ?? ''),
+      type: String(row.type ?? 'telecaller'),
+      deleted: !!Number(row.deleted ?? 0),
+      absentSince: row.absentSince ? String(row.absentSince) : null,
+    };
+  }
+  async getEnquiry(id: string) {
+    const row = await this.db.prepare("SELECT * FROM Enquiry WHERE id = ?").bind(id).first();
+    return mapEnquiry(row);
+  }
+  async createEnquiry(data: Omit<Enquiry, "id" | "createdAt" | "updatedAt">) {
+    const now = new Date().toISOString();
+    const e: Enquiry = sanitize({ ...data, id: newId(), createdAt: now, updatedAt: now });
+    await this.db
+      .prepare(
+        "INSERT INTO Enquiry (id, estNumber, organizationId, dailyNo, source, enquiryNumber, sourceLead, location, clientCompany, contactName, contactEmail, contactPhone, title, description, priority, status, rateStatus, procurementSubmittedAt, sentRevisionAt, assignedAgentId, fieldStaffId, loggedByAgentId, createdAt, updatedAt, imageUrls, activities, additionalRequirements, items, searchText) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .bind(
+        e.id, e.estNumber, (e as any).organizationId ?? "", e.dailyNo, e.source, e.enquiryNumber, e.sourceLead, e.location, e.clientCompany, e.contactName, e.contactEmail, e.contactPhone, e.title, e.description,
+        e.priority, e.status, e.rateStatus, e.procurementSubmittedAt, (e as any).sentRevisionAt ?? "", e.assignedAgentId,
+        (e as any).fieldStaffId ?? "", (e as any).loggedByAgentId ?? "", e.createdAt, e.updatedAt,
+        JSON.stringify(e.imageUrls ?? []), JSON.stringify(e.activities ?? []), JSON.stringify(e.additionalRequirements ?? []), JSON.stringify(e.items ?? []), (e as any).searchText ?? "",
+      )
+      .run();
+    return e;
+  }
+  async updateEnquiry(id: string, updates: Partial<Omit<Enquiry, "id" | "createdAt">>) {
+    const existing = await this.getEnquiry(id);
+    if (!existing) return null;
+    const merged: Enquiry = sanitize({ ...existing, ...updates, updatedAt: new Date().toISOString() });
+    await this.db
+      .prepare(
+        "UPDATE Enquiry SET estNumber=?, organizationId=?, dailyNo=?, source=?, enquiryNumber=?, sourceLead=?, location=?, clientCompany=?, contactName=?, contactEmail=?, contactPhone=?, title=?, description=?, priority=?, status=?, rateStatus=?, procurementSubmittedAt=?, sentRevisionAt=?, assignedAgentId=?, fieldStaffId=?, loggedByAgentId=?, updatedAt=?, imageUrls=?, activities=?, additionalRequirements=?, items=?, searchText=? WHERE id=?",
+      )
+      .bind(
+        merged.estNumber, String((merged as any).organizationId ?? ""), merged.dailyNo, merged.source, merged.enquiryNumber, merged.sourceLead, merged.location, merged.clientCompany, merged.contactName, merged.contactEmail, merged.contactPhone, merged.title,
+        merged.description, merged.priority, merged.status, merged.rateStatus, merged.procurementSubmittedAt, String((merged as any).sentRevisionAt ?? ""), merged.assignedAgentId,
+        String((merged as any).fieldStaffId ?? ""), String((merged as any).loggedByAgentId ?? ""), merged.updatedAt, JSON.stringify(merged.imageUrls ?? []), JSON.stringify(merged.activities ?? []),
+        JSON.stringify(merged.additionalRequirements ?? []), JSON.stringify(merged.items ?? []), (merged as any).searchText ?? "", id,
+      )
+      .run();
+    return merged;
+  }
+  async deleteEnquiry(id: string) {
+    await this.db.prepare("DELETE FROM EnquiryComment WHERE enquiryId = ?").bind(id).run();
+    await this.db.prepare("DELETE FROM Enquiry WHERE id = ?").bind(id).run();
+  }
+  async listComments(enquiryId: string) {
+    const { results } = await this.db.prepare("SELECT * FROM EnquiryComment WHERE enquiryId = ? ORDER BY createdAt ASC").bind(enquiryId).all();
+    return ((results || []) as any[]).map(mapComment).filter(Boolean) as EnquiryComment[];
+  }
+  async addComment(data: Omit<EnquiryComment, "id" | "createdAt">) {
+    const c: EnquiryComment = { ...data, visibility: normalizeVisibility((data as any)?.visibility), id: newId(), createdAt: new Date().toISOString() };
+    await this.db
+      .prepare("INSERT INTO EnquiryComment (id, enquiryId, agentId, content, createdAt, parentId, imageUrl, visibility) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(c.id, c.enquiryId, c.agentId, c.content, c.createdAt, c.parentId, c.imageUrl ?? null, c.visibility ?? 'sales')
+      .run();
+    return c;
+  }
+  async listAllComments() {
+    const { results } = await this.db.prepare("SELECT * FROM EnquiryComment ORDER BY createdAt ASC").all();
+    return ((results || []) as any[]).map(mapComment).filter(Boolean) as EnquiryComment[];
+  }
+}

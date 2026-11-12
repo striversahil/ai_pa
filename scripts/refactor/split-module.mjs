@@ -10,9 +10,9 @@
 // Grouping
 //   frontend: each React component → <Folder>/<Name>.tsx · types → types.ts ·
 //             other helpers/constants → helpers.ts(x)
-//   backend:  types → types.ts · declarations that (transitively) touch the DB
-//             or worker deps → store.ts · everything else → pure.ts
-//             (pure.ts never imports store.ts: reusable without a database)
+//   backend:  types → types.ts · declarations that (transitively) do I/O (DB,
+//             cache, network, worker deps) → io.ts · everything else → pure.ts
+//             (pure.ts never imports io.ts: reusable without a database)
 //
 // Safety rules (a declaration stays in <file> when any applies)
 //   • the default export, side-effect statements, re-exports
@@ -141,7 +141,7 @@ if (mode === 'backend') {
 }
 const fileOf = (u) => {
   if (u.isType) return 'types.ts';
-  if (mode === 'backend') return u.touchesDb ? 'store.ts' : 'pure.ts';
+  if (mode === 'backend') return u.touchesDb ? 'io.ts' : 'pure.ts';
   if (isComponent(u)) return `${u.names[0]}.tsx`;
   return 'helpers'; // resolved to .ts/.tsx below
 };
