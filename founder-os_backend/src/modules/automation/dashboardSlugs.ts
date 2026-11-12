@@ -1,37 +1,12 @@
+import { dashboardSlugSet } from '../workspaces/catalog';
+
 /**
- * Slugs that have a dashboard renderer in the frontend (Automations.tsx
- * `renderDashboard`). This list is the single source of truth for the
- * "View Dashboard" button and is intentionally STATIC — it must NOT depend on
- * engine boot state, otherwise the button flickers on cold-start isolates
- * where `AutomationEngine.all()` has not registered modules yet.
+ * Slugs that have a dashboard renderer in the frontend. Static (must NOT depend
+ * on engine boot state, or the "View Dashboard" button flickers on cold
+ * isolates).
  *
- * Keep in sync with the explicit mappings in
- * founder-os_frontend/src/components/Automations.tsx `renderDashboard`.
+ * Derived from the workspace catalog (modules/workspaces/catalog.ts) — add new
+ * dashboards THERE. Kept as a named export for existing importers
+ * (worker/context.ts, modules/automation/routes.ts).
  */
-export const DASHBOARD_SLUGS = new Set<string>([
-  // explicitly-rendered dashboards
-  'zoho-sent-analyzer',
-  'dpp-prices-dashboard',
-  'wa-engine-monitor',
-  'whatsapp-marketing',
-  'neodove-telecaller-report',
-  'sales',
-  'accounts',
-  'digital-marketing',
-  'human-resources',
-  'debtors-tracker',
-  'payment-tracker', // legacy slug alias
-  'whatsapp-autopilot',
-  'enquiry-procurement',
-  'enquiry-management',
-  'reporting-sheet',
-  'crm',
-  'product-line',
-  'stock',
-  'samarth-overview',
-  'sahil-overview',
-  'linkedin',
-  'ai-usage',
-  // generic sheet-analysis renderer (SheetAnalysisDashboard fallback)
-  'telecalling-agent-analysis',
-]);
+export const DASHBOARD_SLUGS: Set<string> = dashboardSlugSet();

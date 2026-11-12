@@ -35,3 +35,4 @@ first. Tracked as a follow-up; behavior preserved byte-for-byte here.
 |---|---|---|---|
 | 1 | P1 | `worker/http.ts` (readBody, authErrorResponse) + `worker/viewer.ts` (memoised getViewer); auth gate/chatMe/enquiryMe use it; resolveSelfTelecaller → `modules/telecalling/self-roster.ts` | getme 56→52 |
 | 2 | P1 | WhatsApp Marketing endpoints → `worker/routes/whatsapp-marketing.ts` (verbatim; re-export kept) | non-registry routes in automations.ts 8→0 |
+| 3 | P2 | `modules/workspaces/catalog.ts` = single dashboard/alias list; DASHBOARD_SLUGS + public AUTH_EXEMPT paths derived from it; guard `workspace-catalog.test.mjs`; parity harness `scripts/workspace-parity.mjs` (60/60 vs main) | be alias literals 6→5 |

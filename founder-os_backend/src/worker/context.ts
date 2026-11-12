@@ -25,6 +25,7 @@ import { refreshNeodoveReport, istDateStr as neodoveTodayIst } from '../automati
 import { isSystemGeneratedComment } from '../shared/systemComment';
 import { getEstimatesPayload } from '../shared/estimates-cache';
 import { getViewerMe } from './viewer';
+import { publicDataPaths } from '../modules/workspaces/catalog';
 
 export type Bindings = {
   DB: D1Database;
@@ -204,8 +205,8 @@ export const AUTH_EXEMPT = [
   '/dashboard',
   // Team-performance dashboards are safe to view without a session (the login
   // cookie is host-scoped, so preview subdomains would otherwise see 401).
-  '/api/automations/telecalling/data',
-  '/api/automations/neodove-telecaller-report/data',
+  // Derived from the workspace catalog (`publicData: true` entries).
+  ...publicDataPaths('/api/automations'),
   // LinkedIn explainer visuals: public-by-design marketing diagrams (UUID ids
   // unguessable). <img> subrequests can't carry auth reliably — see
   // routes/linkedin.ts header. Draft text + actions stay gated.

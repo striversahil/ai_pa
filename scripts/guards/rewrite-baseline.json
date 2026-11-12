@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-12T05:35:33.688Z",
+  "generatedAt": "2026-11-12T05:39:05.356Z",
   "metrics": {
     "fe.raw_fetch_api": 192,
     "fe.hardcoded_automation_data_url": 26,
@@ -14,7 +14,7 @@
     "be.local_parse_json": 2,
     "be.local_ist_helper": 11,
     "be.slug_branch_in_route": 8,
-    "be.slug_alias_literal": 6,
+    "be.slug_alias_literal": 5,
     "fe.files_over_400_lines": 35,
     "be.files_over_400_lines": 45,
     "be.non_registry_routes_in_automations_ts": 0,
