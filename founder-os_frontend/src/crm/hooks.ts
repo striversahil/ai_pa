@@ -13,12 +13,12 @@ import type { CrmOrder, View } from "./types";
 export function useCrmOrders(view: View, q: string, region = "") {
   return useLiveDashboard<ListResponse>(
     () => crmApi.list(view, q, region),
-    { deps: [view, q, region], pollMs: 180_000 },
+    { events: ["crm"], deps: [view, q, region], pollMs: 180_000 },
   );
 }
 
 export function useCrmSummary(region = "") {
-  return useLiveDashboard<SummaryResponse>(() => crmApi.summary(region), { deps: [region], pollMs: 180_000 });
+  return useLiveDashboard<SummaryResponse>(() => crmApi.summary(region), { events: ["crm"], deps: [region], pollMs: 180_000 });
 }
 
 /** IST calendar day (YYYY-MM-DD) — the floor runs on IST, never UTC. */

@@ -62,7 +62,7 @@ export default function ManagementReview() {
       query: Array.isArray(d.query) ? (d.query as any[]).map(toEnquiry) : [],
       queryResolved: Array.isArray(d.queryResolved) ? (d.queryResolved as any[]).map(toEnquiry) : [],
     };
-  }, { pollMs: 60000 });
+  }, { events: ["enquiries"], pollMs: 60000 });
   const queuesLoaded = queues.data != null;
 
   // Complete server history — one fetch off the same cached computation
@@ -81,7 +81,7 @@ export default function ManagementReview() {
       total: Number(d.total ?? 0),
       totalPages: Number(d.totalPages ?? 1),
     };
-  }, { pollMs: 60000, deps: [historyPage, historyPageSize] });
+  }, { events: ["enquiries"], pollMs: 60000, deps: [historyPage, historyPageSize] });
 
   // Refresh-all handle with a stable identity for effects (the hook result
   // object itself is new every render — never put it in a dep array).

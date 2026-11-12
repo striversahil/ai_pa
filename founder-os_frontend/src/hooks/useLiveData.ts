@@ -84,7 +84,16 @@ export interface UseLiveQueryOptions {
 
 export interface LiveQueryResult<T> {
   data: T | null;
+  /**
+   * FIRST-PAINT flag: true only until the first payload arrives (or while a
+   * `deps` change is loading a different dataset). A live-event refetch or a
+   * poll NEVER sets this — use `refreshing` for those. Render a full-page
+   * spinner/empty state on `loading`, and at most a subtle indicator on
+   * `refreshing`.
+   */
   loading: boolean;
+  /** A background refetch (live event / poll) is in flight while data is shown. */
+  refreshing: boolean;
   error: unknown;
   refresh: () => void;
   /**
@@ -102,9 +111,12 @@ export function useLiveQuery<T>(
   options: UseLiveQueryOptions = {},
 ): LiveQueryResult<T> {
   const { events, deps = [], pollMs, clearOnError, timeoutMs = FETCH_TIMEOUT_MS } = options;
-  const [data, setData] = useState<T | null>(null);
+  const [data, setDataState] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  /** Mirrors `data` for the refresh path (avoids a stale closure in `run`). */
+  const dataRef = useRef<T | null>(null);
 
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
@@ -117,8 +129,26 @@ export function useLiveQuery<T>(
   const timeoutMsRef = useRef(timeoutMs);
   timeoutMsRef.current = timeoutMs;
 
-  const refresh = useCallback(() => {
-    setLoading(true);
+  /** Direct state write that also keeps `dataRef` in sync (see setData below). */
+  const setData = useCallback<Dispatch<SetStateAction<T | null>>>((value) => {
+    setDataState((prev) => {
+      const next = typeof value === "function" ? (value as (p: T | null) => T | null)(prev) : value;
+      dataRef.current = next;
+      return next;
+    });
+  }, []);
+
+  /**
+   * `force` = a DEP CHANGE: the view is loading a different dataset, so a
+   * first-paint spinner is correct. Live events and polls pass false: the
+   * numbers on screen are still valid, so they refetch behind `refreshing`.
+   * Before this split, every live event set `loading=true`, which blanked any
+   * component that renders a full-page spinner on `loading` alone — the reason
+   * an unrelated dashboard write looked like the page reloading.
+   */
+  const run = useCallback((force: boolean) => {
+    if (force || dataRef.current === null) setLoading(true);
+    else setRefreshing(true);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, rej) => {
       timer = setTimeout(() => rej(new Error(`Request timed out after ${timeoutMsRef.current / 1000}s — retrying`)), timeoutMsRef.current);
@@ -131,13 +161,20 @@ export function useLiveQuery<T>(
         setError(e);
         if (clearOnErrorRef.current) setData(null);
       })
-      .finally(() => { if (timer) clearTimeout(timer); setLoading(false); });
+      .finally(() => {
+        if (timer) clearTimeout(timer);
+        setLoading(false);
+        setRefreshing(false);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const refresh = useCallback(() => run(false), [run]);
 
   // Initial load + reload when deps change.
   useEffect(() => {
     connect();
-    refresh();
+    run(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 
@@ -169,7 +206,7 @@ export function useLiveQuery<T>(
     return () => clearInterval(id);
   }, [pollMs, refresh]);
 
-  return { data, loading, error, refresh, setData };
+  return { data, loading, refreshing, error, refresh, setData };
 }
 
 /** Imperative subscription for components that manage their own state (e.g. the
@@ -186,18 +223,18 @@ export function useLiveEvent(handler: (e: LiveEvent) => void): void {
 
 /**
  * Zero-wiring live dashboard hook. Any NEW dashboard view should prefer this:
- * it subscribes to EVERY live event (typed ones like `estimates`/`telecalling`
- * plus the backend's automatic `data-changed`), so a new view goes live the
- * moment its data endpoint exists — no event-name list to maintain. This is the
- * scalable pattern for adding dashboards/automations as the app grows.
+ * with no `events` filter it subscribes to EVERY live event (typed ones like
+ * `estimates`/`telecalling` plus the backend's automatic `data-changed`), so a
+ * new view goes live the moment its data endpoint exists — no event-name list
+ * to maintain.
  *
- * Under the hood it is `useLiveQuery(fetcher)` with no `events` filter. If you
- * need to refetch only on specific event types (less traffic at very high
- * scale), fall back to `useLiveQuery(fetcher, { events: [...] })`.
+ * High-traffic views SHOULD pass `events: [...]` to narrow the refetch: this is
+ * the same hook as `useLiveQuery`, and a big payload (accounts ≈ 280 KB, master
+ * data ≈ 2.6k rows) must not reload because an unrelated screen saved something.
  */
 export function useLiveDashboard<T>(
   fetcher: () => Promise<T>,
-  options: Omit<UseLiveQueryOptions, "events"> = {},
+  options: UseLiveQueryOptions = {},
 ): LiveQueryResult<T> {
   return useLiveQuery<T>(fetcher, options);
 }

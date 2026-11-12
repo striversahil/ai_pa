@@ -11,5 +11,5 @@ export function useOverviewData(slug: "samarth-overview" | "sahil-overview") {
     const res = await fetch(workspaceDataUrl(slug));
     if (!res.ok) throw new Error(`overview load failed (${res.status})`);
     return normalizeOverview(await res.json());
-  });
+  }, { events: ["enquiries", "crm", "telecalling", "estimates", "automation"] });
 }

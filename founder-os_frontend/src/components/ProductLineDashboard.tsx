@@ -25,7 +25,7 @@ export default function ProductLineDashboard() {
     const res = await fetch(workspaceDataUrl("product-line"));
     if (!res.ok) throw new Error("failed to load product line");
     return res.json();
-  });
+  }, { events: ["product-line"] });
 
   const [tab, setTab] = useState<"products" | "vendors" | "rates">("products");
   const [q, setQ] = useState("");

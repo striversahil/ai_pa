@@ -30,7 +30,7 @@ export default function AccountsDashboard() {
     const res = await fetch(workspaceDataUrl("digital-marketing"), { cache: "no-store" });
     if (!res.ok) throw new Error(`Load failed (HTTP ${res.status})`);
     return res.json();
-  }, { pollMs: 60000 });
+  }, { events: ["digital-marketing"], pollMs: 60000 });
 
   const data = dash.data;
   const [statusFilter, setStatusFilter] = useState<"pending" | "done" | "all">("pending");
@@ -73,7 +73,7 @@ export default function AccountsDashboard() {
         { key: "open", label: "Open Tasks", icon: "🗂️" },
       ];
   const isTaskView = view === "tasks";
-  const incompleteTray = useMemo(() => data?.incompleteList ?? data?.overdueList ?? [], [data]);
+  const incompleteTray = useMemo(() => data?.overdueList ?? [], [data]);
   const historyTray = useMemo(() => data?.history ?? [], [data]);
   // Reference items: single lane, always visible when in tasks view.
   const inUnscheduled = (_u: UnscheduledItem) => true;

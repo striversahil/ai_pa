@@ -123,7 +123,6 @@ export interface DashData {
   junior: TaskItem[];
   items: TaskItem[];
   overdueList?: TaskItem[];
-  incompleteList?: TaskItem[];
   history?: TaskItem[];
   freqStats?: FreqStat[];
   unscheduled?: UnscheduledItem[];

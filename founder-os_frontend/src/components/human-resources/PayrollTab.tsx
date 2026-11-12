@@ -24,7 +24,7 @@ export default function PayrollTab() {
     const res = await fetch(`/api/human-resources/payroll?month=${encodeURIComponent(month)}`, { cache: "no-store" });
     if (!res.ok) throw new Error(`Payroll load failed (HTTP ${res.status})`);
     return res.json();
-  }, { deps: [month], pollMs: 60000 });
+  }, { events: ["human-resources"], deps: [month], pollMs: 60000 });
 
   const [filter, setFilter] = useState<"all" | PayrollStatus>("all");
   const [generating, setGenerating] = useState(false);

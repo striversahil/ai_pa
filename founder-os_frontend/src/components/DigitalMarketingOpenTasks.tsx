@@ -278,7 +278,7 @@ export default function DigitalMarketingOpenTasks() {
     const res = await fetch('/api/digital-marketing/open-tasks', { cache: 'no-store' });
     if (!res.ok) throw new Error(`Load failed (HTTP ${res.status})`);
     return res.json();
-  }, { pollMs: 60000 });
+  }, { events: ["digital-marketing"], pollMs: 60000 });
   const [showNew, setShowNew] = useState(false);
   const [filter, setFilter] = useState<'all' | 'open' | 'done'>('all');
   const meName = (me as any)?.user?.name ?? (me as any)?.user?.email ?? '';

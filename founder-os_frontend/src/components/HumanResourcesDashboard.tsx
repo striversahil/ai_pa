@@ -49,7 +49,7 @@ export default function HumanResourcesDashboard({ onNavigate }: { onNavigate?: (
     const res = await fetch(`${workspaceDataUrl("human-resources")}?month=${encodeURIComponent(month)}`, { cache: "no-store" });
     if (!res.ok) throw new Error(`Load failed (HTTP ${res.status})`);
     return res.json();
-  }, { deps: [month], pollMs: 60000 });
+  }, { events: ["human-resources"], deps: [month], pollMs: 60000 });
 
   const data = dash.data;
   const counts: Record<HrView, number | null> = {

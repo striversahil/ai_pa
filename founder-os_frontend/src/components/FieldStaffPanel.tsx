@@ -25,7 +25,7 @@ export default function FieldStaffPanel() {
 
   const query = useLiveDashboard(
     useCallback(() => fetchFieldStaff({ from, to, staffId: staffId || undefined }), [from, to, staffId]),
-    { deps: [from, to, staffId] },
+    { events: ["field-staff", "enquiries"], deps: [from, to, staffId] },
   );
   const data: FieldStaffData | null = query.data ?? null;
   const visits = useMemo(() => [...(data?.visits ?? [])].sort(compareVisits), [data]);

@@ -35,7 +35,7 @@ export default function CoreTab({ canManage, isRoot, onManage }: CoreTabProps) {
       assigned: core.assignments[r.id] ?? null,
     }));
     return { rows, canManage: dir.canManage, catalog: core.catalog, coreUnavailable: core.coreUnavailable };
-  });
+  }, { events: ["telecalling"] });
   const rows = useMemo(() => dash.data?.rows ?? [], [dash.data]);
   const catalog = useMemo(() => dash.data?.catalog?.departments ?? [], [dash.data]);
   const [deptFilter, setDeptFilter] = useState("");

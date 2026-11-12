@@ -48,7 +48,7 @@ export default function SalesObjectionsPanel() {
 
   const query = useLiveDashboard(
     useCallback(() => fetchObjections({ status, category, q: q || undefined }), [status, category, q]),
-    { deps: [status, category, q] },
+    { events: ["sales-objections"], deps: [status, category, q] },
   );
   const rows: SalesObjection[] = useMemo(() => query.data?.objections ?? [], [query.data]);
   const openCount = useMemo(() => rows.filter((r) => r.status === "open").length, [rows]);

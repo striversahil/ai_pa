@@ -21,7 +21,7 @@ export default function ManualCallsPanel() {
       if (!res.ok) throw new Error(`load failed (${res.status})`);
       return (await res.json()) as Payload;
     },
-    { deps: [from, to] },
+    { events: ["telecalling"], deps: [from, to] },
   );
 
   const [drafts, setDrafts] = useState<Record<string, { value: string; note: string }>>({});

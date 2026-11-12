@@ -26,7 +26,7 @@ export default function LeavesTab() {
     const holBody = await holRes.json();
     const empBody = await empRes.json();
     return { leaves: leavesBody.leaves ?? [], holidays: holBody.holidays ?? [], employees: empBody.members ?? [] };
-  }, { deps: [month], pollMs: 60000 });
+  }, { events: ["human-resources"], deps: [month], pollMs: 60000 });
 
   const [leaveForm, setLeaveForm] = useState<{ open: boolean; leave: HrLeave | null }>({ open: false, leave: null });
   const [deleting, setDeleting] = useState<HrLeave | null>(null);

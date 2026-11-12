@@ -7,6 +7,7 @@
  *    the app shell, so the PWA works offline after first load.
  */
 import { rm, readdir, writeFile, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -36,8 +37,17 @@ await walk(OUT_PATH);
 
 const precache = [...new Set(['/', ...assets])];
 
+// Build fingerprint: hash the PRECACHE LIST, not the clock. Every Next.js chunk
+// name already embeds its content hash, so an unchanged build produces an
+// identical VERSION and the browser never sees a "new" worker — no forced
+// reload, no cache churn. Previously this was `Date.now()`, which meant EVERY
+// build (even a no-op rebuild) handed all open tabs a new worker; combined with
+// skipWaiting() + clients.claim() + the reload-on-controllerchange listener
+// that was the "dashboard reloads itself" bug.
+const BUILD_ID = createHash('sha256').update(precache.join('\n')).digest('hex').slice(0, 12);
+
 const sw = `/* PWA service worker — generated at build time by scripts/postbuild.mjs */
-const VERSION = 'fos-v${Date.now()}';
+const VERSION = 'fos-v${BUILD_ID}';
 const PRECACHE = ${JSON.stringify(precache)};
 
 self.addEventListener('install', (event) => {

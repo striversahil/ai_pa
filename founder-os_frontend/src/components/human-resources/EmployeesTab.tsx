@@ -59,7 +59,7 @@ export default function EmployeesTab() {
     const res = await fetch("/api/human-resources/members", { cache: "no-store" });
     if (!res.ok) throw new Error(`Load failed (HTTP ${res.status})`);
     return res.json();
-  }, { pollMs: 60000 });
+  }, { events: ["human-resources"], pollMs: 60000 });
   const [query, setQuery] = useState("");
   const [view, setView] = useState<"active" | "inactive" | "all">("active");
   const [form, setForm] = useState<{ open: boolean; employee: HrEmployee | null }>({ open: false, employee: null });

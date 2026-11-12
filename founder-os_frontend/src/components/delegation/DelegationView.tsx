@@ -41,7 +41,7 @@ export default function DelegationView() {
   const [history, setHistory] = useState<HrDelegationTask | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  const board = useLiveDashboard(() => fetchDelegationBoard(date), { deps: [date], pollMs: 60000 });
+  const board = useLiveDashboard(() => fetchDelegationBoard(date), { events: ["human-resources"], deps: [date], pollMs: 60000 });
   const data = board.data;
   const isManager = !!data?.meta.isManager;
   const today = data?.meta.today ?? todayIST();

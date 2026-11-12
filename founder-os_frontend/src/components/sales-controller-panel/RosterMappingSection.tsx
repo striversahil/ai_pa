@@ -26,7 +26,7 @@ export function RosterMappingSection({
   rosterRows: RosterRow[];
   refreshAll: () => void;
 }) {
-  const dir = useLiveDashboard(() => fetchDirectory());
+  const dir = useLiveDashboard(() => fetchDirectory(), { events: ["telecalling"] });
   const [regionById, setRegionById] = useState<Record<string, string>>({});
   const [typeById, setTypeById] = useState<Record<string, string>>({});
   const [busyId, setBusyId] = useState<string | null>(null);

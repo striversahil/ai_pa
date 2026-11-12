@@ -263,7 +263,7 @@ export default function KraKpiCharts() {
     const res = await fetch('/api/digital-marketing/metrics-series?days=30', { cache: 'no-store' });
     if (!res.ok) throw new Error(`Load failed (HTTP ${res.status})`);
     return res.json();
-  }, { pollMs: 60000 });
+  }, { events: ["digital-marketing"], pollMs: 60000 });
   const days = useMemo(() => {
     const all = Array.isArray(series.data?.days) ? series.data.days : [];
     return all.slice(Math.max(0, all.length - range));

@@ -16,7 +16,7 @@ export default function RegisterMappingSection() {
   const roster = useLiveDashboard(async () => {
     const telecallers = await fetchSalesRoster();
     return { telecallers: telecallers as RosterRow[] };
-  });
+  }, { events: ["telecalling"] });
   const rosterRows = roster.data?.telecallers ?? [];
   const refreshAll = () => roster.refresh();
 

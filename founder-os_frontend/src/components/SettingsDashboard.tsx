@@ -43,7 +43,7 @@ export default function SettingsDashboard() {
     const res = await fetch("/api/settings");
     if (!res.ok) throw new Error(`load failed (${res.status})`);
     return res.json();
-  });
+  }, { events: ["settings"] });
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
 

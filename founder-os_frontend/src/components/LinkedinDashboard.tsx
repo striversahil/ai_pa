@@ -76,7 +76,7 @@ function copyText(t: string) {
 
 export default function LinkedinDashboard() {
   const [day, setDay] = useState<string | null>(null); // null = today
-  const batch = useLiveDashboard(() => fetchBatch(day ?? undefined), { deps: [day] });
+  const batch = useLiveDashboard(() => fetchBatch(day ?? undefined), { events: ["linkedin"], deps: [day] });
   const [active, setActive] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
   const [tab, setTab] = useState<"final" | "research" | "visual">("final");

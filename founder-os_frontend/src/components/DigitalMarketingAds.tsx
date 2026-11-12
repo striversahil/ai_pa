@@ -19,7 +19,7 @@ export default function DigitalMarketingAds() {
     const res = await fetch('/api/digital-marketing/ads', { cache: 'no-store' });
     if (!res.ok) throw new Error(`Load failed (HTTP ${res.status})`);
     return res.json();
-  }, { pollMs: 60000 });
+  }, { events: ["digital-marketing"], pollMs: 60000 });
 
   const rows = useMemo(() => {
     const all = Array.isArray(ads.data?.rows) ? ads.data!.rows : [];

@@ -27,7 +27,7 @@ export default function StockDashboard() {
     const res = await fetch(`${workspaceDataUrl("stock")}?days=14`);
     if (!res.ok) throw new Error("load failed");
     return res.json();
-  });
+  }, { events: ["stock"] });
   const [tab, setTab] = useState<'inv' | 'moves' | 'alerts' | 'add'>('inv');
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("");
@@ -48,7 +48,7 @@ export default function StockDashboard() {
       .sort((a, b) => String(a.sku).localeCompare(String(b.sku)));
   }, [data, q, cat, onlyLow]);
 
-  if (dash.loading) return <div className="py-20 text-center text-sm opacity-60 animate-pulse">Loading stock…</div>;
+  if (dash.loading && !data) return <div className="py-20 text-center text-sm opacity-60 animate-pulse">Loading stock…</div>;
   if (dash.error) return <div className="py-20 text-center text-sm text-red-400">Stock failed to load — <button className={ghostBtn} onClick={() => dash.refresh()}>Retry</button></div>;
   const days = data?.meta.days ?? [];
   const locs = data?.meta.locations ?? [];

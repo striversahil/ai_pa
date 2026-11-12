@@ -43,7 +43,7 @@ export default function AttendanceTab() {
     const day = await dayRes.json();
     const summaryBody = await sumRes.json();
     return { day, summary: summaryBody.rows ?? [] };
-  }, { deps: [date], pollMs: 60000 });
+  }, { events: ["human-resources"], deps: [date], pollMs: 60000 });
 
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [busy, setBusy] = useState(false);
