@@ -1,7 +1,8 @@
-# ERP Future Ideation — Planned, Not Built Yet
+# ERP Future Ideation — Partially Built, Rest Mapped
 
-> **Status:** ACCEPTED into plan, explicitly **deferred** — do not build in Phase 0–1.
-> These three asks from management are answered here so the core design stays compatible from day one.
+> **Status:** PARTIALLY BUILT as of 2026-11-12 — foundation live, three ideas still deferred but now unblocked.
+> **Done:** core tables live in D1 (`core_employee` 33, `core_customer` 5106, `core_sale` 164, `core_enquiry` 602, `core_credit` 1572, `core_sales_order` 142, `core_receipt` 525, `core_promise` 43), 25 dual-write funnels, 6 shadow comparators + heartbeats, My Work tab (`/api/work/my|team`), notifications pull (`/api/notifications`), 2 desks (`sales_my_work`, `sales_team`) + dashboard API, plan Phase 7 `core_lead` DESIGNED (doc-only, `0135` not yet applied).
+> **Still needed for a successful transition:** quiet/matching-week flips (customer display, leaderboard/ledger, floor, dues calendar) + human confirmation; Zoho invoices + ledgers/journals (cut-over); more desks + WhatsApp channel (Meta approval); retirements post-flip; Dec 1 parallel run + CA sign-off; then build §1–§3 below on top (no rework).
 > Source: discussions Nov 2026 (buddy mode, escalation flashing, lead-magnet + AI marketing).
 > Foundation: `ERP_TRANSITION_PLAN.md` (D1-native core `core_*` + helpers `hlp_*`, Zoho/NeoDove stay live).
 
@@ -28,9 +29,10 @@
 - Buddy never inherits powers they don't hold (credit-limit, cancellation, export stay permission-checked against the buddy's own roles; extra powers need an explicit delegated `core_approval_request`).
 - Prototype exists today: `EstimateAssignment.tempForTelecallerId` + `absentSince` — the transition generalizes it from estimates-only to every queue.
 
-### Build trigger (later)
+### Build trigger (later) — UPDATED 2026-11-12
 
-- Phase 2+ : add `absentSince` to `core_employee`, cover-reason to `core_action_event`, `Buddy` section to `hlp_dashboard`. No core redesign needed.
+- **DONE:** `core_employee` (33 rows) + `core_action` / `core_action_event` tables exist; My Work + team queue live (`GET /api/work/my|team`); `EstimateAssignment.tempForTelecallerId + absentSince` prototype still legacy-only.
+- **TODO for success:** add `absentSince` to `core_employee`; cover-reason to `core_action_event`; `Buddy:` section to `hlp_dashboard` (3rd desk after `sales_my_work` / `sales_team`); dated grant rows (`validFrom/validTo`); auto-expiry job. No core redesign needed — configuration on top of live tables.
 
 ---
 
@@ -52,9 +54,10 @@
 - Flashing is idempotent per `(actionId, level)` — a slow cron or retry never double-notifies.
 - Reassign steps require a reason and are themselves audit rows; the original assignee stays visible in history.
 
-### Build trigger (later)
+### Build trigger (later) — UPDATED 2026-11-12
 
-- Phase 2 : seed policies/steps/templates, wire sweeper to `core_action`, add panel badges. Templates for WhatsApp stay placeholders until Meta approves.
+- **DONE:** estimate-follow-up projector live (`modules/core/projectors.ts`); log-only sweeper on 5-min cron; My Work UI + tab-bar badges; in-app notifications pull (`core_notification` + `GET /api/notifications` + mark-read) + 2 desks + dashboard API (`GET /api/dashboards/:key`); quiet-hours gate (`isOpsWindow`) reused.
+- **TODO for success:** seed `core_escalation_policy/step` + templates; wire sweeper from log-only → real `core_action` transitions + `core_notification` fanout; escalation badges/flash states in panel; WhatsApp channel (blocked on Meta template approval); idempotent `(actionId, level)` guards + `core_system_job` proof lines. This is the ladder that makes flips safe to operate.
 
 ---
 
@@ -88,15 +91,25 @@
 - Replies → `core_activity`; interest → estimate → order → `core_credit` (generator/closer). Per-strategy funnel lives in `hlp_report + hlp_snapshot` (sent → delivered → read → replied → converted), so marketing learns which strategy makes pipeline, not just sends.
 - Guardrails: `whatsappOptIn` + DND enforced in the sender; Meta template names stay placeholders until approved; every auto-send killable (`CANCELLED`), deduped per `(ruleId, dedupKey)`.
 
-### Build trigger (later)
+### Build trigger (later) — UPDATED 2026-11-12: Phase 7 `core_lead` is the landing pad
 
-- Phase 3+ : portal adapter per source (start with one B2B + Meta), one welcome + one nurture rule, one agent (intake-classifier). Scale adapters/strategies after the sales spine (Phase 3) is live so every lead has somewhere to land.
+- **DONE (design, not yet migrated):** `ERP_TRANSITION_PLAN.md` §15 `core_lead` — `status (unqualified|qualified)` + `outcome (open|won|lost|dropped)`, `sourceName` enum + `sourceRaw`, `expectedRate*` vs `quotedRate*` per line; live ground truth measured (602/606 enquiries already carry `estNumber`; 1,321 declined = ₹30.17 Cr, `callTag` NULL, 1,055 blank `sourceLead`); daily AI intake (`vision-intake.ts` verbatim lines + catalogue match) proven in prod.
+- **TODO for success:** 7a `0135_core_lead.sql` + 1,979-row backfill + shadow → 7b create/decline funnels (telecaller dashboard + digital intake → `unqualified`; `status-sync.ts` decline → `qualified/lost`) → 7c `requireLeadQualifier` gate + `PUT /api/leads/:id/qualify` (unlock-only, parallel week, human sign-off) → 7d rate-intelligence reads core → 7e retire `callTag`/comment-mining. Then portal adapters (one B2B + Meta first), one welcome + one nurture `hlp_rule`, one intake-classifier agent. Do NOT build adapters before 7c is stable — every lead needs somewhere to land.
 
 ---
 
-## 4. What stays true for all three
+## 4. What stays true for all three + what a successful transition still needs
 
 - **D1 stays.** No Postgres, no new infra. All tables are `core_*`/`hlp_*` in the same D1 with the file-separated Prisma layout from the transition plan.
 - **Zoho/NeoDove untouched.** They remain live adapters; these ideas consume their data, never replace them.
 - **One queue, one audit, one notify pipe.** Buddy cover, escalation flashes, and marketing sends all flow through `core_action + core_audit_event + core_notification` — three features, one backbone.
 - **Deferred, not dropped.** Build order: foundation + identity + My Work first (Phases 0–2). These three land on top without rework.
+
+### Transition success checklist (2026-11-12 — all required before §1–§3 scale)
+
+- [x] Core mirrors live + verified: identity/customers/sales/credit/orders/stock/finance/promises + shadows + heartbeats (commits to `7baf514`; plan `be27558`).
+- [ ] Flips with quiet/matching week + human confirmation: customer display → core; leaderboard/ledger → `core_credit`; floor → `core_sales_order`; dues calendar → `core_receipt`.
+- [ ] Finance cut-over: Zoho invoices (`core_invoice` + lines), ledgers/journals, Dec 1 parallel run, Zoho read-only Jan 1, CA sign-off (human, owner needed).
+- [ ] Notifications GA: more desks (accounts/dispatch/store/founder), WhatsApp channel (Meta approval), retire legacy registries post-flip.
+- [ ] Phase 7 7a–7e: `core_lead` migration → funnels → qualification gate → rate intelligence → retire loss-tagging. Unblocks the lead-magnet (§3).
+- [ ] Monthly: `docs/core-change-requests/` review, lock re-sign, `core_access_log` + `core_row_change` actor coverage audit.
