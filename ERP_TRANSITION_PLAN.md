@@ -229,15 +229,31 @@ Port `bui-crm-v2/scripts/schema-guard.mjs` → `founder-os_backend/scripts/core-
 3. Cost/margin visibility: **unitCost/margin visible to MD-role person ONLY** — new `MD` position + `md` role seeded dormant in Phase 1 (no holder yet). Sales-head + TL see targets/revenue exactly as today's dashboard (no margin change).
 4. File bytes: **stay in KV/R2 as today**, `storageKey` abstracts. `core_attachment` holds metadata only.
 
+### Decided 2026-11-12 with founder (execution votes, all live)
+
+5. Phase 2 scope: **estimate follow-ups first**, sweeper **log-only**, **role-filtered My Work tab**, team scope **mirrors positions**.
+6. Phase 3 order: **customers first, then sales**; leaderboard/Controller move via **shadow compare first**; score-event writes stop **after one matching week**; Zoho backfill **open pipeline only, closed history later**.
+7. Customer spine: **mirror 1:1, merge duplicates later** (human review); hard-delete → **DELETED tombstone** (never row-deleted).
+8. Shadow discipline (all spines): **log-only DIFF rows, sig-deduped, throttled**; quiet runs leave a **daily heartbeat** (zero DIFFs ≠ never ran); flips need a **quiet/matching week + human confirmation**.
+9. Sales spine: **headers only, no lines**; enquiries **linked + active only**; attribution **carried as facts** (region/createdBy/converter, never recomputed); closer picks are retired (ledger is generator-only).
+10. Ledger: **full history, 1:1 mirror** into `core_credit`; match = **per-estimate per-kind sums**; stop = **human-confirmed**.
+11. Orders/stock: **mirror + shadow first, flip later**; **open orders only**; stock = **all movements, reservations shape now, locations as facts**.
+12. Finance 5a: **dues + opening receivables** (debtor open balances); dues calendar moves via **shadow first**.
+13. Notifications 6a: **work-queue events → in-app pull only** (no push, so quiet hours don't gate); **two desks first** (`sales_my_work`, `sales_team`); **retire nothing yet**.
+14. D1 lesson (locked in): D1 rejects `INSERT…SELECT…ON CONFLICT` — always `INSERT OR IGNORE` + `UPDATE…FROM`; nullable live columns need nullable core columns (`changes: 0` on a backfill is investigated, never shrugged).
+
 ---
 
 ## 14. Next actions checklist
 
-- [ ] Approve this plan + decisions in §13.
-- [ ] Phase 0 PR: `0144` migration + `modules/core/*` stubs + `core-guard.mjs` + `GET /api/work/my` (empty) + deploy.
-- [ ] Phase 1 PR: `0145` identity + backfill + dual-write + positions on core.
-- [ ] Phase 2 PR: projectors + My Work UI + escalation sweeper.
-- [ ] Phases 3–6 in order; delete one legacy model per cut-over; never add to legacy.
+- [x] Plan + decisions in §13 approved; execution votes §13.5–14 recorded live.
+- [x] Phase 0: `0125` migration + `modules/core/*` stubs + `core-guard.mjs` + empty work endpoints + deploy.
+- [x] Phase 1: `0126` identity + backfill (33 employees) + dual-write + shadow positions compare. **Left: flip display to core after manager review.**
+- [x] Phase 2: estimate-followup projector + My Work UI + log-only sweeper. **Left: accounts/dispatch/approval sources, badges done, notifications endpoint live (6a).**
+- [x] Phase 3a–3e: customer/sales/credit mirrors + dual-writes + three shadows + heartbeats. **Left: customer flip (quiet week), ledger flip + leaderboard reads core (matching week, human-confirmed).**
+- [x] Phase 4a–4b: order spine + stock ledger + floor/stock shadows. **Left: floor flip (quiet week).**
+- [x] Phase 5a: dues + receivables + paid-marking + finance shadow. **Left: promises, Zoho invoices (cut-over), Dec parallel run + CA sign-off (human).**
+- [x] Phase 6a: work-queue → in-app notifications + two desk seeds + dashboard API. **Left: more desks, WhatsApp channel (Meta approval), retirements after flips.**
 - [ ] Monthly: review `docs/core-change-requests/`, sign lock, audit `core_access_log` + `core_row_change` actor coverage.
 
 *Source notes: current-stack facts from `AGENTS.md` + `architecture.md` (Worker/D1/GH-runners, KV, EventHub, deploy policy, org positions, TL1 two-region, 20/80 credits, NeoDove manual link, dues calendar); target-model ideas from `bui-crm-v2/{README,AGENTS,prisma/schema/{core,automation,legacy}.prisma,prisma/sql/core/{001,002}.sql,tests/scenario.sql,scripts/schema-guard.mjs}` — Postgres specifics replaced with D1-native equivalents above.*
