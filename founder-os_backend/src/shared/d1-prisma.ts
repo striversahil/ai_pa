@@ -1147,6 +1147,8 @@ export class D1PrismaClient {
   get coreReservation() { return this.model('CoreReservation'); }
   get coreWarehouse() { return this.model('CoreWarehouse'); }
   get coreReceipt() { return this.model('CoreReceipt'); }
+  get hlpDashboard() { return this.model('HlpDashboard'); }
+  get hlpWidget() { return this.model('HlpWidget'); }
   get coreSeries() { return this.model('CoreSeries'); }
   get waTask() { return this.model('WaTask'); }
   get messageLineage() { return this.model('MessageLineage'); }
