@@ -115,9 +115,9 @@ export const deps = () => {
 // ── Boot: register engines + load automations on first request ─────────────
 // MUST be registered before any route so AutomationEngine is populated before
 // handlers (e.g. /api/automations/:slug/data) run.
-// Only automation-management routes wait for full boot; every other endpoint
+// Only automation-management + session (workspace data) routes wait for full boot; every other endpoint
 // proceeds immediately. A failed/hung init is RETRYABLE by the next request.
-export const BOOT_PATH_RE = /^\/api\/(trigger|automations|status|health)(\/|$)/;
+export const BOOT_PATH_RE = /^\/api\/(trigger|automations|session|status|health)(\/|$)/;
 const BOOT_TIMEOUT_MS = 20000;
 const BOOT_WAIT_MS = 15000;
 const BOOT_MAX_ATTEMPTS = 5;
@@ -205,8 +205,10 @@ export const AUTH_EXEMPT = [
   '/dashboard',
   // Team-performance dashboards are safe to view without a session (the login
   // cookie is host-scoped, so preview subdomains would otherwise see 401).
-  // Derived from the workspace catalog (`publicData: true` entries).
+  // Derived from the workspace catalog (`publicData: true` entries) — the
+  // legacy alias path and the canonical /session path stay in lockstep.
   ...publicDataPaths('/api/automations'),
+  ...publicDataPaths('/api/session/workspaces'),
   // LinkedIn explainer visuals: public-by-design marketing diagrams (UUID ids
   // unguessable). <img> subrequests can't carry auth reliably — see
   // routes/linkedin.ts header. Draft text + actions stay gated.

@@ -6,7 +6,8 @@
 //                     live broadcast, shared helpers, app factory (middleware).
 //   routes/*.ts     — one module per API domain (auth, chat, enquiries, system,
 //                     estimates, whatsapp, triggers, runner, autopilot,
-//                     automations/marketing, events).
+//                     automations (registry), session (viewer workspaces),
+//                     whatsapp-marketing, events).
 //   cron.ts         — native `* * * * *` cron router (neodove-refresh +
 //                     GitHub Actions workflow_dispatch dispatcher).
 // ─────────────────────────────────────────────────────────────────────────────
@@ -31,6 +32,7 @@ import { registerRunnerRoutes } from './worker/routes/runner';
 import { registerAutopilotRoutes } from './worker/routes/autopilot';
 import { registerAutomationRoutes } from './worker/routes/automations';
 import { registerMarketingRoutes } from './worker/routes/whatsapp-marketing';
+import { registerSessionRoutes } from './worker/routes/session';
 import { registerAccountsRoutes } from './worker/routes/accounts';
 import { registerCopilotRoutes } from './worker/routes/copilot';
 import { registerProductLineRoutes } from './worker/routes/product-line';
@@ -74,6 +76,7 @@ registerTriggerRoutes(app);
 registerRunnerRoutes(app);
 registerAutopilotRoutes(app);
 registerAutomationRoutes(app);
+registerSessionRoutes(app);
 registerAccountsRoutes(app);
 registerCopilotRoutes(app);
 registerProductLineRoutes(app);
