@@ -1,0 +1,32 @@
+// prisma/core/06-finance.prisma — CANONICAL finance tables (Phase 5a).
+// NOT yet wired to the Prisma generator. D1 reality: 0132_core_finance.sql.
+// Locked by prisma/core.lock + scripts/core-guard.mjs — humans only.
+//
+// 5a scope: core_receipt only (dues projections + open receivables).
+// core_invoice/lines, core_promise, ledgers/journals land in 5b+.
+
+model CoreReceipt {
+  id               String  @id
+  origin           String  @default("due") // due | receivable
+  templateId       String  @default("")
+  biller           String  @default("")
+  category         String  @default("")
+  amount           Float   @default(0)
+  dueDate          String  @default("")
+  statementDate    String?
+  identifier       String  @default("")
+  customerName     String  @default("")
+  masterCustomerId String  @default("")
+  invoiceNo        String  @default("")
+  invoiceDate      String?
+  received         Float   @default(0)
+  balance          Float   @default(0)
+  status           String  @default("open")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([origin])
+  @@index([dueDate])
+  @@index([masterCustomerId])
+  @@map("core_receipt")
+}

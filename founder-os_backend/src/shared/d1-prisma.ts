@@ -230,6 +230,7 @@ const DATE_FIELDS: Record<string, string[]> = {
   CoreStockEntry: ['createdAt'],
   CoreReservation: ['createdAt'],
   CoreWarehouse: ['createdAt'],
+  CoreReceipt: ['invoiceDate', 'createdAt', 'updatedAt'],
   CoreFieldPolicy: ['updatedAt'],
   HlpDashboard: ['createdAt', 'updatedAt'],
   HlpWidget: [],
@@ -384,6 +385,7 @@ const ID_FIELDS: Record<string, string> = {
   CoreStockEntry: 'id',
   CoreReservation: 'id',
   CoreWarehouse: 'id',
+  CoreReceipt: 'id',
   CoreFieldPolicy: 'id',
   CoreSeries: 'key',
   HlpDashboard: 'id',
@@ -1144,6 +1146,7 @@ export class D1PrismaClient {
   get coreStockEntry() { return this.model('CoreStockEntry'); }
   get coreReservation() { return this.model('CoreReservation'); }
   get coreWarehouse() { return this.model('CoreWarehouse'); }
+  get coreReceipt() { return this.model('CoreReceipt'); }
   get coreSeries() { return this.model('CoreSeries'); }
   get waTask() { return this.model('WaTask'); }
   get messageLineage() { return this.model('MessageLineage'); }

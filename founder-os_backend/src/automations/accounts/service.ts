@@ -1578,6 +1578,25 @@ export async function getPaymentDues(dateStr: string): Promise<PaymentDueRow[]> 
       }
     }
   }
+  // Phase 5a dual-write: project dues into core_receipt (convergent on reads;
+  // template CRUD busts the calendar cache, which re-mirrors on next read).
+  try {
+    const { upsertDueReceipts, shadowCompareFinance } = await import('../../modules/core/finance');
+    const built = rows.sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.title.localeCompare(b.title));
+    await upsertDueReceipts(built.map((r) => ({
+      templateId: String(r.templateId ?? ''), biller: String(r.biller ?? ''),
+      category: String(r.category ?? ''), amount: Number(r.amount ?? 0) || 0,
+      dueDate: String(r.dueDate ?? '').slice(0, 10),
+      statementDate: r.statementDate ? String(r.statementDate).slice(0, 10) : null,
+      identifier: String(r.identifier ?? ''),
+    })));
+    // Phase 5a finance shadow (accounts-read-only, log-only).
+    await shadowCompareFinance(built.map((r) => ({
+      templateId: String(r.templateId ?? ''), dueDate: String(r.dueDate ?? '').slice(0, 10),
+      amount: Number(r.amount ?? 0) || 0,
+    })));
+    return built;
+  } catch { /* never block the calendar */ }
   return rows.sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.title.localeCompare(b.title));
 }
 

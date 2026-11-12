@@ -132,6 +132,11 @@ function registerDebtorsTrackerPrefix(app: Hono<{ Bindings: Bindings }>, prefix:
     const importedBy = await actorName(c);
     try {
       const report = await importDebtors(text, importedBy);
+      // Phase 5a dual-write: refresh receivable rows.
+      try {
+        const { mirrorReceivables } = await import('../../modules/core/finance');
+        await mirrorReceivables();
+      } catch { /* non-fatal */ }
       notifyLive(c, { type: LiveEvent.Debtors });
       return c.json({ ok: true, report });
     } catch (e) { return errorResponse(c, e); }
@@ -148,6 +153,11 @@ function registerDebtorsTrackerPrefix(app: Hono<{ Bindings: Bindings }>, prefix:
     const importedBy = await actorName(c);
     try {
       const report = await importCollections(text, importedBy);
+      // Phase 5a dual-write: collections change balances — refresh.
+      try {
+        const { mirrorReceivables } = await import('../../modules/core/finance');
+        await mirrorReceivables();
+      } catch { /* non-fatal */ }
       notifyLive(c, { type: LiveEvent.Debtors });
       return c.json({ ok: true, report });
     } catch (e) { return errorResponse(c, e); }
@@ -160,6 +170,11 @@ function registerDebtorsTrackerPrefix(app: Hono<{ Bindings: Bindings }>, prefix:
     } catch (e) { return scopeError(c, e); }
     try {
       const report = await resetDebtorsTracker();
+      // Phase 5a dual-write: wipe converges core (paid/deleted rows leave).
+      try {
+        const { mirrorReceivables } = await import('../../modules/core/finance');
+        await mirrorReceivables();
+      } catch { /* non-fatal */ }
       notifyLive(c, { type: LiveEvent.Debtors });
       return c.json({ ok: true, report });
     } catch (e) { return errorResponse(c, e); }
@@ -181,6 +196,11 @@ function registerDebtorsTrackerPrefix(app: Hono<{ Bindings: Bindings }>, prefix:
     }
     try {
       await updateInvoiceFields(c.req.param('id'), patch, allowed);
+      // Phase 5a dual-write: refresh this receivable.
+      try {
+        const { mirrorReceivables } = await import('../../modules/core/finance');
+        await mirrorReceivables([c.req.param('id')]);
+      } catch { /* non-fatal */ }
       notifyLive(c, { type: LiveEvent.Debtors });
       return c.json({ ok: true });
     } catch (e) { return errorResponse(c, e); }
@@ -193,6 +213,11 @@ function registerDebtorsTrackerPrefix(app: Hono<{ Bindings: Bindings }>, prefix:
     } catch (e) { return scopeError(c, e); }
     try {
       await deleteInvoice(c.req.param('id'));
+      // Phase 5a dual-write: soft-deleted rows leave core on refresh.
+      try {
+        const { mirrorReceivables } = await import('../../modules/core/finance');
+        await mirrorReceivables();
+      } catch { /* non-fatal */ }
       notifyLive(c, { type: LiveEvent.Debtors });
       return c.json({ ok: true });
     } catch (e) { return errorResponse(c, e); }
@@ -205,6 +230,11 @@ function registerDebtorsTrackerPrefix(app: Hono<{ Bindings: Bindings }>, prefix:
     } catch (e) { return scopeError(c, e); }
     try {
       await deleteCollection(c.req.param('id'));
+      // Phase 5a dual-write: balances change on collection delete.
+      try {
+        const { mirrorReceivables } = await import('../../modules/core/finance');
+        await mirrorReceivables();
+      } catch { /* non-fatal */ }
       notifyLive(c, { type: LiveEvent.Debtors });
       return c.json({ ok: true });
     } catch (e) { return errorResponse(c, e); }
