@@ -38,6 +38,7 @@ D1 (single DB, no schemas — prefix convention)
 ├── core_* tables      <- SOURCE OF TRUTH, human-reviewed only
 │     core_employee, core_department, core_position, core_team, core_region, ...
 │     core_customer, core_contact, core_address, core_assignment, core_activity
+│     core_lead (status unqualified|qualified, outcome open|won|lost|dropped +lines, rates, gate)
 │     core_enquiry, core_estimate, core_sales_order (+lines, stage_events), core_credit
 │     core_dispatch (+lines, events), core_stock_entry, core_reservation
 │     core_invoice (+lines), core_receipt, core_allocation, core_promise
@@ -77,6 +78,7 @@ New folder `founder-os_backend/src/modules/core/` + `prisma/core/` definitions (
 | `02-identity.ts` | `core_employee, core_department, core_position, core_team, core_region, core_emp_dept, core_emp_position, core_emp_region, core_team_member, core_report_line, core_user_link, core_service_account, core_role, core_position_role, core_emp_role, core_perm_rule, core_access_config, core_field_policy` | `Telecaller + Accountant + DigitalMarketingManager + fieldStaff` → `core_employee`; `AuthUser` linked via `core_user_link (authUserId↔employeeId)`; `AuthScope/Role` seed `core_role/perm_rule`; position overrides → `core_emp_position` |
 | `03-customer.ts` | `core_customer, core_contact, core_address, core_assignment, core_activity, core_note, core_tag*` | `MasterCustomer + ClientTypeRule/Segment` → customer + tags + assignment; NeoDove/field calls → `core_activity`; `CustomerNote` → `core_note` |
 | `04-sales.ts` | `core_enquiry (+lines, quotes), core_estimate (+lines, assignment, credit)` | `Enquiry + EnquiryComment` → `core_enquiry`; `Estimate + Comment + Classification` → `core_estimate` (+ Zoho link); `EstimateAssignment` → `core_estimate_assignment` (holder, temp-cover); `TelecallerScoreEvent` → `core_credit (generator/closer)` |
+| `04-leads.ts` | `core_lead (+lines, expected/quoted rates, gate)` | `Enquiry (pre-quote) + Estimate (declined) + AI-intake rejects → core_lead (status unqualified\|qualified, outcome open\|won\|lost\|dropped)`; per-line expected vs quoted rates for price intelligence |
 | `05-order.ts` | `core_sales_order (+lines, stage_events, gates), core_dispatch (+lines, events), core_stock_entry, core_reservation, core_warehouse` | `CrmSalesOrder/SoItem/ScheduleEvent` → `core_sales_order + stage_events`; `DispatchProof + SoAttachment` → `core_dispatch + core_attachment`; stock tables → ledger + reservations |
 | `06-finance.ts` | `core_invoice (+lines), core_note (+lines), core_receipt, core_allocation, core_promise, core_ledger_*, core_journal_*` | Zoho invoices → core with link; `AccountsTaskTemplate(kind=payment)` dues → `core_receipt/promise` projections; payment calendar reads same rows |
 | `07-work.ts` | `core_action (+events), core_escalation_policy/step, core_system_job, core_approval_*, core_notification_*` | `AccountsTaskLog + DigitalMarketingTaskLog + WaTask + Task + ChatPendingItem` → `core_action` (category distinguishes); notification-batcher → `core_notification_*` |
@@ -127,6 +129,8 @@ New folder `founder-os_backend/src/modules/core/` + `prisma/core/` definitions (
 
 **Permissions (service-enforced, never UI):** `core_perm_rule (role, entityType, field, action VIEW|CREATE|EDIT|DELETE|APPROVE|TRANSITION|EXPORT, scope OWN|TEAM|REGION|DEPARTMENT|ALL, effect ALLOW|DENY, conditions)`. Effective = position-roles ∪ direct grants. Screens are subjects: `screen:sales_mywork, screen:sales_team, screen:sales_manage, screen:accounts_desk, screen:dispatch_board, screen:store, screen:founder_os`. Seed mirrors your current matrix (sales own-only, TL region, head department, accounts verify/stock/payment/invoice, dispatch ship, founder all) + explicit DENYs (cost/margin, export).
 
+**Lead qualification gate (Phase 7):** `requireLeadQualifier` = root \| MIS \| `sales-head` \| `Telecaller.type='team_lead'` scoped to their region(s) incl. `region2`. Execs / field staff can *create* leads (`status='unqualified'`) but get `403` on qualify — enforced server-side, never UI-only. Qualification unlocks quotation creation (no auto-create of the Zoho quote in 7c — TL/head still press the existing create-quote button).
+
 **Field policy:** `core_field_policy` marks `unitCost=SENSITIVE (logged), PAN=RESTRICTED, grandTotal=derived, stage=transition-only, creditLimit=approval-gated`. Every sensitive view lands in `core_access_log`.
 
 ---
@@ -137,9 +141,9 @@ Each login lands on their default `hlp_dashboard` (by position code). All views 
 
 | Login | Default dashboard | Sees | Can do |
 |---|---|---|---|
-| Sales exec / Field exec | `sales_my_work` | own enquiries/estimates/orders/customers/actions | register enquiry, log activity, edit own, request rates/approvals |
-| TL1 / TL2 | `sales_team` | team + region(s) pipeline, overdue, Won | reassign, approve small discount, escalate |
-| Sales-head / MIS-sales | `sales_manage` | all regions, Unmapped bucket, Controller | re-home, closer-pick, holidays, type rules, segments |
+| Sales exec / Field exec | `sales_my_work` | own enquiries/estimates/orders/customers/actions | register enquiry (= create `core_lead` as `unqualified`), log activity, edit own, request rates/approvals |
+| TL1 / TL2 | `sales_team` | team + region(s) pipeline, overdue, Won | reassign, approve small discount, escalate, **qualify leads** (`unqualified → qualified`, own regions incl. `region2`) |
+| Sales-head / MIS-sales | `sales_manage` | all regions, Unmapped bucket, Controller | re-home, closer-pick, holidays, type rules, segments, **qualify any lead** |
 | Accountant senior/junior | `accounts_desk` | verify → stock → payment → invoice queues, dues calendar | verify, reserve, receipt, invoice (draft), promise |
 | Store / Purchase | `store` / `purchase_desk` | reservations, GRNs, POs, availability | receive, reserve, raise PO |
 | Dispatch exec/head | `dispatch_board` | ready → pack → ship → POD | plan, pack, ship, upload proofs |
@@ -242,6 +246,8 @@ Port `bui-crm-v2/scripts/schema-guard.mjs` → `founder-os_backend/scripts/core-
 13. Notifications 6a: **work-queue events → in-app pull only** (no push, so quiet hours don't gate); **two desks first** (`sales_my_work`, `sales_team`); **retire nothing yet**.
 14. D1 lesson (locked in): D1 rejects `INSERT…SELECT…ON CONFLICT` — always `INSERT OR IGNORE` + `UPDATE…FROM`; nullable live columns need nullable core columns (`changes: 0` on a backfill is investigated, never shrugged).
 
+15. Lead ledger (Phase 7, decided 2026-11-12): **common `core_lead` table with `status` (`unqualified|qualified`)** — every telecaller-logged lead (dashboard) and every digitally captured lead (IndiaMART / B2B / social) enters `unqualified`; only TL (own regions incl. `region2`) or sales-head/MIS/root may qualify, and qualification unlocks quotation creation. **Two independent axes** — `status` (gate) vs `outcome` (`open|won|lost|dropped`): a declined quote is `qualified/lost`, never relabelled `unqualified`. **Rates per line + header total** (`expectedRate*` = what client will pay, `quotedRate*` = what we quoted). **Source normalised + raw kept** (`sourceName` enum `TL|AI|B2B|Incoming|FieldStaff|CompanyData|IndiaMART|Referral|Other|Unmapped`, `sourceRaw` verbatim).
+
 ---
 
 ## 14. Next actions checklist
@@ -254,6 +260,77 @@ Port `bui-crm-v2/scripts/schema-guard.mjs` → `founder-os_backend/scripts/core-
 - [x] Phase 4a–4b: order spine + stock ledger + floor/stock shadows. **Left: floor flip (quiet week).**
 - [x] Phase 5a: dues + receivables + paid-marking + finance shadow. **Left: promises, Zoho invoices (cut-over), Dec parallel run + CA sign-off (human).**
 - [x] Phase 6a: work-queue → in-app notifications + two desk seeds + dashboard API. **Left: more desks, WhatsApp channel (Meta approval), retirements after flips.**
+- [ ] Phase 7 — core_lead ledger + qualification gate: **7a** schema + backfill + shadow (nothing reads it) → **7b** create/decline funnels (insert-only) → **7c** qualification gate (behaviour change — human sign-off + one parallel week) → **7d** rate intelligence reads core → **7e** retire `callTag` loss-tagging + Zoho-comment mining. **Open: draft quotes count as qualified vs unqualified; qualify = unlock vs auto-create quote; unqualified expiry policy.**
 - [ ] Monthly: review `docs/core-change-requests/`, sign lock, audit `core_access_log` + `core_row_change` actor coverage.
+
+## 15. Phase 7 — core_lead: lead intake ledger + qualification gate (decided 2026-11-12)
+
+**Problem.** Today a quotation must exist before an enquiry can be logged: 602 of
+606 enquiries already carry an `estNumber`, only 4 do not. So every lead that is
+never worth quoting has nowhere to go, and every quote that dies is a black hole —
+1,321 declined quotes (₹30.17 Cr quoted) with `callTag` NULL on all of them, 1,055
+with a blank `sourceLead`, and `sourceLead` itself free text fragmented across
+`comapny data` / `Company Data` / `company data` (5 spellings, 227 rows). The daily
+AI intake (`vision-intake.ts`) enriches each enquiry with verbatim lines + catalogue
+matches, but nothing records a lead the moment it is judged not worth pursuing.
+
+**Future model (founder).** Every enquiry done by a telecaller from their dashboard
+and every lead captured through digital mediums (multiple B2B + social platforms)
+acts as an **unqualified lead**. From the platform itself, only a **team lead or
+sales head qualifies** a lead and creates the quotation. One common table,
+**`core_lead`**, with `status` = `unqualified | qualified`.
+
+**Two axes, never conflated.** `status` (the gate) is independent of `outcome`
+(`open | won | lost | dropped`): a qualified lead that loses is `qualified/lost`,
+never relabelled `unqualified`. Backfill reads honestly — 1,321 declined →
+`qualified/lost` (₹30.17 Cr quoted); 654 live → `qualified/open|won`; 4 quoteless →
+`unqualified`. The unqualified population accumulates from 7b onward, which is the
+point of the gate.
+
+**Schema (`core_lead`).** Identity: `id, dedupKey UNIQUE, leadNo, captureKind
+(telecaller|digital|b2b|social|manual|sync)`. Who: `customerName, clientCompany,
+contactName/Phone/Email, location, region, assignedAgentId`. Source: `sourceName`
+(enum `TL|AI|B2B|Incoming|FieldStaff|CompanyData|IndiaMART|Referral|Other|Unmapped`)
++ `sourceRaw` (verbatim evidence, never overwritten) + `sourceRef` (campaign /
+IndiaMART id). Ask: `productText, productId, qtyText, specText`. **Rates (the
+point):** `expectedRateAmount/Unit` (what the client will pay, AI-extracted) +
+`quotedRateAmount/Unit` (what we quoted, per line from Zoho at decline time) —
+spread per product per source = the price intelligence that today lives only
+inside Zoho. Gate: `status, qualifiedBy, qualifiedByRole, qualifiedAt,
+qualifyNote`. Outcome: `outcome, disqualifyReason
+(no_response|wrong_number|price_too_high|no_budget|not_genuine|out_of_scope|
+duplicate|competitor_won|client_cancelled|other), reasonDetail, lostAt, wonAt`.
+Link: `enquiryId, estimateId, estNumber`. Audit: `createdAt, updatedAt, occurredAt`.
+
+**Capture funnels (dual-write, fire-and-log, never block the business write).**
+1. `status-sync.ts` `DECLINE_STATUSES` branch → `outcome='lost'` (primary, catches
+all 1,321 + every future decline). 2. `vision-intake.ts` → unmatched (`<0.65`
+confidence) line or empty lead block → `out_of_scope` unqualified row with verbatim
+text. 3. Manual `PUT /api/leads/:id/qualify|drop` (TL/head only via
+`requireLeadQualifier`; execs get `403`).
+
+**Backfill (D1 rule §13.14).** `INSERT OR IGNORE … SELECT` from
+`Estimate.status='declined'` LEFT JOIN `Enquiry` on `estNumber`; `sourceName`
+normalised by CASE (`comapny%|company% → CompanyData`, `ai% → AI`, blank →
+`Unmapped`, `Enquiry.source` direct map else `Other`); rate = `Estimate.total`
+(header; per-line rates arrive at decline time from 7b onward). Expected rowcount:
+1,321 + 654 + 4 = 1,979.
+
+**Shadow.** Daily compare: declined-estimate count vs `qualified/lost` rows +
+normalised-source distribution; log-only DIFF, sig-deduped + heartbeat (zero DIFFs
+≠ never ran). Gate 7c on one matching week + human confirmation.
+
+**Sequence (decoupling-safe).** 7a additive (table + backfill + shadow, nothing
+reads it) → 7b insert-only funnels → 7c qualification gate (behaviour change,
+sign-off + parallel week; unlock-only, no auto-create of Zoho quote) → 7d rate
+intelligence + daily-enquiry report read core → 7e retire `callTag` loss-tagging +
+Zoho-comment mining. No Zoho/NeoDove change at any step; no `Estimate`/`Enquiry`
+write retired before 7c is stable.
+
+**Open (asked, unanswered).** Draft quotes count as qualified vs unqualified;
+qualify = unlock existing create-quote vs auto-create Zoho quote; unqualified
+expiry (auto-drop after N days vs stay open).
+
+---
 
 *Source notes: current-stack facts from `AGENTS.md` + `architecture.md` (Worker/D1/GH-runners, KV, EventHub, deploy policy, org positions, TL1 two-region, 20/80 credits, NeoDove manual link, dues calendar); target-model ideas from `bui-crm-v2/{README,AGENTS,prisma/schema/{core,automation,legacy}.prisma,prisma/sql/core/{001,002}.sql,tests/scenario.sql,scripts/schema-guard.mjs}` — Postgres specifics replaced with D1-native equivalents above.*
