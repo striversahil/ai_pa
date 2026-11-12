@@ -50,8 +50,8 @@ const ITEMS = [
   { rates: [], finalRate: null },                                                      // fresh unquoted
   { rates: [rate()], finalRate: null },                                                // quoted, undecided
   { rates: [rate()], finalRate: 120, finalizedAt: '2026-09-02T10:00:00+05:30' },        // decided, reviewed
-  { rates: [rate({ quotedAt: '2026-09-05T10:00:00+05:30' })], finalRate: 120, finalizedAt: '2026-09-02T10:00:00+05:30' }, // unreviewed quotes
-  { rates: [rate({ quotedAt: '2026-09-05T10:00:00+05:30', sharedWithSales: true })], finalRate: 120, finalizedAt: '2026-09-02T10:00:00+05:30' }, // shared → reviewed
+  { rates: [rate({ quotedAt: '2026-09-05T10:00:00+05:30' })], finalRate: 120, finalizedAt: '2026-09-02T10:00:00+05:30' }, // decided, quote after finalize (no queue effect)
+  { rates: [rate({ quotedAt: '2026-09-05T10:00:00+05:30', sharedWithSales: true })], finalRate: 120, finalizedAt: '2026-09-02T10:00:00+05:30' }, // decided, shared quote
   { rates: [rate({ quotedAt: 'not-a-date' })], finalRate: 120, finalizedAt: '2026-09-02T10:00:00+05:30' }, // bad date → not pending
   { notAvailable: true },                                                              // unavailable
   { loops: [loop({ kind: 'not_available', openedBy: 'procurement', holder: 'management', text: 'No stock' })] }, // awaiting approval

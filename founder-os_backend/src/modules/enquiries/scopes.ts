@@ -66,9 +66,10 @@ export function canSeeProcurementRequests(me: MeResponse): boolean {
  *  keep them; stripping them from procurement's own payload made saved
  *  discounts vanish from his view (and a later edit from the stripped row
  *  wiped the stored value). Per-quote `selected` flag locates the decided row.
- *  Management-shared ALTERNATES reach sales anonymized: vendor name +
- *  vendor description blanked (they identify the source) — sales sees the
- *  option + green final rate + forwarded salesNote only.
+ *  Sales never sees vendor information (founder rule): with `hideRequests`,
+ *  vendor name + vendor description are stripped from EVERY quoted row —
+ *  decided, shared and unshared alike (the decided row keeps `selected`;
+ *  shared rows keep their anonymized `salesNote`/`sharedFinalRate`).
  *  Item thread is the common sales↔procurement channel (per-item, always open,
  *  even after sent — negotiation stays separate). Sales sees thread but
  *  quoted entries with vendor names are stripped (internal).
@@ -96,7 +97,20 @@ export function stripMarginFields<T extends Record<string, any>>(enquiry: T, opt
           // off them) — hide from sales readers only, never from procurement.
           const { discountPercent, ...rr } = r;
           void discountPercent;
-          const shown = opts?.hideRequests ? rr : r;
+          // Sales never sees vendor information (founder rule): vendor names
+          // AND descriptions are stripped from EVERY quoted row — including
+          // the decided row (which keeps only the `selected` marker) and
+          // unshared alternates. Procurement/management payloads are untouched.
+          if (opts?.hideRequests) {
+            const { vendor, description, ...anon } = rr as any;
+            void vendor;
+            void description;
+            if (selectedVendor && r.vendor === selectedVendor) return { ...anon, selected: true };
+            return anon;
+          }
+          // Procurement/management payloads keep everything (discounts are
+          // procurement's own input — stripping them once wiped saved values).
+          const shown = r;
           if (selectedVendor && r.vendor === selectedVendor) return { ...shown, selected: true };
           if ((r as any)?.sharedWithSales === true) {
             const { vendor, description, ...anon } = shown as any;

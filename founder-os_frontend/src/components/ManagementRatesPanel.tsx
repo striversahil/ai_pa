@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import type { EnquiryItem, EnquiryItemRate } from "@/types";
 import { parseMoneyInput, parseSignedMoneyInput, historyDateChip } from "@/types";
 import { RATE_STATUS_LABEL, fmtINR, ceil5, finalRound, shareKey } from "@/enquiry/pricing";
-import { itemHasUnreviewedQuotes, isOpenSpecFlag } from "@/enquiry/queue";
+import { isOpenSpecFlag } from "@/enquiry/queue";
 import LoopCards from "@/components/LoopCards";
 import { openLoops } from "@/enquiry/loops";
 import ItemRateForm from "@/components/ItemRateForm";
@@ -58,7 +58,6 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
   // previous rate until a revision is saved — revise unlocks one item at a
   // time, late quotes never auto-clear.
   const [revise, setRevise] = useState<Record<number, boolean>>({});
-  const [keepBusyIdx, setKeepBusyIdx] = useState<number | null>(null);
   const [notAvailableOpen, setNotAvailableOpen] = useState<number | null>(null);
   const [notAvailableReason, setNotAvailableReason] = useState("");
   // Decided-rates summary: collapsed "Closed" dropdown above the item cards.
@@ -335,13 +334,13 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
         if (finalize) out.finalizedAt = new Date().toISOString();
       }
       // A changed management decision is a fresh decision: stamp finalizedAt
-      // so late-quote banners clear and the Closed summary follows the new
-      // rate — a revise-Save completes without needing a second Finalize
-      // press to look applied. Unchanged saves keep the original stamp.
+      // so the Closed summary follows the new rate — a revise-Save completes
+      // without needing a second Finalize press to look applied. Unchanged
+      // saves keep the original stamp.
       if (out.finalRate !== undefined && out.finalRate !== null) {
         // Legacy rows carry vendor-only decisions (no selectedRateIdx) —
-        // same vendor counts as unchanged so unrelated saves never clear a
-        // pending late-quote review.
+        // same vendor counts as unchanged so unrelated saves never re-stamp
+        // the decision.
         const storedIdx = (it as any).selectedRateIdx;
         const idxSame = storedIdx === undefined || storedIdx === null
           ? String(out.selectedVendor ?? "") === String(it.selectedVendor ?? "")
@@ -494,29 +493,6 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
         setSaveError(e?.message || "Reject failed — please retry.");
       } finally {
         setFlagBusy(false);
-      }
-    })();
-  };
-
-  // Keep-confirmed (immediate, no separate Save needed): the committed rate
-  // stands and the late-quote review clears — the item leaves the Active
-  // queue. Only fires when there are unreviewed quotes; otherwise Keep is
-  // already the state and the button is a no-op. Stamps finalizedAt=now so
-  // quotes logged up to this instant count as reviewed.
-  const confirmKeep = (i: number) => {
-    setSaveError(null);
-    setKeepBusyIdx(i);
-    const at = new Date().toISOString();
-    void (async () => {
-      try {
-        await onSave(
-          items.map((it, j) => (j === i ? { ...it, finalizedAt: at } : it)),
-          false,
-        );
-      } catch (e: any) {
-        setSaveError(e?.message || "Keep failed — please retry.");
-      } finally {
-        setKeepBusyIdx(null);
       }
     })();
   };
@@ -1160,22 +1136,17 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                         );
                       })()}
                       <p className="text-[10px] text-[var(--text-tertiary)]">Committed — sales sees this rate.{(it as any).finalDiscountPercent ? ` Discount ${String((it as any).finalDiscountPercent)}% applied.` : ""}</p>
-                      {itemHasUnreviewedQuotes(it as any) && !revise[i] && (
-                        <p className="text-[11px] font-bold text-amber-400">↓ New vendor quotes since this decision — Keep holds this rate, Revise switches to another.</p>
-                      )}
-                      {/* Keep / Revise flag: Keep confirms the committed rate
-                          (clears the review instantly when new quotes arrived),
+                      {/* Keep / Revise flag: Keep confirms the committed rate,
                           Revise unlocks the vendor list + margin to override
                           with another quote. One Save applies + re-stamps. */}
                       <div className="inline-flex rounded-lg border border-[var(--border-card)] overflow-hidden text-[11px] font-bold"
                         title="Keep confirms this rate — Revise unlocks the vendor list to override with another quote">
-                        <button type="button" disabled={keepBusyIdx === i}
+                        <button type="button"
                           onClick={() => {
-                            if (itemHasUnreviewedQuotes(it as any)) { confirmKeep(i); return; }
                             setRevise((prev) => ({ ...prev, [i]: false }));
                           }}
-                          className={`px-2.5 py-1.5 cursor-pointer border-0 disabled:opacity-60 ${!revise[i] ? "bg-emerald-600 text-white" : "bg-transparent text-[var(--text-tertiary)]"}`}>
-                          {keepBusyIdx === i ? "Keeping…" : `Keep ₹${Number(it.finalRate).toLocaleString("en-IN")}`}
+                          className={`px-2.5 py-1.5 cursor-pointer border-0 ${!revise[i] ? "bg-emerald-600 text-white" : "bg-transparent text-[var(--text-tertiary)]"}`}>
+                          {`Keep ₹${Number(it.finalRate).toLocaleString("en-IN")}`}
                         </button>
                         <button type="button" onClick={() => setRevise((prev) => ({ ...prev, [i]: true }))}
                           className={`px-2.5 py-1.5 cursor-pointer border-0 ${revise[i] ? "bg-indigo-600 text-white" : "bg-transparent text-[var(--text-tertiary)]"}`}>

@@ -2,7 +2,7 @@
 // update.ts re-exports everything public here, so existing imports keep working.
 import { parseItemMedia, numOrUndefined, parseItemRates } from "../parse";
 import { enquiryLabelText } from "../types";
-import type { LoopParty } from "../types";
+import type { LoopParty, LoopRecord } from "../types";
 import { applyLoopOps, auditNote, answerOpen, openLoops, migrateItemLoops } from "../loops";
 import type { LoopWriter } from "../loops";
 import type { ItemWriteCtx, RateWriteCtx } from "./types";
@@ -16,6 +16,9 @@ import type { ItemWriteCtx, RateWriteCtx } from "./types";
  * - Privileged rate requests reopen the procurement handoff without
  *   touching quotes or decisions (flagging never deletes); loop trail is
  *   server-authored (client remarks kept once each), capped at 50.
+ * - Decided means done: a committed decision auto-resolves flags raised
+ *   before the save (open spec/query/rates/ask records carried from stored
+ *   are answered, never left stranding the row out of History).
  */
 export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
   const { storedItems, privileged, restricted, actingProcurement } = ctx;
@@ -242,9 +245,10 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
       // A fresh management request is a pure signal: quotes AND decisions
       // stay intact — flagging procurement never deletes prior work (a flag
       // once wiped the item's rates + decision, destroying quoted work).
-      // Procurement's next rate edit answers the request in the loop pass;
-      // new quotes after a decision resurface in the management queue via
-      // itemHasUnreviewedQuotes.
+      // Procurement's next rate edit answers the request in the loop pass.
+      // Quotes arriving after a decision keep the committed rate
+      // (applyLateQuoteReopen) and never reopen the queue (founder decision
+      // 2026-11-12).
       // The handoff reopen lives in applyRateLifecycles below.
       void 0;
     }
@@ -385,6 +389,32 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
       loops = answerOpen(loops, 'not_available', `Marked as not available${(base as any).notAvailableReason ? `: ${(base as any).notAvailableReason}` : ''}`.slice(0, 500), 'management', nowIso);
       if (loops !== before) (base as any).notAvailableAt = nowIso;
       else if (!(base as any).notAvailableAt) (base as any).notAvailableAt = stored.notAvailableAt ?? nowIso;
+    }
+    // Decided means done (founder decision 2026-11-12): a committed decision
+    // auto-resolves flags raised BEFORE this save. Open spec / query / rates /
+    // not-available records carried over from stored are answered with an
+    // audit entry instead of stranding the row out of History. Loops opened
+    // IN this save keep fresh ids, so a just-raised flag is never eaten here
+    // (and the re-flag rule above already wiped the decision for a fresh
+    // spec ask, so this block is skipped for it).
+    if (base.finalRate !== undefined && base.finalRate !== null) {
+      const storedOpenIds = new Set(
+        migrateItemLoops(stored)
+          .filter((l) => l?.status === 'open')
+          .map((l) => String(l?.id ?? '')),
+      );
+      if (storedOpenIds.size > 0) {
+        const resolved: LoopRecord[] = loops.map((l) => {
+          if (!l || l.status !== 'open' || !storedOpenIds.has(String(l?.id ?? ''))) return l;
+          return {
+            ...l,
+            status: 'answered',
+            answer: { text: 'Auto-resolved — decided', by: role, at: nowIso },
+            closedAt: nowIso,
+          };
+        });
+        if (resolved.some((l, i) => l !== loops[i])) loops = resolved;
+      }
     }
     // Server-authored audit notes (visible, same as the old trail remarks).
     if (privileged) {

@@ -1,6 +1,0 @@
-#!/bin/sh
-# Enable once per clone:  git config core.hooksPath .githooks
-node scripts/schema-guard.mjs || {
-  echo "Commit blocked by schema-guard (see above)."
-  exit 1
-}

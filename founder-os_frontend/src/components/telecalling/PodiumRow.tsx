@@ -83,8 +83,9 @@ export function PodiumRow({
   const tone = TARGET_TONE[status];
   // Headline = FILTER-period consumer attainment (no carry-in, no backlog).
   // Falls back to the since-start ledger only for payloads that predate
-  // periodTarget. The ledger status pill + carry badges below keep the backlog
-  // visible — the bar itself never mixes October into November.
+  // periodTarget. Carry badges removed (founder decision 2026-11-12 — the
+  // backlog/out numbers are incorrect right now); the bar itself never mixes
+  // October into November.
   const headlinePct = pt ? pt.pct : (t?.attainmentPct ?? 0);
   const animatedPct = useCountUp(headlinePct);
   const headlineAccepted = pt ? pt.accepted : (t?.sinceStart.accepted ?? 0);
@@ -194,7 +195,8 @@ export function PodiumRow({
             />
           </div>
 
-          {/* Backlog stays visible as badges — never inside the bar. */}
+          {/* Carry badges removed (2026-11-12) — backlog/out hidden until the
+              ledger numbers are fixed. */}
           {t && (
             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] leading-4">
               <span className="whitespace-nowrap font-mono font-semibold text-[var(--text-secondary)]">
@@ -206,18 +208,6 @@ export function PodiumRow({
               )}
               {!periodNone && periodMet && (
                 <span className={`${PILL} py-0 text-[9px] border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300`}>✓ {pt ? pt.label : "week"} met</span>
-              )}
-              {t.carryIn > 0 && (
-                <span className={`${PILL} py-0 text-[9px] border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300`} title="Unmet target carried into this week from earlier weeks">
-                  ↩ {fmtLakh(t.carryIn)} backlog
-                </span>
-              )}
-              {t.carryOut > 0 ? (
-                <span className={`${PILL} py-0 text-[9px] border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300`} title="Shortfall that carries into next week">
-                  → {fmtLakh(t.carryOut)} out
-                </span>
-              ) : (
-                <span className={`${PILL} py-0 text-[9px] border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300`}>✓ ledger cleared</span>
               )}
               {pt && pt.unclassifiedCount > 0 && (
                 <span className={`${PILL} py-0 text-[9px] border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300`} title="Accepted ₹ waiting for a consumer/reseller decision — excluded from the bar until reviewed">

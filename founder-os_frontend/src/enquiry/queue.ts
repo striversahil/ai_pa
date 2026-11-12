@@ -93,24 +93,6 @@ export function hasPendingNotAvailableWork(e: Pick<Enquiry, "items">): boolean {
   return (e.items ?? []).some((it) => openLoops(it, 'not_available').length > 0);
 }
 
-/** New vendor quotes since the decision: a decided item (finalRate set)
- *  with quotes logged AFTER it was finalized that management hasn't shared
- *  yet. Surfaces the item back in the management queue so the new quote can
- *  be reviewed/shared (Revise → share). Rows lacking timestamps fall back to
- *  the old behavior (not pending) — never false-positive on legacy rows. */
-export function itemHasUnreviewedQuotes(it: Pick<EnquiryItem, "rates" | "finalRate"> & { finalizedAt?: string }): boolean {
-  if ((it as any)?.rateAvailable || (it as any)?.notAvailable) return false;
-  if ((it as any)?.finalRate === undefined || (it as any)?.finalRate === null) return false;
-  const fin = Date.parse(String((it as any)?.finalizedAt ?? ""));
-  if (!Number.isFinite(fin)) return false;
-  return ((it as any)?.rates ?? []).some((r: any) => {
-    const q = Date.parse(String(r?.quotedAt ?? ""));
-    if (!Number.isFinite(q) || q <= fin) return false;
-    if (r?.sharedWithSales === true) return false;
-    return true;
-  });
-}
-
 /** Zoho-cancelled requirement (client side): declined / void / cancelled /
  *  rejected. Dead rows never sit in Active — they conclude automatically.
  *  Mirrors `founder-os_backend/src/modules/enquiries/queues.ts` — keep in sync. */
@@ -174,10 +156,10 @@ export function isManagementPendingEnquiry(e: EnquiryShape): boolean {
   const zs = String((e as any).zohoStatus ?? '').trim().toLowerCase();
   if (!reopened && zs && zs !== 'draft') return false;
   // Any item needing a decision appears here instantly (correct spec, quoted
-  // or internal, not yet finalized) — plus decided items with new unshared
-  // vendor quotes since the decision (variation answers, late quotes) — plus
-  // open not-available asks awaiting approval.
-  return items.some((it) => itemNeedsDecision(it) || itemHasUnreviewedQuotes(it as any) || openLoops(it, 'not_available').length > 0);
+  // or internal, not yet finalized) — plus open not-available asks awaiting
+  // approval. Decided items stay decided: late quotes never reopen the queue
+  // (founder decision 2026-11-12).
+  return items.some((it) => itemNeedsDecision(it) || openLoops(it, 'not_available').length > 0);
 }
 
 /** Open spec ask: procurement opened it and sales hasn't answered yet.

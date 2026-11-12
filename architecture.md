@@ -1,6 +1,11 @@
 # Founder OS — Architecture Document
 
-> **Status of this doc:** rewritten against the current code on `main` (Aug 2026).
+> **Status of this doc:** rewritten against the current code on `main` (Aug 2026); drift-corrected
+> 2026-11-12 (cron dispatch, telecalling retirements, route inventory) and extended with §16–§18
+> (automations vs session, ERP core, code organisation + duplication control).
+> **Doc roles:** `AGENTS.md` = rules, gotchas, founder decisions (terse). This file = how the system
+> works. `ERP_TRANSITION_PLAN.md` = the ERP roadmap. `docs/REUSABLE_COMPONENTS.md` = generated catalog
+> of reusable modules. A behavior change updates the matching section here in the same commit.
 > The platform is no longer a single Cloudflare Worker — it is a **multi-runtime
 > system** where a Cloudflare Worker/D1 API is the live data plane and **all heavy
 > AI + cron is executed by GitHub Actions** (`scripts/*-runner.js`). An Express/
@@ -90,8 +95,10 @@ Worker + GitHub Actions.
 │   │   ├── worker/                      # Worker codebase (split from the old monolithic worker.ts):
 │   │   │   ├── context.ts               # Bindings type, bootstrapEnv, deps(), boot, auth guards, live broadcast, shared helpers, app factory (middleware)
 │   │   │   ├── cron.ts                  # * * * * * cron router (neodove-refresh + GH workflow_dispatch dispatcher)
-│   │   │   └── routes/                  # one module per API domain: auth, chat, enquiries, system,
-│   │   │                                #   estimates, whatsapp, triggers, runner, autopilot, automations, events
+│   │   │   ├── http.ts / viewer.ts      # shared request helpers: readBody(c), getViewer(c)/getViewerMe(c)
+│   │   │   ├── workspace-data.ts        # serves /api/session/workspaces/:slug/data (see §16)
+│   │   │   └── routes/                  # one module per API domain (~40; the register* list in
+│   │   │                                #   src/worker.ts is the authoritative inventory)
 │   │   ├── config/ config-worker.ts    # env validation (server / worker variants)
 │   │   ├── routes/                      # Express routers (whatsapp-webhook, health, triggers, ...)
 │   │   ├── modules/                     # ai, automation, brain, whatsapp, waba, email, auth, chat, ...
@@ -116,7 +123,12 @@ Worker + GitHub Actions.
 │   ├── neodove-report-runner.js        # NeoDove telecaller report (today + backfill)
 │   └── set-ai-keys.sh                  # push GROQ_API_KEYS to GH + Worker secrets (keys never touch disk/git)
 ├── founder-os_frontend/               # Next.js 16 static dashboard (Cloudflare Pages)
-├── .github/workflows/                 # cron-every-{5,10,15,30}min.yml + cron-daily-ist.yml
+├── .github/workflows/                 # cron-every-{5,10,15,30}min.yml + cron-daily-ist.yml + guards.yml (CI)
+├── scripts/guards/                    # zero-dep `node --test` guard suite (mirrors, parity, ratchet) — §18
+├── scripts/dup-audit.mjs              # duplication/boundary metrics behind the ratchet — §18
+├── docs/                              # REUSABLE_COMPONENTS.md, rewrite-log.md, core-change-requests/
+├── .claude/skills/                    # agent rulebooks (ai-pa-code-discipline)
+├── ERP_TRANSITION_PLAN.md             # ERP core roadmap — §17
 ├── founder-os_backend/zoho_sent/        # Zoho Books cURL export (sent_estimates.txt)
 ├── random_dump/                       # design docs, n8n workflows
 └── WA_Engine_Pro_API_Documentation.md / WHATSAPP_FLOW.md / whatsapp_plan.md / whatsapp-business-autopilot-architecture.md / whatsapp_context.md   # reference docs
@@ -225,7 +237,7 @@ redeploys; dedup keys in `AutomationRun` make double-firing impossible.
 | `orphaned-message-recovery` | handler | `*/2 * * * *` | Re-enqueue saved-but-unclassified messages |
 | `outbound-intent-recovery` | handler | `*` | Re-defer persisted outbound intents once Redis back |
 | `sla-monitor` | handler | `*` | Flag SLA breaches → Slack |
-| `telecalling` | handler | `*/30 * * * *` rule intent; **production-live via `cron-daily-ist.yml` (08:00 IST round-robin rotation + 21:00 IST EOD remark deduction) + `cron-every-15min.yml` effort-sync → `/api/runner/telecalling/effort-sync`** | Unified Lead Conversion (programmatic estimate assignment) + Lead Generation (NeoDove, live). **Deterministic — no LLM.** Handler `runLeadConversion()` (service.ts) deals unassigned estimates (risk re-poaching switched OFF — holders keep everything); `runEodRemarkDeduction()` charges −10 per red-risk holding at 21:00 IST; `bulkAssignEstimates()` powers MIS bulk-assign. Registered in `registry-worker.ts` as `telecalling`. Triggered in prod by `POST /api/trigger/telecalling` + `/api/trigger/telecalling/eod` (secret-gated), NOT by in-worker node-cron. |
+| `telecalling` | handler | **production-live via `cron-daily-ist.yml` 02:30 UTC slot (08:00 IST)** | Sales Leaderboard data provider. **Deterministic — no LLM.** `runLeadConversion()` (service.ts) = daily region sweep + NeoDove attribution; estimates are owned by `Estimate.region` (R1–R4), close credit split 20% generator (automatic) / 80% closer (sales-head pick). The 21:00 EOD deduction, effort-sync, snatch/cover/bulk-assign machinery are **retired (2026-10-22)** — those routes return `{retired:true}`. Headless provider for the unified Sales workspace (see AGENTS.md "Domain quirks"). Triggered by `POST /api/trigger/telecalling` (secret-gated), NOT by in-worker node-cron. |
 | `telecalling-agent-analysis` | handler | `*/30 * * * *` | Read Telecalling Agents sheet → per-agent metrics |
 | `telecalling-enquiry-to-dpp` | rule | event+scan | Enquiry messages → DPP |
 | `wa-engine-monitor` | handler | `*` | WA Engine session/health monitor + dashboard |
@@ -472,26 +484,23 @@ Gateway design (one place, both runtimes):
 
 Telecalling production status: the `telecalling` automation is **production-live and
 fully deterministic (no LLM)** — `runLeadConversion()` in
-`founder-os_backend/src/automations/telecalling/service.ts` (round-robin assignment,
-conversion-weighted routing, risk/ok-red-zombie model, `TelecallerScoreEvent` ledger
-with +100 closes and −10 EOD remark penalties; risk re-poaching is switched OFF).
-Live cadence: `cron-daily-ist.yml`
-fires `POST /api/trigger/telecalling` at 08:00 IST (round-robin rotation) and
-`POST /api/trigger/telecalling/eod` at 21:00 IST (EOD remark deduction — −10 per
-red-risk holding, scores only), while `cron-every-15min.yml` runs
-`scripts/effort-sync-runner.js` → `POST /api/runner/telecalling/effort-sync`, which
-persists per-day NeoDove call-log snapshots (`telecalling:effort:<YYYY-MM-DD>`) that the
-assignment engine reads for the snatch shield. Dashboard: `TelecallingDashboard`
-(frontend) ← `/api/automations/telecalling/data` + `/api/estimates` (KV-cached, live via
-EventHub `telecalling` events).
+`founder-os_backend/src/automations/telecalling/service.ts`. Live cadence: `cron-daily-ist.yml`
+02:30 UTC slot fires `POST /api/trigger/telecalling` at 08:00 IST (region sweep + NeoDove
+attribution). Estimates are region-owned (R1–R4, no individual dealing); the
+`TelecallerScoreEvent` ledger uses close slabs split 20% generator / 80% closer. The 21:00 IST
+EOD deduction, effort-sync runner, snatch shield and round-robin dealing were **retired
+2026-10-22** (founder decision). Dashboard: the Sales Leaderboard tab of the unified Sales
+workspace ← `/api/session/workspaces/telecalling/data` (legacy alias
+`/api/automations/telecalling/data`) + `/api/estimates` (KV-cached, live via EventHub).
+Full rules: AGENTS.md "Domain quirks".
 
 | Workflow | Cadence (UTC) | Jobs |
 |----------|---------------|------|
 | `cron-every-5min.yml` | `*/5` | `whatsapp-digest-runner.js` (heavy AI), `whatsapp-autopilot-runner.js` (shadow), light-trigger curls (wa-engine-monitor, morning-queue-drain, orphaned-message-recovery, outbound-intent-recovery, sla-monitor, whatsapp-marketing, notification-batcher) — never pings Zoho |
 | `cron-every-10min.yml` | `*/10` | `neodove-report-runner.js` (today, intraday overwrite — GH egress fallback; primary population is the native in-worker refresh every 5 min) |
-| `cron-every-15min.yml` | `*/15` | `effort-sync-runner.js` (NeoDove call-log snapshots for the telecalling snatch shield), `crm-runner.js` (dispatch-floor sync: Zoho orders → D1 rows), `zoho-sent-runner.js` (full sync + AI: All-status 2-page fetch, transitions, gated AI — see `scripts/zoho-sync/README.md`; `force` dispatch reprocesses all eligible) — serial group, one Zoho pinger at a time |
+| `cron-every-15min.yml` | `*/15` | `crm-runner.js` (dispatch-floor sync: Zoho orders → D1 rows), `zoho-sent-runner.js` (full sync + AI: All-status 2-page fetch, transitions, gated AI — see `scripts/zoho-sync/README.md`; `force` dispatch reprocesses all eligible) — serial group, one Zoho pinger at a time |
 | `cron-every-30min.yml` | `*/30` | `email-brain-index-runner.js` |
-| `cron-daily-ist.yml` | `30 19` (baseline-freeze 01:00 IST), `30 21` (data-retention 03:00 IST) | baseline-freeze (curl), data-retention (curl), `morning-brief-runner.js`, `eod-summary-runner.js`, `neodove-report-runner.js` (yesterday + N-day backfill) |
+| `cron-daily-ist.yml` | one slot per job family, gated on `inputs.slot` (`all` = manual): **02:30** (08:00 IST) telecalling distribution + `morning-brief-runner.js` · **13:30** (19:00 IST) `eod-summary-runner.js` + `neodove-report-runner.js` (yesterday + N-day backfill) · **19:30** (01:00 IST) baseline-freeze · **21:30** (03:00 IST) data-retention + `linkedin-daily-runner.js` | (15:30 EOD-deduction slot retired 2026-10-22) |
 
 Secrets for runners: `WORKER_URL`, `SHARED_SECRET`, `AI_KEYS` (unified gateway keys;
 legacy `GROQ_API_KEYS`/`OPENROUTER_API_KEYS` + `OMNIROUTE_*` still merged as fallback).
@@ -512,7 +521,7 @@ Cloudflare Cron Trigger on founder-os-worker (wrangler.toml [triggers])
        │     every-10min → minute % 10 == 0
        │     every-15min → minute % 15 == 0
        │     every-30min → minute % 30 == 0
-        │     daily       → 02:30 / 13:30 / 15:30 / 19:30 / 21:30 UTC (one slot per
+        │     daily       → 02:30 / 13:30 / 19:30 / 21:30 UTC (one slot per
         │                     job family; workflow gates each job on inputs.slot)
        │     neodove-refresh → minute % 5 == 0 (native D1 write, ops hours only)
        │     quiet-hours gate → 21:00–09:00 IST pauses Zoho/NeoDove analysis
@@ -522,15 +531,15 @@ Cloudflare Cron Trigger on founder-os-worker (wrangler.toml [triggers])
             └─ GitHub Actions runs the workflow on demand
 ```
 
-- The router lives in `src/worker.ts` (`scheduled` handler): `dueWorkflows()` computes which
+- The router lives in `src/worker/cron.ts` (wired as the `scheduled` handler from `src/worker.ts`): `dueWorkflows()` computes which
   workflows are due at the current UTC minute and fires `workflow_dispatch` for each concurrently
   via `ctx.waitUntil(Promise.all(...))` so the worker never blocks on a slow endpoint. One `* * * * *`
   Cron Trigger runs every minute; the handler no-ops (cheap) when nothing is due.
 - Cadence gates use `event.scheduledTime` (the slot Cloudflare intended), NOT wall-clock execution
   time — cron events are delivered 1–2 min late and time-based gates would drift/skip otherwise.
 - **Quiet hours 21:00–09:00 IST** (no shop-floor operation): Zoho/NeoDove-backed analysis pauses via
-  `isOpsWindow()` in `src/worker/cron.ts` — every-10min (neodove-today) and every-15min (effort-sync +
-  crm + zoho-sent-analyzer, serial group) dispatches are skipped, every-5min keeps firing (WhatsApp
+  `isOpsWindow()` in `src/worker/cron.ts` — every-10min (neodove-today) and every-15min (crm +
+  zoho-sent-analyzer, serial group) dispatches are skipped, every-5min keeps firing (WhatsApp
   jobs + light triggers only — it never pings Zoho), daily dispatches with `run_neodove=false` (skips `neodove-report`;
   brief / telecalling / retention / baseline read D1 and run), and the native neodove-refresh (+ warmer)
   is skipped in-worker. Manual dispatch defaults both inputs to true, so overnight manual runs work.
@@ -695,7 +704,7 @@ The `functions/` dir is excluded from Next typecheck (Pages Functions types come
 | Component | Target | How |
 |-----------|--------|-----|
 | founder-os-worker | Cloudflare Workers (**live API**) | `node scripts/build-worker.mjs` → `npx wrangler deploy` (D1 `DB`, `EVENT_HUB` DO, `CHAT_FILES` KV) |
-| Cron/AI dispatch | cPanel cron (`216.10.246.39`) | user crontab → `~/gh-trigger.sh` → `workflow_dispatch` |
+| Cron/AI dispatch | founder-os-worker Cron Trigger (`* * * * *`) | `src/worker/cron.ts` → GitHub `workflow_dispatch` (cPanel dispatch lines are disabled, kept only for rollback) |
 | Cron/AI | GitHub Actions (**live execution**) | `.github/workflows/cron-*.yml` → `scripts/*-runner.js` |
 | **D1 nightly backup** | cPanel cron (`216.10.246.39`) | `30 2 * * *` → `~/d1-backup.sh` → Cloudflare D1 **export API** (polling) → SQL dump in `~/d1-backups/`, 14-day retention |
 | waba-worker | Cloudflare Workers | `cd waba-worker && wrangler deploy` (D1 `waba-worker`) |
@@ -996,7 +1005,8 @@ for every approved member — not an automation.
 | Component | Target | How |
 |-----------|--------|-----|
 | founder-os-worker | Cloudflare Workers (**live API**) | `node scripts/build-worker.mjs` → `npx wrangler deploy` (D1 `DB`, `EVENT_HUB`/`ASYNC_RUNNER` DOs, `CHAT_FILES` KV) |
-| Cron/AI dispatch | cPanel cron (`216.10.246.39`) | user crontab → `~/gh-trigger.sh` → `workflow_dispatch` |
+| Cron/AI dispatch | founder-os-worker Cron Trigger (`* * * * *`) | `src/worker/cron.ts` → GitHub `workflow_dispatch` |
+| D1 nightly backup | cPanel cron (`216.10.246.39`) | `~/d1-backup.sh` (the only live job left on that host, plus a health ping) |
 | Cron/AI execution | GitHub Actions | `.github/workflows/cron-*.yml` → `scripts/*-runner.js` |
 | waba-worker | Cloudflare Workers | `cd waba-worker && wrangler deploy` (D1 `waba-worker`) |
 | Express backend | Docker / host (alt/local) | `pnpm build` → `node dist/server.js`; `Dockerfile` + `docker-compose.yml` |
@@ -1007,7 +1017,90 @@ Secrets: `SHARED_SECRET`, `DATABASE_URL`, `WA_ENGINE_API_KEY`, `AI_KEYS` (unifie
 legacy per-provider `*_API_KEYS` + `LLM_*` (merged as fallback), `GOOGLE_SERVICE_ACCOUNT_JSON`, `GITHUB_ACCESS_TOKEN` (+ `SSH_HOST`/`SSH_USER`/
 `SSH_PASSWORD` for the cPanel host, stored in root `.env`).
 
+## 16. Automations vs Session (machine vs human, 2026-11-12)
 
+Two sibling surfaces over the same dashboards; neither imports the other.
 
+| | `/automations` — the machine | `/session` — the human ("Workspace") |
+|---|---|---|
+| Frontend | `src/views/automations/AutomationsView.tsx` (admin-only registry console) | `src/views/session/SessionView.tsx` (`/session`, `/session/<slug>`) |
+| Worker | `worker/routes/automations.ts` — list / detail / enable-pause / cooldown / runs | `worker/routes/session.ts` — `GET /api/session`, `/workspaces`, `/workspaces/:slug/data` (read-only) |
+| Owns | registry state, scopes (`registry-worker.ts`) | viewer-scoped data (`modules/workspaces/scoping.ts`) |
 
+- **One catalog**: `modules/workspaces/catalog.ts` lists every dashboard + legacy aliases (frontend
+  mirror `src/workspaces/aliases.ts`, guard `workspace-catalog.test.mjs`). New dashboard = catalog entry
+  + one line in `src/workspaces/registry.tsx`.
+- Dashboard components are host-agnostic: data URL via `workspaceDataUrl`, navigation via
+  `useWorkspaceHost()`; never hardcode `/automations` or `/api/automations`.
+- `GET /api/automations/:slug/data` is a deprecated alias (Deprecation header) of the session data route.
+- Admins land on `/automations`, everyone else on `/session`. Only `telecalling` and
+  `neodove-telecaller-report` are `publicData` (founder decision).
 
+## 17. ERP core layer (Phase 0 lock, 2026-11-12)
+
+D1 now carries a core/helper split alongside the legacy tables:
+
+- `core_*` tables = **source of truth** (schema in `prisma/core/01-platform … 08-leads.prisma`, logic in
+  `src/modules/core/` — customers, sales, orders, finance, stock, leads, stages, audit, notify, events,
+  projectors, sync). Served by `worker/routes/work.ts`. **Locked**: humans only, verified by
+  `node founder-os_backend/scripts/core-guard.mjs`; agents propose changes in `docs/core-change-requests/`.
+- `hlp_*` tables = helpers (dashboards, saved views, flags) — free to change, reference core by id only,
+  never duplicate a business fact, never write `core_*` outside `src/modules/core/`.
+- Legacy tables (`Estimate`, `CrmSalesOrder`, `Telecaller…`) keep running; Phase 7 added the `core_lead`
+  intake ledger with mirrors + shadow comparison. Roadmap and phase status: `ERP_TRANSITION_PLAN.md`.
+
+## 18. Code organisation & duplication control
+
+The repo's main failure mode is new code being added beside existing code instead of reusing it. The
+rules are in AGENTS.md "Coding practices" and the skill `.claude/skills/ai-pa-code-discipline/`; this
+section describes the machinery.
+
+### 18.1 Layers (dependency direction is one-way)
+```
+Frontend:  app/page.tsx → views/{automations,session} → workspaces/ + components/<Dashboard>
+                         → hooks/ (useLiveData, domain hooks) → src/<domain>/ (pure: queue/normalize/pricing)
+                         → api/client.ts · lib/format · components/ui
+Backend:   worker.ts → worker/routes/<domain>.ts (thin) → modules/<domain>/ | automations/<slug>/
+                         (types · parse · queues · scopes · update · store · pure.ts/io.ts)
+                         → shared/ (cache, ai-gateway, prisma-d1) · modules/core/ (locked)
+```
+Never sideways between route modules or between `views/automations` and `views/session`.
+
+### 18.2 Where reusable things live
+- `docs/REUSABLE_COMPONENTS.md` — generated catalog (`scripts/refactor/gen-reusable-catalog.py`) of every
+  module split out by `scripts/refactor/split-module.mjs`; old paths re-export, so imports keep working.
+- Backend `pure.ts` = synchronous, no DB/cache/network (safe in tests and on both runtimes); `io.ts` = I/O.
+- Shared kits: `@/components/ui`, `@/lib/format`, `@/workspaces`, `hooks/useLiveData`; backend
+  `worker/http.ts`, `worker/viewer.ts`, `shared/cache.ts`, `shared/ai-gateway.ts`.
+
+### 18.3 Guards (CI: `.github/workflows/guards.yml`, `node --test "scripts/guards/*.test.mjs"`)
+| Guard | Protects |
+|---|---|
+| `rewrite-ratchet` + `rewrite-baseline.json` | 18 duplication/boundary metrics from `scripts/dup-audit.mjs` never grow (raw FE fetch, local INR/date formatters, ad-hoc modals, auth/body boilerplate, files > 400 lines, registry leaks) |
+| `queue-mirror`, `crm-lifecycle`, `enquiry-rates-union` | backend↔frontend predicate/lifecycle mirrors stay identical |
+| `format-canonical` | one home for money/date formatting |
+| `workspace-catalog`, `workspace-scoping` | the §16 catalog + viewer scoping |
+| `d1-parity`, `gateway-js-parity`, `gateway-pool` | D1 shim registries; TS gateway ↔ JS runner port |
+| `core-guard.mjs` (not in the suite) | locked ERP core signature |
+
+### 18.4 Duplication baseline (jscpd 4.0.5, min 6 lines / 50 tokens, 2026-11-12)
+533 clones · 6,761 duplicated lines · **4.3%** of 157k lines (TS 5.9%, TSX 3.2%, JS 1.9%).
+
+| Class | Lines | Status |
+|---|---|---|
+| Same-side copies | 5,479 | debt — see below |
+| Backend↔frontend mirrors | 1,515 | sanctioned, but only crm / enquiry-queue / format / gateway are guarded |
+| `*-worker.ts` twins | 185 | expected (esbuild redirect) |
+| Express ↔ Worker | 115 | disappears with Express retirement |
+
+Ranked debt (proposed single home):
+1. Accounts ↔ Digital Marketing task-board fork, ~1.6k lines across 9 FE files + Worker/Express routes →
+   one configurable task-board kit + one shared backend task lifecycle.
+2. Route-handler try/notifyLive/catch boilerplate, ~500 lines (`human-resources.ts` 699 lines, `digital-
+   marketing.ts`, `accounts.ts`, `debtors-tracker.ts`, `telecalling.ts`, `crm.ts`) → one helper in `worker/http.ts`.
+3. Unguarded mirrors (debtors parse 360, salary-formula 205, reporting 211, …) → parity guards.
+4. Smaller FE forks: Sheet/WaEngine/Dpp dashboards, CrmDashboard ↔ SalesDispatchPanel, debtors
+   Collections ↔ Invoices tabs, payment ↔ expense calendar, Sidebar ↔ MobileDrawer.
+5. `modules/core/*` repeated helpers (~160 lines) → core change request (locked).
+
+Re-run the report after each cleanup and update these numbers; `dup-audit.mjs` stays the CI gate.

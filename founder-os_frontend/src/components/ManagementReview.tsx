@@ -8,7 +8,7 @@ import Modal from "@/components/Modal";
 import { Table, thClass, tdClass } from "@/components/ui/Table";
 import type { Enquiry } from "@/types";
 import { enquiryLabel, historyDateChip } from "@/types";
-import { itemNeedsDecision, isOpenSpecFlag, isManagementPendingEnquiry, isManagementHistoryEnquiry, itemHasUnreviewedQuotes, isZohoClosedStatus, ratesCoverage, hasOpenQuery, hasResolvedQuery, openLoops } from "@/enquiry/queue";
+import { itemNeedsDecision, isOpenSpecFlag, isManagementPendingEnquiry, isManagementHistoryEnquiry, isZohoClosedStatus, ratesCoverage, hasOpenQuery, hasResolvedQuery, openLoops } from "@/enquiry/queue";
 import { matchesEnquiryQuery } from "@/enquiry/search";
 import { toEnquiry } from "@/enquiry/normalize";
 import { enquirySalesSignal } from "@/enquiry/sales-signal";
@@ -582,9 +582,9 @@ export default function ManagementReview() {
 
   const loopProgress = (e: Enquiry): { done: number; total: number } => {
     const loop = (e.items ?? []).filter((it) => !isOpenSpecFlag(it) && !it.rateAvailable);
-    // Items with new unshared quotes since the decision still need a review
-    // pass — never count them done while the row sits in Active.
-    const done = loop.filter((it) => it.finalRate !== undefined && it.finalRate !== null && !itemHasUnreviewedQuotes(it as any)).length;
+    // Decided means decided — late vendor quotes never reopen the queue
+    // (founder decision 2026-11-12), so a finalRate always counts as done.
+    const done = loop.filter((it) => it.finalRate !== undefined && it.finalRate !== null).length;
     return { done, total: loop.length };
   };
 

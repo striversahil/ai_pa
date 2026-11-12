@@ -149,7 +149,6 @@ export {
   itemNeedsDecision,
   hasFreshUnquotedWork,
   hasPendingVariationWork,
-  itemHasUnreviewedQuotes,
   isFreshQuotableItem,
   isProcurementPendingEnquiry,
   isProcurementHistoryEnquiry,

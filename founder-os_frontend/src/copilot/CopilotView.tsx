@@ -10,6 +10,7 @@
 
 import React from 'react';
 import type { ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import Markdown from '../components/Markdown';
 import { useCopilotTurn, type ProposalApi } from './useCopilotTurn';
 import type { CopilotEndpoints, CopilotMsg, CopilotViewConfig } from './types';
@@ -34,14 +35,22 @@ export default function CopilotView({ endpoints, view, open, onClose, onOpen, re
     confirmed: t.confirmed, applying: t.applying,
   };
   const userInitial = (view.userInitial ?? 'S').charAt(0).toUpperCase();
+  // Portal the overlay to document.body: the copilot mounts deep inside
+  // dashboard panels (enquiry detail, product-line boards) whose ancestors
+  // create stacking contexts — without a portal the sticky tab bars paint
+  // above the popup no matter its z-index. Guarded for static prerender.
+  const [mounted, setMounted] = React.useState(false);
+  React.useEffect(() => { setMounted(true); }, []);
+  const showOverlay = t.visible && mounted;
 
   return (
     <>
-      {t.visible && (
-        <div className={`fixed inset-0 z-40 bg-black/30 backdrop-blur-sm ${t.exiting ? 'animate-fade-out' : 'animate-fade-in'}`} onClick={onClose} />
-      )}
+      {showOverlay ? createPortal(
+        <div className={`fixed inset-0 z-40 bg-black/30 backdrop-blur-sm ${t.exiting ? 'animate-fade-out' : 'animate-fade-in'}`} onClick={onClose} />,
+        document.body,
+      ) : null}
 
-      {t.visible && (
+      {showOverlay ? createPortal(
         <div
           className={`fixed z-50 left-1/2 -translate-x-1/2 bottom-[84px] w-[clamp(340px,94vw,600px)] md:w-[clamp(520px,62vw,780px)] xl:w-[clamp(640px,48vw,920px)] h-[clamp(440px,74dvh,620px)] md:h-[clamp(520px,78dvh,800px)] xl:h-[clamp(560px,82dvh,920px)] rounded-2xl bg-[var(--bg-card)] border border-[var(--overlay-border)] shadow-[0_24px_64px_rgba(0,0,0,0.5)] flex flex-col overflow-hidden ${t.exiting ? 'animate-scale-down' : 'animate-scale-up'}`}
           role="dialog"
@@ -183,8 +192,9 @@ export default function CopilotView({ endpoints, view, open, onClose, onOpen, re
               </>
             )}
           </div>
-        </div>
-      )}
+        </div>,
+        document.body,
+      ) : null}
 
       {view.chrome !== 'popup' && (
         <div className="fixed z-50 left-1/2 -translate-x-1/2 bottom-4 w-[clamp(340px,94vw,600px)] md:w-[clamp(520px,62vw,780px)] xl:w-[clamp(640px,48vw,920px)] animate-fade-in">

@@ -99,24 +99,6 @@ export function hasPendingNotAvailableWork(e: Pick<Enquiry, "items">): boolean {
   return ((e as any).items ?? []).some((it: any) => openItemLoops(it, 'not_available').length > 0);
 }
 
-/** New vendor quotes since the decision: a decided item (finalRate set) with
- *  quotes logged AFTER it was finalized that management hasn't shared yet.
- *  Surfaces the item back in the management queue. Rows lacking timestamps
- *  fall back to not-pending (never false-positive on legacy rows).
- *  Rate-available / not-available items skip the loop entirely — never unreviewed. */
-export function itemHasUnreviewedQuotes(it: any): boolean {
-  if ((it as any)?.rateAvailable || (it as any)?.notAvailable) return false;
-  if (it?.finalRate === undefined || it?.finalRate === null) return false;
-  const fin = Date.parse(String(it?.finalizedAt ?? ""));
-  if (!Number.isFinite(fin)) return false;
-  return ((it?.rates ?? []) as any[]).some((r: any) => {
-    const q = Date.parse(String(r?.quotedAt ?? ""));
-    if (!Number.isFinite(q) || q <= fin) return false;
-    if (r?.sharedWithSales === true) return false;
-    return true;
-  });
-}
-
 /** One fresh line is quotable even on a concluded row (card stays editable). */
 export function isFreshQuotableItem(it: ItemDecisionShape): boolean {
   return !(it as any)?.rateAvailable && !(it as any)?.notAvailable && openItemLoops(it, 'not_available').length === 0 && !(it as any)?.internalRates && openItemLoops(it, 'spec').length === 0
@@ -189,9 +171,10 @@ export function isManagementPendingEnquiry(e: EnquiryShape): boolean {
   if (!reopened && String((e as any).rateStatus ?? '') === 'sent') return false;
   const zs = String((e as any).zohoStatus ?? '').trim().toLowerCase();
   if (!reopened && zs && zs !== 'draft') return false;
-  // Decided items with new unshared vendor quotes since the decision come
-  // back for review/share — plus open not-available asks awaiting approval.
-  return items.some((it: any) => itemNeedsDecision(it) || itemHasUnreviewedQuotes(it) || openItemLoops(it, 'not_available').length > 0);
+  // Decided items stay decided: quotes arriving after finalization keep the
+  // committed rate (applyLateQuoteReopen) and never reopen the queue — plus
+  // open not-available asks awaiting approval.
+  return items.some((it: any) => itemNeedsDecision(it) || openItemLoops(it, 'not_available').length > 0);
 }
 
 /** Open spec ask: procurement opened it and sales hasn't answered yet.

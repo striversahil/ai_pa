@@ -1,7 +1,8 @@
 # Rewrite log — /automations vs /session split + duplication cleanup
 
-Rules and design: the `founder-os-codekeeper` skill (`references/automation-vs-session.md`,
-`references/rewrite-plan.md`). One line per commit below. Metrics come from
+Rules and design: AGENTS.md ("Automation vs Session boundary", "Coding practices"), architecture.md
+§16/§18, and the skill `.claude/skills/ai-pa-code-discipline/` (replaces the off-repo
+`founder-os-codekeeper` skill). One line per commit below. Metrics come from
 `node scripts/dup-audit.mjs .`; the floor is `scripts/guards/rewrite-baseline.json`.
 
 ## Decisions (founder, 2026-11-12)

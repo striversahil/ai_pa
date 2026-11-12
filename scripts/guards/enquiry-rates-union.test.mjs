@@ -173,3 +173,54 @@ describe('rates union: stale snapshots never delete quotes', () => {
     assert.deepStrictEqual(vendorsOf(out), ['CBPL', 'CBPL']);
   });
 });
+
+describe('decide resolves flags: a committed decision auto-answers pre-save open loops', () => {
+  // Founder decision 2026-11-12 (decided = done): flags raised BEFORE the
+  // save never strand a decided row out of History.
+  const flaggedDecided = () => ({
+    name: 'X', qty: '', spec: 's',
+    rates: [{ ...CBPL_GEAR }],
+    selectedVendor: 'CBPL', finalRate: 54920, finalizedAt: '2026-10-06T10:11:09.544Z',
+    loops: [{ id: 'lp_spec_1', kind: 'spec', text: 'Send pic', openedBy: 'procurement', openedAt: '2026-10-06T09:00:00.000Z', holder: 'sales', status: 'open' }],
+  });
+  const openOf = (out) => (out.loops ?? []).filter((l) => l?.status === 'open');
+
+  it('[management] finalize answers the carried spec flag, decision stands', () => {
+    const out = normalizeItemWrites([flaggedDecided()], { ...CTX.management, storedItems: [flaggedDecided()] })[0];
+    assert.strictEqual(openOf(out).length, 0);
+    const rec = out.loops.find((l) => l?.id === 'lp_spec_1');
+    assert.strictEqual(rec?.status, 'answered');
+    assert.strictEqual(rec?.answer?.text, 'Auto-resolved — decided');
+    assert.strictEqual(out.finalRate, 54920);
+  });
+
+  it('[sales] plain save on a decided+flagged item resolves the flag too', () => {
+    const out = normalizeItemWrites([flaggedDecided()], { ...CTX.sales, storedItems: [flaggedDecided()] })[0];
+    assert.strictEqual(openOf(out).length, 0);
+    assert.strictEqual(out.finalRate, 54920);
+  });
+
+  it('a flag raised in the same save is never eaten', () => {
+    const stored = flaggedDecided();
+    stored.loops = [];
+    const incoming = flaggedDecided();
+    incoming.loops = [];
+    incoming.loopOpen = { kind: 'query', text: 'other make please' };
+    const out = normalizeItemWrites([incoming], { ...CTX.sales, storedItems: [stored] })[0];
+    const open = openOf(out);
+    assert.strictEqual(open.length, 1);
+    assert.strictEqual(open[0].kind, 'query');
+    assert.strictEqual(out.finalRate, 54920);
+  });
+
+  it('fresh spec re-flag still wipes the decision (re-quote rule stands)', () => {
+    const stored = flaggedDecided();
+    stored.loops = [];
+    const incoming = flaggedDecided();
+    incoming.loops = [];
+    incoming.specIssue = 'dimension missing';
+    const out = normalizeItemWrites([incoming], { ...CTX.procurementViewer, storedItems: [stored] })[0];
+    assert.strictEqual(out.finalRate, undefined);
+    assert.ok(openOf(out).some((l) => l.kind === 'spec'));
+  });
+});
