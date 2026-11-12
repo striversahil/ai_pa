@@ -126,15 +126,64 @@ export function registerWorkRoutes(app: Hono<{ Bindings: Bindings }>): void {
           },
         });
       } catch { /* audit best-effort */ }
+      // Phase 6a producer: completing someone else's action notifies them.
+      try {
+        const { notifyUsers } = await import('../../modules/core/notify');
+        const actorName = caller.employeeId ?? 'a manager';
+        if (action.assigneeId && action.assigneeId !== caller.employeeId) {
+          await notifyUsers([{
+            employeeId: String(action.assigneeId), title: 'Follow-up marked done',
+            body: `${String(action.title ?? 'A follow-up').slice(0, 120)} — completed by ${actorName}.`,
+            entityType: 'core_action', entityId: action.id, actionId: action.id,
+          }], caller.employeeId);
+        }
+      } catch { /* never block completion */ }
       return c.json({ action: shapeAction(row, await employeeNames(p, [row.assigneeId].filter(Boolean))) });
     } catch (e: any) {
       return c.json({ error: e?.message ?? 'complete failed' }, 500);
     }
   });
 
+  // Phase 6a: in-app pull — own QUEUED notifications, newest first.
   app.get('/api/notifications', async (c) => {
     const v = await viewer(c);
     if (v.error) return v.error;
-    return c.json({ notifications: [] });
+    try {
+      const { prisma } = deps();
+      const caller = await resolveCaller(prisma as any, v.me.user?.id ?? null, v.me);
+      if (!caller.employeeId) return c.json({ notifications: [], unread: 0 });
+      const rows: any[] = await (prisma as any).coreNotification?.findMany?.({
+        where: { employeeId: caller.employeeId, status: 'QUEUED' },
+        orderBy: { createdAt: 'desc' }, take: 100,
+      }).catch(() => []) ?? [];
+      return c.json({
+        unread: rows.length,
+        notifications: rows.map((r: any) => ({
+          id: String(r.id), title: String(r.title ?? ''), body: String(r.body ?? ''),
+          entityType: r.entityType ?? null, entityId: r.entityId ?? null,
+          actionId: r.actionId ?? null, createdAt: r.createdAt ?? null,
+        })),
+      });
+    } catch (e: any) {
+      return c.json({ error: e?.message ?? 'notifications unavailable' }, 500);
+    }
+  });
+
+  app.post('/api/notifications/:id/read', async (c) => {
+    const v = await viewer(c);
+    if (v.error) return v.error;
+    try {
+      const { prisma } = deps();
+      const p = prisma as any;
+      const caller = await resolveCaller(p, v.me.user?.id ?? null, v.me);
+      const row: any = await p.coreNotification?.findUnique?.({ where: { id: c.req.param('id') ?? '' } }).catch(() => null);
+      if (!row) return c.json({ error: 'no such notification' }, 404);
+      if (!caller.employeeId || String(row.employeeId) !== caller.employeeId) return c.json({ error: 'not yours' }, 403);
+      const { markNotificationRead } = await import('../../modules/core/notify');
+      await markNotificationRead(String(row.id));
+      return c.json({ ok: true });
+    } catch (e: any) {
+      return c.json({ error: e?.message ?? 'mark-read failed' }, 500);
+    }
   });
 }

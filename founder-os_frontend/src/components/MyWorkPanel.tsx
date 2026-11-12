@@ -10,7 +10,7 @@ import React, { useCallback, useMemo, useState } from "react";
 import { useAuth } from "@/auth/AuthContext";
 import { useLiveQuery } from "@/hooks/useLiveData";
 import { hasSalesManagerAccess } from "./SalesControllerPanel";
-import { completeAction, fetchMyWork, fetchTeamWork, type WorkAction, type WorkPayload } from "@/work/api";
+import { completeAction, fetchMyWork, fetchTeamWork, fetchNotifications, markNotificationRead, type WorkAction, type WorkPayload, type AppNotification } from "@/work/api";
 import { groupByAssignee, isOverdue, sortWork } from "@/work/queue";
 
 function istTodayYmd(): string {
@@ -59,6 +59,23 @@ export default function MyWorkPanel() {
 
   const myQuery = useLiveQuery<WorkPayload>(fetchMyWork);
   const teamQuery = useLiveQuery<WorkPayload>(fetchTeamWork);
+  // Phase 6a: in-app pull — unread notifications, live on any data-changed.
+  const notesQuery = useLiveQuery<{ unread: number; notifications: AppNotification[] }>(fetchNotifications);
+  const [readId, setReadId] = useState<string | null>(null);
+
+  const markRead = useCallback(async (id: string) => {
+    setReadId(id);
+    try {
+      await markNotificationRead(id);
+      notesQuery.refresh();
+    } catch { /* pull again on next event */ }
+    finally {
+      setReadId(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const notes = useMemo(() => notesQuery.data?.notifications ?? [], [notesQuery.data]);
 
   const myActions = useMemo(() => sortWork(myQuery.data?.actions ?? [], today), [myQuery.data, today]);
   const teamGroups = useMemo(
@@ -87,6 +104,32 @@ export default function MyWorkPanel() {
   return (
     <div className="space-y-4">
       {message ? <p className="text-xs text-red-600">{message}</p> : null}
+
+      {notes.length > 0 ? (
+        <section>
+          <h2 className="mb-2 text-sm font-semibold text-[var(--text-primary)]">
+            Notifications · {notesQuery.data?.unread ?? notes.length} unread
+          </h2>
+          <ul className="space-y-2">
+            {notes.map((n) => (
+              <li key={n.id} className="flex items-center gap-3 rounded-xl border border-[var(--border-card)] bg-[var(--bg-card)] px-3 py-2">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-[var(--text-primary)]">{n.title}</p>
+                  {n.body ? <p className="mt-0.5 truncate text-xs text-[var(--text-secondary)]">{n.body}</p> : null}
+                </div>
+                <button
+                  type="button"
+                  disabled={readId === n.id}
+                  onClick={() => markRead(n.id)}
+                  className="rounded-lg bg-slate-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                >
+                  {readId === n.id ? "…" : "Mark read"}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       <section>
         <h2 className="mb-2 text-sm font-semibold text-[var(--text-primary)]">My queue</h2>

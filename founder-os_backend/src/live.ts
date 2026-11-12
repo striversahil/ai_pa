@@ -91,6 +91,8 @@ export const LiveEvent = {
   DeviceCalls: "device-calls",
   /** Stock inventory writes (SKU catalogue + movements). */
   Stock: "stock",
+  /** In-app notifications (Phase 6a): new core_notification rows for the reader. */
+  Notifications: "notifications",
 } as const;
 
 export type LiveEventType = (typeof LiveEvent)[keyof typeof LiveEvent];

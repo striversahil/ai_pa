@@ -92,10 +92,30 @@ export async function projectEstimateFollowups(p: any, limit = 500): Promise<Pro
         });
         await writeAudit(p, id, 'create', { projector: CATEGORY, estimateId: a.estimateId }, 'core-projector: opened follow-up');
         summary.opened++;
+        // Phase 6a producer: notify the assignee (edge-triggered, once per open).
+        try {
+          const { notifyUsers } = await import('./notify');
+          if (a.telecallerId) {
+            await notifyUsers([{
+              employeeId: String(a.telecallerId), title: 'New follow-up assigned',
+              body: title, entityType: 'core_action', entityId: id, actionId: id,
+            }]);
+          }
+        } catch { /* never block projection */ }
       } else if (existing.assigneeId !== (a.telecallerId ?? null)) {
         await p.coreAction.update({ where: { id: existing.id }, data: { assigneeId: a.telecallerId ?? null, title, dueAt, regionId, updatedAt: nowIso() } });
         await writeAudit(p, existing.id, 'update', { reassignedTo: a.telecallerId ?? null }, 'core-projector: holder changed');
         summary.reassigned++;
+        // Phase 6a producer: notify the new holder (edge-triggered).
+        try {
+          const { notifyUsers } = await import('./notify');
+          if (a.telecallerId) {
+            await notifyUsers([{
+              employeeId: String(a.telecallerId), title: 'Follow-up reassigned to you',
+              body: title, entityType: 'core_action', entityId: existing.id, actionId: existing.id,
+            }]);
+          }
+        } catch { /* never block projection */ }
       } else summary.skipped++;
     }
   } catch (e: any) {
@@ -142,6 +162,18 @@ export async function sweepEscalationsLogOnly(p: any, assigneeIds: string[], lim
         },
       });
       out.due++;
+      // Phase 6a producer: overdue digest as a real in-app notification
+      // (alongside the WOULD_ESCALATE log row — same once-per-day dedupe).
+      try {
+        const { notifyUsers } = await import('./notify');
+        if (a.assigneeId) {
+          await notifyUsers([{
+            employeeId: String(a.assigneeId), title: 'Follow-up overdue',
+            body: String(a.title ?? 'A follow-up is past its due date.'),
+            entityType: 'core_action', entityId: a.id, actionId: a.id,
+          }]);
+        }
+      } catch { /* never block the sweep */ }
     }
   } catch (e: any) {
     out.error = e?.message ?? 'sweep failed';

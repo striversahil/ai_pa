@@ -26,3 +26,21 @@ export interface WorkPayload {
 export const fetchMyWork = () => api.get<WorkPayload>("/work/my");
 export const fetchTeamWork = () => api.get<WorkPayload>("/work/team");
 export const completeAction = (id: string) => api.post<{ action: WorkAction }>(`/work/actions/${encodeURIComponent(id)}/complete`);
+
+export interface AppNotification {
+  id: string;
+  title: string;
+  body: string;
+  entityType: string | null;
+  entityId: string | null;
+  actionId: string | null;
+  createdAt: string | null;
+}
+
+export interface NotificationsPayload {
+  unread: number;
+  notifications: AppNotification[];
+}
+
+export const fetchNotifications = () => api.get<NotificationsPayload>("/notifications");
+export const markNotificationRead = (id: string) => api.post<{ ok: boolean }>(`/notifications/${encodeURIComponent(id)}/read`);

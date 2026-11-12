@@ -1,6 +1,6 @@
 {
   "signedBy": "striversahil@gmail.com",
-  "signedAt": "2026-11-11T17:50:19.345Z",
+  "signedAt": "2026-11-12T00:40:13.079Z",
   "files": {
     "migrations/0125_core_foundation.sql": "3a2779be49f5e08160da2981b30ee924188f2cba2189074051bbfed24ec36fdc",
     "migrations/0126_core_identity.sql": "c4766e18acbea714405aaec811dee9c4f38896063d4f32195cb0477937044699",
@@ -16,15 +16,16 @@
     "src/modules/core/customers.ts": "91dae9b299493df93311e21eea702cbba242223ee5810006109442574029c530",
     "src/modules/core/events.ts": "a772e724473283066110ab806751f2fcb6434a1dba41415500e2e83a50b2e35e",
     "src/modules/core/finance.ts": "288f6859a5281942ae37887f802e5f62f52b08c9773298347a9591d59af68918",
+    "src/modules/core/notify.ts": "99670d68e178dad9927dea6dd4958710e3470fa42f6380c1802972265408e30d",
     "src/modules/core/numbering.ts": "ca432934aaa063d4a17a68ca0fc3ff96a21002947b4f1c01aa084a3cf8ca8b78",
     "src/modules/core/orders.ts": "15a4d71b50c73075c3b1cc42d8e36a348c21da202a78d0d7802baa85aec10e6b",
     "src/modules/core/permissions.ts": "54c9d2ddc4e3ed10e0464e7613c15d127666e2848b9549805f3ea181c6438318",
-    "src/modules/core/projectors.ts": "7db18796f2833fcee2c36a49bfb31a819fdf94442b9edafb8345454fd60387f3",
+    "src/modules/core/projectors.ts": "8eaf21a949409a311d438ae4c3df587fe714bc6159ff402fd46db679bd18d1cc",
     "src/modules/core/sales.ts": "035a9fc2c54a303a3276add35c36cd8285d914bfbc61e0b0598c20519d31d3dc",
     "src/modules/core/stages.ts": "90d4d088c2d049c86568c8529180f0c29d5d1f2b57642ccc4bd2a1f3d1d1a678",
     "src/modules/core/stock.ts": "6691d33bf1a9b91affe3304011312b33e086ae67e4cb4bcb6cc48cecfaa147aa",
     "src/modules/core/sync.ts": "23f3cf2dbade835e2f1d4385498d3513f57469f72df63f88574fa18b470c9f51",
-    "src/worker/routes/work.ts": "e5fea1d072e438cbc20e693b673694b5006d58f9006aa413349df0ca771e9560",
+    "src/worker/routes/work.ts": "f8552c5eab1286e35104f8c4b07dc90c025fdb12065bdf59417b3b32bc2b4754",
     "scripts/core-guard.mjs": "cc65f1e903bd2f2e3555c178ccacd2776c099f9707bbec73a7782d593bc03837"
   }
 }
