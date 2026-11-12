@@ -275,6 +275,11 @@ function registerDebtorsTrackerPrefix(app: Hono<{ Bindings: Bindings }>, prefix:
     }
     try {
       const contact = await updateCustomerSituation(key, patch, await actorName(c));
+      // Phase 5b dual-write: structured promise converges in core.
+      try {
+        const { mirrorSituationPromise } = await import('../../modules/core/finance');
+        await mirrorSituationPromise(key);
+      } catch { /* non-fatal */ }
       notifyLive(c, { type: LiveEvent.Debtors });
       return c.json({ ok: true, contact });
     } catch (e) { return errorResponse(c, e); }
@@ -302,6 +307,11 @@ function registerDebtorsTrackerPrefix(app: Hono<{ Bindings: Bindings }>, prefix:
         remark: String((body as any)?.remark ?? ''),
         actor: await actorName(c),
       });
+      // Phase 5b dual-write: parse the new remark into a promise row (or drop).
+      try {
+        const { mirrorRemarkPromise } = await import('../../modules/core/finance');
+        await mirrorRemarkPromise(String((remark as any)?.id ?? ''));
+      } catch { /* non-fatal */ }
       notifyLive(c, { type: LiveEvent.Debtors });
       return c.json({ ok: true, remark });
     } catch (e) { return errorResponse(c, e); }
@@ -315,6 +325,11 @@ function registerDebtorsTrackerPrefix(app: Hono<{ Bindings: Bindings }>, prefix:
     } catch (e) { return scopeError(c, e); }
     try {
       await deleteCustomerRemark(c.req.param('remarkId'), await actorName(c));
+      // Phase 5b dual-write: deleted remarks leave core promises.
+      try {
+        const { mirrorRemarkPromise } = await import('../../modules/core/finance');
+        await mirrorRemarkPromise(c.req.param('remarkId'));
+      } catch { /* non-fatal */ }
       notifyLive(c, { type: LiveEvent.Debtors });
       return c.json({ ok: true });
     } catch (e) { return errorResponse(c, e); }

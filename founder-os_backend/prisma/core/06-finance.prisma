@@ -3,6 +3,26 @@
 // Locked by prisma/core.lock + scripts/core-guard.mjs — humans only.
 //
 // 5a scope: core_receipt only (dues projections + open receivables).
+// 5b: core_promise (dated commitments; status derived on read, never stored).
+
+model CorePromise {
+  id               String  @id
+  origin           String  @default("situation") // situation | remark
+  customerKey      String  @default("")
+  customerName     String  @default("")
+  masterCustomerId String  @default("")
+  promisedDate     String  @default("")
+  startDay         String  @default("")
+  amount           Float?
+  remarkId         String?
+  promisedBy       String  @default("")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([customerKey])
+  @@index([promisedDate])
+  @@map("core_promise")
+}
 // core_invoice/lines, core_promise, ledgers/journals land in 5b+.
 
 model CoreReceipt {
