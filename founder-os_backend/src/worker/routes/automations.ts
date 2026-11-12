@@ -1,9 +1,17 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// routes/automations.ts — automation admin API + WhatsApp Marketing.
+// routes/automations.ts — the automation REGISTRY API (the machine side).
+//
+//   GET   /api/automations          registry list (admin: full; others: trimmed)
+//   GET   /api/automations/:slug    definition + recent runs (admin)
+//   PATCH /api/automations/:slug    enable/pause, cooldown (admin)
+//   GET   /api/automations/:slug/data   DEPRECATED alias → /api/session/workspaces/:slug/data
+//
+// Viewer-facing reads (which dashboards can I open, my scoped data) belong to
+// routes/session.ts. Do not add business-data endpoints here.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import { deps, getEntryOrReload, DASHBOARD_SLUGS, getMe, authStore, readSessionCookie, requireScope, type Bindings } from '../context';
-import { AuthError } from '../../modules/auth/types';
+import { serveWorkspaceData } from '../workspace-data';
 import { AUTOMATION_SCOPES, accessScopesFor } from '../../modules/automation/registry-worker';
 
 function parseJson(value: string | null | undefined): unknown {
@@ -87,139 +95,15 @@ export function registerAutomationRoutes(app: Hono<{ Bindings: Bindings }>): voi
     return c.json(row);
   });
 
+  // DEPRECATED alias of GET /api/session/workspaces/:slug/data (same handler,
+  // worker/workspace-data.ts). Kept for old clients/bookmarks + the public
+  // telecalling/NeoDove paths in AUTH_EXEMPT. Viewer scoping lives in
+  // modules/workspaces/scoping.ts — do not add per-slug logic here.
   app.get('/api/automations/:slug/data', async (c) => {
-    const { AutomationEngine } = deps();
-    // Legacy slug alias: old bookmarks/clients still resolve the dashboard.
-    const slug = c.req.param('slug') === 'payment-tracker' ? 'debtors-tracker' : c.req.param('slug');
-    try {
-      if (!AutomationEngine.get(slug)) await getEntryOrReload(slug);
-      const query = { ...c.req.query() };
-      // Debtors Tracker reads need `debtors-tracker` or the legacy `accounts`
-      // alias (the generic data route would otherwise serve it to any
-      // signed-in user).
-      if (slug === 'debtors-tracker') {
-        try {
-          const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
-          if (!me) throw new AuthError('UNAUTHENTICATED', 'Authentication required', 401);
-          const held = new Set(((me.scopes ?? []) as string[]).map((s) => String(s).toLowerCase()));
-          const allowed = accessScopesFor('debtors-tracker', 'debtors-tracker').some((s) => held.has(s));
-          if (!me.isAdmin && !allowed) {
-            throw new AuthError('FORBIDDEN', "Requires 'debtors-tracker' permission", 403);
-          }
-        } catch (e) {
-          if (e instanceof AuthError) return c.json({ error: e.message }, ((e as any).status ?? 403) as any);
-          throw e;
-        }
-      }
-      // For the telecalling dashboard, non-admin sales agents are scoped to
-      // their OWN lead conversion + at-risk data (leaderboard stays team-wide).
-      // The agent is identified from the signed-in session: exact roster-email
-      // match first, then a loose name match ("muskan" → "Muskan",
-      // "samar" → "Samarjeet"). Root/admin/MIS always see the full team view.
-      if (c.req.param('slug') === 'telecalling') {
-        // Scoping is decided ONLY here, from the session. `?selfAgentId=` is
-        // never trusted from the client: the endpoint is auth-exempt (see
-        // AUTH_EXEMPT), so an anonymous caller could otherwise hand-pick any
-        // staff id and read that region's drill. Always start by dropping it.
-        delete query.selfAgentId;
-        try {
-          const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
-          const isAdmin = !!me?.isAdmin || (me?.scopes ?? []).includes('mis') || (me?.scopes ?? []).includes('sales-head');
-          // Non-admin sales agents get their OWN roster id injected so the
-          // payload can scope `risk`/`recent` (and coerce drills) to them.
-          // Root/MIS/sales-head (and anonymous) stay unscoped = full team.
-          if (me && !isAdmin) {
-            const selfId = await resolveSelfTelecaller(c);
-            if (selfId) query.selfAgentId = selfId;
-          }
-        } catch { /* no session → unscoped */ }
-      }
-      // For the accounts taskbar, non-admin viewers are scoped to their OWN
-      // lane (telecalling-style): the payload only contains their role +
-      // shared tasks, so other lanes can't leak through tab-switching or
-      // direct API calls. Identity = explicit `?as=` (the "Acting as" picker,
-      // authoritative for shared logins) with session matching as fallback.
-      if (c.req.param('slug') === 'accounts') {
-        try {
-          const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
-          const isAdmin = !!me?.isAdmin || (me?.scopes ?? []).includes('mis');
-          if (me && !isAdmin) {
-            const { resolveSelfAccountant } = await import('../../automations/accounts/service');
-            const self = await resolveSelfAccountant((query as any).as ?? null, me as any);
-            (query as any).scope = { scope: self, isAdmin: false };
-          } else if (me) {
-            (query as any).scope = { scope: null, isAdmin: true };
-          }
-        } catch { /* no session → unscoped (auth gate normally blocks first) */ }
-      }
-      if (c.req.param('slug') === 'digital-marketing') {
-        try {
-          const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
-          const isAdmin = !!me?.isAdmin || (me?.scopes ?? []).includes('mis');
-          if (me && !isAdmin) {
-            const { resolveSelfDigitalMarketingManager } = await import('../../automations/digital-marketing/service');
-            const self = await resolveSelfDigitalMarketingManager((query as any).as ?? null, me as any);
-            (query as any).scope = { scope: self, isAdmin: false };
-          } else if (me) {
-            (query as any).scope = { scope: null, isAdmin: true };
-          }
-        } catch { /* no session → unscoped */ }
-      }
-      if (c.req.param('slug') === 'human-resources') {
-        try {
-          const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
-          const scopes = (me?.scopes ?? []) as string[];
-          // Anyone granted the HR dashboard gets the complete HR view: every
-          // task, the full roster and all expenses/inventory. No self-scoping.
-          const hasFullView = !!me?.isAdmin || scopes.includes('mis') || scopes.includes('human-resources');
-          if (me && hasFullView) {
-            (query as any).scope = { scope: null, isAdmin: true };
-          } else if (me) {
-            const { resolveSelfHumanResourcesMember } = await import('../../automations/human-resources/service');
-            // Users without HR/MIS access get no cross-user data.
-            const self = await resolveSelfHumanResourcesMember(null, me as any);
-            (query as any).scope = { scope: self, isAdmin: false };
-          }
-        } catch { /* no session → unscoped */ }
-      }
-      // Customer master: the payload is the whole book (~2.6k rows with contact
-      // details), so it must not be readable by any signed-in user. Same rule
-      // as the write routes — dashboard grant, the sales board it embeds in, or
-      // sales leadership.
-      if (slug === 'master-data') {
-        try {
-          const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
-          const { canViewMaster } = await import('../../modules/master-data/editors');
-          if (!canViewMaster(me)) {
-            return c.json({ error: "Requires 'master-data' permission" }, 403);
-          }
-        } catch (e) {
-          if (e instanceof AuthError) return c.json({ error: e.message }, ((e as any).status ?? 403) as any);
-          return c.json({ error: "Requires 'master-data' permission" }, 403);
-        }
-      }
-      // Reporting Sheet: viewer-filtered payload. The guard attaches the session
-      // so data() can narrow to the departments this viewer may open; anyone
-      // with no department and no viewer grant is rejected here, not inside.
-      if (slug === 'reporting-sheet') {
-        try {
-          const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
-          const { viewableDepartments } = await import('../../modules/reporting/access');
-          if (!me || viewableDepartments(me).length === 0) {
-            return c.json({ error: "Requires 'reporting-sheet' permission" }, 403);
-          }
-          (query as any).reportingMe = me;
-        } catch (e) {
-          if (e instanceof AuthError) return c.json({ error: e.message }, ((e as any).status ?? 403) as any);
-          return c.json({ error: "Requires 'reporting-sheet' permission" }, 403);
-        }
-      }
-      const data = await AutomationEngine.getData(slug, query);
-      return c.json(data);
-    } catch (e: any) {
-      console.log(`automation data failed for '${c.req.param('slug')}':`, e?.message);
-      return c.json({ error: 'no data provider' }, 404);
-    }
+    const res = await serveWorkspaceData(c, c.req.param('slug'));
+    res.headers.set('Deprecation', 'true');
+    res.headers.set('Link', `</api/session/workspaces/${c.req.param('slug')}/data>; rel="successor-version"`);
+    return res;
   });
 }
 
