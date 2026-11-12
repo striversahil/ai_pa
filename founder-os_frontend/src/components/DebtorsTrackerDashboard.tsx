@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useLiveDashboard } from "@/hooks/useLiveData";
+import { useLiveQuery } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
 import type { CustomerAgeingRow, LiveInvoice, DebtorsTrackerPayload } from "@/debtors-tracker/types";
 import { deleteCollection, getDebtorsTrackerData, recordReceivablesExport, resetDebtorsTracker, runReminderDryRun } from "@/debtors-tracker/api";
@@ -23,11 +23,28 @@ import { Card } from "./debtors-tracker/ui";
 
 type View = "summary" | "ageing" | "invoices" | "collections" | "ledger" | "reminders" | "accounts";
 
+/** Ignore socket echoes of our own writes inside this window (debounce is 1.5s). */
+const ECHO_SUPPRESS_MS = 2000;
+
 export default function DebtorsTrackerDashboard() {
   const { me } = useAuth();
   const canAccounts = !!me && (me.isAdmin || me.scopes.includes("accounts"));
 
-  const dash = useLiveDashboard<DebtorsTrackerPayload>(getDebtorsTrackerData);
+  /**
+   * Every mutation below broadcasts a `debtors` live event (see backend
+   * `worker/routes/debtors-tracker.ts` — situation, remarks, imports, edits
+   * all `notifyLive`). Without suppression each save refetches twice: once
+   * here, once ~1.5s later when the socket echo arrives. Stamping our own
+   * writes and ignoring events inside the echo window keeps it to one fetch.
+   */
+  const lastMutatedRef = useRef(0);
+  const dash = useLiveQuery<DebtorsTrackerPayload>(getDebtorsTrackerData, {
+    events: () => Date.now() - lastMutatedRef.current > ECHO_SUPPRESS_MS,
+  });
+  const refreshAfterMutation = () => {
+    lastMutatedRef.current = Date.now();
+    dash.refresh();
+  };
 
   const [view, setView] = useState<View | null>(null);
   const [importKind, setImportKind] = useState<ImportKind | null>(null);
@@ -91,7 +108,7 @@ export default function DebtorsTrackerDashboard() {
     try {
       await resetDebtorsTracker();
       setToast("Debtors tracker data cleared. Customer contacts were kept.");
-      dash.refresh();
+      refreshAfterMutation();
     } catch (e: any) {
       setToast(e?.message ?? "Reset failed");
     } finally {
@@ -104,7 +121,7 @@ export default function DebtorsTrackerDashboard() {
     try {
       await deleteCollection(c.id);
       setToast("Collection deleted.");
-      dash.refresh();
+      refreshAfterMutation();
     } catch (e: any) {
       setToast(e?.message ?? "Delete failed");
     }
@@ -123,7 +140,7 @@ export default function DebtorsTrackerDashboard() {
     try {
       await runReminderDryRun();
       setToast("Today's reminder dry-run logged. Nothing was sent on WhatsApp.");
-      dash.refresh();
+      refreshAfterMutation();
     } catch (e: any) {
       setToast(e?.message ?? "Reminder run failed");
     } finally {
@@ -292,7 +309,7 @@ export default function DebtorsTrackerDashboard() {
           onEdit={setEditing}
           onGoToAccounts={() => setView("accounts")}
           canAccounts={canAccounts}
-          onChanged={() => dash.refresh()}
+          onChanged={() => refreshAfterMutation()}
         />
       )}
       {data && activeView === "collections" && (
@@ -323,7 +340,7 @@ export default function DebtorsTrackerDashboard() {
         onDone={(msg) => {
           setImportKind(null);
           setToast(msg);
-          dash.refresh();
+          refreshAfterMutation();
         }}
       />
 
@@ -335,7 +352,7 @@ export default function DebtorsTrackerDashboard() {
         onSaved={(msg) => {
           setEditing(null);
           setToast(msg);
-          dash.refresh();
+          refreshAfterMutation();
         }}
       />
 
@@ -347,7 +364,7 @@ export default function DebtorsTrackerDashboard() {
         onSaved={(msg) => {
           setContact(null);
           setToast(msg);
-          dash.refresh();
+          refreshAfterMutation();
         }}
       />
 
@@ -359,7 +376,7 @@ export default function DebtorsTrackerDashboard() {
         onSaved={(msg) => {
           // Stays open so several daily remarks / promise edits can be added.
           setToast(msg);
-          dash.refresh();
+          refreshAfterMutation();
         }}
       />
 
