@@ -50,7 +50,7 @@ export default function AccountsDashboard() {
   // reconciles in the background — the same contract as sales enquiries.
   // All payload lists holding log rows; rapid taps on one log serialize via
   // the mutation key, taps on different logs run concurrently.
-  const LISTS = useMemo(() => ["items", "senior", "junior", "overdueList", "incompleteList", "history"] as const, []);
+  const LISTS = useMemo(() => ["items", "senior", "junior", "overdueList", "history"] as const, []);
   const { mutate } = useOptimisticMutation(dash);
   const saveLog = React.useCallback((logId: string, body: Record<string, unknown>, patch: Partial<TaskItem>) =>
     mutate(
@@ -214,9 +214,9 @@ export default function AccountsDashboard() {
   // Incomplete tab shows the full not-done backlog (past-due unresolved logs).
   // The payload is already lane-scoped server-side, so admins see everything and
   // everyone else sees their own lane — no further narrowing by lane tab.
-  const incompleteCount = (data?.incompleteList ?? data?.overdueList ?? []).length;
+  const incompleteCount = (data?.overdueList ?? []).length;
   const incompleteTray = useMemo(() => {
-    const list = data?.incompleteList ?? data?.overdueList ?? [];
+    const list = data?.overdueList ?? [];
     if (isIncompleteView || view === "tasks") return list;
     if (view === "my") return selfRole ? list.filter((t) => t.ownerRole === "either" || t.ownerRole === selfRole) : list;
     return list.filter((t) => t.ownerRole === "either" || t.ownerRole === view);
@@ -240,7 +240,7 @@ export default function AccountsDashboard() {
     };
     return { senior: stat(data.senior), junior: stat(data.junior) };
   }, [data]);
-  const backlogCount = (data?.incompleteList ?? data?.overdueList ?? []).length;
+  const backlogCount = (data?.overdueList ?? []).length;
   // Reference items follow the same lane visibility as tasks.
   const inUnscheduled = (u: UnscheduledItem) => {
     if (view === "my") return !selfRole || u.ownerRole === "either" || u.ownerRole === selfRole;
