@@ -43,6 +43,18 @@ async function requireSalesManager(c: any): Promise<boolean> {
   return scopes.includes('sales-head') || roles.includes('sales-head') || !!me.isAdmin;
 }
 
+/** Roster-mapping gate (founder decision 2026-11-12: HR owns employment
+ *  mapping). Sales-head/MIS keep their existing power; HR holders gain the
+ *  same Map/Link power so the register can become the single writer. */
+async function requireRosterManager(c: any): Promise<boolean> {
+  if (await requireSalesManager(c)) return true;
+  const me: any = await getViewerMe(c);
+  if (!me) return false;
+  if (!isApproved(me)) return false;
+  const scopes: string[] = me.scopes ?? [];
+  return scopes.includes('human-resources') || !!me.isAdmin;
+}
+
 /** Shared create-data builder for POST /api/telecallers + from-directory (one
  *  home — validation and field mapping live here, never copied per route). */
 function telecallerCreateData(body: any): { error?: string; data?: Record<string, unknown> } {
@@ -165,11 +177,11 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
   });
 
   // ── Roster mapping queue (Phase A; Worker-only, no Express mirror) ─────────
-  // Map a directory login onto the sales roster: HR creates the person, the
-  // sales head assigns region (+type/name) here. Email already rostered →
-  // 409 with linkTo (frontend offers Link = PUT email onto that row instead).
+  // Map a directory login onto the sales roster: HR creates the person, HR (or
+  // sales-head/MIS) assigns region (+type/name) here. Email already rostered →
+  // 409 with linkTo (frontend offers Link = attach email onto that row instead).
   app.post('/api/telecallers/from-directory', async (c) => {
-    if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head, MIS or root only' }, 403);
+    if (!(await requireRosterManager(c))) return c.json({ error: 'sales-head, MIS, HR or root only' }, 403);
     const { prisma } = deps();
     const fromBody = await readBody(c);
     const userId = String(fromBody?.userId ?? '');
@@ -197,6 +209,38 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     try { const { mirrorRosterRow } = await import('../../modules/core/sync'); await mirrorRosterRow('telecaller', (mapped as any).id ?? mapped); } catch { /* non-fatal */ }
     notifyLive(c, { type: LiveEvent.Telecalling });
     return c.json(mapped, 201);
+  });
+
+  // Link a directory login onto an EXISTING roster row (HR-owned mapping).
+  // Body: { rowId, userId }. The login's email is attached to the row after
+  // verifying no OTHER live row already claims it (409 with that row's id).
+  app.post('/api/telecallers/link', async (c) => {
+    if (!(await requireRosterManager(c))) return c.json({ error: 'sales-head, MIS, HR or root only' }, 403);
+    const { prisma } = deps();
+    const linkBody = await readBody(c);
+    const rowId = String(linkBody?.rowId ?? '');
+    const linkUserId = String(linkBody?.userId ?? '');
+    if (!rowId || !linkUserId) return c.json({ error: 'rowId and userId required' }, 400);
+    let linkUser: any = null;
+    try {
+      const users = await authStore(c).listUsers();
+      linkUser = (users as any[]).find((u) => String(u.id) === linkUserId) ?? null;
+    } catch { /* user table unavailable — 404 below */ }
+    if (!linkUser) return c.json({ error: 'login not found' }, 404);
+    if (linkUser.isRoot) return c.json({ error: 'the root login cannot be rostered' }, 403);
+    const linkEmail = String(linkUser.email ?? '').trim();
+    if (!linkEmail) return c.json({ error: 'login has no email — set one before linking' }, 400);
+    const rows = await prisma.telecaller.findMany({}).catch(() => []);
+    const target = (rows as any[]).find((t) => String(t.id) === rowId && !t.deleted);
+    if (!target) return c.json({ error: 'roster row not found' }, 404);
+    const other = (rows as any[]).find((t) => String(t.id) !== rowId && !t.deleted && String(t.email ?? '').toLowerCase().trim() === linkEmail.toLowerCase());
+    if (other) return c.json({ error: 'email already on another roster row', linkTo: other.id, name: other.name }, 409);
+    const linked = await prisma.telecaller.update({ where: { id: rowId }, data: { email: linkEmail } });
+    try { await invalidateRiskCache(); } catch { /* non-fatal */ }
+    try { const { invalidateFieldStaffCache } = await import('../../modules/field-visits/service'); await invalidateFieldStaffCache(); } catch { /* non-fatal */ }
+    try { const { mirrorRosterRow } = await import('../../modules/core/sync'); await mirrorRosterRow('telecaller', rowId); } catch { /* non-fatal */ }
+    notifyLive(c, { type: LiveEvent.Telecalling });
+    return c.json(linked);
   });
 
   app.put('/api/telecallers/:id', async (c) => {

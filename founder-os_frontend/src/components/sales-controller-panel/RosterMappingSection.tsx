@@ -8,7 +8,7 @@
 import { useMemo, useState } from "react";
 import { fetchDirectory } from "@/auth/api";
 import type { DirectoryRow } from "@/auth/directory";
-import { mapRosterFromDirectory, linkRosterEmail } from "@/telecalling/api";
+import { mapRosterFromDirectory, linkRosterByLogin } from "@/telecalling/api";
 import { useLiveDashboard } from "@/hooks/useLiveData";
 import type { RosterRow } from "../TelecallingDashboard";
 
@@ -78,7 +78,7 @@ export function RosterMappingSection({
     setBusyId(u.id);
     setError(null);
     try {
-      await linkRosterEmail(c.linkTo, u.email);
+      await linkRosterByLogin(c.linkTo, u.id);
       setConflicts((prev) => {
         const next = { ...prev };
         delete next[u.id];

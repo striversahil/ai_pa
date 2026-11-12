@@ -34,13 +34,13 @@ describe('roster mapping queue contract (Phase A)', () => {
   });
 
   it('sales-head/MIS gate + Worker-only (no Express mirror)', () => {
-    const block = route.slice(route.indexOf('from-directory'));
-    assert.ok(block.includes('requireSalesManager'), 'mapping must be sales-head/MIS gated');
+    assert.ok(route.includes('requireRosterManager'), 'mapping must use the roster-manager gate (sales-head/MIS + HR)');
+    assert.ok(route.includes("scopes.includes('human-resources')"), 'HR holders must pass the gate');
     let express = '';
     try {
       express = readFileSync(join(BACKEND_DIR, 'src', 'routes', 'telecalling.ts'), 'utf8');
     } catch { express = ''; }
-    assert.ok(!express.includes('from-directory'), 'no Express mirror (frozen)');
+    assert.ok(!express.includes('from-directory') && !express.includes('/link'), 'no Express mirror (frozen)');
   });
 
   it('new rows mirror into core (directory converges on next read)', () => {
@@ -48,9 +48,22 @@ describe('roster mapping queue contract (Phase A)', () => {
     assert.ok(block.includes("mirrorRosterRow('telecaller'"), 'mapped rows must mirror into core');
   });
 
+  it('link endpoint attaches a login email to an existing row (HR-capable)', () => {
+    assert.ok(route.includes("'/api/telecallers/link'"), 'link route must be registered');
+    const start = route.indexOf('/api/telecallers/link');
+    const next = route.indexOf('\n  app.', start + 1);
+    const block = next === -1 ? route.slice(start) : route.slice(start, next);
+    assert.ok(block.includes('requireRosterManager'), 'link must share the roster-manager gate');
+    assert.ok(block.includes('rowId and userId required'), 'link must require row + login');
+    assert.ok(block.includes('email already on another roster row'), 'link must refuse double-claims with 409');
+    assert.ok(block.includes("mirrorRosterRow('telecaller', rowId)"), 'linked rows must mirror into core');
+    assert.ok(!block.includes("app.put('/api/telecallers/:id'"), 'link must not widen the legacy PUT gate');
+  });
+
   it('frontend fetchers live in the domain api module', () => {
     const api = readFileSync(join(BACKEND_DIR, '..', 'founder-os_frontend', 'src', 'telecalling', 'api.ts'), 'utf8');
     assert.ok(api.includes('/api/telecallers/from-directory'), 'domain api must call the mapping endpoint');
+    assert.ok(api.includes('/api/telecallers/link'), 'domain api must call the scoped link endpoint');
     assert.ok(api.includes('worker/routes/telecalling.ts'), 'domain api must name its backend mirror');
     assert.ok(api.includes('linkTo'), 'conflict must surface linkTo for the Link offer');
   });

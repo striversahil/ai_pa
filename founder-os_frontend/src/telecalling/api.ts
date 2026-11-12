@@ -45,12 +45,14 @@ export async function mapRosterFromDirectory(input: MapRosterInput): Promise<unk
   return res.json();
 }
 
-/** Link an existing roster row to a login email (uses the existing PUT). */
-export async function linkRosterEmail(id: string, email: string): Promise<unknown> {
-  const res = await fetch(`/api/telecallers/${id}`, {
-    method: "PUT",
+/** Link a directory login onto an existing roster row (HR-owned mapping).
+ *  Uses the scoped link endpoint so HR holders can link (the legacy PUT stays
+ *  sales-head/MIS-only and untouched). */
+export async function linkRosterByLogin(rowId: string, userId: string): Promise<unknown> {
+  const res = await fetch("/api/telecallers/link", {
+    method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ rowId, userId }),
   });
   if (!res.ok) throw new Error(await readError(res));
   return res.json();
