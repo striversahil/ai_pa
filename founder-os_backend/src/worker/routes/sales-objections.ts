@@ -9,12 +9,13 @@
 // link); at least one of the two is required.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { authStore, getMe, isApproved, notifyLive, readSessionCookie, requireMisScope, type Bindings } from '../context';
+import { isApproved, notifyLive, requireMisScope, type Bindings } from '../context';
 import { addReply, createObjection, getObjection, listObjections, setObjectionStatus } from '../../modules/sales-objections/store';
 import { cleanObjectionInput } from '../../modules/sales-objections/types';
+import { getViewerMe } from '../viewer';
 
 async function viewer(c: any): Promise<any | null> {
-  const me: any = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null)).catch(() => null);
+  const me: any = await getViewerMe(c).catch(() => null);
   if (!me || !isApproved(me)) return null;
   if (me.isAdmin || me.isRoot) return me;
   const scopes: string[] = ((me.scopes ?? []) as string[]).map((s) => String(s).toLowerCase());
@@ -25,7 +26,7 @@ async function viewer(c: any): Promise<any | null> {
 /** Manager gate for replies + resolve/reopen (MIS / sales-head / root). */
 async function requireSalesManager(c: any): Promise<boolean> {
   try { await requireMisScope(c); return true; } catch { /* fall through */ }
-  const me: any = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+  const me: any = await getViewerMe(c);
   if (!me) return false;
   if (!isApproved(me)) return false;
   const scopes: string[] = me.scopes ?? [];

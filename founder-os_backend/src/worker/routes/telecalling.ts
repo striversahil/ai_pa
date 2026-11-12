@@ -9,7 +9,7 @@
 // owned by regions, never individuals.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { deps, requireMisScope, misScopeError, notifyLive, LiveEvent, authStore, getMe, isApproved, readSessionCookie, type Bindings } from '../context';
+import { deps, requireMisScope, misScopeError, notifyLive, LiveEvent, authStore, isApproved, type Bindings } from '../context';
 import {
   setEstimateCallTag,
   invalidateRiskCache,
@@ -27,13 +27,14 @@ import {
   setTypeRule,
 } from '../../automations/telecalling/client-segments';
 import { normalizeAgentPhone } from '../../automations/telecalling/util';
+import { getViewerMe } from '../viewer';
 
 /** Root/MIS/sales-head gate for the region-model management writes. Accepts
  * the scope or the role itself, so a sales-head role holder is authorized even
  * if the scope grant is missing from their session. */
 async function requireSalesManager(c: any): Promise<boolean> {
   try { await requireMisScope(c); return true; } catch { /* fall through */ }
-  const me: any = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+  const me: any = await getViewerMe(c);
   if (!me) return false;
   if (!isApproved(me)) return false;
   const scopes: string[] = me.scopes ?? [];
@@ -351,7 +352,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     if (!(await requireSalesManager(c))) {
       return c.json({ error: 'sales-head, MIS or root only' }, 403);
     }
-    const me: any = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null)).catch(() => null);
+    const me: any = await getViewerMe(c).catch(() => null);
     const body = await c.req.json().catch(() => ({}));
     try {
       const { holiday, created } = await markSalesHoliday({
@@ -406,7 +407,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     if (!(await requireSalesManager(c))) {
       return c.json({ error: 'sales-head, MIS or root only' }, 403);
     }
-    const me: any = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null)).catch(() => null);
+    const me: any = await getViewerMe(c).catch(() => null);
     const body = await c.req.json().catch(() => ({}));
     try {
       const result = await setManualSegment(body?.clientKey ?? body?.key, body?.segment, {
@@ -426,7 +427,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     if (!(await requireSalesManager(c))) {
       return c.json({ error: 'sales-head, MIS or root only' }, 403);
     }
-    const me: any = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null)).catch(() => null);
+    const me: any = await getViewerMe(c).catch(() => null);
     const body = await c.req.json().catch(() => ({}));
     const rules = Array.isArray(body?.rules) ? body.rules : [{ typeBase: body?.typeBase, segment: body?.segment }];
     try {
@@ -450,7 +451,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
   // Delete this block + manual-calls.ts + the Call Log tab when NeoDove is
   // trusted again.
   app.get('/api/telecalling/manual-calls/mode', async (c) => {
-    const me: any = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null)).catch(() => null);
+    const me: any = await getViewerMe(c).catch(() => null);
     if (!me) return c.json({ error: 'authentication required' }, 401);
     try {
       const { getCallSource } = await import('../../automations/telecalling/call-source');
@@ -474,7 +475,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
   });
 
   app.get('/api/telecalling/manual-calls', async (c) => {
-    const me: any = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null)).catch(() => null);
+    const me: any = await getViewerMe(c).catch(() => null);
     if (!me) return c.json({ error: 'authentication required' }, 401);
     const { prisma } = deps();
     const dayQ = String(c.req.query('day') ?? '').trim();
@@ -523,7 +524,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     }
     const tc: any = await prisma.telecaller.findUnique({ where: { id: telecallerId } }).catch(() => null);
     if (!tc || (tc as any).deleted) return c.json({ error: 'agent not found' }, 404);
-    const me: any = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null)).catch(() => null);
+    const me: any = await getViewerMe(c).catch(() => null);
     const now = new Date();
     try {
       const row: any = await (prisma as any).manualCallLog.upsert({
@@ -599,7 +600,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
       } catch { return c.json({ error: 'only sales managers or the agent herself can attach proof' }, 403); }
     }
     const { prisma } = deps();
-    const me: any = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null)).catch(() => null);
+    const me: any = await getViewerMe(c).catch(() => null);
     const ext = (file.name.split('.').pop() || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 8);
     const key = `manualcalls/${day}/${String(telecallerId).replace(/[^A-Za-z0-9_-]/g, '_')}/${crypto.randomUUID()}${ext ? '.' + ext : ''}`;
     try {
@@ -650,7 +651,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
   // Serve screenshot bytes (never exposes raw KV keys).
   app.get('/api/telecalling/manual-calls/file', async (c) => {
     if (!c.env.CHAT_FILES) return c.json({ error: 'File storage is not configured' }, 501);
-    const me: any = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null)).catch(() => null);
+    const me: any = await getViewerMe(c).catch(() => null);
     if (!me) return c.json({ error: 'authentication required' }, 401);
     const { prisma } = deps();
     const telecallerId = String(c.req.query('telecallerId') ?? '').trim();

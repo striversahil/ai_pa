@@ -18,7 +18,7 @@
 // region on their Telecaller roster row. No roster row ⇒ no orders.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { authStore, deps, getMe, isApproved, readSessionCookie, requireMisScope, misScopeError, notifyLive, type Bindings } from '../context';
+import { deps, isApproved, requireMisScope, misScopeError, notifyLive, type Bindings } from '../context';
 import {
   CrmError,
   amendOrderItems,
@@ -38,6 +38,7 @@ import {
 import { normalizeView } from '../../modules/crm/types';
 import { normalizeRegionFilter } from '../../modules/crm/region';
 import { resolveRosterMatch } from '../../modules/telecalling/self';
+import { getViewerMe } from '../viewer';
 
 interface Viewer {
   id: string;
@@ -61,7 +62,7 @@ const lower = (v: unknown) => String(v ?? '').toLowerCase();
 
 async function viewer(c: any): Promise<Viewer | null> {
   try {
-    const me: any = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+    const me: any = await getViewerMe(c);
     if (!me || !isApproved(me)) return null;
     const scopes = (Array.isArray(me.scopes) ? me.scopes : []).map(lower);
     const roles = (Array.isArray(me.roles) ? me.roles : []).map(lower);

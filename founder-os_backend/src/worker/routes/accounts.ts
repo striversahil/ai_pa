@@ -3,10 +3,7 @@
 // Mirror: founder-os_backend/src/routes/accounts.ts (Express alt runtime).
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import {
-  deps, requireMisScope, misScopeError, notifyLive, LiveEvent,
-  authStore, getMe, readSessionCookie, MAX_ATTACHMENT_BYTES, type Bindings,
-} from '../context';
+import { deps, requireMisScope, misScopeError, notifyLive, LiveEvent, MAX_ATTACHMENT_BYTES, type Bindings } from '../context';
 import {
   listAccountants, createAccountant, updateAccountant,
   listTemplates, createTemplate, updateTemplate, logTask, getAccountsExport,
@@ -16,10 +13,11 @@ import {
 import {
   listCashEntries, createCashEntry, updateCashEntry, deleteCashEntry,
 } from '../../automations/accounts/cash';
+import { getViewerMe } from '../viewer';
 
 async function actorName(c: any): Promise<string | null> {
   try {
-    const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+    const me = await getViewerMe(c);
     return me?.user?.name ?? me?.user?.email ?? null;
   } catch { return null; }
 }
@@ -101,7 +99,7 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
   // MIS. Task templates stay MIS-only above; these endpoints force
   // kind='payment' and refuse task rows both ways.
   async function paymentGate(c: any) {
-    const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null)).catch(() => null);
+    const me = await getViewerMe(c).catch(() => null);
     if (!me) throw new Error('Authentication required');
     const scopes = ((me as any)?.scopes ?? []) as string[];
     if ((me as any)?.isAdmin || scopes.includes('mis') || scopes.includes('accounts')) return me;
@@ -186,14 +184,14 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
   // records its own spends). Edits/deletes: accounts/MIS only, so history
   // can't be rewritten from the floor.
   async function cashReadGate(c: any) {
-    const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null)).catch(() => null);
+    const me = await getViewerMe(c).catch(() => null);
     if (!me) throw new Error('Authentication required');
     const scopes = ((me as any)?.scopes ?? []) as string[];
     if ((me as any)?.isAdmin || scopes.includes('mis') || scopes.includes('accounts') || scopes.includes('dispatch')) return me;
     throw new Error("Requires 'accounts' or 'dispatch' permission");
   }
   async function cashWriteGate(c: any) {
-    const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null)).catch(() => null);
+    const me = await getViewerMe(c).catch(() => null);
     if (!me) throw new Error('Authentication required');
     const scopes = ((me as any)?.scopes ?? []) as string[];
     if ((me as any)?.isAdmin || scopes.includes('mis') || scopes.includes('accounts')) return me;
@@ -265,7 +263,7 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
   app.patch('/api/accounts/logs/:id', async (c) => {
     const body = await c.req.json().catch(() => ({}));
     try {
-      const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null)).catch(() => null);
+      const me = await getViewerMe(c).catch(() => null);
       const self = await resolveSelfAccountant(
         (body as any)?.as ?? c.req.query('as') ?? null, me as any,
       ).catch(() => null);

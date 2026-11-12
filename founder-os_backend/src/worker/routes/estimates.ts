@@ -5,7 +5,8 @@
 // routes/telecalling.ts (Phase-3 split). URLs unchanged.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { deps, requireSecret, requireMisScope, misScopeError, notifyLive, LiveEvent, kolkataDateStr, getEstimatesPayload, refreshNeodoveReport, authStore, getMe, isApproved, readSessionCookie, type Bindings } from '../context';
+import { deps, requireSecret, requireMisScope, misScopeError, notifyLive, LiveEvent, kolkataDateStr, getEstimatesPayload, refreshNeodoveReport, isApproved, type Bindings } from '../context';
+import { getViewerMe } from '../viewer';
 
 export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void {
   // ── Estimates ───────────────────────────────────────────────────────────────
@@ -44,7 +45,7 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
       return c.json({ error: 'action/toStage must be one of confirm|invoice|ship|payment|complete|cancel|void' }, 400);
     }
     const { prisma } = deps();
-    const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+    const me = await getViewerMe(c);
     const actor = me?.user?.name || me?.user?.email || 'MIS';
     // Resolve the stage the order is currently in (for the fromStage audit).
     let fromStage: string | null = null;

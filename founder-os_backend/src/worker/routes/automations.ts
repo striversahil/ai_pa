@@ -10,7 +10,7 @@
 // routes/session.ts. Do not add business-data endpoints here.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { deps, getEntryOrReload, DASHBOARD_SLUGS, getMe, authStore, readSessionCookie, requireScope, type Bindings } from '../context';
+import { deps, getEntryOrReload, DASHBOARD_SLUGS, requireScope, type Bindings } from '../context';
 import { serveWorkspaceData } from '../workspace-data';
 import { AUTOMATION_SCOPES, accessScopesFor } from '../../modules/automation/registry-worker';
 
@@ -22,7 +22,7 @@ function parseJson(value: string | null | undefined): unknown {
 // Moved to worker/viewer.ts (implementation: modules/telecalling/self-roster.ts).
 // Re-exported for existing importers (worker/routes/telecalling.ts,
 // modules/device-calls/scopes.ts).
-import { resolveSelfTelecaller } from '../viewer';
+import { resolveSelfTelecaller, getViewerMe } from '../viewer';
 export { resolveSelfTelecaller };
 
 export function registerAutomationRoutes(app: Hono<{ Bindings: Bindings }>): void {
@@ -30,7 +30,7 @@ export function registerAutomationRoutes(app: Hono<{ Bindings: Bindings }>): voi
     const { prisma } = deps();
     // The full registry (triggers/config/runs) is root/admin-only. Non-root
     // users only get the minimal dashboard list needed for their sidebar nav.
-    const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+    const me = await getViewerMe(c);
     const isAdmin = !!me?.isAdmin;
     const rows = await prisma.automation.findMany({ orderBy: { createdAt: 'asc' } });
     const withDashboard = DASHBOARD_SLUGS;
@@ -68,7 +68,7 @@ export function registerAutomationRoutes(app: Hono<{ Bindings: Bindings }>): voi
     // Full automation detail (raw triggerJson/configJson) is admin-only —
     // configs can hold Sheet URLs / chat IDs / vendor handles. Non-admins
     // already get the minimal list from GET /api/automations.
-    const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+    const me = await getViewerMe(c);
     if (!me?.isAdmin) return c.json({ error: 'Forbidden' }, 403);
     const row = await prisma.automation.findUnique({
       where: { slug: c.req.param('slug') },
@@ -84,7 +84,7 @@ export function registerAutomationRoutes(app: Hono<{ Bindings: Bindings }>): voi
 
   app.patch('/api/automations/:slug', async (c) => {
     const { prisma, AutomationEngine } = deps();
-    const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+    const me = await getViewerMe(c);
     if (!me?.isAdmin) return c.json({ error: 'Forbidden' }, 403);
     const body = await c.req.json().catch(() => ({}));
     const data: Record<string, unknown> = {};

@@ -9,10 +9,7 @@
 //     → `accounts` only
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import {
-  authStore, getMe, requireScope, readSessionCookie, notifyLive, LiveEvent,
-  type Bindings,
-} from '../context';
+import { authStore, requireScope, notifyLive, LiveEvent, type Bindings } from '../context';
 import { AuthError } from '../../modules/auth/types';
 import {
   importCollections, importDebtors, getDebtorsTrackerData, DebtorsTrackerError,
@@ -22,6 +19,7 @@ import {
   addInvoiceAttachment, deleteInvoiceAttachment, listInvoiceAttachments, planZipMatches,
 } from '../../automations/debtors-tracker/service';
 import { parseCollectionsTsv, parseDebtorsTsv } from '../../automations/debtors-tracker/parse';
+import { getViewerMe } from '../viewer';
 
 const TRACKER_SCOPES = ['debtors-tracker', 'payment-tracker', 'accounts'];
 
@@ -30,7 +28,7 @@ function heldScopes(me: any): Set<string> {
 }
 
 async function meFor(c: any) {
-  return getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+  return getViewerMe(c);
 }
 
 /** Any tracker viewer: sales (`debtors-tracker`) or accounts. */

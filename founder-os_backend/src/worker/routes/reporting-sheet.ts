@@ -15,9 +15,7 @@
 //             root / MIS may save any week
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import {
-  authStore, getMe, readSessionCookie, notifyLive, LiveEvent, type Bindings,
-} from '../context';
+import { notifyLive, LiveEvent, type Bindings } from '../context';
 import { AuthError } from '../../modules/auth/types';
 import {
   saveReportSection, getFilledPeriods, ReportingError, type Actor,
@@ -28,9 +26,10 @@ import {
 } from '../../modules/reporting/access';
 import { DEPARTMENTS, type ReportDepartment, type ReportSection } from '../../modules/reporting/types';
 import { currentWeekKey } from '../../modules/reporting/period';
+import { getViewerMe } from '../viewer';
 
 async function meFor(c: any) {
-  return getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+  return getViewerMe(c);
 }
 
 function actorOf(me: any): Actor {

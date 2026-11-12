@@ -4,13 +4,14 @@
 // Mirror: founder-os_backend/src/routes/product-line.ts (Express alt runtime).
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { requireMisScope, misScopeError, notifyLive, LiveEvent, authStore, getMe, readSessionCookie, type Bindings } from '../context';
+import { requireMisScope, misScopeError, notifyLive, LiveEvent, type Bindings } from '../context';
 import { AuthError } from '../../modules/auth/types';
+import { getViewerMe } from '../viewer';
 
 /** Quote writes: whoever holds the `product-line` scope (granted from the
  *  Admin panel), plus MIS/admin. Products/guide/vendors stay MIS-only. */
 async function requireQuoteScope(c: any): Promise<void> {
-  const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+  const me = await getViewerMe(c);
   if (!me) throw new AuthError('UNAUTHENTICATED', 'Authentication required', 401);
   if (me.isAdmin) return;
   const scopes = (me as any).scopes ?? [];

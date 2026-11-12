@@ -11,8 +11,9 @@
 // team_lead scoped to [region, region2]. Region-less leads are head-only.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { authStore, deps, getMe, notifyLive, readSessionCookie, LiveEvent, type Bindings } from '../context';
+import { deps, notifyLive, LiveEvent, type Bindings } from '../context';
 import { resolveCaller } from '../../modules/core/permissions';
+import { getViewerMe } from '../viewer';
 
 function shapeLead(r: any): any {
   return {
@@ -57,7 +58,7 @@ async function rosterRegions(p: any, email: string): Promise<{ id: string; regio
 
 export function registerLeadRoutes(app: Hono<{ Bindings: Bindings }>): void {
   const viewer = async (c: any) => {
-    const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+    const me = await getViewerMe(c);
     if (!me) return { me: null as any, error: c.json({ error: 'Authentication required' }, 401) };
     return { me, error: null as any };
   };

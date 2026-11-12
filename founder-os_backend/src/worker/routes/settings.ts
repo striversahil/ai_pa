@@ -5,15 +5,16 @@
 // key material NEVER passes through here. Writes broadcast live so open
 // dashboards converge instantly (plus the auto-live data-changed event).
 import type { Hono } from 'hono';
-import { authStore, getMe, notifyLive, readSessionCookie, type Bindings } from '../context';
+import { notifyLive, type Bindings } from '../context';
 import { LiveEvent } from '../../live';
 import { ROOT_EMAIL } from '../../modules/auth/types';
 import { APP_SETTINGS, getAppSettings, setAppSetting } from '../../shared/app-settings';
 import { resolveChatChain, resolveChatModel, resolveIntakeChain, resolveLegModel } from '../../shared/intake-chain';
+import { getViewerMe } from '../viewer';
 
 async function rootDenial(c: any): Promise<any | null> {
   try {
-    const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+    const me = await getViewerMe(c);
     if ((me as any)?.isRoot || String((me as any)?.user?.email ?? '').toLowerCase() === String(ROOT_EMAIL).toLowerCase()) return null;
     return c.json({ ok: false, error: 'Root only' }, 403);
   } catch (e: any) {

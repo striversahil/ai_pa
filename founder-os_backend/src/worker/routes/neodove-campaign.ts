@@ -16,17 +16,16 @@
 //   PUT  /api/neodove/campaign/agents/:key/url      map an agent's campaign URL
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import {
-  authStore, getMe, isApproved, readSessionCookie, notifyLive, LiveEvent, type Bindings,
-} from '../context';
+import { isApproved, notifyLive, LiveEvent, type Bindings } from '../context';
 import { AuthError } from '../../modules/auth/types';
 import {
   CampaignError, createPush, getCampaignBatches, getCampaignPreview, getCampaignStates,
   runBatchChunk, setAgentCampaignUrl, getCampaignTypes,
 } from '../../modules/neodove-campaign/service';
+import { getViewerMe } from '../viewer';
 
 async function meFor(c: any) {
-  return getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+  return getViewerMe(c);
 }
 
 /** Root / MIS / sales-head — scope OR role, mirroring the roster gate. */

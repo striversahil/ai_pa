@@ -15,9 +15,7 @@
 //   import  → sales-head / MIS / root only (bulk replace, not a correction)
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import {
-  authStore, getMe, readSessionCookie, notifyLive, LiveEvent, type Bindings,
-} from '../context';
+import { authStore, notifyLive, LiveEvent, type Bindings } from '../context';
 import { AuthError } from '../../modules/auth/types';
 import {
   getCustomerDetail, updateCustomer, deleteCustomer, setDuplicateReview, importMasterData,
@@ -28,9 +26,10 @@ import {
   canEditMaster, canViewMaster, isMasterManager, isSalesHead, listEditors, setEditor,
 } from '../../modules/master-data/editors';
 import type { CustomerPatch, DuplicateReview } from '../../modules/master-data/types';
+import { getViewerMe } from '../viewer';
 
 async function meFor(c: any) {
-  return getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+  return getViewerMe(c);
 }
 
 function actorOf(me: any): Actor {

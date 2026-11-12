@@ -14,15 +14,14 @@
 // and write to the caller's own roster member unless they hold HR/MIS access.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import {
-  authStore, getMe, notifyLive, readSessionCookie, LiveEvent, type Bindings,
-} from '../context';
+import { notifyLive, LiveEvent, type Bindings } from '../context';
 import { HrError } from '../../automations/human-resources/errors';
 import {
   createSelfTask, deleteDelegationTask, getDelegationBoard, getTaskHistory,
   isHrManager, updateDelegationTask,
 } from '../../automations/human-resources/delegation';
 import { createTask, updateMember } from '../../automations/human-resources/service';
+import { getViewerMe } from '../viewer';
 
 function actorLabel(me: any): string | null {
   return me?.user?.name ?? me?.user?.email ?? null;
@@ -51,7 +50,7 @@ async function knownLogins(c: any): Promise<Set<string>> {
 
 export function registerDelegationRoutes(app: Hono<{ Bindings: Bindings }>): void {
   const viewer = async (c: any) => {
-    const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+    const me = await getViewerMe(c);
     if (!me) return { me: null, error: c.json({ error: 'Authentication required' }, 401) };
     return { me, error: null };
   };

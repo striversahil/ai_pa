@@ -7,8 +7,9 @@
 // scope: team widgets require TEAM-or-wider callers, enforced here.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { authStore, deps, getMe, readSessionCookie, type Bindings } from '../context';
+import { deps, type Bindings } from '../context';
 import { resolveCaller } from '../../modules/core/permissions';
+import { getViewerMe } from '../viewer';
 
 interface WidgetPayload {
   key: string;
@@ -46,7 +47,7 @@ async function unreadCount(p: any, employeeId: string | null): Promise<number> {
 
 export function registerDashboardRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.get('/api/dashboards/:key', async (c) => {
-    const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+    const me = await getViewerMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
     try {
       const { prisma } = deps();

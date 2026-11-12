@@ -14,7 +14,7 @@
 // city/address log, /ping answers 410, no GPS is persisted.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { authStore, deps, getMe, isApproved, notifyLive, readSessionCookie, requireMisScope, type Bindings } from '../context';
+import { deps, isApproved, notifyLive, requireMisScope, type Bindings } from '../context';
 import { createEnquiryStore } from '../../modules/enquiries/store';
 import { enquiryCreate } from '../../modules/enquiries/routes';
 import {
@@ -33,13 +33,14 @@ import {
   setMillNewFlag,
 } from '../../modules/field-visits/store';
 import { getFieldStaffData, invalidateFieldStaffCache, suggestMillMatch } from '../../modules/field-visits/service';
+import { getViewerMe } from '../viewer';
 
 function istToday(): string {
   return new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
 }
 
 async function viewer(c: any): Promise<any | null> {
-  const me: any = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null)).catch(() => null);
+  const me: any = await getViewerMe(c).catch(() => null);
   if (!me || !isApproved(me)) return null;
   if (me.isAdmin || me.isRoot) return me;
   const scopes: string[] = ((me.scopes ?? []) as string[]).map((s) => String(s).toLowerCase());
@@ -57,7 +58,7 @@ function actorOf(me: any): { id: string; name: string } {
 /** Manager gate for deletes (MIS / sales-head / root). */
 async function requireSalesManager(c: any): Promise<boolean> {
   try { await requireMisScope(c); return true; } catch { /* fall through */ }
-  const me: any = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+  const me: any = await getViewerMe(c);
   if (!me) return false;
   if (!isApproved(me)) return false;
   const scopes: string[] = me.scopes ?? [];

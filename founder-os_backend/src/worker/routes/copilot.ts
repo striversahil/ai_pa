@@ -6,10 +6,11 @@
 // Mirror: founder-os_backend/src/server.ts (Express alt runtime, non-stream).
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { authStore, getMe, notifyLive, readSessionCookie, LiveEvent, type Bindings } from '../context';
+import { notifyLive, LiveEvent, type Bindings } from '../context';
 import { getCopilot } from '../../copilot/registry';
 import { appendHistoryNote, appliedNote, cleanSession, clearState, runTurn, streamTurn } from '../../copilot/engine';
 import type { CopilotReply } from '../../copilot/types';
+import { getViewerMe } from '../viewer';
 
 function sseResponse(gen: AsyncGenerator<{ type: string; data: any }, CopilotReply, unknown>): Response {
   const stream = new ReadableStream({
@@ -42,7 +43,7 @@ function chatError(c: any, e: any) {
 
 export function registerCopilotRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.post('/api/copilot/:id/chat', async (c) => {
-    const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+    const me = await getViewerMe(c);
     const def = getCopilot(c.req.param('id') ?? '');
     if (!def) return c.json({ error: 'unknown copilot' }, 404);
     const denied = def.checkAccess(me);
@@ -59,7 +60,7 @@ export function registerCopilotRoutes(app: Hono<{ Bindings: Bindings }>): void {
     }
   });
   app.post('/api/copilot/:id/chat/stream', async (c) => {
-    const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+    const me = await getViewerMe(c);
     const def = getCopilot(c.req.param('id') ?? '');
     if (!def) return c.json({ error: 'unknown copilot' }, 404);
     const denied = def.checkAccess(me);
@@ -78,7 +79,7 @@ export function registerCopilotRoutes(app: Hono<{ Bindings: Bindings }>): void {
   // New chat — wipes rolling history + draft state. The 50-request window
   // is only for back-to-back chat; a fresh chat starts with zero memory.
   app.post('/api/copilot/:id/chat/clear', async (c) => {
-    const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+    const me = await getViewerMe(c);
     const def = getCopilot(c.req.param('id') ?? '');
     if (!def) return c.json({ error: 'unknown copilot' }, 404);
     const denied = def.checkAccess(me);
@@ -94,7 +95,7 @@ export function registerCopilotRoutes(app: Hono<{ Bindings: Bindings }>): void {
   });
   // Confirm path — only for copilots that return proposals (read-only ones 404).
   app.post('/api/copilot/:id/chat/execute', async (c) => {
-    const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+    const me = await getViewerMe(c);
     const def = getCopilot(c.req.param('id') ?? '');
     if (!def) return c.json({ error: 'unknown copilot' }, 404);
     const denied = def.checkAccess(me);

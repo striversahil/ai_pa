@@ -3,9 +3,7 @@
 // Worker-only: Express is frozen (no parallel mirror for new endpoints).
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import {
-  authStore, getMe, notifyLive, readSessionCookie, LiveEvent, type Bindings,
-} from '../context';
+import { notifyLive, LiveEvent, type Bindings } from '../context';
 import { HrError } from '../../automations/human-resources/errors';
 import {
   createExpense, createFundTxn, createTask, deleteExpense, deleteFundTxn, deleteTask,
@@ -35,13 +33,14 @@ import {
 import {
   defaultDocTitle, isHiringDocKind, isPdfUpload, MAX_HIRING_DOC_BYTES,
 } from '../../automations/human-resources/hiring-positions-parse';
+import { getViewerMe } from '../viewer';
 
 function actorLabel(me: any): string | null {
   return me?.user?.name ?? me?.user?.email ?? null;
 }
 
 async function access(c: any) {
-  const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+  const me = await getViewerMe(c);
   if (!me) return { me: null, canManage: false, error: c.json({ error: 'Authentication required' }, 401) };
   const scopes = (me.scopes ?? []) as string[];
   if (!me.isAdmin && !scopes.includes('mis') && !scopes.includes('human-resources')) {

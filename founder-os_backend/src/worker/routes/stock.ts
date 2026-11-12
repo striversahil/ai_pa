@@ -3,11 +3,12 @@
 // Reads ride the automation data endpoint; writes are `stock`/MIS-scoped.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { misScopeError, notifyLive, LiveEvent, authStore, getMe, readSessionCookie, type Bindings } from '../context';
+import { misScopeError, notifyLive, LiveEvent, type Bindings } from '../context';
 import { AuthError } from '../../modules/auth/types';
+import { getViewerMe } from '../viewer';
 
 async function requireStockScope(c: any): Promise<void> {
-  const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+  const me = await getViewerMe(c);
   if (!me) throw new AuthError('UNAUTHENTICATED', 'Authentication required', 401);
   if (me.isAdmin) return;
   const scopes = (me as any).scopes ?? [];
@@ -46,7 +47,7 @@ export function registerStockRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.post('/api/stock/movements', async (c) => {
     try { await requireStockScope(c); } catch (e) { return misScopeError(c, e); }
     try {
-      const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+      const me = await getViewerMe(c);
       const { postStockMovement } = await import('../../automations/stock/update');
       const actor = (me as any)?.user?.name ?? (me as any)?.user?.email ?? '';
       const row = await postStockMovement(await c.req.json().catch(() => ({})), actor);
@@ -75,7 +76,7 @@ export function registerStockRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.post('/api/stock/reserve', async (c) => {
     try { await requireStockScope(c); } catch (e) { return misScopeError(c, e); }
     try {
-      const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+      const me = await getViewerMe(c);
       const { reserveStock } = await import('../../automations/stock/update');
       const actor = (me as any)?.user?.name ?? (me as any)?.user?.email ?? '';
       const row = await reserveStock(await c.req.json().catch(() => ({})), actor);
@@ -96,7 +97,7 @@ export function registerStockRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.post('/api/stock/backfill', async (c) => {
     try { await requireStockScope(c); } catch (e) { return misScopeError(c, e); }
     try {
-      const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+      const me = await getViewerMe(c);
       const { backfillStockFromPayload } = await import('../../automations/stock/update');
       const actor = (me as any)?.user?.name ?? (me as any)?.user?.email ?? '';
       const row = await backfillStockFromPayload(await c.req.json().catch(() => ({ items: [] })), actor);

@@ -3,10 +3,7 @@
 // Mirror: founder-os_backend/src/routes/digital-marketing.ts (Express alt runtime).
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import {
-  deps, requireMisScope, misScopeError, notifyLive, LiveEvent,
-  authStore, getMe, readSessionCookie, MAX_ATTACHMENT_BYTES, type Bindings,
-} from '../context';
+import { deps, requireMisScope, misScopeError, notifyLive, LiveEvent, MAX_ATTACHMENT_BYTES, type Bindings } from '../context';
 import {
   listDigitalMarketingManagers, createDigitalMarketingManager, updateDigitalMarketingManager,
   listTemplates, createTemplate, updateTemplate, logTask, getDigitalMarketingExport,
@@ -16,10 +13,11 @@ import {
 } from '../../automations/digital-marketing/service';
 import { getDigitalMarketingAds, createAd, updateAd, deleteAd, createAdAttachment, getAdAttachment, deleteAdAttachment, toAdAttachmentJson } from '../../automations/digital-marketing/ads';
 import { getDigitalMarketingOpenTasks, getOpenTaskById, createOpenTask, updateOpenTask, deleteOpenTask, upsertOpenTaskEntry, ensureEntryForDate, createOpenTaskAttachment, getOpenTaskAttachment, deleteOpenTaskAttachment, toOpenTaskAttachmentJson } from '../../automations/digital-marketing/open-tasks';
+import { getViewerMe } from '../viewer';
 
 async function actorName(c: any): Promise<string | null> {
   try {
-    const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null));
+    const me = await getViewerMe(c);
     return me?.user?.name ?? me?.user?.email ?? null;
   } catch { return null; }
 }
@@ -383,7 +381,7 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
   app.patch('/api/digital-marketing/logs/:id', async (c) => {
     const body = await c.req.json().catch(() => ({}));
     try {
-      const me = await getMe(authStore(c), readSessionCookie(c.req.header('cookie') ?? null)).catch(() => null);
+      const me = await getViewerMe(c).catch(() => null);
       const self = await resolveSelfDigitalMarketingManager(
         (body as any)?.as ?? c.req.query('as') ?? null, me as any,
       ).catch(() => null);
