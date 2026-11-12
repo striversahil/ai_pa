@@ -3,6 +3,7 @@
 import React, { useMemo, useState } from "react";
 import ConfirmDialog from "../ui/ConfirmDialog";
 import EmployeeFormModal from "./EmployeeFormModal";
+import RegisterMappingSection from "./RegisterMappingSection";
 import { useLiveDashboard } from "@/hooks/useLiveData";
 import type { HrEmployee } from "@/hr/types";
 import { jsonRequest, readError } from "@/hr/api";
@@ -119,6 +120,18 @@ export default function EmployeesTab() {
         </div>
         <button onClick={() => setForm({ open: true, employee: null })} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-500">Add employee</button>
       </div>
+
+      {/* HR register → sales-roster mapping (single writer; same queue as the
+          Controller, run by HR). Collapsed by default so the employee list
+          stays the primary view. */}
+      <details>
+        <summary className="cursor-pointer text-xs font-bold text-indigo-500 hover:underline">
+          Login → roster mapping (unmapped logins waiting)
+        </summary>
+        <div className="mt-2">
+          <RegisterMappingSection />
+        </div>
+      </details>
 
       {err && <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 px-3 py-2 text-xs text-rose-500">{err}</div>}
       {dash.loading && !dash.data && <div className="py-12 text-center text-sm text-zinc-500 animate-pulse">Loading employees…</div>}

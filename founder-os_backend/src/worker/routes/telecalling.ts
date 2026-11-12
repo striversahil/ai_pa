@@ -98,11 +98,13 @@ function telecallerCreateData(body: any): { error?: string; data?: Record<string
 
 export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): void {
   // ── Telecaller roster (staff ↔ hierarchy ↔ region) ────────────────────────────
-  // READ is MIS + sales-head (running the roster is the sales-head's job);
-  // roster WRITES below are sales-head/MIS writes via requireSalesManager.
+  // READ is MIS + sales-head + HR (HR owns employment mapping and needs the
+  // roster to Map/Link; founder decision 2026-11-12); roster WRITES below stay
+  // sales-head/MIS via requireSalesManager except the HR-capable mapping
+  // endpoints which use requireRosterManager.
   app.get('/api/telecallers', async (c) => {
     try { await requireMisScope(c); }
-    catch (e) { if (!(await requireSalesManager(c))) return misScopeError(c, e); }
+    catch (e) { if (!(await requireRosterManager(c))) return misScopeError(c, e); }
     const { prisma } = deps();
     const showDeleted = c.req.query('deleted') === '1';
     const tcs = await prisma.telecaller.findMany({

@@ -26,7 +26,7 @@ export interface MapRosterConflict {
   name: string;
 }
 
-/** Map a directory login onto the sales roster (sales-head/MIS only).
+/** Map a directory login onto the sales roster (sales-head/MIS/HR).
  *  Throws on duplicate email with `linkTo` attached — caller offers Link. */
 export async function mapRosterFromDirectory(input: MapRosterInput): Promise<unknown> {
   const res = await fetch("/api/telecallers/from-directory", {
@@ -56,4 +56,13 @@ export async function linkRosterByLogin(rowId: string, userId: string): Promise<
   });
   if (!res.ok) throw new Error(await readError(res));
   return res.json();
+}
+
+/** Live sales-roster rows (HR-readable; powers the HR register mapping queue).
+ *  Lives here so components never raw-fetch the roster (ratchet-clean). */
+export async function fetchSalesRoster(): Promise<Array<{ id: string; email?: string | null }>> {
+  const res = await fetch("/api/telecallers", { cache: "no-store" });
+  if (!res.ok) throw new Error(await readError(res));
+  const j = await res.json();
+  return Array.isArray(j) ? j : (j?.telecallers ?? []);
 }

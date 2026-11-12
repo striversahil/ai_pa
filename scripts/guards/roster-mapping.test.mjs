@@ -66,5 +66,26 @@ describe('roster mapping queue contract (Phase A)', () => {
     assert.ok(api.includes('/api/telecallers/link'), 'domain api must call the scoped link endpoint');
     assert.ok(api.includes('worker/routes/telecalling.ts'), 'domain api must name its backend mirror');
     assert.ok(api.includes('linkTo'), 'conflict must surface linkTo for the Link offer');
+    assert.ok(api.includes('fetchSalesRoster'), 'roster read must live in the domain api (no raw fetch in components)');
+  });
+
+  it('roster read is HR-capable (HR needs the roster to Map/Link)', () => {
+    const getStart = route.indexOf("app.get('/api/telecallers'");
+    assert.ok(getStart !== -1, 'GET roster must exist');
+    const getNext = route.indexOf('\n  app.', getStart + 1);
+    const getBlock = getNext === -1 ? route.slice(getStart) : route.slice(getStart, getNext);
+    assert.ok(getBlock.includes('requireRosterManager'), 'GET must use the roster-manager gate (sales-head/MIS + HR)');
+    assert.ok(!getBlock.includes("app.put('/api/telecallers/:id'"), 'read gate change must not touch the legacy PUT');
+  });
+
+  it('HR register reuses the mapping queue (composition, never a fork)', () => {
+    const wrapper = readFileSync(join(BACKEND_DIR, '..', 'founder-os_frontend', 'src', 'components', 'human-resources', 'RegisterMappingSection.tsx'), 'utf8');
+    assert.ok(wrapper.includes('RosterMappingSection'), 'HR wrapper must render the shared queue');
+    assert.ok(wrapper.includes('fetchSalesRoster'), 'HR wrapper must read via the domain api');
+    assert.ok(!wrapper.includes('/api/telecallers/from-directory'), 'HR wrapper must not re-implement mapping (no fork)');
+    assert.ok(!wrapper.includes('mapRosterFromDirectory'), 'HR wrapper must not call mapping directly (delegates to the shared queue)');
+    assert.ok(!wrapper.includes('regionById'), 'HR wrapper must not copy picker state (no fork)');
+    const employees = readFileSync(join(BACKEND_DIR, '..', 'founder-os_frontend', 'src', 'components', 'human-resources', 'EmployeesTab.tsx'), 'utf8');
+    assert.ok(employees.includes('RegisterMappingSection'), 'Employees tab must host the register queue (HR active tool)');
   });
 });
