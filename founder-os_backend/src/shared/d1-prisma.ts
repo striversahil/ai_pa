@@ -232,6 +232,7 @@ const DATE_FIELDS: Record<string, string[]> = {
   CoreWarehouse: ['createdAt'],
   CoreReceipt: ['invoiceDate', 'createdAt', 'updatedAt'],
   CorePromise: ['createdAt', 'updatedAt'],
+  CoreLead: ['createdAt', 'updatedAt'],
   CoreFieldPolicy: ['updatedAt'],
   HlpDashboard: ['createdAt', 'updatedAt'],
   HlpWidget: [],
@@ -388,6 +389,7 @@ const ID_FIELDS: Record<string, string> = {
   CoreWarehouse: 'id',
   CoreReceipt: 'id',
   CorePromise: 'id',
+  CoreLead: 'id',
   CoreFieldPolicy: 'id',
   CoreSeries: 'key',
   HlpDashboard: 'id',
@@ -426,6 +428,7 @@ const UNIQUE_FIELDS: Record<string, string[]> = {
   CoreServiceAccount: ['key'],
   CoreUserLink: ['employeeId'],
   CoreCustomer: ['zohoCustomerId'],
+  CoreLead: ['dedupKey'],
   CoreFieldPolicy: ['entityType', 'fieldName'],
   DeviceRegistration: ['tokenHash'],
   DeviceCall: ['idempotencyKey'],
@@ -456,6 +459,7 @@ const FLOAT_FIELDS: Record<string, string[]> = {
   AccountsTaskTemplate: ['amount'],
   AccountsTaskLog: ['paidAmount'],
   DigitalMarketingAd: ['amountSpent'],
+  CoreLead: ['expectedRateAmount', 'quotedRateAmount'],
 };
 
 const RELATIONS: Record<string, Record<string, { model: string; fk: string; one?: boolean }>> = {
@@ -1150,6 +1154,7 @@ export class D1PrismaClient {
   get coreWarehouse() { return this.model('CoreWarehouse'); }
   get coreReceipt() { return this.model('CoreReceipt'); }
   get corePromise() { return this.model('CorePromise'); }
+  get coreLead() { return this.model('CoreLead'); }
   get hlpDashboard() { return this.model('HlpDashboard'); }
   get hlpWidget() { return this.model('HlpWidget'); }
   get coreSeries() { return this.model('CoreSeries'); }

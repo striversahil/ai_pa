@@ -260,7 +260,7 @@ Port `bui-crm-v2/scripts/schema-guard.mjs` → `founder-os_backend/scripts/core-
 - [x] Phase 4a–4b: order spine + stock ledger + floor/stock shadows. **Left: floor flip (quiet week).**
 - [x] Phase 5a: dues + receivables + paid-marking + finance shadow. **Left: promises, Zoho invoices (cut-over), Dec parallel run + CA sign-off (human).**
 - [x] Phase 6a: work-queue → in-app notifications + two desk seeds + dashboard API. **Left: more desks, WhatsApp channel (Meta approval), retirements after flips.**
-- [ ] Phase 7 — core_lead ledger + qualification gate: **7a** schema + backfill + shadow (nothing reads it) → **7b** create/decline funnels (insert-only) → **7c** qualification gate (behaviour change — human sign-off + one parallel week) → **7d** rate intelligence reads core → **7e** retire `callTag` loss-tagging + Zoho-comment mining. **Open: draft quotes count as qualified vs unqualified; qualify = unlock vs auto-create quote; unqualified expiry policy.**
+- [x] Phase 7a: `core_lead` + 1,979-lead backfill (1,321 qualified/lost ₹30.17 Cr quoted, 490 won, 164 open, 4 unqualified) + `leads.ts` mirrors + lead shadow. **Left: 7b create/decline funnels, 7c qualification gate (sign-off), 7d rate intelligence, 7e retire loss tagging.** Open: draft quotes count as qualified vs unqualified; qualify = unlock vs auto-create quote; unqualified expiry.
 - [ ] Monthly: review `docs/core-change-requests/`, sign lock, audit `core_access_log` + `core_row_change` actor coverage.
 
 ## 15. Phase 7 — core_lead: lead intake ledger + qualification gate (decided 2026-11-12)

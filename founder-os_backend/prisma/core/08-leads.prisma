@@ -1,0 +1,60 @@
+// prisma/core/08-leads.prisma — CANONICAL lead ledger (Phase 7a).
+// NOT yet wired to the Prisma generator. D1 reality: 0135_core_lead.sql.
+// Locked by prisma/core.lock + scripts/core-guard.mjs — humans only.
+//
+// One row per lead, first touch to outcome. Two independent axes:
+//   status  = unqualified | qualified   (the gate — who may quote)
+//   outcome = open | won | lost | dropped (what happened to the lead)
+// A declined quote is qualified/lost — never relabelled unqualified.
+// id reuses source: `lead-est:<estimateId>` or `lead-enq:<enquiryId>`.
+// dedupKey UNIQUE: `est:<estimateId>` or `enq:<enquiryId>` (idempotent replays).
+
+model CoreLead {
+  id                 String  @id
+  dedupKey           String  @unique
+  leadNo             String  @default("")
+  captureKind        String  @default("sync") // telecaller | digital | b2b | social | manual | sync
+  customerName       String  @default("")
+  clientCompany      String  @default("")
+  contactName        String  @default("")
+  contactPhone       String  @default("")
+  contactEmail       String  @default("")
+  location           String  @default("")
+  region             String  @default("")
+  assignedAgentId    String  @default("")
+  sourceName         String  @default("Unmapped") // TL | AI | B2B | Incoming | FieldStaff | CompanyData | IndiaMART | Referral | Other | Unmapped
+  sourceRaw          String  @default("")
+  sourceRef          String  @default("")
+  productText        String  @default("")
+  productId          String  @default("")
+  qtyText            String  @default("")
+  specText           String  @default("")
+  expectedRateAmount Float?
+  expectedRateUnit   String  @default("")
+  quotedRateAmount   Float?
+  quotedRateUnit     String  @default("")
+  status             String  @default("unqualified")
+  outcome            String  @default("open")
+  qualifiedBy        String  @default("")
+  qualifiedByRole    String  @default("")
+  qualifiedAt        String  @default("")
+  qualifyNote        String  @default("")
+  disqualifyReason   String  @default("other")
+  reasonDetail       String  @default("")
+  lostAt             String  @default("")
+  wonAt              String  @default("")
+  enquiryId          String  @default("")
+  estimateId         String  @default("")
+  estNumber          String  @default("")
+  occurredAt         String  @default("")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([status])
+  @@index([outcome])
+  @@index([sourceName])
+  @@index([occurredAt])
+  @@index([estimateId])
+  @@index([enquiryId])
+  @@map("core_lead")
+}
