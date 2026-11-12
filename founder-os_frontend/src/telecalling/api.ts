@@ -37,7 +37,8 @@ export async function mapRosterFromDirectory(input: MapRosterInput): Promise<unk
   if (res.status === 409) {
     const j = await res.json();
     const err = new Error(String(j?.error ?? "email already on the roster"));
-    (err as Error & { linkTo?: string }).linkTo = String(j?.linkTo ?? "");
+    (err as Error & { linkTo?: string; linkName?: string }).linkTo = String(j?.linkTo ?? "");
+    (err as Error & { linkTo?: string; linkName?: string }).linkName = String(j?.name ?? "");
     throw err;
   }
   if (!res.ok) throw new Error(await readError(res));
