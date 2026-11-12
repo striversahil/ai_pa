@@ -360,11 +360,16 @@ model TelecallerScoreEvent {
   day          String // YYYY-MM-DD the event occurred (IST)
   reason       String?
   createdAt    DateTime   @default(now())
+  // Unification columns (collapse 0137): who wrote + why. Table lives as
+  // core_credit on D1 (see @@map); the model name stays stable.
+  actorId      String?
+  actorReason  String?
   telecaller   Telecaller @relation(fields: [telecallerId], references: [id], onDelete: Cascade)
 
   @@index([telecallerId])
   @@index([day])
   @@index([estimateId])
+  @@map("core_credit")
 }
 
 // Event-ledger scoring for the CRM sales-order pipeline (mirrors

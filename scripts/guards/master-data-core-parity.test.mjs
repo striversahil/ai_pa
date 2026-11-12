@@ -5,9 +5,10 @@
 // runs anywhere with zero deps):
 //   backend  → src/modules/master-data/store.ts   (single-table reads + tombstone writes)
 //   backend  → migration 0136                      (RENAME + unification cols + bridge)
-//   backend  → no `MasterCustomer` SQL table refs in unlocked code
+//   backend  → no `MasterCustomer` SQL table refs in unlocked src/
 //              (locked modules/core/* excluded — human re-sign removes it;
-//               migrations/ history excluded — it records the rename itself)
+//               migrations/ history + offline gen scripts excluded — they
+//               record/emit history, never serve traffic)
 //
 // Run: `node --test "scripts/guards/*.test.mjs"`
 import { describe, it } from 'node:test';

@@ -256,7 +256,7 @@ Port `bui-crm-v2/scripts/schema-guard.mjs` → `founder-os_backend/scripts/core-
 - [x] Phase 0: `0125` migration + `modules/core/*` stubs + `core-guard.mjs` + empty work endpoints + deploy.
 - [x] Phase 1: `0126` identity + backfill (33 employees) + dual-write + shadow positions compare. **Left: flip display to core after manager review.**
 - [x] Phase 2: estimate-followup projector + My Work UI + log-only sweeper. **Left: accounts/dispatch/approval sources, badges done, notifications endpoint live (6a).**
-- [x] Phase 3a–3e: customer/sales/credit mirrors + dual-writes + three shadows + heartbeats. **Collapse 0136 (founder decision 2026-11-12): customer done — `MasterCustomer` renamed to `core_customer` (+`actorId/actorReason/tombstonedAt`), verified mirror dropped, tombstone deletes, bridge VIEW; flip flag retired. Left: collapse credit/ledger, orders/floor, dues (same pattern).**
+- [x] Phase 3a–3e: customer/sales/credit mirrors + dual-writes + three shadows + heartbeats. **Collapse 0136+0137 (founder decision 2026-11-12): customer done** (`MasterCustomer`→`core_customer`, +`actorId/actorReason/tombstonedAt`, tombstone deletes, bridge VIEW) **+ ledger done** (`TelecallerScoreEvent`→`core_credit`, shim TABLE_MAP + `@@map`, actor stamps, mirror/shadow calls removed). **Left: collapse orders/floor, dues (same pattern).**
 - [x] Phase 4a–4b: order spine + stock ledger + floor/stock shadows. **Left: floor flip (quiet week).**
 - [x] Phase 5a: dues + receivables + paid-marking + finance shadow. **Left: promises, Zoho invoices (cut-over), Dec parallel run + CA sign-off (human).**
 - [x] Phase 6a: work-queue → in-app notifications + two desk seeds + dashboard API. **Left: more desks, WhatsApp channel (Meta approval), retirements after flips.**

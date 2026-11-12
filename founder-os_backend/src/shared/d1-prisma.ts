@@ -810,11 +810,19 @@ function resolveUniqueWhere(model: string, where: any): { sql: string; params: a
 
 type Row = Record<string, any>;
 
+/** Collapse map (founder decision 2026-11-12): legacy tables that BECAME
+ *  core_* by rename keep their model names, so every call site works
+ *  unchanged — only the physical table changes. Add the next pair here when
+ *  it collapses (orders/floor, dues, ...). */
+const TABLE_MAP: Record<string, string> = {
+  TelecallerScoreEvent: 'core_credit',
+};
+
 class D1Model {
   constructor(private db: D1DatabaseLike, private model: string) {}
 
   private table() {
-    return qid(this.model);
+    return qid(TABLE_MAP[this.model] ?? this.model);
   }
 
   async findMany(args: any = {}): Promise<Row[]> {
