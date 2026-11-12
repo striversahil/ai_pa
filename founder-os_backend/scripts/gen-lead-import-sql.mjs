@@ -69,8 +69,8 @@ function main() {
       `cityVerified = excluded.cityVerified, citySource = excluded.citySource, ` +
       `locationBasis = excluded.locationBasis, duplicateGroup = excluded.duplicateGroup, ` +
       `duplicateConfidence = excluded.duplicateConfidence, suggestedAction = excluded.suggestedAction, ` +
-      `notes = CASE WHEN MasterCustomer.notes IS NULL OR MasterCustomer.notes = '' ` +
-      `THEN excluded.notes ELSE MasterCustomer.notes END, updatedAt = excluded.updatedAt;`,
+      `notes = CASE WHEN core_customer.notes IS NULL OR core_customer.notes = '' ` +
+      `THEN excluded.notes ELSE core_customer.notes END, updatedAt = excluded.updatedAt;`,
     );
   }
   mkdirSync(OUT_DIR, { recursive: true });
