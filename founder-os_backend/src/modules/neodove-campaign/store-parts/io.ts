@@ -2,7 +2,7 @@
 // store.ts re-exports everything public here, so existing imports keep working.
 import { getD1Database } from "../../../shared/prisma-d1";
 import type { CampaignAgent, AgentTally, PushBatch, AssignedLead, SkippedLead } from "../types";
-import { AGENT_COLUMNS, CUSTOMER_COLUMNS, BATCH_COLUMNS, toBatch, PATCHABLE, INSERT_CHUNK, LEAD_COLUMNS } from "./pure";
+import { AGENT_COLUMNS, CUSTOMER_COLUMNS, BATCH_COLUMNS, toBatch, PATCHABLE, INSERT_CHUNK, LEAD_COLUMNS, LIVE_CUSTOMER_WHERE } from "./pure";
 import type { LeadOutcome } from "./types";
 
 export function campaignDb(): any {
@@ -150,11 +150,11 @@ export async function listCustomersByState(region: string, state: string, client
   const type = String(clientType ?? '').trim();
   const res = type
     ? await db
-      .prepare(`SELECT ${CUSTOMER_COLUMNS} FROM MasterCustomer WHERE region = ? AND state = ? AND customerTypeBase = ? ORDER BY id`)
+      .prepare(`SELECT ${CUSTOMER_COLUMNS} FROM core_customer WHERE region = ? AND state = ? AND customerTypeBase = ? AND ${LIVE_CUSTOMER_WHERE} ORDER BY id`)
       .bind(region, state, type)
       .all()
     : await db
-      .prepare(`SELECT ${CUSTOMER_COLUMNS} FROM MasterCustomer WHERE region = ? AND state = ? ORDER BY id`)
+      .prepare(`SELECT ${CUSTOMER_COLUMNS} FROM core_customer WHERE region = ? AND state = ? AND ${LIVE_CUSTOMER_WHERE} ORDER BY id`)
       .bind(region, state)
       .all();
   return (res?.results ?? []) as any[];
@@ -170,8 +170,8 @@ export async function listStateCounts(region: string, clientType = ''): Promise<
       `SELECT state,
               COUNT(*) AS total,
               SUM(CASE WHEN phonesJson NOT IN ('[]', '') AND phonesJson IS NOT NULL THEN 1 ELSE 0 END) AS withPhone
-         FROM MasterCustomer
-        WHERE region = ? AND customerTypeBase = ?
+         FROM core_customer
+        WHERE region = ? AND customerTypeBase = ? AND ${LIVE_CUSTOMER_WHERE}
         GROUP BY state
         ORDER BY total DESC, state ASC`,
     ).bind(region, type).all()
@@ -179,8 +179,8 @@ export async function listStateCounts(region: string, clientType = ''): Promise<
       `SELECT state,
               COUNT(*) AS total,
               SUM(CASE WHEN phonesJson NOT IN ('[]', '') AND phonesJson IS NOT NULL THEN 1 ELSE 0 END) AS withPhone
-         FROM MasterCustomer
-        WHERE region = ?
+         FROM core_customer
+        WHERE region = ? AND ${LIVE_CUSTOMER_WHERE}
         GROUP BY state
         ORDER BY total DESC, state ASC`,
     ).bind(region).all();
@@ -201,8 +201,8 @@ export async function listTypeCounts(region: string, state = ''): Promise<Array<
       `SELECT customerTypeBase AS base,
               COUNT(*) AS total,
               SUM(CASE WHEN phonesJson NOT IN ('[]', '') AND phonesJson IS NOT NULL THEN 1 ELSE 0 END) AS withPhone
-         FROM MasterCustomer
-        WHERE region = ? AND state = ?
+         FROM core_customer
+        WHERE region = ? AND state = ? AND ${LIVE_CUSTOMER_WHERE}
         GROUP BY customerTypeBase
         ORDER BY total DESC, base ASC`,
     ).bind(region, st).all()
@@ -210,8 +210,8 @@ export async function listTypeCounts(region: string, state = ''): Promise<Array<
       `SELECT customerTypeBase AS base,
               COUNT(*) AS total,
               SUM(CASE WHEN phonesJson NOT IN ('[]', '') AND phonesJson IS NOT NULL THEN 1 ELSE 0 END) AS withPhone
-         FROM MasterCustomer
-        WHERE region = ?
+         FROM core_customer
+        WHERE region = ? AND ${LIVE_CUSTOMER_WHERE}
         GROUP BY customerTypeBase
         ORDER BY total DESC, base ASC`,
     ).bind(region).all();

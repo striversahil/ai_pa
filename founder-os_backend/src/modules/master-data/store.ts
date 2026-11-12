@@ -24,7 +24,9 @@ const LIST_COLUMNS = [
 
 const DETAIL_COLUMNS = `${LIST_COLUMNS}, citySource, locationBasis, billingAddress, reviewedBy, reviewedAt, updatedAt`;
 
-/** Every customer row, keyset-paginated on the primary key (D1 row caps). */
+/** Every live customer row, keyset-paginated on the primary key (D1 row caps).
+ *  Tombstones (`status='DELETED'`) are excluded: deletes tombstone instead of
+ *  removing rows, so the book only ever renders live rows. */
 export async function listAllCustomers(): Promise<any[]> {
   const db = masterDb();
   if (!db) return [];
@@ -32,7 +34,7 @@ export async function listAllCustomers(): Promise<any[]> {
   let cursor = '';
   for (let page = 0; page < 40; page++) {
     const res = await db
-      .prepare(`SELECT ${LIST_COLUMNS} FROM MasterCustomer WHERE id > ? ORDER BY id LIMIT 500`)
+      .prepare(`SELECT ${LIST_COLUMNS} FROM core_customer WHERE id > ? AND ${LIVE_WHERE} ORDER BY id LIMIT 500`)
       .bind(cursor)
       .all();
     const rows: any[] = res?.results ?? [];
@@ -54,58 +56,32 @@ export async function listRegions(): Promise<MasterRegion[]> {
 export async function getCustomerRow(id: string): Promise<any | null> {
   const db = masterDb();
   if (!db) return null;
-  const row = await db.prepare(`SELECT ${DETAIL_COLUMNS} FROM MasterCustomer WHERE id = ?`).bind(id).first();
+  const row = await db.prepare(`SELECT ${DETAIL_COLUMNS} FROM core_customer WHERE id = ? AND ${LIVE_WHERE}`).bind(id).first();
   return row ?? null;
 }
 
-/** Existing ids — lets an import report inserted vs updated without guessing. */
+/** Existing live ids — lets an import report inserted vs updated without
+ *  guessing. Tombstones excluded: a revived id reports as inserted, exactly
+ *  like the old hard-delete behavior. */
 export async function listCustomerIds(): Promise<Set<string>> {
   const db = masterDb();
   if (!db) return new Set();
-  const res = await db.prepare('SELECT id FROM MasterCustomer').all();
+  const res = await db.prepare(`SELECT id FROM core_customer WHERE ${LIVE_WHERE}`).all();
   return new Set(((res?.results ?? []) as any[]).map((r) => String(r.id)));
 }
 
 export async function countCustomers(): Promise<number> {
   const db = masterDb();
   if (!db) return 0;
-  const row = await db.prepare('SELECT COUNT(*) AS n FROM MasterCustomer').first();
+  const row = await db.prepare(`SELECT COUNT(*) AS n FROM core_customer WHERE ${LIVE_WHERE}`).first();
   return Number((row as any)?.n ?? 0) || 0;
 }
 
-// ── Core read path (Phase 3a flip, flag-gated in service.ts) ───────────────
-// Same columns + same keyset pagination as the legacy readers above, so the
-// payload shape is identical whichever source serves it. DELETED tombstones
-// are excluded: legacy hard-deletes remove rows outright, so serving a
-// tombstone would surface a customer the legacy book no longer has.
-const CORE_LIVE_WHERE = `("status" IS NULL OR "status" <> 'DELETED')`;
-
-/** Every live core_customer row (tombstones excluded), keyset-paginated. */
-export async function listAllCustomersCore(): Promise<any[]> {
-  const db = masterDb();
-  if (!db) return [];
-  const out: any[] = [];
-  let cursor = '';
-  for (let page = 0; page < 40; page++) {
-    const res = await db
-      .prepare(`SELECT ${LIST_COLUMNS} FROM core_customer WHERE id > ? AND ${CORE_LIVE_WHERE} ORDER BY id LIMIT 500`)
-      .bind(cursor)
-      .all();
-    const rows: any[] = res?.results ?? [];
-    if (rows.length === 0) break;
-    out.push(...rows);
-    cursor = String(rows[rows.length - 1]?.id ?? '');
-    if (rows.length < 500) break;
-  }
-  return out;
-}
-
-export async function countCustomersCore(): Promise<number> {
-  const db = masterDb();
-  if (!db) return 0;
-  const row = await db.prepare(`SELECT COUNT(*) AS n FROM core_customer WHERE ${CORE_LIVE_WHERE}`).first();
-  return Number((row as any)?.n ?? 0) || 0;
-}
+/** Live-book predicate: tombstones (`status='DELETED'`) are excluded everywhere
+ *  the book renders. Deletes tombstone instead of removing rows (collapse
+ *  0136), so every read carries this filter — book membership is identical to
+ *  the old hard-delete behavior. */
+export const LIVE_WHERE = `("status" IS NULL OR "status" <> 'DELETED')`;
 
 // ── Writes ──────────────────────────────────────────────────────────────────
 
@@ -152,15 +128,23 @@ export function patchToColumns(patch: Record<string, unknown>): { columns: strin
   return { columns, values };
 }
 
-export async function updateCustomerRow(id: string, columns: string[], values: any[]): Promise<void> {
+export async function updateCustomerRow(
+  id: string,
+  columns: string[],
+  values: any[],
+  actor?: { id: string; reason: string },
+): Promise<void> {
   const db = masterDb();
   if (!db) throw new Error('database not ready');
   const sets = columns.map((c) => `${c} = ?`);
   sets.push('updatedAt = ?');
+  // Unification stamp: who wrote + why (collapse 0136). Set on every edit so
+  // the book carries its own audit trail instead of a side table.
+  sets.push('actorId = ?', 'actorReason = ?');
   const iso = new Date().toISOString();
   await db
-    .prepare(`UPDATE MasterCustomer SET ${sets.join(', ')} WHERE id = ?`)
-    .bind(...values, iso, id)
+    .prepare(`UPDATE core_customer SET ${sets.join(', ')} WHERE id = ?`)
+    .bind(...values, iso, actor?.id ?? '', actor?.reason ?? '', id)
     .run();
 }
 
@@ -170,22 +154,35 @@ export async function markDuplicateGroupRow(group: string, review: DuplicateRevi
   const iso = new Date().toISOString();
   const res = await db
     .prepare(
-      `UPDATE MasterCustomer
-         SET duplicateReview = ?, reviewedBy = ?, reviewedAt = ?, updatedAt = ?
+      `UPDATE core_customer
+         SET duplicateReview = ?, reviewedBy = ?, reviewedAt = ?, updatedAt = ?,
+             actorId = ?, actorReason = 'duplicate-review'
        WHERE duplicateGroup = ?`,
     )
-    .bind(review, review === 'open' ? '' : actor, review === 'open' ? null : iso, iso, group)
+    .bind(review, review === 'open' ? '' : actor, review === 'open' ? null : iso, iso, review === 'open' ? '' : actor, group)
     .run();
   return Number(res?.meta?.changes ?? res?.changes ?? 0) || 0;
 }
 
-/** Hard delete — managers only (service guards pipeline rows). The Zoho
- *  re-import will NOT resurrect the row (upsert matches on id; a deleted id
- *  simply never appears again unless a future extract still carries it). */
-export async function deleteCustomerRow(id: string): Promise<boolean> {
+/** Tombstone delete — managers only (service guards pipeline rows). The row
+ *  stays with `status='DELETED'` + `tombstonedAt` (never row-deleted), so
+ *  history and audit survive; every book read excludes tombstones via
+ *  LIVE_WHERE, so the served book is identical to the old hard-delete. The
+ *  Zoho re-import will NOT resurrect the row (upsert matches on id; a
+ *  tombstoned id present in a future extract revives it — same as the old
+ *  behavior where a carried id re-inserted). */
+export async function deleteCustomerRow(id: string, actor?: { id: string; reason: string }): Promise<boolean> {
   const db = masterDb();
   if (!db) throw new Error('database not ready');
-  const res = await db.prepare(`DELETE FROM MasterCustomer WHERE id = ?`).bind(id).run();
+  const iso = new Date().toISOString();
+  const res = await db
+    .prepare(
+      `UPDATE core_customer
+         SET status = 'DELETED', tombstonedAt = ?, actorId = ?, actorReason = ?, updatedAt = ?
+       WHERE id = ? AND ${LIVE_WHERE}`,
+    )
+    .bind(iso, actor?.id ?? '', actor?.reason ?? 'delete', iso, id)
+    .run();
   return (Number((res as any)?.meta?.changes ?? (res as any)?.changes ?? 0) || 0) > 0;
 }
 
@@ -196,7 +193,7 @@ export function prepareUpsert(db: any, c: ImportCustomer): any {
   const iso = new Date().toISOString();
   return db
     .prepare(
-      `INSERT INTO MasterCustomer (
+      `INSERT INTO core_customer (
          id, zohoCustomerId, region, zone, subArea, state, pincode, displayName, companyName,
          customerType, customerTypeBase, customerTypeTag, status, contactPerson, designation,
          phonesJson, emailsJson, billingAddress, gstin, owner, pipelineStage, estimateCount,
@@ -220,8 +217,8 @@ export function prepareUpsert(db: any, c: ImportCustomer): any {
          duplicateGroup = excluded.duplicateGroup,
          duplicateConfidence = excluded.duplicateConfidence,
          suggestedAction = excluded.suggestedAction,
-         notes = CASE WHEN MasterCustomer.notes IS NULL OR MasterCustomer.notes = ''
-                      THEN excluded.notes ELSE MasterCustomer.notes END,
+         notes = CASE WHEN core_customer.notes IS NULL OR core_customer.notes = ''
+                      THEN excluded.notes ELSE core_customer.notes END,
          updatedAt = excluded.updatedAt`,
     )
     .bind(

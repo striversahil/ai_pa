@@ -3,7 +3,7 @@
 The Zoho customer book as a first-class dashboard — the reference table every
 enquiry, estimate and sales order ultimately points at.
 
-- `MasterCustomer`: one row per Zoho customer (2,604 seeded), keyed by
+- `core_customer`: one row per Zoho customer (2,604 seeded), keyed by
   `zohoCustomerId` so a re-import upserts instead of duplicating. Contact
   channels live in `phonesJson`/`emailsJson` (a customer legitimately has
   several). `customerTypeBase`/`customerTypeTag` are derived at import — the

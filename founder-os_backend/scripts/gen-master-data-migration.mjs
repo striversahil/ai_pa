@@ -282,7 +282,7 @@ function main() {
   for (let i = 0; i < values.length; i += CHUNK) {
     const chunk = values.slice(i, i + CHUNK);
     statements.push(
-      `INSERT INTO MasterCustomer (${COLUMNS.join(', ')}) VALUES\n` +
+      `INSERT INTO core_customer (${COLUMNS.join(', ')}) VALUES\n` +
       chunk.map((v) => `(${v.join(', ')})`).join(',\n') +
       `\nON CONFLICT(id) DO UPDATE SET ${UPDATE_SET};`,
     );

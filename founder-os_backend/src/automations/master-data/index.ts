@@ -1,6 +1,6 @@
 // master-data — Customer master automation.
 //
-// No schedule: the payload is a KV-cached read of the MasterCustomer table and
+// No schedule: the payload is a KV-cached read of the core_customer table and
 // the dashboard refreshes on the typed `master-data` live event after every
 // write. The automation exists so the table is a first-class dashboard (sidebar,
 // Automations registry, "View data") and so a future Zoho customer sync has a

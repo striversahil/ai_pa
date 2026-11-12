@@ -48,7 +48,7 @@ function main() {
   for (let i = 0; i < customers.length; i += ROWS_PER_STATEMENT) {
     const chunk = customers.slice(i, i + ROWS_PER_STATEMENT);
     statements.push(
-      `INSERT INTO MasterCustomer (id, zohoCustomerId, region, zone, subArea, state, pincode, ` +
+      `INSERT INTO core_customer (id, zohoCustomerId, region, zone, subArea, state, pincode, ` +
       `displayName, companyName, customerType, customerTypeBase, customerTypeTag, status, ` +
       `contactPerson, designation, phonesJson, emailsJson, billingAddress, gstin, owner, ` +
       `pipelineStage, estimateCount, lastEstimateDate, salesOrderCount, lastSalesOrderDate, ` +

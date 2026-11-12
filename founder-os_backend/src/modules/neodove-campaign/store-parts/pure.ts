@@ -7,6 +7,10 @@ import type { PushBatch, PushMode, PushStatus, Distribution } from "../types";
 export const AGENT_COLUMNS = ['id', 'region', 'name', 'secretName', 'active', 'campaignUrl', 'kind'].join(', ');
 
 /** Customer columns the selector needs — no addresses, no notes. */
+/** Live-book predicate (mirrors master-data/store LIVE_WHERE): tombstones
+ *  (`status='DELETED'`) are never pushed, counted, or listed. */
+export const LIVE_CUSTOMER_WHERE = `(status IS NULL OR status <> 'DELETED')`;
+
 export const CUSTOMER_COLUMNS = [
   'id', 'zohoCustomerId', 'region', 'state',
   'companyName', 'displayName', 'contactPerson', 'phonesJson', 'emailsJson',

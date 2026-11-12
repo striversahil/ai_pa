@@ -20,8 +20,6 @@ import {
   MANAGER_ONLY_FIELDS, markDuplicateGroupRow, deleteCustomerRow, PATCH_COLUMNS, listCustomerIds,
   masterDb,
 } from './store';
-import { mirrorCustomers, mirrorCustomerRemoved } from '../core/customers';
-import { readBookRows, readBookCount } from './read-source';
 
 export const MASTER_CACHE_KEY = 'master:data:v2';
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -83,12 +81,12 @@ export function computeTotals(rows: ReturnType<typeof toCustomer>[]): MasterData
 }
 
 async function computePayload(): Promise<MasterDataPayload> {
-  // readBookRows: legacy book while the flip flag is OFF; verified core rows
-  // when ON (per-compute legacy COUNT(*) check, legacy fallback on drift).
-  const [regions, updatedAt, rawRows] = await Promise.all([
+  // Single table since collapse 0136 (MasterCustomer IS core_customer) — the
+  // gated switch and its fallback are gone with the mirror.
+  const [regions, rawRows, updatedAt] = await Promise.all([
     listRegions(),
+    listAllCustomers(),
     lastAuditAt(),
-    readBookRows(),
   ]);
   const rows = rawRows.map(toCustomer).sort((a, b) => a.name.localeCompare(b.name));
   return {
@@ -106,10 +104,9 @@ export async function getMasterDataPayload(): Promise<MasterDataPayload> {
 }
 
 /** Header stamp: last import or edit. Cheap enough to sit outside the payload
- *  cache (single-row read) but folded into it to keep the route to one call.
- *  Follows the read-source flag so the count always matches the served book. */
+ *  cache (single-row read) but folded into it to keep the route to one call. */
 export async function getMasterDataStamp(): Promise<{ updatedAt: string; count: number }> {
-  const [updatedAt, count] = await Promise.all([lastAuditAt(), readBookCount()]);
+  const [updatedAt, count] = await Promise.all([lastAuditAt(), countCustomers()]);
   return { updatedAt, count };
 }
 
@@ -131,7 +128,7 @@ export async function getAllowedTypeBases(): Promise<Array<{ base: string; segme
     const db = masterDb();
     if (!db) return fallback.map((base) => ({ base, segment: defaultTypeSegment(base), count: 0 }));
     const countsRes = await db.prepare(
-      `SELECT customerTypeBase AS base, COUNT(*) AS n FROM MasterCustomer GROUP BY customerTypeBase`,
+      `SELECT customerTypeBase AS base, COUNT(*) AS n FROM core_customer GROUP BY customerTypeBase`,
     ).all().catch(() => null);
     const counts = new Map<string, number>();
     for (const r of ((countsRes?.results ?? []) as any[])) {
@@ -263,7 +260,7 @@ export async function updateCustomer(
     );
   }
   const { columns, values } = patchToColumns(clean);
-  await updateCustomerRow(key, columns, values);
+  await updateCustomerRow(key, columns, values, { id: actor.id, reason: 'customer-edit' });
   await insertAudit({
     actorId: actor.id, actorName: actor.name, action: 'customer-edit', entityId: key,
     detail: { fields: changed, before: Object.fromEntries(changed.map((k) => [k, (existing as any)[PATCH_COLUMNS[k]] ?? ''])) },
@@ -274,8 +271,6 @@ export async function updateCustomer(
   if (typeTouched) {
     try { await cacheDelPrefix('telecalling:dashboard'); } catch { /* non-fatal */ }
   }
-  // Phase 3a dual-write: project the edited row into core_customer (never throws).
-  await mirrorCustomers({ ids: [key] });
   return getCustomerDetail(key);
 }
 
@@ -294,15 +289,15 @@ export async function setDuplicateReview(
     detail: { review, rows: changed },
   });
   await invalidateMasterDataCache();
-  // Phase 3a dual-write: project the reviewed group into core_customer.
-  await mirrorCustomers({ group: g });
   return { group: g, review, changed };
 }
 
-/** Hard delete — sales-head only (root as system owner). Pipeline rows (any
+/** Tombstone delete — sales-head only (root as system owner). Pipeline rows (any
  *  estimate or sales order on file) are refused: set Inactive instead so
- *  history survives. Busts the telecalling dashboard cache too — a deleted
- *  client un-maps from the Controller's auto-match immediately. */
+ *  history survives. The row stays with `status='DELETED'` (never row-deleted);
+ *  book reads exclude tombstones, so the served book is unchanged. Busts the
+ *  telecalling dashboard cache too — a deleted client un-maps from the
+ *  Controller's auto-match immediately. */
 export async function deleteCustomer(
   id: string,
   actor: Actor,
@@ -324,15 +319,13 @@ export async function deleteCustomer(
     );
   }
   const name = String((existing as any).displayName ?? key);
-  await deleteCustomerRow(key);
+  await deleteCustomerRow(key, { id: actor.id, reason: 'customer-delete' });
   await insertAudit({
     actorId: actor.id, actorName: actor.name, action: 'customer-delete', entityId: key,
     detail: { name },
   });
   await invalidateMasterDataCache();
   try { await cacheDelPrefix('telecalling:dashboard'); } catch { /* non-fatal */ }
-  // Phase 3a dual-write: tombstone the core row (never row-deleted).
-  await mirrorCustomerRemoved(key, name);
   return { id: key, name };
 }
 
@@ -359,8 +352,6 @@ export async function importMasterData(json: unknown, actor: Actor): Promise<Mas
   }
   await upsertRegions(parsed.regions);
   await upsertCustomers(parsed.customers);
-  // Phase 3a dual-write: project the imported batch into core_customer.
-  await mirrorCustomers({ ids: parsed.customers.map((c) => c.id) });
   await insertAudit({
     actorId: actor.id, actorName: actor.name, action: 'import', entityId: 'master',
     detail: { received: parsed.customers.length, inserted, updated, skipped: parsed.skipped, regions: parsed.regions.length },

@@ -1,63 +1,80 @@
-// master-data-core-parity.test.mjs — Guard: the Phase 3a customer-display flip.
+// master-data-core-parity.test.mjs — Guard: the customer collapse (0136).
 //
-// The flip serves the dashboard payload from `core_customer` when the
-// `masterdata:readCore` Setting is on, with legacy fallback on any mismatch.
-// This guard locks the three invariants the flip depends on (text-level, so it
+// Collapse 0136 made MasterCustomer BECOME core_customer: one table, no
+// mirror, no flip flag. This guard locks the end state (text-level, so it
 // runs anywhere with zero deps):
-//   backend  → src/modules/master-data/store.ts   (LIST_COLUMNS + core reader)
-//   backend  → src/modules/master-data/service.ts  (flag + fallback)
-//   backend  → src/modules/core/customers.ts       (MIRROR_COLUMNS — read truth)
-//   backend  → src/worker/routes/master-data.ts    (manager-only flip route)
+//   backend  → src/modules/master-data/store.ts   (single-table reads + tombstone writes)
+//   backend  → migration 0136                      (RENAME + unification cols + bridge)
+//   backend  → no `MasterCustomer` SQL table refs in unlocked code
+//              (locked modules/core/* excluded — human re-sign removes it;
+//               migrations/ history excluded — it records the rename itself)
 //
 // Run: `node --test "scripts/guards/*.test.mjs"`
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { BACKEND_DIR } from './_bundle.mjs';
 
-const store = readFileSync(join(BACKEND_DIR, 'src', 'modules', 'master-data', 'store.ts'), 'utf8');
-const service = readFileSync(join(BACKEND_DIR, 'src', 'modules', 'master-data', 'service.ts'), 'utf8');
-const readSource = readFileSync(join(BACKEND_DIR, 'src', 'modules', 'master-data', 'read-source.ts'), 'utf8');
-const core = readFileSync(join(BACKEND_DIR, 'src', 'modules', 'core', 'customers.ts'), 'utf8');
-const routes = readFileSync(join(BACKEND_DIR, 'src', 'worker', 'routes', 'master-data.ts'), 'utf8');
+const SRC = join(BACKEND_DIR, 'src');
+const store = readFileSync(join(SRC, 'modules', 'master-data', 'store.ts'), 'utf8');
+const service = readFileSync(join(SRC, 'modules', 'master-data', 'service.ts'), 'utf8');
+const migration = readFileSync(join(BACKEND_DIR, 'migrations', '0136_customer_collapse.sql'), 'utf8');
 
-function quotedList(src, name) {
-  const m = src.match(new RegExp(`const ${name} = \\[([\\s\\S]*?)\\]`));
-  assert.ok(m, `${name} array not found`);
-  return [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
+function unlockedTsFiles(dir, out = []) {
+  const entries = readdirSync(dir, { withFileTypes: true });
+  for (const e of entries) {
+    const p = join(dir, e.name);
+    if (e.isDirectory()) {
+      if (p.includes(`${'/'}modules${'/'}core`)) continue; // locked — human re-signs
+      unlockedTsFiles(p, out);
+    } else if (/\.tsx?$/.test(e.name)) {
+      out.push(p);
+    }
+  }
+  return out;
 }
 
-describe('master-data core flip contract', () => {
-  it('every legacy LIST_COLUMNS column exists in the core mirror', () => {
-    const legacy = quotedList(store, 'LIST_COLUMNS');
-    const mirror = new Set(quotedList(core, 'MIRROR_COLUMNS'));
-    assert.ok(legacy.length > 20, 'expected a real column list');
-    for (const col of legacy) {
-      assert.ok(mirror.has(col), `core_customer is missing legacy column: ${col}`);
+describe('customer collapse contract (0136)', () => {
+  it('no legacy MasterCustomer SQL table refs in unlocked code', () => {
+    const bad = [];
+    for (const f of unlockedTsFiles(SRC)) {
+      const s = readFileSync(f, 'utf8');
+      if (/(FROM|INTO|UPDATE|TABLE)\s+MasterCustomer\b/.test(s)) bad.push(f);
     }
+    assert.deepEqual(bad, [], `legacy table refs remain: ${bad.join(', ')}`);
   });
 
-  it('core reader excludes DELETED tombstones (legacy hard-deletes rows)', () => {
-    assert.ok(store.includes('listAllCustomersCore'), 'missing listAllCustomersCore');
-    assert.ok(store.includes("`(\"status\" IS NULL OR \"status\" <> 'DELETED')`") ||
-      store.includes(`"status" <> 'DELETED'`),
-      'core reader must filter DELETED tombstones to match legacy semantics');
-    assert.ok(store.includes('core_customer'), 'core reader must query core_customer');
+  it('book reads hit the unified table with tombstones excluded', () => {
+    assert.ok(store.includes('LIVE_WHERE'), 'missing tombstone predicate');
+    for (const fn of ['listAllCustomers', 'getCustomerRow', 'listCustomerIds', 'countCustomers']) {
+      assert.ok(store.includes(fn), `missing ${fn}`);
+    }
+    assert.ok(!store.includes('FROM MasterCustomer'), 'store still reads the legacy name');
+    assert.ok(store.includes('FROM core_customer'), 'store must read the unified table');
   });
 
-  it('flag defaults OFF and the payload falls back to legacy', () => {
-    assert.ok(readSource.includes('MASTER_READ_CORE_KEY'), 'missing flip flag key');
-    assert.ok(readSource.includes('return false'), 'flag read must default OFF on error');
-    assert.ok(readSource.includes('listAllCustomersCore()'), 'read-source must try core when on');
-    assert.ok(readSource.includes('serving legacy'), 'read-source must fall back to legacy on mismatch/error');
-    assert.ok(service.includes('readBookRows()'), 'payload compute must read through the guarded switch');
+  it('deletes tombstone — no row-deletes of the book', () => {
+    assert.ok(!/DELETE\s+FROM\s+core_customer/i.test(store), 'store must never row-delete the book');
+    assert.ok(store.includes("status = 'DELETED'"), 'delete path must tombstone');
+    assert.ok(store.includes('tombstonedAt'), 'tombstone must be timestamped');
+    assert.ok(store.includes('actorId'), 'writes must stamp the actor (unification column)');
   });
 
-  it('flip route is manager-only and busts the cache', () => {
-    assert.ok(routes.includes("app.put('/api/master-data/read-source'"), 'missing flip route');
-    assert.ok(routes.includes('requireManager'), 'flip route must be manager-only');
-    assert.ok(routes.includes('setMasterReadCore'), 'route must use the service flip');
-    assert.ok(routes.includes('invalidateMasterDataCache'), 'flip must bust the payload cache');
+  it('service has no mirror calls and no flip flag', () => {
+    assert.ok(!service.includes('mirrorCustomers'), 'dual-write funnel must be gone');
+    assert.ok(!service.includes('mirrorCustomerRemoved'), 'tombstone funnel must be gone');
+    assert.ok(!service.includes('read-source'), 'flip flag machinery must be gone');
+    assert.ok(!existsSync(join(SRC, 'modules', 'master-data', 'read-source.ts')), 'read-source.ts must be deleted');
+  });
+
+  it('migration renames, unifies, and bridges', () => {
+    assert.ok(migration.includes('DROP TABLE core_customer'), 'must drop the verified mirror first');
+    assert.ok(migration.includes('ALTER TABLE MasterCustomer RENAME TO core_customer'), 'must rename legacy into core_*');
+    for (const col of ['actorId', 'actorReason', 'tombstonedAt']) {
+      assert.ok(migration.includes(`ADD COLUMN ${col}`), `missing unification column ${col}`);
+    }
+    assert.ok(migration.includes('CREATE VIEW MasterCustomer AS SELECT * FROM core_customer'), 'must leave a read bridge on the old name');
+    assert.ok(migration.includes('INSTEAD OF INSERT') && migration.includes('INSTEAD OF UPDATE') && migration.includes('INSTEAD OF DELETE'), 'bridge must forward writes too');
   });
 });

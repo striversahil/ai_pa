@@ -181,12 +181,9 @@ export async function loadClientQueue(from: string, to: string): Promise<{ clien
   }
   const names = rows.map((r) => String(r?.customerName ?? ''));
   const classes = await classifyClients(names);
-  // Phase 3b shadow: compare MasterCustomer vs core_customer on Controller
-  // reads only. Served values never change — diffs log as SystemJob rows.
-  try {
-    const { shadowCompareCustomers } = await import('../../../modules/core/customers');
-    await shadowCompareCustomers();
-  } catch { /* never block the Controller */ }
+  // (Collapse 0136: MasterCustomer IS core_customer — single table, no shadow.
+  // The locked shadowCompareCustomers stays defined until a human re-signs
+  // the core lock, but nothing calls it anymore.)
   const [rules] = await Promise.all([loadTypeRules()]);
   // Unique master type bases for the rule editor (with master row counts).
   let master: MasterEntry[] = [];
@@ -294,7 +291,7 @@ export async function setManualSegment(
   let masterName = String(opts.masterName ?? '');
   if (masterId) {
     try {
-      const row: any = await db.prepare('SELECT displayName, companyName FROM MasterCustomer WHERE id = ?').bind(masterId).first();
+      const row: any = await db.prepare('SELECT displayName, companyName FROM core_customer WHERE id = ?').bind(masterId).first();
       if (row) {
         masterName = String(row.displayName || row.companyName || '');
         if (!masterName) throw new Error('unknown master customer');
