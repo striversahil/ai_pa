@@ -6,7 +6,34 @@ import { authStore, deps, publicOrigin, isSecure, AuthRoutes, type Bindings } fr
 import { listAccountants } from '../../automations/accounts/service';
 import { listDigitalMarketingManagers } from '../../automations/digital-marketing/service';
 import { listEmployees } from '../../automations/human-resources/employees';
+import { DIRECTORY_HIDDEN_KEY } from '../../modules/auth/directory';
 import { readBody } from '../http';
+
+/** Shared roster snapshot loader (positions + directory reuse it — one home). */
+async function loadRosterSnapshot() {
+  const { prisma } = deps();
+  const [tcs, accts, mkts, hrs] = await Promise.all([
+    prisma.telecaller.findMany({}).catch(() => []),
+    listAccountants(false).catch(() => []),
+    listDigitalMarketingManagers(false).catch(() => []),
+    listEmployees(false).catch(() => []),
+  ]);
+  return {
+    telecallers: (tcs as any[]).map((t) => ({ id: t.id ?? null, email: t.email ?? null, name: t.name ?? null, type: t.type ?? null, region: t.region ?? null })),
+    accountants: (accts as any[]).map((r) => ({ id: (r as any).id ?? null, email: r.email ?? null, name: r.name ?? null, role: r.role ?? null })),
+    marketers: (mkts as any[]).map((r) => ({ id: (r as any).id ?? null, email: r.email ?? null, name: r.name ?? null, role: r.role ?? null })),
+    hrMembers: (hrs as any[]).map((r) => ({ id: (r as any).id ?? null, email: r.email ?? null, loginEmail: r.loginEmail ?? null, name: r.name ?? null, designation: (r as any).designation ?? null })),
+  };
+}
+
+async function loadHiddenEmails(): Promise<unknown> {
+  try {
+    const { prisma } = deps();
+    const row = await (prisma as any).setting.findUnique({ where: { key: DIRECTORY_HIDDEN_KEY } }).catch(() => null);
+    const v = (row as any)?.value;
+    try { return JSON.parse(String(v ?? "[]")); } catch { return []; }
+  } catch { return []; }
+}
 
 export function registerAuthRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.get('/api/auth/google', async (c) => {
@@ -35,21 +62,7 @@ export function registerAuthRoutes(app: Hono<{ Bindings: Bindings }>): void {
   });
   app.get('/api/auth/positions', async (c) => {    // Worker-only (Express is frozen — no mirror). Roster reads run AFTER the
     // manager gate inside authUserPositions, via this loader closure.
-    const r = await AuthRoutes.authUserPositions(authStore(c), c.req.header('cookie') ?? null, async () => {
-      const { prisma } = deps();
-      const [tcs, accts, mkts, hrs] = await Promise.all([
-        prisma.telecaller.findMany({}).catch(() => []),
-        listAccountants(false).catch(() => []),
-        listDigitalMarketingManagers(false).catch(() => []),
-        listEmployees(false).catch(() => []),
-      ]);
-      return {
-        telecallers: (tcs as any[]).map((t) => ({ email: t.email ?? null, name: t.name ?? null, type: t.type ?? null })),
-        accountants: (accts as any[]).map((r) => ({ email: r.email ?? null, name: r.name ?? null, role: r.role ?? null })),
-        marketers: (mkts as any[]).map((r) => ({ email: r.email ?? null, name: r.name ?? null, role: r.role ?? null })),
-        hrMembers: (hrs as any[]).map((r) => ({ email: r.email ?? null, loginEmail: r.loginEmail ?? null, name: r.name ?? null })),
-      };
-    }, async () => {
+    const r = await AuthRoutes.authUserPositions(authStore(c), c.req.header('cookie') ?? null, loadRosterSnapshot, async () => {
       // Phase 1 shadow: core-backed snapshot for diff logging only. Any
       // failure → null → endpoint serves pure roster values as before.
       try {
@@ -74,6 +87,27 @@ export function registerAuthRoutes(app: Hono<{ Bindings: Bindings }>): void {
           })),
         };
       } catch { return null; }
+    });
+    return c.json(r.body, r.status as any);
+  });
+  // ── Unified employee directory (view-first; Worker-only, no Express mirror) ─
+  // One entry per non-root login: position + roster source links. Root sees
+  // all incl. hidden (flagged); managers + HR-scope holders see all-minus-hidden.
+  app.get('/api/auth/directory', async (c) => {
+    const r = await AuthRoutes.authDirectory(authStore(c), c.req.header('cookie') ?? null, loadRosterSnapshot, loadHiddenEmails);
+    return c.json(r.body, r.status as any);
+  });
+  // Root-defined hidden-login list (root-only read/write; HR never sees it).
+  app.get('/api/auth/hidden-logins', async (c) => {
+    const r = await AuthRoutes.authGetHiddenLogins(authStore(c), c.req.header('cookie') ?? null, loadHiddenEmails);
+    return c.json(r.body, r.status as any);
+  });
+  app.put('/api/auth/hidden-logins', async (c) => {
+    const body = await readBody(c);
+    const { prisma } = deps();
+    const r = await AuthRoutes.authSetHiddenLogins(authStore(c), c.req.header('cookie') ?? null, body ?? {}, async (emails) => {
+      const value = JSON.stringify(emails);
+      await (prisma as any).setting.upsert({ where: { key: DIRECTORY_HIDDEN_KEY }, update: { value }, create: { key: DIRECTORY_HIDDEN_KEY, value } });
     });
     return c.json(r.body, r.status as any);
   });
