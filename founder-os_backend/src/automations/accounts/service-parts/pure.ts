@@ -25,6 +25,13 @@ export const DATA_TTL_MS = 5 * 60 * 1000;
 // dashboard-shape change so stale KV never serves the old row layout.
 export const DATA_CACHE_PREFIX = 'accounts:dashboard:v2:';
 
+/** Due-projection signature (Phase 5a mirror gate). The accounts read path
+ *  projects dues into core_receipt; identical dues must not re-write ~180 rows
+ *  on every cache miss, and the TTL is also the self-heal window for core rows
+ *  changed outside this path. */
+export const DUES_SIG_KEY = 'accounts:dues:sig';
+export const DUE_SYNC_TTL_MS = 30 * 60 * 1000;
+
 /** Lane slots for AccountsTaskLog rows. Shared templates get one instance per
  *  lane so each lane completes its own copy; ordinary tasks use 'main'. */
 export const SLOT_MAIN = 'main';

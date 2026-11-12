@@ -3,9 +3,9 @@
 import { prisma } from "../../../shared/prisma";
 import { SEED_TASKS } from "../seed-tasks";
 import { logger } from "../../../shared/logger";
-import { cacheDel, cached } from "../../../shared/cache";
+import { cacheDel, cacheGet, cacheSet, cached } from "../../../shared/cache";
 import { mirrorRosterRow } from "../../../modules/core/sync";
-import { isDueOn, slotsFor, slotKey, SLOT_MAIN, SLOT_SENIOR, SLOT_JUNIOR, normName, LANE_SLOTS, addDays, istDateStr, DATA_CACHE_PREFIX, UNSCHEDULED_RULES, parseRule, windowGraceStart, toAttachmentJson, missStreak, summarizePayments, DATA_TTL_MS, ISO_DAY, diffDays, fmtMins, normId, cleanTemplateInput, toPaymentAttachment, toPaymentRow, mondayOf } from "./pure";
+import { isDueOn, slotsFor, slotKey, SLOT_MAIN, SLOT_SENIOR, SLOT_JUNIOR, normName, LANE_SLOTS, addDays, istDateStr, DATA_CACHE_PREFIX, DUES_SIG_KEY, DUE_SYNC_TTL_MS, UNSCHEDULED_RULES, parseRule, windowGraceStart, toAttachmentJson, missStreak, summarizePayments, DATA_TTL_MS, ISO_DAY, diffDays, fmtMins, normId, cleanTemplateInput, toPaymentAttachment, toPaymentRow, mondayOf } from "./pure";
 import type { LaneScope, PaymentAttachment, PaymentDueRow } from "./types";
 
 export async function ensureSeedTemplates(): Promise<void> {
@@ -957,21 +957,39 @@ export async function getPaymentDues(dateStr: string): Promise<PaymentDueRow[]> 
   }
   // Phase 5a dual-write: project dues into core_receipt (convergent on reads;
   // template CRUD busts the calendar cache, which re-mirrors on next read).
+  //
+  // Perf gate (2026-11-12): this block is a READ path — it runs on every cold
+  // dashboard compute, and the payload recomputes on every cache miss (5-min
+  // TTL + a bust on every accounts write). The mirror alone is ~1 DELETE + 1
+  // INSERT per template (~180 statements at 82 templates) and the shadow does
+  // its own full scan; both are idempotent projections of `built`. So they are
+  // signature-gated: identical dues inside DUE_SYNC_TTL_MS do zero writes. The
+  // TTL doubles as the self-heal — after it lapses the mirror re-converges even
+  // if core_receipt was touched elsewhere. Never blocks the calendar.
   try {
     const { upsertDueReceipts, shadowCompareFinance } = await import('../../../modules/core/finance');
     const built = rows.sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.title.localeCompare(b.title));
-    await upsertDueReceipts(built.map((r) => ({
-      templateId: String(r.templateId ?? ''), biller: String(r.biller ?? ''),
-      category: String(r.category ?? ''), amount: Number(r.amount ?? 0) || 0,
-      dueDate: String(r.dueDate ?? '').slice(0, 10),
-      statementDate: r.statementDate ? String(r.statementDate).slice(0, 10) : null,
-      identifier: String(r.identifier ?? ''),
-    })));
-    // Phase 5a finance shadow (accounts-read-only, log-only).
-    await shadowCompareFinance(built.map((r) => ({
-      templateId: String(r.templateId ?? ''), dueDate: String(r.dueDate ?? '').slice(0, 10),
-      amount: Number(r.amount ?? 0) || 0,
-    })));
+    const sig = built
+      .map((r) => `${r.templateId}|${r.dueDate}|${Number(r.amount ?? 0) || 0}|${r.statementDate ?? ''}`)
+      .join(';');
+    const prevSig = await cacheGet<string>(DUES_SIG_KEY, DUE_SYNC_TTL_MS).catch(() => null);
+    if (prevSig !== sig) {
+      await upsertDueReceipts(built.map((r) => ({
+        templateId: String(r.templateId ?? ''), biller: String(r.biller ?? ''),
+        category: String(r.category ?? ''), amount: Number(r.amount ?? 0) || 0,
+        dueDate: String(r.dueDate ?? '').slice(0, 10),
+        statementDate: r.statementDate ? String(r.statementDate).slice(0, 10) : null,
+        identifier: String(r.identifier ?? ''),
+      })));
+      // Phase 5a finance shadow (accounts-read-only, log-only) rides the same
+      // gate: a changed due set is exactly when a divergence can appear, and
+      // the TTL keeps receivables/promise coverage without a per-read scan.
+      await shadowCompareFinance(built.map((r) => ({
+        templateId: String(r.templateId ?? ''), dueDate: String(r.dueDate ?? '').slice(0, 10),
+        amount: Number(r.amount ?? 0) || 0,
+      })));
+      await cacheSet(DUES_SIG_KEY, sig, DUE_SYNC_TTL_MS).catch(() => null);
+    }
     return built;
   } catch { /* never block the calendar */ }
   return rows.sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.title.localeCompare(b.title));
