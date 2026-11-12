@@ -3,7 +3,7 @@
 // Mirror: founder-os_backend/src/routes/digital-marketing.ts (Express alt runtime).
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { deps, requireMisScope, misScopeError, notifyLive, LiveEvent, MAX_ATTACHMENT_BYTES, type Bindings } from '../context';
+import { deps, requireAdminScope, adminScopeError, notifyLive, LiveEvent, MAX_ATTACHMENT_BYTES, type Bindings } from '../context';
 import {
   listDigitalMarketingManagers, createDigitalMarketingManager, updateDigitalMarketingManager,
   listTemplates, createTemplate, updateTemplate, logTask, getDigitalMarketingExport,
@@ -24,10 +24,10 @@ async function actorName(c: any): Promise<string | null> {
 }
 
 export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>): void {
-  // ── Roster (MIS-only, like /api/telecallers: reads and writes) ──────────
+  // ── Roster (root-only, like /api/telecallers: reads and writes) ──────────
   // The dashboard gets the names it needs via data().roster (no emails).
   app.get('/api/digital-marketing/roster', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
     const { prisma } = deps();
     void prisma;
     const rows = await listDigitalMarketingManagers(c.req.query('deleted') === '1');
@@ -35,7 +35,7 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
   });
 
   app.post('/api/digital-marketing/roster', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
     const body = await readBody(c);
     try {
       const row = await createDigitalMarketingManager(body || {});
@@ -45,7 +45,7 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
   });
 
   app.put('/api/digital-marketing/roster/:id', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
     const body = await readBody(c);
     try {
       const row = await updateDigitalMarketingManager(c.req.param('id'), body || {});
@@ -55,21 +55,21 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
   });
 
   app.delete('/api/digital-marketing/roster/:id', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
     await updateDigitalMarketingManager(c.req.param('id'), { deleted: true });
     notifyLive(c, { type: LiveEvent.DigitalMarketing });
     return c.json({ ok: true });
   });
 
-  // ── Templates (MIS-only reads/writes; dashboard reads via data()) ──────
+  // ── Templates (root-only reads/writes; dashboard reads via data()) ──────
   app.get('/api/digital-marketing/templates', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
     const rows = await listTemplates(c.req.query('all') === '1');
     return c.json({ templates: rows });
   });
 
   app.post('/api/digital-marketing/templates', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
     const body = await readBody(c);
     try {
       const row = await createTemplate(body || {});
@@ -79,7 +79,7 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
   });
 
   app.put('/api/digital-marketing/templates/:id', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
     const body = await readBody(c);
     try {
       const row = await updateTemplate(c.req.param('id'), body || {});
@@ -89,15 +89,15 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
   });
 
   app.delete('/api/digital-marketing/templates/:id', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
     await updateTemplate(c.req.param('id'), { active: false });
     notifyLive(c, { type: LiveEvent.DigitalMarketing });
     return c.json({ ok: true });
   });
 
-  // ── MIS export: past-N-days full ledger (pending/inprogress/done + remarks + file links) ──
+  // ── Root export: past-N-days full ledger (pending/inprogress/done + remarks + file links) ──
   app.get('/api/digital-marketing/export', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
     try {
       const origin = new URL(c.req.url).origin;
       return c.json(await getDigitalMarketingExport(c.req.query('days'), origin));
@@ -143,7 +143,7 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
   });
 
   app.delete('/api/digital-marketing/ads/:id', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
     try {
       const row: any = await deleteAd(c.req.param('id'));
       try {
@@ -214,10 +214,10 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
     const row: any = await getAdAttachment(c.req.param('id') ?? '').catch(() => null);
     if (!row) return c.json({ error: 'Attachment not found' }, 404);
     const actor = await actorName(c);
-    let isMis = false;
-    try { await requireMisScope(c); isMis = true; } catch { /* fall through */ }
-    if (!isMis && actor && String(row.uploadedBy) !== String(actor)) {
-      return c.json({ error: 'Only the uploader or MIS can remove this file' }, 403);
+    let isRoot = false;
+    try { await requireAdminScope(c); isRoot = true; } catch { /* fall through */ }
+    if (!isRoot && actor && String(row.uploadedBy) !== String(actor)) {
+      return c.json({ error: 'Only the uploader or root can remove this file' }, 403);
     }
     try {
       if (c.env.CHAT_FILES && row.kvKey) await c.env.CHAT_FILES.delete(String(row.kvKey));
@@ -229,7 +229,7 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
 
   // ── Open Tasks: free-form tasks with start/end + per-day progress (migration 0120) ──
   // Status is a manual open|done tick (dates display-only). Create/update/entry
-  // writes are any signed-in viewer (DMM + MIS); DELETE is creator-or-MIS.
+  // writes are any signed-in viewer (DMM included); DELETE is creator-or-root.
   app.get('/api/digital-marketing/open-tasks', async (c) => {
     try {
       return c.json(await getDigitalMarketingOpenTasks());
@@ -257,13 +257,13 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
 
   app.delete('/api/digital-marketing/open-tasks/:id', async (c) => {
     const actor = await actorName(c);
-    let isMis = false;
-    try { await requireMisScope(c); isMis = true; } catch { /* fall through */ }
+    let isRoot = false;
+    try { await requireAdminScope(c); isRoot = true; } catch { /* fall through */ }
     try {
       const task: any = await getOpenTaskById(c.req.param('id')).catch(() => null);
       if (!task) return c.json({ error: 'Task not found' }, 404);
-      if (!isMis && !(actor && String((task as any)?.createdBy ?? '') === String(actor))) {
-        return c.json({ error: 'Only the creator or MIS can delete this task' }, 403);
+      if (!isRoot && !(actor && String((task as any)?.createdBy ?? '') === String(actor))) {
+        return c.json({ error: 'Only the creator or root can delete this task' }, 403);
       }
       const row: any = await deleteOpenTask(c.req.param('id'));
       try {
@@ -363,10 +363,10 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
     const row: any = await getOpenTaskAttachment(c.req.param('id') ?? '').catch(() => null);
     if (!row) return c.json({ error: 'Attachment not found' }, 404);
     const actor = await actorName(c);
-    let isMis = false;
-    try { await requireMisScope(c); isMis = true; } catch { /* fall through */ }
-    if (!isMis && actor && String(row.uploadedBy) !== String(actor)) {
-      return c.json({ error: 'Only the uploader or MIS can remove this file' }, 403);
+    let isRoot = false;
+    try { await requireAdminScope(c); isRoot = true; } catch { /* fall through */ }
+    if (!isRoot && actor && String(row.uploadedBy) !== String(actor)) {
+      return c.json({ error: 'Only the uploader or root can remove this file' }, 403);
     }
     try {
       if (c.env.CHAT_FILES && row.kvKey) await c.env.CHAT_FILES.delete(String(row.kvKey));
@@ -376,7 +376,7 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
     return c.json({ ok: true });
   });
 
-  // ── Taskbar logging (any signed-in accounts viewer; MIS included) ──
+  // ── Taskbar logging (any signed-in accounts viewer) ──
   // Who is inferred server-side (session → roster, declared `as` first) —
   // the client never declares attribution.
   app.patch('/api/digital-marketing/logs/:id', async (c) => {
@@ -451,15 +451,15 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
     return new Response(obj.value, { headers });
   });
 
-  // Delete attachment (row + bytes) — uploader, MIS, or root.
+  // Delete attachment (row + bytes) — uploader or root.
   app.delete('/api/digital-marketing/files/:id', async (c) => {
     const row: any = await getAttachment(c.req.param('id') ?? '').catch(() => null);
     if (!row) return c.json({ error: 'Attachment not found' }, 404);
     const actor = await actorName(c);
-    let isMis = false;
-    try { await requireMisScope(c); isMis = true; } catch { /* fall through */ }
-    if (!isMis && actor && String(row.uploadedBy) !== String(actor)) {
-      return c.json({ error: 'Only the uploader or MIS can remove this file' }, 403);
+    let isRoot = false;
+    try { await requireAdminScope(c); isRoot = true; } catch { /* fall through */ }
+    if (!isRoot && actor && String(row.uploadedBy) !== String(actor)) {
+      return c.json({ error: 'Only the uploader or root can remove this file' }, 403);
     }
     try {
       if (c.env.CHAT_FILES && row.kvKey) await c.env.CHAT_FILES.delete(String(row.kvKey));

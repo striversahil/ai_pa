@@ -224,7 +224,7 @@ export async function computeDashboard(
     : [];
   const bySlot = new Map((logs as any[]).map((l) => [slotKey(l.templateId, l.slot), l]));
   const active = (templates as any[]).filter((t) => !UNSCHEDULED_RULES.has(String(parseRule(t)?.type ?? t.ruleType ?? '')));
-  // Lane enforcement: non-MIS viewers only receive their own lane (their role
+  // Lane enforcement: non-root viewers only receive their own lane (their role
   // plus shared). Shared templates are visible in BOTH lanes regardless of
   // ownerRole — each lane gets its own slot copy (see slotsFor). Admins, and
   // logged-out callers where the auth gate is off (local/dev), receive
@@ -551,7 +551,7 @@ export async function computeDashboard(
     },
     roster: (roster as any[]).map((r) => ({
       // Public team slice: identity + lane only (no emails/phones — those stay
-      // behind the MIS-only roster endpoint, telecalling-parity). Enough for
+      // behind the root-only roster endpoint, telecalling-parity). Enough for
       // the Who-picker, lane labels, and the team board.
       id: r.id, name: r.name, role: r.role, order: r.order,
     })),
@@ -578,7 +578,7 @@ export async function computeDashboard(
 export async function getAccountsDashboardData(query: Record<string, any> = {}) {
   const date = String(query.date || '').slice(0, 10) || istDateStr();
   // Scope is part of the cache key: a junior must never be served a payload
-  // computed for MIS (or vice versa).
+  // computed for root (or vice versa).
   const scope = (query.scope ?? null) as { scope: LaneScope | null; isAdmin: boolean } | null;
   const scopeKey = !scope || scope.isAdmin ? 'all' : scope.scope ? `self:${scope.scope.selfId}` : 'unassigned';
   return cached(`${DATA_CACHE_PREFIX}${date}:${scopeKey}`, DATA_TTL_MS, () => computeDashboard(date, scope));
@@ -725,7 +725,7 @@ export async function resolveSelfAccountant(
   return null;
 }
 
-// ── Roster (MIS writes) ──────────────────────────────────────────────────────
+// ── Roster (root writes) ──────────────────────────────────────────────────────
 export async function listAccountants(includeDeleted = false) {
   return prisma.accountant.findMany({
     where: includeDeleted ? {} : { deleted: false },
@@ -769,7 +769,7 @@ export async function updateAccountant(id: string, input: Record<string, any>) {
   return row;
 }
 
-// ── Templates (MIS writes) ───────────────────────────────────────────────────
+// ── Templates (root writes) ───────────────────────────────────────────────────
 export async function listTemplates(includeInactive = false) {
   return prisma.accountsTaskTemplate.findMany({
     where: includeInactive ? {} : { active: true },
@@ -850,7 +850,7 @@ export async function logTask(
       if (identity?.selfName) data.doneBy = String(identity.selfName).slice(0, 200);
     }
   } else {
-    // No resolvable identity (MIS/admin not on the roster, or unresolved
+    // No resolvable identity (root/admin not on the roster, or unresolved
     // shared login): honor explicit client values, then fall back to actor.
     if (input.doneBy !== undefined) data.doneBy = input.doneBy ? String(input.doneBy).slice(0, 200) : null;
     if (input.accountantId !== undefined) data.accountantId = input.accountantId ? String(input.accountantId) : null;

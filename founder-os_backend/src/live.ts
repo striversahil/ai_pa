@@ -28,13 +28,13 @@ export const LiveEvent = {
   Crm: "crm",
   Chat: "chat",
   /**
-   * Telecalling assignment/risk/roster writes (engine runs, MIS controller,
+   * Telecalling assignment/risk/roster writes (engine runs, root/sales-head control,
    * effort-sync). Typed member so refactors are compiler-checked — previously
    * a raw "telecalling" string at every call site.
    */
   Telecalling: "telecalling",
   /**
-   * Accounts taskbar writes (daily logging, remarks, attachments, MIS
+   * Accounts taskbar writes (daily logging, remarks, attachments, root
    * roster/template changes). Typed member so refactors are compiler-checked.
    */
   Accounts: "accounts",

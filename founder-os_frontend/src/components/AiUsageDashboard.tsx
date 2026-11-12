@@ -80,7 +80,7 @@ export default function AiUsageDashboard() {
       <div className="flex min-h-[50vh] flex-col items-center justify-center gap-3 text-center">
         <div className="text-5xl">🔒</div>
         <h2 className="text-xl font-bold">Access pending</h2>
-        <p className="max-w-md text-sm text-zinc-500">AI usage is visible to MIS members only. Ask the administrator to grant access.</p>
+        <p className="max-w-md text-sm text-zinc-500">AI usage is visible to root only.</p>
       </div>
     );
   }

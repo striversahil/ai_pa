@@ -123,7 +123,7 @@ export async function deletePositionDoc(id: string): Promise<void> {
 
 // ── Delegation board (employee self-service) ────────────────────────────────
 // All reads/writes are session-scoped on the server: an employee only ever gets
-// their own tasks, HR/MIS users get the whole board.
+// their own tasks, HR users get the whole board.
 
 export async function fetchDelegationBoard(date?: string): Promise<HrDelegationBoard> {
   const res = await fetch(`/api/delegation/board${date ? `?date=${encodeURIComponent(date)}` : ""}`, {

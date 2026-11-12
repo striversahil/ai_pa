@@ -7,8 +7,8 @@
 // KV (CHAT_FILES, same locker as team-chat files).
 //
 // Auth (2026-11-04): proof uploads (invoice + packing_before + packing_after)
-// are MIS *or* dispatch floor — the floor must attach the dispatch proof
-// itself; LR/POD/other uploads and ALL deletes stay MIS-only. Listing stays
+// are root *or* dispatch floor — the floor must attach the dispatch proof
+// itself; LR/POD/other uploads and ALL deletes stay root-only. Listing stays
 // gated (SO numbers are guessable). Byte-serving is OPEN (2026-11-06): file
 // ids are crypto-random UUIDs (unguessable bearer URLs, same contract as
 // /api/chat/files/:key and /api/enquiries/files/*), so View/Download links
@@ -17,7 +17,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import {
-  authStore, getMe, isApproved, requireMisScope, requireScope, misScopeError,
+  authStore, getMe, isApproved, requireAdminScope, requireScope, adminScopeError,
   notifyLive, broadcastLive, LiveEvent, MAX_ATTACHMENT_BYTES, deps,
   type Bindings,
 } from '../context';
@@ -56,7 +56,7 @@ function toJson(row: any) {
 }
 
 export function registerCrmAttachmentRoutes(app: Hono<{ Bindings: Bindings }>): void {
-  // Upload: MIS (everything) or the dispatch floor (proof kinds only — invoice
+  // Upload: root (everything) or the dispatch floor (proof kinds only — invoice
   // + packing photos, so the floor can attach its own dispatch proof).
   app.post('/api/crm/attachments', async (c) => {
     if (!c.env.CHAT_FILES) return c.json({ error: 'File storage is not configured' }, 501);
@@ -71,22 +71,22 @@ export function registerCrmAttachmentRoutes(app: Hono<{ Bindings: Bindings }>): 
     const file = form.get('file');
     if (!soNumber) return c.json({ error: 'soNumber required' }, 400);
     if (!VALID_KINDS.has(kind)) return c.json({ error: 'kind must be one of invoice|packing_before|packing_after|transport_receipt|courier_receipt|packing_list|lr|pod|other' }, 400);
-    let isMis = true;
+    let isRoot = true;
     try {
-      await requireMisScope(c);
+      await requireAdminScope(c);
     } catch {
-      // Not MIS — the floor may still upload the dispatch proof kinds.
-      isMis = false;
+      // Not root — the floor may still upload the dispatch proof kinds.
+      isRoot = false;
       if (!PROOF_KINDS.has(kind)) {
-        return c.json({ error: 'Only MIS can upload this document kind.' }, 403);
+        return c.json({ error: 'Only root can upload this document kind.' }, 403);
       }
       try {
         await requireScope(authStore(c), c.req.header('cookie') ?? null, 'dispatch');
       } catch {
-        return c.json({ error: 'Proof uploads need the dispatch scope (MIS can upload everything).' }, 403);
+        return c.json({ error: 'Proof uploads need the dispatch scope (root can upload everything).' }, 403);
       }
     }
-    void isMis;
+    void isRoot;
     if (!(file instanceof File)) return c.json({ error: 'file field required' }, 400);
     const mime = file.type || 'application/octet-stream';
     if (!isAllowedMime(mime)) return c.json({ error: 'Only PDF and image files can be attached' }, 400);
@@ -103,7 +103,7 @@ export function registerCrmAttachmentRoutes(app: Hono<{ Bindings: Bindings }>): 
     if (file.size > MAX_ATTACHMENT_BYTES) return c.json({ error: 'File too large (max 20MB)' }, 413);
     if (file.size <= 0) return c.json({ error: 'Empty file' }, 400);
     const me = await getMe(authStore(c), c.req.header('cookie') ?? null);
-    const actor = me?.user?.name || me?.user?.email || 'MIS';
+    const actor = me?.user?.name || me?.user?.email || 'root';
     const ext = (file.name.split('.').pop() || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 8);
     const key = `so/${soNumber.replace(/[^A-Za-z0-9_-]/g, '_')}/${crypto.randomUUID()}${ext ? '.' + ext : ''}`;
     await c.env.CHAT_FILES.put(key, await file.arrayBuffer(), {
@@ -168,9 +168,9 @@ export function registerCrmAttachmentRoutes(app: Hono<{ Bindings: Bindings }>): 
     return new Response(obj.value, { headers });
   });
 
-  // Delete attachment (row + bytes) — MIS only.
+  // Delete attachment (row + bytes) — root only.
   app.delete('/api/crm/attachments/:id', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
     const { prisma } = deps();
     const row: any = await prisma.soAttachment.findUnique({ where: { id: c.req.param('id') ?? '' } }).catch(() => null);
     if (!row) return c.json({ error: 'Attachment not found' }, 404);

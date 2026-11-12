@@ -150,7 +150,7 @@ function parseRule(t: any): any | null {
   }
 }
 
-/** Legacy path for simple MIS-created tasks (no ruleJson): frequency + dueDay/dueMonth. */
+/** Legacy path for simple manager-created tasks (no ruleJson): frequency + dueDay/dueMonth. */
 function legacyDueOn(t: any, y: number, m: number, d: number, wd: number, dim: number): boolean {
   const freq = String(t.frequency || 'daily');
   if (freq === 'daily') return wd >= 1 && wd <= 6;
@@ -365,7 +365,7 @@ async function computeDashboard(
     : [];
   const byTemplate = new Map((logs as any[]).map((l) => [String(l.templateId), l]));
   const active = (templates as any[]).filter((t) => !UNSCHEDULED_RULES.has(String(parseRule(t)?.type ?? t.ruleType ?? '')));
-  // Lane enforcement: non-MIS viewers only receive their own lane (their role
+  // Lane enforcement: non-root viewers only receive their own lane (their role
   // plus shared). Admins, and logged-out callers where the auth gate is off
   // (local/dev), receive everything. Logged-in non-roster viewers receive
   // nothing but the team board.
@@ -665,7 +665,7 @@ async function computeDashboard(
     },
     roster: (roster as any[]).map((r) => ({
       // Public team slice: identity + lane only (no emails/phones — those stay
-      // behind the MIS-only roster endpoint, telecalling-parity). Enough for
+      // behind the root-only roster endpoint, telecalling-parity). Enough for
       // the Who-picker, lane labels, and the team board.
       id: r.id, name: r.name, role: r.role, order: r.order,
     })),
@@ -686,8 +686,8 @@ export const getAccountsDashboardData = getDigitalMarketingDashboardData;
 
 export async function getDigitalMarketingDashboardData(query: Record<string, any> = {}) {
   const date = String(query.date || '').slice(0, 10) || istDateStr();
-  // Scope is part of the cache key: a non-MIS viewer must never be served a payload
-  // computed for MIS (or vice versa).
+  // Scope is part of the cache key: a non-root viewer must never be served a payload
+  // computed for root (or vice versa).
   const scope = (query.scope ?? null) as { scope: LaneScope | null; isAdmin: boolean } | null;
   const scopeKey = !scope || scope.isAdmin ? 'all' : scope.scope ? `self:${scope.scope.selfId}` : 'unassigned';
   return cached(`${DATA_CACHE_PREFIX}${date}:${scopeKey}`, DATA_TTL_MS, () => computeDashboard(date, scope));
@@ -756,11 +756,11 @@ export async function getDigitalMarketingMetricsSeries(days: unknown): Promise<{
     return { days: out, from, to, computedAt: new Date().toISOString() };
   });
 }
-// ── MIS export: past-N-days full ledger ─────────────────────────────────────
+// ── Root export: past-N-days full ledger ─────────────────────────────────────
 // One row per (date × due task): status, who, remark, attachment links.
 // Read-only (never creates instances) — a complete view of what was
-// pending / in-progress / done for the single-manager taskbar, for the MIS export.
-// Minutes → "1h 20m" / "45m" for the MIS export. NULL/0 → null.
+// pending / in-progress / done for the single-manager taskbar, for the root export.
+// Minutes → "1h 20m" / "45m" for the root export. NULL/0 → null.
 function fmtMins(v: unknown): string | null {
   const n = Math.floor(Number(v));
   if (!Number.isFinite(n) || n <= 0) return null;
@@ -908,7 +908,7 @@ export async function getDigitalMarketingExport(daysRaw: unknown, origin: string
 }
 
 // ── Identity scoping (lane enforcement) ─────────────────────────────────────
-// Non-MIS viewers only ever receive their own lane (role + shared). Mirrors
+// Non-root viewers only ever receive their own lane (role + shared). Mirrors
 // the telecalling selfAgentId pattern: the frontend ALSO hides other tabs,
 // but the payload itself is scoped so tab-switching can't leak lanes.
 export interface LaneScope {
@@ -955,7 +955,7 @@ export async function resolveSelfDigitalMarketingManager(
   return null;
 }
 
-// ── Roster (MIS writes) ──────────────────────────────────────────────────────
+// ── Roster (root writes) ──────────────────────────────────────────────────────
 export async function listDigitalMarketingManagers(includeDeleted = false) {
   return prisma.digitalMarketingManager.findMany({
     where: includeDeleted ? {} : { deleted: false },
@@ -1004,7 +1004,7 @@ export async function updateDigitalMarketingManager(id: string, input: Record<st
   return row;
 }
 
-// ── Templates (MIS writes) ───────────────────────────────────────────────────
+// ── Templates (root writes) ───────────────────────────────────────────────────
 export async function listTemplates(includeInactive = false) {
   return prisma.digitalMarketingTaskTemplate.findMany({
     where: includeInactive ? {} : { active: true },
@@ -1133,7 +1133,7 @@ export async function logTask(
       if (identity?.selfName) data.doneBy = String(identity.selfName).slice(0, 200);
     }
   } else {
-    // No resolvable identity (MIS/admin not on the roster, or unresolved
+    // No resolvable identity (root/admin not on the roster, or unresolved
     // shared login): honor explicit client values, then fall back to actor.
     if (input.doneBy !== undefined) data.doneBy = input.doneBy ? String(input.doneBy).slice(0, 200) : null;
     if (input.accountantId !== undefined) data.accountantId = input.accountantId ? String(input.accountantId) : null;

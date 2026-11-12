@@ -3,7 +3,7 @@
 // Mirror: founder-os_backend/src/routes/accounts.ts (Express alt runtime).
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { deps, requireMisScope, misScopeError, notifyLive, LiveEvent, MAX_ATTACHMENT_BYTES, type Bindings } from '../context';
+import { deps, requireAdminScope, adminScopeError, notifyLive, LiveEvent, MAX_ATTACHMENT_BYTES, type Bindings } from '../context';
 import {
   listAccountants, createAccountant, updateAccountant,
   listTemplates, createTemplate, updateTemplate, logTask, getAccountsExport,
@@ -24,10 +24,10 @@ async function actorName(c: any): Promise<string | null> {
 }
 
 export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void {
-  // ── Roster (MIS-only, like /api/telecallers: reads and writes) ──────────
+  // ── Roster (root-only, like /api/telecallers: reads and writes) ──────────
   // The dashboard gets the names it needs via data().roster (no emails).
   app.get('/api/accounts/roster', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
     const { prisma } = deps();
     void prisma;
     const rows = await listAccountants(c.req.query('deleted') === '1');
@@ -35,7 +35,7 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
   });
 
   app.post('/api/accounts/roster', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
     const body = await readBody(c);
     try {
       const row = await createAccountant(body || {});
@@ -45,7 +45,7 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
   });
 
   app.put('/api/accounts/roster/:id', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
     const body = await readBody(c);
     try {
       const row = await updateAccountant(c.req.param('id'), body || {});
@@ -55,21 +55,21 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
   });
 
   app.delete('/api/accounts/roster/:id', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
     await updateAccountant(c.req.param('id'), { deleted: true });
     notifyLive(c, { type: LiveEvent.Accounts });
     return c.json({ ok: true });
   });
 
-  // ── Templates (MIS-only reads/writes; dashboard reads via data()) ──────
+  // ── Templates (root-only reads/writes; dashboard reads via data()) ──────
   app.get('/api/accounts/templates', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
     const rows = await listTemplates(c.req.query('all') === '1');
     return c.json({ templates: rows });
   });
 
   app.post('/api/accounts/templates', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
     const body = await readBody(c);
     try {
       const row = await createTemplate(body || {});
@@ -79,7 +79,7 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
   });
 
   app.put('/api/accounts/templates/:id', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
     const body = await readBody(c);
     try {
       const row = await updateTemplate(c.req.param('id'), body || {});
@@ -89,7 +89,7 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
   });
 
   app.delete('/api/accounts/templates/:id', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
     await updateTemplate(c.req.param('id'), { active: false });
     notifyLive(c, { type: LiveEvent.Accounts });
     return c.json({ ok: true });
@@ -97,13 +97,13 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
 
   // ── Payment dues (Worker-only; Express is frozen — no mirror) ─────────────
   // Founder rule: ANY accountant manages dues (add/edit/remove), not just
-  // MIS. Task templates stay MIS-only above; these endpoints force
+  // root. Task templates stay root-only above; these endpoints force
   // kind='payment' and refuse task rows both ways.
   async function paymentGate(c: any) {
     const me = await getViewerMe(c).catch(() => null);
     if (!me) throw new Error('Authentication required');
     const scopes = ((me as any)?.scopes ?? []) as string[];
-    if ((me as any)?.isAdmin || scopes.includes('mis') || scopes.includes('accounts')) return me;
+    if ((me as any)?.isAdmin || scopes.includes('accounts')) return me;
     throw new Error("Requires 'accounts' permission");
   }
 
@@ -182,20 +182,20 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
 
   // ── Dispatch cash report (Worker-only) ────────────────────────────────
   // Simple in/out ledger. Reads + adds: accounts OR dispatch floor (the floor
-  // records its own spends). Edits/deletes: accounts/MIS only, so history
+  // records its own spends). Edits/deletes: accounts-department only, so history
   // can't be rewritten from the floor.
   async function cashReadGate(c: any) {
     const me = await getViewerMe(c).catch(() => null);
     if (!me) throw new Error('Authentication required');
     const scopes = ((me as any)?.scopes ?? []) as string[];
-    if ((me as any)?.isAdmin || scopes.includes('mis') || scopes.includes('accounts') || scopes.includes('dispatch')) return me;
+    if ((me as any)?.isAdmin || scopes.includes('accounts') || scopes.includes('dispatch')) return me;
     throw new Error("Requires 'accounts' or 'dispatch' permission");
   }
   async function cashWriteGate(c: any) {
     const me = await getViewerMe(c).catch(() => null);
     if (!me) throw new Error('Authentication required');
     const scopes = ((me as any)?.scopes ?? []) as string[];
-    if ((me as any)?.isAdmin || scopes.includes('mis') || scopes.includes('accounts')) return me;
+    if ((me as any)?.isAdmin || scopes.includes('accounts')) return me;
     throw new Error("Requires 'accounts' permission");
   }
 
@@ -249,16 +249,16 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
     } catch (e: any) { return c.json({ error: e?.message ?? 'delete failed' }, 400); }
   });
 
-  // ── MIS export: date-range full ledger (pending/inprogress/done + remarks + file links) ──
+  // ── Root export: date-range full ledger (pending/inprogress/done + remarks + file links) ──
   app.get('/api/accounts/export', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
     try {
       const origin = new URL(c.req.url).origin;
       return c.json(await getAccountsExport(c.req.query('days'), origin, c.req.query('from'), c.req.query('to')));
     } catch (e: any) { return c.json({ error: e?.message ?? 'export failed' }, 400); }
   });
 
-  // ── Taskbar logging (any signed-in accounts viewer; MIS included) ──
+  // ── Taskbar logging (any signed-in accounts viewer) ──
   // Who is inferred server-side (session → roster, declared `as` first) —
   // the client never declares attribution.
   app.patch('/api/accounts/logs/:id', async (c) => {
@@ -333,15 +333,15 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
     return new Response(obj.value, { headers });
   });
 
-  // Delete attachment (row + bytes) — uploader, MIS, or root.
+  // Delete attachment (row + bytes) — uploader or root.
   app.delete('/api/accounts/files/:id', async (c) => {
     const row: any = await getAttachment(c.req.param('id') ?? '').catch(() => null);
     if (!row) return c.json({ error: 'Attachment not found' }, 404);
     const actor = await actorName(c);
-    let isMis = false;
-    try { await requireMisScope(c); isMis = true; } catch { /* fall through */ }
-    if (!isMis && actor && String(row.uploadedBy) !== String(actor)) {
-      return c.json({ error: 'Only the uploader or MIS can remove this file' }, 403);
+    let isRoot = false;
+    try { await requireAdminScope(c); isRoot = true; } catch { /* fall through */ }
+    if (!isRoot && actor && String(row.uploadedBy) !== String(actor)) {
+      return c.json({ error: 'Only the uploader or root can remove this file' }, 403);
     }
     try {
       if (c.env.CHAT_FILES && row.kvKey) await c.env.CHAT_FILES.delete(String(row.kvKey));

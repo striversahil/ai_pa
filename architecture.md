@@ -611,7 +611,7 @@ D1-compatible subset. Migrations live in `prisma/` and `d1/schema.sql` /
 - **AuthUser** — `email` (unique), `name`, `picture`, `isRoot` (derived from `striversahil@gmail.com`).
 - **AuthSession** — 30-day HttpOnly cookie session.
 - **AuthScope** — assignable permission categories (`dashboard`, `whatsapp`, `automations`, `zoho`, …).
-- **AuthRole** — **bundles automation-dashboard scopes only** (`DASHBOARD_SCOPES` allowlist): `key`, `label`, `description`, `scopeKeys`. A user's effective scopes = direct scopes ∪ their roles' scopes. Roles are the primary way founders grant access (e.g. `mis` → `zoho`); the admin panel assigns roles to users instead of ticking every scope checkbox.
+- **AuthRole** — **bundles automation-dashboard scopes only** (`DASHBOARD_SCOPES` allowlist): `key`, `label`, `description`, `scopeKeys`. A user's effective scopes = direct scopes ∪ their roles' scopes. Roles are the primary way founders grant access (e.g. `sales-head` → `telecalling`); the admin panel assigns roles to users instead of ticking every scope checkbox. The MIS role was retired 2026-11-12 (migration 0139) — ex-MIS management endpoints are root-only.
 - **AuthUserRole / AuthRoleScope** — join tables.
 
 **Team chat (Discord-style):**

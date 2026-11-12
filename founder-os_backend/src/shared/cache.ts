@@ -151,7 +151,7 @@ export async function cacheDelPrefix(prefix: string): Promise<number> {
 }
 
 /** List cache key names under a prefix (without the `kvx:` namespace).
- *  Paginates fully; capped at `cap` names. Read-only — for MIS readouts. */
+ *  Paginates fully; capped at `cap` names. Read-only — for manager readouts. */
 export async function cacheKeys(prefix: string, cap = 1000): Promise<string[]> {
   const fullPrefix = `${NS}:${prefix}`;
   const out: string[] = [];

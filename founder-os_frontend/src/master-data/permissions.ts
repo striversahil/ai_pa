@@ -25,16 +25,16 @@ export function masterCapabilities(me: AuthUserMe | null): MasterCapabilitiesCli
   };
 }
 
-/** Sales-head / MIS / root — also the only people who may reassign region,
+/** Sales-head / root — also the only people who may reassign region,
  *  sub-area and state on a record. */
 export function masterIsManager(me: AuthUserMe | null): boolean {
   if (!me) return false;
   if (me.isAdmin) return true;
   const scopes = grantedScopes(me);
-  return scopes.has("mis") || scopes.has("sales-head");
+  return scopes.has("sales-head");
 }
 
-/** Delete is sales-head-only (root as system owner) — even MIS is excluded. */
+/** Delete is sales-head-only (root as system owner). */
 export function masterIsSalesHead(me: AuthUserMe | null): boolean {
   if (!me) return false;
   if (me.isAdmin) return true;

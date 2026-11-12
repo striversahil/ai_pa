@@ -517,7 +517,7 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
       const local = (e: string): string => e.split('@')[0].trim();
       // Same roster rule as the backend lead inference: exact email first,
       // then local-part (bare `buisales4` vs full login), so the signed-in
-      // agent always resolves to their own MIS roster row (e.g. Muskan).
+      // agent always resolves to their own telecaller roster row (e.g. Muskan).
       const self = agents.find((a) => {
         const e = String((a as any)?.email ?? '').toLowerCase().trim();
         return e && (e === userEmail || local(e) === local(userEmail));

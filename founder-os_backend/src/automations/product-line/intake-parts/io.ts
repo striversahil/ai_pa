@@ -1664,12 +1664,12 @@ export const TOOL_DEFS: ToolDefinition[] = [
 /** Product-line intake department definition for the shared engine. */
 export const productLineIntakeDef: CopilotDef<IntakeCtx> = {
   id: 'product-line-intake',
-  // Same gate as quote writes: product-line scope, MIS, or admin.
+  // Same gate as quote writes: product-line scope or admin.
   checkAccess: (me: any) => {
     if (!me) return { status: 401, error: 'Authentication required' };
     if ((me as any).isAdmin) return null;
     const scopes: string[] = (me as any).scopes ?? [];
-    if (scopes.includes('product-line') || scopes.includes('mis')) return null;
+    if (scopes.includes('product-line')) return null;
     return { status: 403, error: "Requires 'product-line' permission" };
   },
   buildCtx: (env, me, extra) => ({

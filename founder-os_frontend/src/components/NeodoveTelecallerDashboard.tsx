@@ -15,7 +15,7 @@ export default function NeodoveTelecallerDashboard() {
   const [backfilling, setBackfilling] = useState(false);
   const [backfillLog, setBackfillLog] = useState<string[]>([]);
   const { me } = useAuth();
-  const canBackfill = !!me?.isAdmin || (me?.scopes ?? []).includes("mis");
+  const canBackfill = !!me?.isAdmin;
   const [error, setError] = useState<string | null>(null);
   const [lastLoaded, setLastLoaded] = useState<Date | null>(null);
   const [preset, setPreset] = useState<PresetKey>("today");

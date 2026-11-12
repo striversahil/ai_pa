@@ -4,7 +4,7 @@
 // employee Delegation board so there is exactly one task UI in the app.
 //
 // Writes always go through the delegation service (append-only journal):
-//   * manager mode → /api/human-resources/tasks/:id (HR/MIS authority)
+//   * manager mode → /api/human-resources/tasks/:id (HR authority)
 //   * self mode    → /api/delegation/tasks/:id (employee, scoped server-side)
 // The remark box is append-only: it starts empty and adds one journal entry per
 // save, so a task accumulates a day-by-day trail instead of overwriting history.
@@ -81,7 +81,7 @@ export function LogList({ logs, today, limit = 4 }: {
 
 export interface TaskCardProps {
   task: HrTask | HrDelegationTask;
-  /** manager = HR/MIS authority; self = employee on their own board. */
+  /** manager = HR authority; self = employee on their own board. */
   mode: "manager" | "self";
   /** IST today, for journal day headings. */
   today?: string;

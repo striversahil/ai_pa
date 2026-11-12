@@ -10,7 +10,7 @@ import { NewAdRunModal } from "./digital-marketing-ads/NewAdRunModal";
 
 export default function DigitalMarketingAds() {
   const { me } = useAuth();
-  const canDelete = !!me && ((me as any).isAdmin || ((me as any).scopes ?? []).includes('mis'));
+  const canDelete = !!me && !!(me as any).isAdmin;
   const [typeFilter, setTypeFilter] = useState<'all' | AdType>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | AdStatus>('all');
   const [query, setQuery] = useState('');

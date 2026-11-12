@@ -3,7 +3,7 @@
 // The founder's rule: master edits belong to specific people the sales-head
 // appoints — not to every dashboard viewer. The appointment is a DIRECT user
 // scope (`master-data-edit`) rather than a role, so granting it can never leak
-// another dashboard, the admin panel, or role management. Sales-head / MIS /
+// another dashboard, the admin panel, or role management. Sales-head /
 // root always hold the capability implicitly (they run sales).
 import type { AuthStore } from '../auth/store';
 import type { MeResponse } from '../auth/types';
@@ -21,7 +21,7 @@ export interface EditorEntry {
   isRoot: boolean;
   /** Holds the direct edit scope (appointed). */
   canEdit: boolean;
-  /** Holds it implicitly (sales-head / MIS / root) — not revocable here. */
+  /** Holds it implicitly (sales-head / root) — not revocable here. */
   implicit: boolean;
   appointedBy: string;
   appointedAt: string;
@@ -31,17 +31,17 @@ function heldScopes(me: MeResponse | null): Set<string> {
   return new Set(((me?.scopes ?? []) as string[]).map((s) => String(s).toLowerCase()));
 }
 
-/** Sales-head / MIS / root — the people who appoint editors and may edit
+/** Sales-head / root — the people who appoint editors and may edit
  *  region ownership themselves. */
 export function isMasterManager(me: MeResponse | null): boolean {
   if (!me) return false;
   if (me.isAdmin) return true;
   const held = heldScopes(me);
-  return held.has('sales-head') || held.has('mis');
+  return held.has('sales-head');
 }
 
-/** Client delete is sales-head-only (root keeps it as system owner): even MIS
- *  cannot delete — a wrong delete is unrecoverable, unlike an edit. */
+/** Client delete is sales-head-only (root keeps it as system owner):
+ *  a wrong delete is unrecoverable, unlike an edit. */
 export function isSalesHead(me: MeResponse | null): boolean {
   if (!me) return false;
   if (me.isAdmin) return true;
@@ -97,7 +97,7 @@ export async function listEditors(store: AuthStore): Promise<EditorEntry[]> {
     .map((u: any) => {
       const scopes = new Set(((u.scopes ?? []) as string[]).map((s) => String(s).toLowerCase()));
       const roles = new Set(((u.roles ?? []) as string[]).map((s) => String(s).toLowerCase()));
-      const implicit = !!u.isRoot || roles.has('sales-head') || roles.has('mis') || scopes.has('admin');
+      const implicit = !!u.isRoot || roles.has('sales-head') || scopes.has('admin');
       const last = trail.get(String(u.id));
       return {
         userId: String(u.id),
@@ -129,8 +129,8 @@ export async function setEditor(
   if (target.isRoot) throw new AuthError('FORBIDDEN', 'the root account always has edit access', 400);
   const current = new Set(((target.scopes ?? []) as string[]).map((s) => String(s).toLowerCase()));
   const roles = new Set(((target.roles ?? []) as string[]).map((s) => String(s).toLowerCase()));
-  if (roles.has('sales-head') || roles.has('mis')) {
-    throw new AuthError('FORBIDDEN', 'this user already edits through the sales-head / MIS role', 400);
+  if (roles.has('sales-head')) {
+    throw new AuthError('FORBIDDEN', 'this user already edits through the sales-head role', 400);
   }
   if (canEdit) current.add(MASTER_EDIT_SCOPE);
   else current.delete(MASTER_EDIT_SCOPE);

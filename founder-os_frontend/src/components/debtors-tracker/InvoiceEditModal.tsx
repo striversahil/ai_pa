@@ -30,6 +30,7 @@ const FIELDS: FieldSpec[] = [
   { key: "callStatus", label: "Call Status" },
   { key: "paymentStatus", label: "Payment Status" },
   { key: "accountStatus", label: "Status" },
+  // `mis` = the debtor-sheet MIS remarks column (data format, not the retired role).
   { key: "mis", label: "MIS" },
   { key: "employee", label: "Employee / Owner" },
   { key: "state", label: "State" },

@@ -165,7 +165,7 @@ export interface DashData {  meta: { day: string; requestedDay?: string; unassig
   };
   leaderboard: LeaderRow[];
   recent: any[];
-  /** Per-day × per-agent MIS breakdown (only when fetched with ?daily=1). */
+  /** Per-day × per-agent manager breakdown (only when fetched with ?daily=1). */
   daily?: DailyRow[];
   dailyError?: string | null;
   /** Team-wide earned shields (red/zombie holdings protected today). */
@@ -179,7 +179,7 @@ export interface DashData {  meta: { day: string; requestedDay?: string; unassig
   regions?: RegionInfo[];
   /** TL1 reseller targets — one row per TL1 with a region pair (server-computed). */
   tlTargets?: import("@/telecalling/view-types").TlTarget[];
-  /** Roster staff with no region yet (MIS should map them). */
+  /** Roster staff with no region yet (root should map them). */
   unmappedStaff?: LeaderRow[];
   /** Unmapped open estimates (managers only). */
   unmapped?: { count: number; value: number; items: UnmappedItem[] } | null;
@@ -189,7 +189,7 @@ export interface DashData {  meta: { day: string; requestedDay?: string; unassig
   epoch?: string | null;
 }
 
-/** One day × one telecaller of MIS detail (backend `daily` block, ?daily=1). */
+/** One day × one telecaller of manager detail (backend `daily` block, ?daily=1). */
 export interface DailyRow {
   date: string;
   weekday: string;
@@ -261,7 +261,7 @@ export interface FollowUp {  estimateId: string;
   callTagByName?: string | null;
   /** ISO timestamp of when the tag was set. */
   callTagAt?: string | null;
-  /** Dated customer commitment (free text, set by holder/MIS). */
+  /** Dated customer commitment (free text, set by holder/root). */
   nextStep?: string | null;
   /** Date the commitment is due (YYYY-MM-DD, max +30 days). */
   nextStepDate?: string | null;

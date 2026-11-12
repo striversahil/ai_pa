@@ -5,13 +5,11 @@
 /** Live events that refresh controller data (same set as the leaderboard). */
 export const TELECALLING_EVENTS = ["automation", "telecalling", "estimates", "baseline"];
 
-/** MIS/sales-head authority — same check the leaderboard inner tab used (scope or role). */
+/** Root/sales-head authority — same check the leaderboard inner tab used (scope or role). */
 export function hasSalesManagerAccess(me: { isAdmin?: boolean; scopes?: string[]; roles?: string[] } | null): boolean {
   if (!me) return false;
   return !!(
     me.isAdmin ||
-    me.scopes?.includes("mis") ||
-    me.roles?.includes("mis") ||
     me.scopes?.includes("sales-head") ||
     me.roles?.includes("sales-head")
   );

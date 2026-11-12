@@ -14,7 +14,6 @@ export type OrgPosition =
   | "dm-senior"
   | "dm-junior"
   | "hr"
-  | "mis"
   | "unmapped";
 
 export interface PositionInfo {
@@ -33,7 +32,6 @@ export const POSITION_ORDER: OrgPosition[] = [
   "team-lead",
   "telecaller",
   "field-staff",
-  "mis",
   "accountant",
   "dm-senior",
   "dm-junior",
@@ -47,7 +45,6 @@ export const POSITION_META: Record<OrgPosition, { department: OrgDepartment; lab
   "team-lead": { department: "sales", label: "Team Lead" },
   "telecaller": { department: "sales", label: "Telecaller" },
   "field-staff": { department: "sales", label: "Field Staff" },
-  "mis": { department: "operations", label: "MIS" },
   "accountant": { department: "operations", label: "Accountant" },
   "dm-senior": { department: "operations", label: "Digital Marketing · Senior" },
   "dm-junior": { department: "operations", label: "Digital Marketing · Junior" },

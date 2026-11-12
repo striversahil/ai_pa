@@ -248,7 +248,7 @@ export function RoleDrawer({ initial, scopeGroups, onSave, onDelete, busy, isNew
         </label>
         <label className="block">
           <span className="mb-1 block text-xs font-bold text-zinc-500">LABEL</span>
-          <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label (e.g. MIS)"
+          <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label (e.g. Root)"
             className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-3 py-2 text-sm outline-none focus:border-indigo-500" />
         </label>
         <label className="block">

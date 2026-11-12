@@ -16,7 +16,7 @@ const router = Router();
 const store = new PrismaAuthStore(prisma);
 const misGuard = asyncHandler(async (req, res, next) => {
   try {
-    await requireScope(store as any, req.headers.cookie || null, 'mis');
+    await requireScope(store as any, req.headers.cookie || null, 'admin');
     next();
   } catch (e) {
     if (e instanceof AuthError) return res.status(e.status).json({ error: e.message });

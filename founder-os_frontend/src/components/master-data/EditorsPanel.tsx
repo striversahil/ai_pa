@@ -3,7 +3,7 @@
 // EditorsPanel — the sales-head appoints individual editors here.
 //
 // Appointments are DIRECT per-user scopes (never a role), so granting edit
-// rights can not leak another dashboard or the admin panel. Sales-head / MIS /
+// rights can not leak another dashboard or the admin panel. Sales-head /
 // root are implicit and cannot be revoked from this panel.
 import { useEffect, useMemo, useState } from "react";
 import type { EditorEntry } from "@/master-data/types";
@@ -63,7 +63,7 @@ export default function EditorsPanel({ open, onClose }: { open: boolean; onClose
       <div className="space-y-3">
         <div className="rounded-[var(--radius-control)] bg-[var(--surface-soft)] px-3 py-2 text-caption text-[var(--text-secondary)]">
           <strong className="text-[var(--text-primary)]">{appointed}</strong> appointed editor{appointed === 1 ? "" : "s"}.
-          Sales-head, MIS and root always hold edit rights and are not counted. Region / sub-area / state
+          Sales-head and root always hold edit rights and are not counted. Region / sub-area / state
           reassignment stays with them regardless of appointment.
         </div>
 
@@ -110,7 +110,7 @@ export default function EditorsPanel({ open, onClose }: { open: boolean; onClose
                   type="button"
                   disabled={e.implicit || busy === e.userId}
                   onClick={() => void toggle(e)}
-                  title={e.implicit ? "Held through the sales-head / MIS role" : undefined}
+                  title={e.implicit ? "Held through the sales-head role" : undefined}
                   className={`rounded-[var(--radius-control)] px-3 py-1.5 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
                     e.canEdit
                       ? "border border-[var(--border-card)] text-[var(--text-secondary)] hover:text-[var(--color-danger)]"

@@ -4,8 +4,8 @@
 //
 // Reads: any telecalling-scoped session (shared sales surface).
 // Writes: same (agents log visits for field staff, like Field-Staff enquiries).
-// Deletes: sales-head / MIS / root only (double-confirmed in UI).
-// Staff id is validated against the field_staff roster row; a sales-head/MIS
+// Deletes: sales-head / root only (double-confirmed in UI).
+// Staff id is validated against the field_staff roster row; a sales-head
 // logging on behalf of a deactivated row bypasses the active-check (the visit
 // keeps its stored telecallerId, the write is audit-credited to the actor).
 // Mill requirement text auto-creates a Field-Staff enquiry (credited to the
@@ -14,7 +14,7 @@
 // city/address log, /ping answers 410, no GPS is persisted.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { deps, isApproved, notifyLive, requireMisScope, type Bindings } from '../context';
+import { deps, isApproved, notifyLive, requireAdminScope, type Bindings } from '../context';
 import { createEnquiryStore } from '../../modules/enquiries/store';
 import { enquiryCreate } from '../../modules/enquiries/routes';
 import {
@@ -45,7 +45,7 @@ async function viewer(c: any): Promise<any | null> {
   if (!me || !isApproved(me)) return null;
   if (me.isAdmin || me.isRoot) return me;
   const scopes: string[] = ((me.scopes ?? []) as string[]).map((s) => String(s).toLowerCase());
-  if (scopes.includes('mis') || scopes.includes('sales-head') || scopes.includes('telecalling') || scopes.includes('sales')) return me;
+  if (scopes.includes('sales-head') || scopes.includes('telecalling') || scopes.includes('sales')) return me;
   return null;
 }
 
@@ -56,9 +56,9 @@ function actorOf(me: any): { id: string; name: string } {
   };
 }
 
-/** Manager gate for deletes (MIS / sales-head / root). */
+/** Manager gate for deletes (sales-head / root). */
 async function requireSalesManager(c: any): Promise<boolean> {
-  try { await requireMisScope(c); return true; } catch { /* fall through */ }
+  try { await requireAdminScope(c); return true; } catch { /* fall through */ }
   const me: any = await getViewerMe(c);
   if (!me) return false;
   if (!isApproved(me)) return false;
@@ -275,7 +275,7 @@ export function registerFieldStaffRoutes(app: Hono<{ Bindings: Bindings }>): voi
   app.delete('/api/field-staff/visits/:id', async (c) => {
     const me = await viewer(c);
     if (!me) return c.json({ error: 'authentication required' }, 401);
-    if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head, MIS or root only' }, 403);
+    if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head or root only' }, 403);
     const ok = await deleteVisit(c.env.DB, c.req.param('id') ?? '');
     if (!ok) return c.json({ error: 'visit not found' }, 404);
     await invalidateFieldStaffCache().catch(() => null);
@@ -286,7 +286,7 @@ export function registerFieldStaffRoutes(app: Hono<{ Bindings: Bindings }>): voi
   app.delete('/api/field-staff/mills/:id', async (c) => {
     const me = await viewer(c);
     if (!me) return c.json({ error: 'authentication required' }, 401);
-    if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head, MIS or root only' }, 403);
+    if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head or root only' }, 403);
     const existing: any = await getMill(c.env.DB, c.req.param('id') ?? '').catch(() => null);
     if (!existing) return c.json({ error: 'mill not found' }, 404);
     const ok = await deleteMill(c.env.DB, c.req.param('id') ?? '');

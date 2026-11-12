@@ -244,7 +244,7 @@ export async function loadClientQueue(from: string, to: string): Promise<{ clien
   return { clients, typeBases };
 }
 
-// ── Writes (sales-head / MIS only — routes enforce the gate) ────────────────
+// ── Writes (sales-head / root only — routes enforce the gate) ────────────────
 
 export async function setTypeRule(
   typeBase: unknown, segment: unknown, by: string, byName: string,

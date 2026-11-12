@@ -2,12 +2,12 @@
 // routes/leads.ts — lead intake ledger API (Phase 7c/7d).
 //
 // Worker-only (Express is frozen). Reads are scope-filtered server-side:
-//   ALL/DEPARTMENT (root/MIS/sales-head) → everything.
+//   ALL/DEPARTMENT (root/sales-head) → everything.
 //   TEAM (TL1/TL2) → rows in their regions (region-less rows stay head-only).
 //   OWN (exec/field) → rows assigned to their own roster id.
 // Writes (qualify/drop) go through modules/core/leads.ts ONLY — this file
 // never INSERT/UPDATE/DELETEs core_* directly (core-guard rule 3).
-// Qualification gate: requireLeadQualifier = root | MIS | sales-head |
+// Qualification gate: requireLeadQualifier = root | sales-head |
 // team_lead scoped to [region, region2]. Region-less leads are head-only.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
@@ -71,14 +71,14 @@ export function registerLeadRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const scopes: string[] = (me?.scopes ?? []).map((s: string) => String(s).toLowerCase());
     const roles: string[] = (me?.roles ?? []).map((s: string) => String(s).toLowerCase());
     const name = String(me?.user?.name ?? me?.user?.email ?? 'manager');
-    if (me?.isAdmin || scopes.includes('mis') || scopes.includes('sales-head') || roles.includes('sales-head')) {
+    if (me?.isAdmin || scopes.includes('sales-head') || roles.includes('sales-head')) {
       return { actor: { name, role: 'sales-head', regions: null as string[] | null }, error: null as any };
     }
     const ros = await rosterRegions(p, String(me?.user?.email ?? ''));
     if (ros?.isTl) {
       return { actor: { name, role: 'team-lead', regions: ros.regions }, error: null as any };
     }
-    return { actor: null as any, error: c.json({ error: 'team-lead, sales-head, MIS or root only' }, 403) };
+    return { actor: null as any, error: c.json({ error: 'team-lead, sales-head or root only' }, 403) };
   };
 
   /** Scope filter for reads. TEAM = own regions only (region-less stay head-only). */

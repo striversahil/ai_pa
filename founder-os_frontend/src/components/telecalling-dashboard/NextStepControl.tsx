@@ -8,7 +8,7 @@ import { localIsoDay } from "./helpers";
 
 /** Dated next step (customer commitment) editor. While the date is today-or-
  *  future the estimate is protected from red-risk no matter the AI verdict;
- *  a past date reads red until chased. Region staff or MIS only
+ *  a past date reads red until chased. Region staff or root only
  *  (server-enforced); max 30 days out. */
 export function NextStepControl({ f, onSaved }: { f: FollowUp; onSaved: () => void }) {
   const [editing, setEditing] = useState(false);

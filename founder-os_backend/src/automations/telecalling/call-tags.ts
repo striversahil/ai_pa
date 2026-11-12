@@ -78,7 +78,7 @@ export const NEXT_STEP_MAX_DAYS = 30;
 
 /**
  * Validate + persist a dated next step (customer commitment) on one estimate.
- * Holder or MIS only (enforced at the route). Date must be today..today+30
+ * Holder or root only (enforced at the route). Date must be today..today+30
  * IST; null clears both columns. Engines never write these — the risk model
  * only reads them (future/today date protects from red + EOD, past date reads
  * red until chased).

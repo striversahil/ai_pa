@@ -323,7 +323,7 @@ export default function EnquiryModal({
                   </p>
                 ) : selectedFieldStaff && !selectedFieldStaff.region ? (
                   <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-400">
-                    {selectedFieldStaff.name} has no region — this enquiry will land in Unmapped until MIS maps them.
+                    {selectedFieldStaff.name} has no region — this enquiry will land in Unmapped until root maps them.
                   </p>
                 ) : (
                   <p className="text-[11px] text-[var(--text-tertiary)]">

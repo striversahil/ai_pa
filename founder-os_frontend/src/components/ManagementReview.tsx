@@ -28,7 +28,7 @@ export { isManagementPending } from "./management-review/helpers";
 export default function ManagementReview() {
   const { me } = useAuth();
   const scopes = me?.scopes ?? [];
-  const allowed = !!me && (me.isAdmin || scopes.includes("mis"));
+  const allowed = !!me && !!me.isAdmin;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // Queue tabs: Active (awaiting YOUR decision) / Query (sales asks — answer
   // or forward to procurement) / Pending from Sales (spec-flagged — ball with
@@ -504,7 +504,7 @@ export default function ManagementReview() {
     await fetchSelFull(id);
   }, [updateEnquiry, fetchSelFull]);
 
-  // Sent-revision: reopen a `sent` enquiry for additional scope (MIS only).
+  // Sent-revision: reopen a `sent` enquiry for additional scope (root only).
   // The row drops to `finalized` with a revision marker — new items then loop
   // procurement → management → sent again instead of stranding invisible.
   const [reviseBusy, setReviseBusy] = useState(false);

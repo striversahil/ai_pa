@@ -125,7 +125,7 @@ export function AdCard({ r, onChanged, canDelete }: { r: AdRow; onChanged: () =>
                 </button>
               </span>
             ) : (
-              <button onClick={() => { setErr(null); setConfirmDelete(true); }} className="px-3 py-1.5 text-xs font-bold rounded-xl border border-rose-500/40 text-rose-500 hover:bg-rose-500/10 cursor-pointer" title="Delete this campaign (MIS only)">
+              <button onClick={() => { setErr(null); setConfirmDelete(true); }} className="px-3 py-1.5 text-xs font-bold rounded-xl border border-rose-500/40 text-rose-500 hover:bg-rose-500/10 cursor-pointer" title="Delete this campaign (root only)">
                 Delete
               </button>
             )

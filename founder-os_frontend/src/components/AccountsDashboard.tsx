@@ -20,10 +20,10 @@ export { matchSelfRoster } from "./accounts-dashboard/helpers";
 
 export default function AccountsDashboard() {
   const { me } = useAuth();
-  const canMIS = !!me && (me.isAdmin || me.scopes.includes("mis"));
-  // Dispatch cash: adds from accounts OR dispatch floor; edits from accounts/MIS.
-  const canCashAdd = !!me && (me.isAdmin || me.scopes.includes("mis") || me.scopes.includes("accounts") || me.scopes.includes("dispatch") || me.scopes.includes("crm"));
-  const canCashEdit = !!me && (me.isAdmin || me.scopes.includes("mis") || me.scopes.includes("accounts"));
+  const canRoot = !!me && !!me.isAdmin;
+  // Dispatch cash: adds from accounts OR dispatch floor; edits from accounts/root.
+  const canCashAdd = !!me && (me.isAdmin || me.scopes.includes("accounts") || me.scopes.includes("dispatch") || me.scopes.includes("crm"));
+  const canCashEdit = !!me && (me.isAdmin || me.scopes.includes("accounts"));
   const [view, setView] = useState<AccountsView>("dashboard");
 
   // Today only — no date filter. The backend serves the current IST day.
@@ -39,7 +39,7 @@ export default function AccountsDashboard() {
   // the hook is narrowed to that one event.
   const dash = useLiveQuery<DashData>(async () => {
     // Identity rides along so the backend scopes the payload to the viewer's
-    // own lane (MIS/root skip scoping server-side).
+    // own lane (root skips scoping server-side).
     const res = await fetch(`${workspaceDataUrl("accounts")}${actorPick ? `?as=${encodeURIComponent(actorPick)}` : ""}`, { cache: "no-store" });
     if (!res.ok) throw new Error(`Load failed (HTTP ${res.status})`);
     return res.json();
@@ -144,7 +144,7 @@ export default function AccountsDashboard() {
   const pendingCount = lane.filter((t) => t.status !== "done" && t.status !== "skipped").length;
   const doneCount = lane.filter((t) => t.status === "done").length;
 
-  // Identity-aware nav: MIS/root see every lane; everyone else sees Dashboard
+  // Identity-aware nav: root sees every lane; everyone else sees Dashboard
   // + exactly their own lane ("My Tasks"). The backend already scopes the
   // payload, so this is display-layer enforcement to match.
   const selfRole = data?.meta?.self && !data?.meta?.isAdmin ? data.meta.self.role : null;
@@ -281,12 +281,12 @@ export default function AccountsDashboard() {
       </div>
 
       <div className="flex flex-col gap-6">
-        {/* Tabs (full-width horizontal row, like Telecalling). Non-MIS viewers
+        {/* Tabs (full-width horizontal row, like Telecalling). Non-root viewers
             only get Dashboard + their own lane — other lanes never render. */}
         <aside className="w-full shrink-0">
           <TabBar
             items={visibleTabs
-              .filter((t) => t.key !== "controller" || canMIS)
+              .filter((t) => t.key !== "controller" || canRoot)
               .map((t) => ({
                 ...t,
                 count: t.key === "incomplete" ? incompleteCount : t.key === "history" ? historyCount : null,
@@ -422,7 +422,7 @@ export default function AccountsDashboard() {
         </div>
       )}
 
-      {data && view === "controller" && (canMIS ? <Controller onChanged={() => dash.refresh()} /> : <div className="rounded-xl border p-6 text-sm text-zinc-500">🔒 Controller is restricted to MIS-level users.</div>)}
+      {data && view === "controller" && (canRoot ? <Controller onChanged={() => dash.refresh()} /> : <div className="rounded-xl border p-6 text-sm text-zinc-500">🔒 Controller is restricted to root.</div>)}
       {data && view === "dues" && <PaymentDues dues={data.payments ?? []} history={data.paymentHistory ?? []} summary={data.paymentSummary} onRefresh={() => dash.refresh()} />}
       {data && view === "cash" && <DispatchCash entries={data.cashEntries ?? []} summary={data.cashSummary} canAdd={canCashAdd} canEdit={canCashEdit} onRefresh={() => dash.refresh()} />}
         </div>

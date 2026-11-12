@@ -3,9 +3,9 @@
 // Extracted from routes.ts (no behavior change). All PII/margin gating lives
 // here so route handlers stay orchestration-only:
 //
-//   isRestrictedViewer — procurement-safe viewer check (full PII ONLY for
-//     admin / mis / sales / enquiry-tracker scopes; everyone else redacted).
-//   canManageRates   — privileged = admin / root / mis (markup + finalize).
+//   isRestrictedViewer — procurement-safe viewer check (open to every viewer
+//     since 2026-09-22; everyone else redacted).
+//   canManageRates   — privileged = root only (markup + finalize).
 //   redactEnquiryPII / stripMarginFields — response-shape guards (stored rows
 //     untouched).
 //   normalizeMoneyInput / validateRatesInput — money validation (400s, never
@@ -32,11 +32,10 @@ export function redactEnquiryPII<T extends Record<string, any>>(enquiry: T): T {
   return out as T;
 }
 
-/** Privileged = can decide markup + finalize rates (admin / root / MIS). */
+/** Privileged = can decide markup + finalize rates (root only). */
 export function canManageRates(me: MeResponse): boolean {
   if (!me) return false;
-  if (me.isAdmin || (me as any).isRoot) return true;
-  return ((me as any).scopes || []).includes('mis');
+  return !!(me.isAdmin || (me as any).isRoot);
 }
 
 /** May stamp the procurement handoff ("Enquiry Concluded", stamp-only, never
@@ -241,7 +240,7 @@ export async function resolveCreatorAgentId(prisma: any, me: MeResponse): Promis
       // Shared inboxes (2026-11-02: sales7bui@gmail.com is on Pooja, Kamal
       // AND Lata) must never credit the wrong person: an email shared by
       // several rows only resolves when the login NAME also matches one of
-      // those rows, otherwise the lead stays unattributed for MIS to assign.
+      // those rows, otherwise the lead stays unattributed for root to assign.
       const hits = rows.filter((t) => {
         const e = String(t?.email ?? '').toLowerCase().trim();
         return e && (e === email || local(e) === local(email));

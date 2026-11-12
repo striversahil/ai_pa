@@ -109,7 +109,7 @@ export const PATCH_COLUMNS: Record<string, string> = {
   customerTypeTag: 'customerTypeTag',
 };
 
-/** Fields that reassign ownership / geography — sales-head + MIS only. */
+/** Fields that reassign ownership / geography — sales-head only. */
 export const MANAGER_ONLY_FIELDS = new Set(['region', 'subArea', 'state']);
 
 export function patchToColumns(patch: Record<string, unknown>): { columns: string[]; values: any[] } {

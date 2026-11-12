@@ -747,7 +747,7 @@ export default function OrderPanel({
           </div>
 
           {/* Floor-cancelled banner — the client called the whole SO off. Every
-              floor action stays locked until MIS reopens it. */}
+              floor action stays locked until root reopens it. */}
           {locallyCancelled && (
             <div className="mt-4 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-700 dark:text-rose-300">
               <p className="font-bold">Cancelled on the floor{(full as any).localCancelledBy ? ` by ${(full as any).localCancelledBy}` : ""}{(full as any).localCancelledAt ? ` · ${dateLabel(String((full as any).localCancelledAt).slice(0, 10))}` : ""}</p>
@@ -758,7 +758,7 @@ export default function OrderPanel({
                   disabled={cancelBusy}
                   className="mt-2 rounded-lg border border-rose-500/40 px-2.5 py-1 text-[11px] font-bold hover:bg-rose-500/10 disabled:opacity-50"
                 >
-                  {cancelBusy ? "Working…" : "Reopen (MIS only)"}
+                  {cancelBusy ? "Working…" : "Reopen (root only)"}
                 </button>
               )}
               {cancelError && <p className="mt-1 font-bold">{cancelError}</p>}
@@ -906,7 +906,7 @@ export default function OrderPanel({
                 Cancel this sales order
               </h3>
               <p className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-300">
-                The whole SO leaves the floor. This is logged with your reason and can only be reversed by MIS.
+                The whole SO leaves the floor. This is logged with your reason and can only be reversed by root.
               </p>
               <div className="mt-2">
                 <ReasonBox label="Cancellation reason" value={cancelReason} onChange={setCancelReason} />

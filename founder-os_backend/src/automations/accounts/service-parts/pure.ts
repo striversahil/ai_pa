@@ -197,7 +197,7 @@ export function isOffsetDueOn(t: any, y: number, m: number, d: number): boolean 
   return false;
 }
 
-/** Legacy path for simple MIS-created tasks (no ruleJson): frequency + dueDay/dueMonth. */
+/** Legacy path for simple manager-created tasks (no ruleJson): frequency + dueDay/dueMonth. */
 export function legacyDueOn(t: any, y: number, m: number, d: number, wd: number, dim: number): boolean {
   const freq = String(t.frequency || 'daily');
   if (freq === 'daily') return wd >= 1 && wd <= 6;
@@ -294,11 +294,11 @@ export function missStreak(t: any, anchor: string, unresolved: Set<string>): num
   return n;
 }
 
-// ── MIS export: past-N-days full ledger ─────────────────────────────────────
+// ── Root export: past-N-days full ledger ─────────────────────────────────────
 // One row per (date × due task): status, who, remark, attachment links.
 // Read-only (never creates instances) — a complete view of what was
-// pending / done per senior-junior lane, for the MIS export.
-// Minutes → "1h 20m" / "45m" for the MIS export. NULL/0 → null.
+// pending / done per senior-junior lane, for the root export.
+// Minutes → "1h 20m" / "45m" for the root export. NULL/0 → null.
 export function fmtMins(v: unknown): string | null {
   const n = Math.floor(Number(v));
   if (!Number.isFinite(n) || n <= 0) return null;

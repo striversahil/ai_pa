@@ -73,7 +73,7 @@ const RULES: Record<string, Partial<AutomationDefinition>> = {
     id: 'enquiry-procurement', name: 'Sourcing Queue (Pre-Sale Vendor Rates)', description: 'Pending-only vendor-rate queue: items awaiting rates, client PII hidden. No daily pipeline — just what needs rates now.', type: 'handler', trigger: { type: 'manual' }, scope: 'procurement', enabled: true,
   },
   'enquiry-management': {
-    id: 'enquiry-management', name: 'Management Review', description: 'Pending-only rate review: rated items awaiting markup + finalize. No daily pipeline — just what needs a decision now.', type: 'handler', trigger: { type: 'manual' }, scope: 'mis', enabled: true,
+    id: 'enquiry-management', name: 'Management Review', description: 'Pending-only rate review: rated items awaiting markup + finalize. No daily pipeline — just what needs a decision now.', type: 'handler', trigger: { type: 'manual' }, scope: 'admin', enabled: true,
   },
   'dpp-prices-dashboard': {
     id: 'dpp-prices-dashboard', name: 'DPP Prices → Dashboard', description: 'Parse DPP price messages into PriceQuote rows and compute KRA/KPI for the dashboard.', type: 'rule',
@@ -130,13 +130,13 @@ const RULES: Record<string, Partial<AutomationDefinition>> = {
     id: 'sales', name: 'Sales', description: 'Unified sales workspace — leaderboard, enquiries, customer master and region-owned dispatch under one roof.', type: 'handler', trigger: { type: 'manual' }, scope: 'telecalling', enabled: true,
   },
   'accounts': {
-    id: 'accounts', name: 'Accounts', description: 'Recurring accounts taskbar: daily/monthly/yearly compliance tasks with senior/junior logging, remarks, and MIS controller.', type: 'handler', trigger: { type: 'schedule', cron: '30 3 * * *' }, scope: 'accounts', enabled: true,
+    id: 'accounts', name: 'Accounts', description: 'Recurring accounts taskbar: daily/monthly/yearly compliance tasks with senior/junior logging and remarks.', type: 'handler', trigger: { type: 'schedule', cron: '30 3 * * *' }, scope: 'accounts', enabled: true,
   },
   'digital-marketing': {
-    id: 'digital-marketing', name: 'Digital Marketing', description: 'Daily BUI digital marketing taskbar: account sheet, weekly collateral posts (FB/IG/GBP/LI) and daily numeric inputs (Meta Ads, B2B, Whatsapp, Email) with MIS controller and KRA/KPI.', type: 'handler', trigger: { type: 'schedule', cron: '30 3 * * *' }, scope: 'digital-marketing', enabled: true,
+    id: 'digital-marketing', name: 'Digital Marketing', description: 'Daily BUI digital marketing taskbar: account sheet, weekly collateral posts (FB/IG/GBP/LI) and daily numeric inputs (Meta Ads, B2B, Whatsapp, Email) with root-managed roster and KRA/KPI.', type: 'handler', trigger: { type: 'schedule', cron: '30 3 * * *' }, scope: 'digital-marketing', enabled: true,
   },
   'human-resources': {
-    id: 'human-resources', name: 'Human Resources', description: 'HR delegation task list with assignees, due date/time, status and remarks, plus a fixed/variable expense tracker with MIS/root controls.', type: 'handler', trigger: { type: 'manual' }, scope: 'human-resources', enabled: true,
+    id: 'human-resources', name: 'Human Resources', description: 'HR delegation task list with assignees, due date/time, status and remarks, plus a fixed/variable expense tracker with HR/root controls.', type: 'handler', trigger: { type: 'manual' }, scope: 'human-resources', enabled: true,
   },
   'whatsapp-autopilot': {
     id: 'whatsapp-autopilot', name: 'WhatsApp Autopilot', description: 'Structured business layer under WhatsApp: message lineage, per-chat task queue, LLM state transitions. Core loop runs on GH Actions (shadow mode — nothing sends).', type: 'handler', trigger: { type: 'schedule', cron: '*/5 * * * *' }, scope: 'autopilot', enabled: true,
@@ -145,7 +145,7 @@ const RULES: Record<string, Partial<AutomationDefinition>> = {
     id: 'crm', name: 'CRM — Dispatch Floor', description: 'Sales orders synced from Zoho Books into D1 rows. Schedule each line item for a dispatch date, dispatch on the day, reschedule with a mandatory reason, and confirm orders Zoho stopped returning.', type: 'handler', trigger: { type: 'schedule', cron: '*/15 * * * *' }, scope: 'crm', enabled: true,
   },
   'product-line': {
-    id: 'product-line', name: 'Product Line', description: 'Product master (KYP sheet as data): products, guide questions, vendors and quote facts. MIS-editable.', type: 'handler', trigger: { type: 'manual' }, scope: 'product-line', enabled: true,
+    id: 'product-line', name: 'Product Line', description: 'Product master (KYP sheet as data): products, guide questions, vendors and quote facts. Root-editable.', type: 'handler', trigger: { type: 'manual' }, scope: 'product-line', enabled: true,
   },
   'samarth-overview': {
     id: 'samarth-overview', name: 'Samarth Overview', description: 'One-page concise highlight across all dashboards (Zoho, CRM, telecalling, enquiries, accounts, digital marketing, NeoDove, enterprise ops). Read-only aggregator, KV-cached 60s.', type: 'handler', trigger: { type: 'manual' }, scope: 'samarth', enabled: true,
@@ -160,13 +160,13 @@ const RULES: Record<string, Partial<AutomationDefinition>> = {
     id: 'debtors-tracker', name: 'Debtors Tracker', description: 'Pending-payments control desk: paste the debtors ageing sheet to import the invoice ledger, paste collections to keep the receipts ledger live; customer-wise ageing + summary. Deterministic — no LLM.', type: 'handler', trigger: { type: 'manual' }, scope: 'debtors-tracker', enabled: true,
   },
   'ai-usage': {
-    id: 'ai-usage', name: 'AI Usage', description: 'Copilot turns per member (20/hr cap), pool health and daily trend. Read-only, MIS-only.', type: 'handler', trigger: { type: 'manual' }, scope: 'mis', enabled: true,
+    id: 'ai-usage', name: 'AI Usage', description: 'Copilot turns per member (20/hr cap), pool health and daily trend. Read-only, root-only.', type: 'handler', trigger: { type: 'manual' }, scope: 'admin', enabled: true,
   },
   'master-data': {
     id: 'master-data', name: 'Customer Master', description: 'The Zoho customer book: region/zone, contact details, pipeline history, duplicate-review state. Reads are KV-cached; edits belong to the editors the sales-head appoints.', type: 'handler', trigger: { type: 'manual' }, scope: 'master-data', enabled: true,
   },
   'reporting-sheet': {
-    id: 'reporting-sheet', name: 'Reporting Sheet', description: 'Weekly management review: department heads enter their sections (sales, CRM & operations, digital marketing); root and MIS see everything. Auto-fill pulls live numbers, heads confirm or adjust.', type: 'handler', trigger: { type: 'manual' }, scope: 'reporting-sheet', enabled: true,
+    id: 'reporting-sheet', name: 'Reporting Sheet', description: 'Weekly management review: department heads enter their sections (sales, CRM & operations, digital marketing); root sees everything. Auto-fill pulls live numbers, heads confirm or adjust.', type: 'handler', trigger: { type: 'manual' }, scope: 'reporting-sheet', enabled: true,
   },
   'stock': {
     id: 'stock', name: 'Stock', description: 'Manual SKU inventory: on-hand qty, reorder level and day-wise closing stock per product.', type: 'handler', trigger: { type: 'manual' }, scope: 'stock', enabled: true,

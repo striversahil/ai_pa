@@ -11,7 +11,7 @@
 //          to a platform login (drives the Logins panel).
 //
 // Whoever is signed in may use the board; the service layer scopes every read
-// and write to the caller's own roster member unless they hold HR/MIS access.
+// and write to the caller's own roster member unless they hold HR access.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import { notifyLive, LiveEvent, type Bindings } from '../context';
@@ -83,7 +83,7 @@ export function registerDelegationRoutes(app: Hono<{ Bindings: Bindings }>): voi
     if (v.error) return v.error;
     const body = await readBody(c);
     try {
-      // HR/MIS users assign work through the same form the HR dashboard uses;
+      // HR users assign work through the same form the HR dashboard uses;
       // everyone else can only add a task to their own list.
       const row = isHrManager(v.me) && body?.assignedToId
         ? await createTask(body, actorLabel(v.me))
@@ -120,7 +120,7 @@ export function registerDelegationRoutes(app: Hono<{ Bindings: Bindings }>): voi
     const v = await viewer(c);
     if (v.error) return v.error;
     if (!isHrManager(v.me)) {
-      return c.json({ error: 'Only HR/MIS users can link logins' }, 403);
+      return c.json({ error: 'Only HR users can link logins' }, 403);
     }
     const body = await readBody(c);
     try {

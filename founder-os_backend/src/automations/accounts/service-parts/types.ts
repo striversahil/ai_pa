@@ -3,7 +3,7 @@
 
 
 // ── Identity scoping (lane enforcement) ─────────────────────────────────────
-// Non-MIS viewers only ever receive their own lane (role + shared). Mirrors
+// Non-root viewers only ever receive their own lane (role + shared). Mirrors
 // the telecalling selfAgentId pattern: the frontend ALSO hides other tabs,
 // but the payload itself is scoped so tab-switching can't leak lanes.
 export interface LaneScope {

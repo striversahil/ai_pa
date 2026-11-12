@@ -18,7 +18,7 @@
 //    errors (unscoped), as before.
 //  • debtors-tracker rethrows non-auth errors (→ 404 upstream), as before.
 //  • master-data / reporting-sheet map any non-auth error to 403, as before.
-//  • Admin semantics differ per workspace (mis / sales-head / human-resources).
+//  • Admin semantics differ per workspace (sales-head / human-resources).
 // ─────────────────────────────────────────────────────────────────────────────
 import { AuthError } from '../auth/types';
 
@@ -67,12 +67,12 @@ const debtorsTracker: Scoper = async (query, r) => {
 };
 
 /** Non-admin sales agents see their OWN conversion/at-risk rows (leaderboard
- *  stays team-wide). Root/admin/MIS/sales-head and anonymous = full team. */
+ *  stays team-wide). Root/admin/sales-head and anonymous = full team. */
 const telecalling: Scoper = async (query, r) => {
   delete query.selfAgentId; // never trusted from the client
   try {
     const me = await r.loadMe();
-    const isAdmin = !!me?.isAdmin || scopesOf(me).includes('mis') || scopesOf(me).includes('sales-head');
+    const isAdmin = !!me?.isAdmin || scopesOf(me).includes('sales-head');
     if (me && !isAdmin) {
       const selfId = await r.resolveSelfTelecallerId(me);
       if (selfId) query.selfAgentId = selfId;
@@ -86,7 +86,7 @@ const telecalling: Scoper = async (query, r) => {
 const accounts: Scoper = async (query, r) => {
   try {
     const me = await r.loadMe();
-    const isAdmin = !!me?.isAdmin || scopesOf(me).includes('mis');
+    const isAdmin = !!me?.isAdmin;
     if (me && !isAdmin) {
       const self = await r.resolveSelfAccountant(query.as ?? null, me);
       query.scope = { scope: self, isAdmin: false };
@@ -100,7 +100,7 @@ const accounts: Scoper = async (query, r) => {
 const digitalMarketing: Scoper = async (query, r) => {
   try {
     const me = await r.loadMe();
-    const isAdmin = !!me?.isAdmin || scopesOf(me).includes('mis');
+    const isAdmin = !!me?.isAdmin;
     if (me && !isAdmin) {
       const self = await r.resolveSelfDigitalMarketingManager(query.as ?? null, me);
       query.scope = { scope: self, isAdmin: false };
@@ -117,7 +117,7 @@ const humanResources: Scoper = async (query, r) => {
   try {
     const me = await r.loadMe();
     const scopes = scopesOf(me);
-    const hasFullView = !!me?.isAdmin || scopes.includes('mis') || scopes.includes('human-resources');
+    const hasFullView = !!me?.isAdmin || scopes.includes('human-resources');
     if (me && hasFullView) {
       query.scope = { scope: null, isAdmin: true };
     } else if (me) {

@@ -2,7 +2,7 @@
 // Backend: POST /api/telecallers/from-directory shares validation + field
 // mapping with POST /api/telecallers (one home: telecallerCreateData);
 // duplicate email → 409 with linkTo (Link, never silent double-create);
-// region required; root refused; sales-head/MIS gate; Worker-only; mirror.
+// region required; root refused; sales-head/HR gate; Worker-only; mirror.
 // Frontend: fetchers live in the telecalling domain api module (ratchet-clean).
 //
 // Run: `node --test "scripts/guards/*.test.mjs"`
@@ -33,8 +33,8 @@ describe('roster mapping queue contract (Phase A)', () => {
     assert.ok(route.includes('login has no email'), 'emailless logins must be refused');
   });
 
-  it('sales-head/MIS gate + Worker-only (no Express mirror)', () => {
-    assert.ok(route.includes('requireRosterManager'), 'mapping must use the roster-manager gate (sales-head/MIS + HR)');
+  it('sales-head/HR gate + Worker-only (no Express mirror)', () => {
+    assert.ok(route.includes('requireRosterManager'), 'mapping must use the roster-manager gate (sales-head + HR)');
     assert.ok(route.includes("scopes.includes('human-resources')"), 'HR holders must pass the gate');
     let express = '';
     try {
@@ -74,7 +74,7 @@ describe('roster mapping queue contract (Phase A)', () => {
     assert.ok(getStart !== -1, 'GET roster must exist');
     const getNext = route.indexOf('\n  app.', getStart + 1);
     const getBlock = getNext === -1 ? route.slice(getStart) : route.slice(getStart, getNext);
-    assert.ok(getBlock.includes('requireRosterManager'), 'GET must use the roster-manager gate (sales-head/MIS + HR)');
+    assert.ok(getBlock.includes('requireRosterManager'), 'GET must use the roster-manager gate (sales-head + HR)');
     assert.ok(!getBlock.includes("app.put('/api/telecallers/:id'"), 'read gate change must not touch the legacy PUT');
   });
 

@@ -41,7 +41,7 @@ export interface RiskItem {
   reasoning: string | null;
   /** Why the risk state fired (mirrors the AI verdict for the agent). */
   staleReason: string | null;
-  /** Dated customer commitment set by the staff/MIS (null when none). */
+  /** Dated customer commitment set by staff or a manager (null when none). */
   nextStep: string | null;
   nextStepDate: string | null;
 }

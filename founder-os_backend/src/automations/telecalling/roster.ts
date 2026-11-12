@@ -1,10 +1,10 @@
 // roster.ts — telecaller roster sync.
 //
-// Region model (founder, 2026-10-22): the MIS absent/present temp-cover flow,
+// Region model (founder, 2026-10-22): the root absent/present temp-cover flow,
 // bulk deals and push-history writers are retired (estimates belong to regions
 // now — staff hold/work estimates only in their own region; no individual
 // assignment exists any more). Kept: the NeoDove-seeded roster sync; the
-// live staff↔region roster is MIS-managed via the roster API
+// live staff↔region roster is root-managed via the roster API
 // (tlLevel + region fields on Telecaller).
 import { prisma } from '../../shared/prisma';
 import { logger } from '../../shared/logger';
@@ -34,7 +34,7 @@ async function syncTelecallersFromNeodove(): Promise<void> {
     })[];
     const byId = new Map<string, (typeof existing)[number]>();
     const byName = new Map<string, (typeof existing)[number]>();
-    // Roster-name fallback (2026-11-02, Kamal case): a row created by MIS with
+    // Roster-name fallback (2026-11-02, Kamal case): a row created by root with
     // no NeoDove identity can never be adopted by the id/NeoDove-name match
     // above. Fall back to the ROSTER name (case-insensitive, trimmed) when it
     // identifies exactly one unlinked row — never when ambiguous.
@@ -112,7 +112,7 @@ async function syncTelecallersFromNeodove(): Promise<void> {
       // Recycled-id tripwire: this agent's userId is still parked on a row
       // with a different userName (a predecessor). Creating the new row is
       // correct — the stale row is inert (userId fallback only serves rows
-      // with no userName) — but MIS should see it in the logs.
+      // with no userName) — but root should see it in the logs.
       const clash = a.userId ? byId.get(a.userId) : undefined;
       if (clash && String(clash.neodoveUserName ?? '') && String(clash.neodoveUserName) !== a.userName) {
         logger.warn(
@@ -124,7 +124,7 @@ async function syncTelecallersFromNeodove(): Promise<void> {
         data: {
           name: a.userName,
           // New hires start as lead-gen only — they must be reviewed/flagged as
-          // conversion specialists by MIS before receiving estimate follow-ups.
+          // conversion specialists by root before receiving estimate follow-ups.
           assignEstimateFollowUps: false,
           order: maxOrder,
           neodoveUserId: a.userId || null,

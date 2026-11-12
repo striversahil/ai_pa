@@ -36,9 +36,6 @@ export function resolveCoreAutoPosition(input: PositionInput, snap: CoreSnapshot
   if (hasScope(scopes, 'sales-head')) {
     return { position: 'sales-head', via: 'holds sales-head scope' };
   }
-  if (hasScope(scopes, 'mis') || hasScope(scopes, 'user-admin')) {
-    return { position: 'mis', via: 'holds MIS scope' };
-  }
   if (email) {
     const emp = (snap.employees ?? []).find((e) => normEmail(e.workEmail) === email);
     if (emp) {

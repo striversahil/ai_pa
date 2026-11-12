@@ -98,7 +98,7 @@ export function BoardHeader({ meta, period, periods, onPeriod, loading = false, 
               {unattributed > 0 && (
                 <span
                   className="inline-flex items-center gap-1 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] font-semibold text-amber-700 dark:text-amber-300"
-                  title="Enquiries with no roster match — MIS should fix attribution"
+                  title="Enquiries with no roster match — root should fix attribution"
                 >
                   {unattributed} unattributed
                 </span>

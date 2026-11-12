@@ -64,7 +64,7 @@ const isPdf = (a: SoAttachment): boolean =>
 
 /** SO documents inside the order's expanded row. Images open in the native
  *  Lightbox, PDFs in the fullscreen iframe viewer — same big-view components
- *  as team chat. Upload/delete is MIS-only (accounts desk works under the MIS
+ *  as team chat. Upload/delete is root-only (accounts desk works under the root
  *  grant); everyone else reads. */
 export default function SoAttachments({
   so,

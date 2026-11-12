@@ -1,5 +1,5 @@
 // ── Device + manager auth guards for the call-log routes ────────────────────
-import { getMe, isApproved, readSessionCookie, requireMisScope, authStore } from '../../worker/context';
+import { getMe, isApproved, readSessionCookie, requireAdminScope, authStore } from '../../worker/context';
 import { hashToken } from './tokens';
 import type { DeviceRow } from './types';
 
@@ -36,7 +36,6 @@ export async function callViewer(c: any): Promise<CallViewer | null> {
   const isManager =
     !!me.isAdmin ||
     !!me.isRoot ||
-    scopes.includes('mis') ||
     scopes.includes('sales-head') ||
     roles.includes('sales-head');
 
@@ -51,10 +50,10 @@ export async function callViewer(c: any): Promise<CallViewer | null> {
   return { isManager: false, telecallerId: selfId, name: String(me.user?.name ?? '') };
 }
 
-/** Manager-only guard (MIS / sales-head / root). */
+/** Manager-only guard (sales-head / root). */
 export async function requireCallManager(c: any): Promise<boolean> {
   try {
-    await requireMisScope(c);
+    await requireAdminScope(c);
     return true;
   } catch {
     /* fall through to the role check */

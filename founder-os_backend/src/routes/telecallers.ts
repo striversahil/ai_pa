@@ -12,12 +12,12 @@ import { normalizeAgentPhone } from '../automations/telecalling/util';
 
 const router = Router();
 
-// MIS-level control: the roster is the region/hierarchy map — every roster
-// read/write requires the `mis` scope (or root/admin).
-const misAuthStore = new PrismaAuthStore(prisma);
+// Root-level control: the roster is the region/hierarchy map — every roster
+// read/write requires the `admin` scope (or root).
+const authStore = new PrismaAuthStore(prisma);
 const misGuard = asyncHandler(async (req, res, next) => {
   try {
-    await requireScope(misAuthStore as any, req.headers.cookie || null, 'mis');
+    await requireScope(authStore as any, req.headers.cookie || null, 'admin');
     next();
   } catch (e) {
     if (e instanceof AuthError) return res.status(e.status).json({ error: e.message });
@@ -96,7 +96,7 @@ router.put('/:id', misGuard, asyncHandler(async (req, res) => {
 }));
 
 router.delete('/:id', misGuard, asyncHandler(async (req, res) => {
-  // Soft delete: hidden everywhere, restorable from the MIS Controller.
+  // Soft delete: hidden everywhere, restorable from the sales Controller.
   await prisma.telecaller.update({
     where: { id: String(req.params.id) },
     data: { deleted: true, assignEstimateFollowUps: false },

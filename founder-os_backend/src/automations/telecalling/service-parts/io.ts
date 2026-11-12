@@ -56,7 +56,7 @@ export async function runLeadConversion(): Promise<{ linked: number }> {
 }
 
 /**
- * Per-day × per-staff MIS breakdown for an inclusive IST range (region
+ * Per-day × per-staff manager breakdown for an inclusive IST range (region
  * model). Sources per day: close-credit events split 20/80 across
  * generator/closer rows (+ legacy full-slab rows), accepted estimate values,
  * enquiry-sourced leads and the stored NeoDove day snapshot. Gated by the
@@ -86,7 +86,7 @@ export async function computeTelecallingDaily(
 
   // Wins/₹ from accepted estimates on their acceptedAt day — the SAME source
   // as the dashboard (accepted.ts). Reading the close ledger here used to make
-  // the MIS export under-report exactly like the board did.
+  // the root export under-report exactly like the board did.
   try {
     const rows = (await prisma.estimate.findMany({
       where: {
@@ -1056,7 +1056,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   const unmappedStaff = (telecallers as any[]).filter((t) => !String((t as any).region ?? '') && !String((t as any).region2 ?? ''))
     .map((t) => staffRows.get(String(t.id))).filter(Boolean) as StaffRow[];
   for (const t of unmappedStaff) {
-    // Highlighted on the board so MIS notices and maps them.
+    // Highlighted on the board so root notices and maps them.
     (t as any).unmapped = true;
   }
 
@@ -1212,7 +1212,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     // dashboard request (no ?region=, no ?agent=) must keep returning the full
     // leaderboard payload. Setting regionScope on every self-scoped request used
     // to short-circuit into the agent-drill response ({meta, agent, followUps}),
-    // so every non-root/non-MIS viewer got a payload with NO `regions`, NO
+    // so every non-root viewer got a payload with NO `regions`, NO
     // `kpi` and NO `meta.teamTarget` — the dashboard rendered empty for them.
     if (agentFilter || requestedRegion !== undefined) {
       drillStaff = drillSelfStaff;
@@ -1417,7 +1417,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   }));
 
   // Can-manage: the route only injects selfAgentId for NON-admin users, so
-  // its absence means the viewer is root/MIS/sales-head.
+  // its absence means the viewer is root/sales-head.
   const canManage = !selfAgentId;
   const selfStaff = selfAgentId ? staffRows.get(selfAgentId) ?? null : null;
   const selfRegion = selfStaff?.region ?? '';
@@ -1473,7 +1473,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       // NeoDove users with no roster link — Controller link-picker source.
       unmappedNeodoveUsers,
       // Enquiries in the window with no roster match (assignedAgentId empty).
-      // Surfaced so MIS can fix attribution instead of silently undercounting.
+      // Surfaced so root can fix attribution instead of silently undercounting.
       unattributedLeads,
       targets: {
         connectedCallsPerDay: CONNECTED_CALLS_PER_DAY * workingDays,
@@ -1549,14 +1549,14 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     },
     unlinked: { ...roundAgg(wonSnapshot.unlinked), items: wonSnapshot.unlinked.items, label: 'Needs region mapping', kind: 'unlinked' },
     recent: scopedRecent,
-    // MIS daily breakdown (only when ?daily=1 in period mode): per-day ×
+    // Manager daily breakdown (only when ?daily=1 in period mode): per-day ×
     // per-staff closes w/ estimate tags, calls, leads. Absent otherwise so
     // dashboard loads stay light.
     ...(await buildDailySection(q, periodMode, periodRangeInfo)),
   };
 }
 
-/** Daily MIS section for period payloads. Empty (no keys) unless requested. */
+/** Daily manager section for period payloads. Empty (no keys) unless requested. */
 export async function buildDailySection(
   q: Record<string, unknown>,
   periodMode: boolean,

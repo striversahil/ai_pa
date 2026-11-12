@@ -37,11 +37,14 @@ describe('telecalling', () => {
   it('injects the agent roster id for a plain telecaller', async () => {
     assert.deepEqual(await run('telecalling', me(['telecalling']), { selfAgentId: 'evil' }), { ok: true, query: { selfAgentId: 'tc-42' } });
   });
-  for (const [label, v] of [['admin', ADMIN], ['mis', me(['mis'])], ['sales-head', me(['sales-head'])]]) {
+  for (const [label, v] of [['admin', ADMIN], ['sales-head', me(['sales-head'])]]) {
     it(`${label} sees the full team`, async () => {
       assert.deepEqual(await run('telecalling', v, { selfAgentId: 'evil' }), { ok: true, query: {} });
     });
   }
+  it('an unknown scope grants nothing (no stale-scope backdoor)', async () => {
+    assert.deepEqual(await run('telecalling', me(['ghost']), { selfAgentId: 'evil' }), { ok: true, query: { selfAgentId: 'tc-42' } });
+  });
   it('swallows lookup errors (unscoped, never the client id)', async () => {
     const r = await run('telecalling', me(['telecalling']), { selfAgentId: 'evil' }, { resolveSelfTelecallerId: async () => { throw new Error('d1'); } });
     assert.deepEqual(r, { ok: true, query: {} });
@@ -58,9 +61,9 @@ describe('accounts / digital-marketing lanes', () => {
     assert.deepEqual((await run('accounts', me(['accounts']), { as: 'ravi' })).query.scope, { scope: 'acct:ravi', isAdmin: false });
     assert.deepEqual((await run('digital-marketing', me(['digital-marketing']))).query.scope, { scope: 'dm:session', isAdmin: false });
   });
-  it('admin and mis get the full view', async () => {
+  it('admin gets the full view; unknown scopes buy nothing', async () => {
     assert.deepEqual((await run('accounts', ADMIN)).query.scope, { scope: null, isAdmin: true });
-    assert.deepEqual((await run('digital-marketing', me(['mis']))).query.scope, { scope: null, isAdmin: true });
+    assert.deepEqual((await run('digital-marketing', me(['ghost']))).query.scope, { scope: 'dm:session', isAdmin: false });
   });
   it('anonymous stays unscoped', async () => {
     assert.deepEqual(await run('accounts', null, { as: 'x' }), { ok: true, query: { as: 'x' } });

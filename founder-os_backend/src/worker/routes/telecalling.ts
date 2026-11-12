@@ -3,13 +3,13 @@
 // reset, call tags, next steps.
 //
 // Region model (extract, Phase-R): the roster carries each staff member's
-// hierarchy level + region; region fixes and roster writes are sales-head/MIS
+// hierarchy level + region; region fixes and roster writes are sales-head
 // writes. The old assignment overrides, bulk moves, effort
 // shields, absentee cover and penalty toggles are retired — estimates are
 // owned by regions, never individuals.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { deps, requireMisScope, misScopeError, notifyLive, LiveEvent, authStore, isApproved, type Bindings } from '../context';
+import { deps, requireAdminScope, adminScopeError, notifyLive, LiveEvent, authStore, isApproved, type Bindings } from '../context';
 import {
   setEstimateCallTag,
   invalidateRiskCache,
@@ -30,11 +30,11 @@ import { normalizeAgentPhone } from '../../automations/telecalling/util';
 import { getViewerMe } from '../viewer';
 import { readBody } from '../http';
 
-/** Root/MIS/sales-head gate for the region-model management writes. Accepts
+/** Root/sales-head gate for the region-model management writes. Accepts
  * the scope or the role itself, so a sales-head role holder is authorized even
  * if the scope grant is missing from their session. */
 async function requireSalesManager(c: any): Promise<boolean> {
-  try { await requireMisScope(c); return true; } catch { /* fall through */ }
+  try { await requireAdminScope(c); return true; } catch { /* fall through */ }
   const me: any = await getViewerMe(c);
   if (!me) return false;
   if (!isApproved(me)) return false;
@@ -44,7 +44,7 @@ async function requireSalesManager(c: any): Promise<boolean> {
 }
 
 /** Roster-mapping gate (founder decision 2026-11-12: HR owns employment
- *  mapping). Sales-head/MIS keep their existing power; HR holders gain the
+ *  mapping). Sales-head keeps its existing power; HR holders gain the
  *  same Map/Link power so the register can become the single writer. */
 async function requireRosterManager(c: any): Promise<boolean> {
   if (await requireSalesManager(c)) return true;
@@ -98,13 +98,13 @@ function telecallerCreateData(body: any): { error?: string; data?: Record<string
 
 export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): void {
   // ── Telecaller roster (staff ↔ hierarchy ↔ region) ────────────────────────────
-  // READ is MIS + sales-head + HR (HR owns employment mapping and needs the
+  // READ is root + sales-head + HR (HR owns employment mapping and needs the
   // roster to Map/Link; founder decision 2026-11-12); roster WRITES below stay
-  // sales-head/MIS via requireSalesManager except the HR-capable mapping
+  // sales-head via requireSalesManager except the HR-capable mapping
   // endpoints which use requireRosterManager.
   app.get('/api/telecallers', async (c) => {
-    try { await requireMisScope(c); }
-    catch (e) { if (!(await requireRosterManager(c))) return misScopeError(c, e); }
+    try { await requireAdminScope(c); }
+    catch (e) { if (!(await requireRosterManager(c))) return adminScopeError(c, e); }
     const { prisma } = deps();
     const showDeleted = c.req.query('deleted') === '1';
     const tcs = await prisma.telecaller.findMany({
@@ -163,9 +163,9 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
   });
 
   app.post('/api/telecallers', async (c) => {
-    // Sales roster writes are sales-head/MIS writes (founder decision:
-    // sales-head holds complete authority inside sales, same as MIS).
-    if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head, MIS or root only' }, 403);
+    // Sales roster writes are sales-head writes (founder decision:
+    // sales-head holds complete authority inside sales).
+    if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head or root only' }, 403);
     const { prisma } = deps();
     const body = await readBody(c);
     const parsed = telecallerCreateData(body);
@@ -180,10 +180,10 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
 
   // ── Roster mapping queue (Phase A; Worker-only, no Express mirror) ─────────
   // Map a directory login onto the sales roster: HR creates the person, HR (or
-  // sales-head/MIS) assigns region (+type/name) here. Email already rostered →
+  // sales-head) assigns region (+type/name) here. Email already rostered →
   // 409 with linkTo (frontend offers Link = attach email onto that row instead).
   app.post('/api/telecallers/from-directory', async (c) => {
-    if (!(await requireRosterManager(c))) return c.json({ error: 'sales-head, MIS, HR or root only' }, 403);
+    if (!(await requireRosterManager(c))) return c.json({ error: 'sales-head, HR or root only' }, 403);
     const { prisma } = deps();
     const fromBody = await readBody(c);
     const userId = String(fromBody?.userId ?? '');
@@ -217,7 +217,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
   // Body: { rowId, userId }. The login's email is attached to the row after
   // verifying no OTHER live row already claims it (409 with that row's id).
   app.post('/api/telecallers/link', async (c) => {
-    if (!(await requireRosterManager(c))) return c.json({ error: 'sales-head, MIS, HR or root only' }, 403);
+    if (!(await requireRosterManager(c))) return c.json({ error: 'sales-head, HR or root only' }, 403);
     const { prisma } = deps();
     const linkBody = await readBody(c);
     const rowId = String(linkBody?.rowId ?? '');
@@ -246,8 +246,8 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
   });
 
   app.put('/api/telecallers/:id', async (c) => {
-    // Sales roster writes are sales-head/MIS writes (see POST above).
-    if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head, MIS or root only' }, 403);
+    // Sales roster writes are sales-head writes (see POST above).
+    if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head or root only' }, 403);
     const { prisma } = deps();
     const body = await readBody(c);
     const data: Record<string, unknown> = {};
@@ -308,8 +308,8 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
   });
 
   app.delete('/api/telecallers/:id', async (c) => {
-    // Sales roster writes are sales-head/MIS writes (see POST above).
-    if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head, MIS or root only' }, 403);
+    // Sales roster writes are sales-head writes (see POST above).
+    if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head or root only' }, 403);
     const { prisma } = deps();
     await prisma.telecaller.update({
       where: { id: c.req.param('id') },
@@ -321,18 +321,18 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     return c.json({ ok: true });
   });
 
-  // ── NeoDove phone directory (sales-head / MIS) ────────────────────────────
+  // ── NeoDove phone directory (sales-head) ────────────────────────────
   // Manual userId‖userName → phone map (founder 2026-11-06): NeoDove exposes
   // no agent phone, so the sales-head maps each dialling NeoDove user once.
   // The dashboard joins phone-first; unmapped agents stay on the name
   // fallback and are flagged until mapped.
-  // ── Estimate region search (sales-head / MIS): find ANY active/past deal ───
+  // ── Estimate region search (sales-head): find ANY active/past deal ───
   // The Controller uses this to re-home an estimate by number/customer across
   // sent, accepted (incl. confirmed) and declined — the region is authoritative
   // for points/wins regardless of status.
   app.get('/api/telecalling/estimates', async (c) => {
     if (!(await requireSalesManager(c))) {
-      return c.json({ error: 'sales-head, MIS or root only' }, 403);
+      return c.json({ error: 'sales-head or root only' }, 403);
     }
     const q = String(c.req.query('q') ?? '').trim();
     const statusRaw = String(c.req.query('status') ?? 'all').trim().toLowerCase();
@@ -367,13 +367,13 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     }
   });
 
-  // ── Region set (sales-head / MIS): link an unmapped/mis-aimed estimate ─────
+  // ── Region set (sales-head): link an unmapped/mis-aimed estimate ─────
   // Estimates are stamped by the mapping enquiry; rows that synced before their
   // staff had a region (or any other gap) land in the Unmapped bucket and are
   // linked here. Also fixes typos/moves between regions.
   app.put('/api/estimates/:id/region', async (c) => {
     if (!(await requireSalesManager(c))) {
-      return c.json({ error: 'sales-head, MIS or root can set estimate regions' }, 403);
+      return c.json({ error: 'sales-head or root can set estimate regions' }, 403);
     }
     const { prisma } = deps();
     const body = await readBody(c);
@@ -405,13 +405,13 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     return c.json({ ok: true, estimateId, region, wasUnmapped: linked, estimate: est as any });
   });
 
-  // ── History reset (root/MIS only, founder-approved): purge close credits ──
+  // ── History reset (root only, founder-approved): purge close credits ──
   // dry=1 counts what would go without deleting; omitting it runs the purge
   // (deletes every close-credit ledger row, stamps the epoch, leaves all other
   // data untouched).
   app.post('/api/telecalling/reset-history', async (c) => {
     if (!(await requireSalesManager(c))) {
-      return c.json({ error: 'sales-head, MIS or root can reset history' }, 403);
+      return c.json({ error: 'sales-head or root can reset history' }, 403);
     }
     const dryRun = c.req.query('dry') === '1';
     const result = await deleteCloseHistory(dryRun);
@@ -422,13 +422,13 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     return c.json({ ok: true, ...result });
   });
 
-  // ── National holidays (sales-head / MIS): days with ₹0 target ────────────
+  // ── National holidays (sales-head): days with ₹0 target ────────────
   // A holiday accrues no target like a Sunday, so it shrinks that week's due
   // and the carry-out deficit. Past or future dates both allowed — the ledger
   // recomputes from the start, so backdated marks retroactively reduce dues.
   app.get('/api/telecalling/holidays', async (c) => {
     if (!(await requireSalesManager(c))) {
-      return c.json({ error: 'sales-head, MIS or root only' }, 403);
+      return c.json({ error: 'sales-head or root only' }, 403);
     }
     try {
       const holidays = await listSalesHolidays();
@@ -440,7 +440,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
 
   app.post('/api/telecalling/holidays', async (c) => {
     if (!(await requireSalesManager(c))) {
-      return c.json({ error: 'sales-head, MIS or root only' }, 403);
+      return c.json({ error: 'sales-head or root only' }, 403);
     }
     const me: any = await getViewerMe(c).catch(() => null);
     const body = await readBody(c);
@@ -461,7 +461,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
 
   app.delete('/api/telecalling/holidays/:day', async (c) => {
     if (!(await requireSalesManager(c))) {
-      return c.json({ error: 'sales-head, MIS or root only' }, 403);
+      return c.json({ error: 'sales-head or root only' }, 403);
     }
     try {
       await unmarkSalesHoliday(c.req.param('day'));
@@ -473,14 +473,14 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     }
   });
 
-  // ── Client segments (sales-head / MIS): final-consumer vs reseller ───────
+  // ── Client segments (sales-head): final-consumer vs reseller ───────
   // The queue groups accepted + declined estimates by client with the auto
   // match (or up to 5 candidates when unclear); type rules map a whole master
   // family at once; manual marks always win and are the only stored rows.
   // Writes bust the dashboard cache + go live (target bars read segments).
   app.get('/api/telecalling/client-segments', async (c) => {
     if (!(await requireSalesManager(c))) {
-      return c.json({ error: 'sales-head, MIS or root only' }, 403);
+      return c.json({ error: 'sales-head or root only' }, 403);
     }
     try {
       const { DEFAULT_TARGET_START } = await import('../../automations/telecalling/targets');
@@ -495,7 +495,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
 
   app.put('/api/telecalling/client-segments', async (c) => {
     if (!(await requireSalesManager(c))) {
-      return c.json({ error: 'sales-head, MIS or root only' }, 403);
+      return c.json({ error: 'sales-head or root only' }, 403);
     }
     const me: any = await getViewerMe(c).catch(() => null);
     const body = await readBody(c);
@@ -515,7 +515,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
 
   app.put('/api/telecalling/client-type-rules', async (c) => {
     if (!(await requireSalesManager(c))) {
-      return c.json({ error: 'sales-head, MIS or root only' }, 403);
+      return c.json({ error: 'sales-head or root only' }, 403);
     }
     const me: any = await getViewerMe(c).catch(() => null);
     const body = await readBody(c);
@@ -552,7 +552,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
   });
 
   app.put('/api/telecalling/manual-calls/mode', async (c) => {
-    if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head, MIS or root only' }, 403);
+    if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head or root only' }, 403);
     const body = await readBody(c);
     try {
       const { setCallSource } = await import('../../automations/telecalling/call-source');
@@ -604,7 +604,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     }
     // Managers may log any agent; a signed-in agent may log her OWN row.
     let isManager = false;
-    try { await requireMisScope(c); isManager = true; } catch { isManager = await requireSalesManager(c); }
+    try { await requireAdminScope(c); isManager = true; } catch { isManager = await requireSalesManager(c); }
     if (!isManager) {
       try {
         const { resolveSelfTelecaller } = require('./automations') as typeof import('./automations');
@@ -639,7 +639,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
   });
 
   app.delete('/api/telecalling/manual-calls', async (c) => {
-    if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head, MIS or root only' }, 403);
+    if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head or root only' }, 403);
     const { prisma } = deps();
     const telecallerId = String(c.req.query('telecallerId') ?? '').trim();
     const day = String(c.req.query('day') ?? '').trim();
@@ -681,7 +681,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     if (file.size > 20 * 1024 * 1024) return c.json({ error: 'File too large (max 20MB)' }, 413);
     if (file.size <= 0) return c.json({ error: 'Empty file' }, 400);
     let isManager = false;
-    try { await requireMisScope(c); isManager = true; } catch { isManager = await requireSalesManager(c); }
+    try { await requireAdminScope(c); isManager = true; } catch { isManager = await requireSalesManager(c); }
     if (!isManager) {
       try {
         const { resolveSelfTelecaller } = require('./automations') as typeof import('./automations');
@@ -765,7 +765,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
   // ── Agent call-disposition tags (region follow-ups view) ─────────────────
   // The sales team tags each follow-up: NO_ANSWER (not picking up), BUSY, or
   // CALLBACK with a follow-up date (capped at +10 days IST, enforced in
-  // setEstimateCallTag). Sales managers (sales-head/MIS) may tag any estimate;
+  // setEstimateCallTag). Sales managers (sales-head) may tag any estimate;
   // signed-in sales staff may tag estimates in THEIR region (staff work their
   // whole region now — no personal assignment).
   app.put('/api/estimates/:id/call-tag', async (c) => {
@@ -774,10 +774,10 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     let actorTelecallerId: string | null = null;
     let isManager = false;
     try {
-      await requireMisScope(c);
+      await requireAdminScope(c);
       isManager = true;
     } catch {
-      // Sales-head holds complete authority inside sales: same bypass as MIS.
+      // Sales-head holds complete authority inside sales: same bypass as root.
       if (await requireSalesManager(c)) {
         isManager = true;
       } else {
@@ -850,10 +850,10 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     let isManager = false;
     let actorTelecallerId: string | null = null;
     try {
-      await requireMisScope(c);
+      await requireAdminScope(c);
       isManager = true;
     } catch {
-      // Sales-head holds complete authority inside sales: same bypass as MIS.
+      // Sales-head holds complete authority inside sales: same bypass as root.
       if (await requireSalesManager(c)) {
         isManager = true;
       } else {

@@ -6,19 +6,19 @@
 //
 // Authz (founder decision):
 //   READ    — `crm` / `dispatch` (the desk) + `telecalling` (the sales team, via
-//             the unified Sales workspace) + MIS/root/sales-head.
+//             the unified Sales workspace) + root/sales-head.
 //   FLOOR   — schedule/reschedule/dispatch/addresses/confirm: `dispatch` scope
-//             only (MIS/root always). Dispatching is the floor's job.
+//             only (root always). Dispatching is the floor's job.
 //   PROMISE — tentative dates + delay reasons: the floor AND sales agents, but
 //             an agent may only touch orders in their OWN region (server-enforced
 //             from the session, never from a client-supplied region).
 //
-// Region scoping: every read applies `region` server-side. Root/MIS/sales-head
+// Region scoping: every read applies `region` server-side. Root/sales-head
 // see all regions (and an explicit chip filter); an agent is hard-locked to the
 // region on their Telecaller roster row. No roster row ⇒ no orders.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { deps, isApproved, requireMisScope, misScopeError, notifyLive, type Bindings } from '../context';
+import { deps, isApproved, requireAdminScope, adminScopeError, notifyLive, type Bindings } from '../context';
 import {
   CrmError,
   amendOrderItems,
@@ -51,7 +51,7 @@ interface Viewer {
   staffId: string | null;
   /** Roster region (R1–R4; '' = not mapped). Managers keep ''. */
   region: string;
-  /** Full-floor authority + all-region visibility: root/MIS/sales-head/crm/dispatch. */
+  /** Full-floor authority + all-region visibility: root/sales-head/crm/dispatch. */
   isManager: boolean;
   /** May set tentative dates/delay reasons (floor + sales agents). */
   canPromise: boolean;
@@ -70,12 +70,11 @@ async function viewer(c: any): Promise<Viewer | null> {
     const isAdmin = !!me.isAdmin || !!me.isRoot;
     const isManager =
       isAdmin ||
-      scopes.includes('mis') ||
       scopes.includes('sales-head') ||
       roles.includes('sales-head') ||
       scopes.includes('crm') ||
       scopes.includes('dispatch');
-    const canWriteFloor = isAdmin || scopes.includes('dispatch') || scopes.includes('mis');
+    const canWriteFloor = isAdmin || scopes.includes('dispatch');
     const canPromise = canWriteFloor || scopes.includes('telecalling') || scopes.includes('sales-head') || roles.includes('sales-head');
 
     let staffId: string | null = null;
@@ -116,25 +115,25 @@ function denial(c: any, message: string, status = 403) {
 /** Read access: the dispatch desk, sales agents, and sales leadership. */
 async function requireRead(c: any): Promise<Viewer | Response> {
   try {
-    // `mis` scope grants everything — fast, explicit path.
-    await requireMisScope(c);
+    // Root grants everything — fast, explicit path.
+    await requireAdminScope(c);
   } catch (e) {
     const v = await viewer(c);
-    if (!v) return misScopeError(c, e);
+    if (!v) return adminScopeError(c, e);
     if (!v.isManager && !v.scopes.includes('telecalling')) {
       return denial(c, 'CRM read access required (crm, dispatch or telecalling scope).');
     }
     return v;
   }
-  // MIS passed — still return the full viewer so region chips + write flags work.
+  // Root passed — still returns the full viewer so region chips + write flags work.
   const v = await viewer(c);
   return v || {
-    id: '', scopes: ['mis'], roles: [], isAdmin: true, name: 'MIS',
+    id: '', scopes: [], roles: [], isAdmin: true, name: 'root',
     staffId: null, region: '', isManager: true, canPromise: true, canWriteFloor: true,
   };
 }
 
-/** Floor transitions require the `dispatch` scope (or MIS/root). */
+/** Floor transitions require the `dispatch` scope (or root). */
 async function requireDispatchWrite(c: any): Promise<Viewer | Response> {
   const v = await viewer(c);
   if (!v) return c.json({ error: 'Sign-in required.' }, 401);
@@ -142,12 +141,12 @@ async function requireDispatchWrite(c: any): Promise<Viewer | Response> {
   return denial(c, 'Dispatch access required — ask root for the dispatch scope.');
 }
 
-/** Floor-cancel reversal is MIS-only (root always passes). */
-async function requireMisWrite(c: any): Promise<Viewer | Response> {
+/** Floor-cancel reversal is root-only. */
+async function requireRootWrite(c: any): Promise<Viewer | Response> {
   const v = await viewer(c);
   if (!v) return c.json({ error: 'Sign-in required.' }, 401);
-  if (v.isAdmin || v.scopes.includes('mis')) return v;
-  return denial(c, 'MIS access required to reopen a cancelled sales order.');
+  if (v.isAdmin) return v;
+  return denial(c, 'Root access required to reopen a cancelled sales order.');
 }
 
 /** Promise dates: floor OR sales agent (own region, enforced by the caller). */
@@ -385,7 +384,7 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.post('/api/crm/orders/:id/proofs/:proofId/documents', attachProofHandler);
   app.post('/api/crm/orders/:id/proofs/:proofId/photos', attachProofHandler);
 
-  // ── Amend items (client-confirmed floor overlay — dispatch/MIS only) ───────
+  // ── Amend items (client-confirmed floor overlay — dispatch/root only) ───────
   // Qty changes, line removals and added lines. The reason is the
   // client-confirmation note and every line is audit-logged. Nothing is
   // written back to Zoho Books (read-only).
@@ -420,7 +419,7 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
     }
   });
 
-  // ── Cancel the whole SO on the floor (client-confirmed — dispatch/MIS only)
+  // ── Cancel the whole SO on the floor (client-confirmed — dispatch/root only)
   app.post('/api/crm/orders/:id/cancel-local', async (c) => {
     const v = await requireDispatchWrite(c);
     if (v instanceof Response) return v;
@@ -438,9 +437,9 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
     }
   });
 
-  // ── Reopen a floor-cancelled SO (MIS only) ────────────────────────────────
+  // ── Reopen a floor-cancelled SO (root only) ────────────────────────────────
   app.post('/api/crm/orders/:id/reopen', async (c) => {
-    const v = await requireMisWrite(c);
+    const v = await requireRootWrite(c);
     if (v instanceof Response) return v;
     try {
       const res = await reopenOrderLocal({ idOrSo: c.req.param('id'), actor: v.name });
@@ -451,7 +450,7 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
     }
   });
 
-  // ── Confirm a source deletion (destructive — dispatch/MIS only) ─────────────
+  // ── Confirm a source deletion (destructive — dispatch/root only) ─────────────
   app.post('/api/crm/orders/:id/confirm-source-deletion', async (c) => {
     const v = await requireDispatchWrite(c);
     if (v instanceof Response) return v;
@@ -464,7 +463,7 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
     }
   });
 
-  // ── Correct the client addresses (floor edit — dispatch/MIS only) ───────────
+  // ── Correct the client addresses (floor edit — dispatch/root only) ───────────
   // The edit sets the edited marker, so the Zoho sync leaves that address
   // alone afterwards. Nothing is written back to Zoho Books (read-only).
   app.put('/api/crm/orders/:id/addresses', async (c) => {

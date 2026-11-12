@@ -1,7 +1,7 @@
 // rotation.ts — assignment history-chain writer.
 //
 // Region model (founder, 2026-10-22): estimates are owned by REGIONS, not
-// individuals — the dealing engines (round-robin, best-fit, MIS bulk moves,
+// individuals — the dealing engines (round-robin, best-fit, manager bulk moves,
 // absent covers, EOD re-poaching) are retired. Kept: getFollowUpSpecialists
 // (the conversion-specialist pool closure-list reader) and recordAssignment
 // (the EstimateAssignment history-chain writer, used by legacy tooling).

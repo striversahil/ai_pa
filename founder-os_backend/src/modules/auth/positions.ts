@@ -15,7 +15,6 @@ export type OrgPosition =
   | "dm-senior"
   | "dm-junior"
   | "hr"
-  | "mis"
   | "unmapped";
 
 export interface PositionMeta {
@@ -30,7 +29,6 @@ export const POSITION_ORDER: OrgPosition[] = [
   "team-lead",
   "telecaller",
   "field-staff",
-  "mis",
   "accountant",
   "dm-senior",
   "dm-junior",
@@ -44,7 +42,6 @@ export const POSITION_META: Record<OrgPosition, { department: OrgDepartment; lab
   "team-lead": { department: "sales", label: "Team Lead" },
   "telecaller": { department: "sales", label: "Telecaller" },
   "field-staff": { department: "sales", label: "Field Staff" },
-  "mis": { department: "operations", label: "MIS" },
   "accountant": { department: "operations", label: "Accountant" },
   "dm-senior": { department: "operations", label: "Digital Marketing · Senior" },
   "dm-junior": { department: "operations", label: "Digital Marketing · Junior" },
@@ -60,7 +57,6 @@ export const POSITION_META: Record<OrgPosition, { department: OrgDepartment; lab
  */
 export const POSITION_SUGGESTED_SCOPES: Record<OrgPosition, string[]> = {
   "sales-head": ["sales-head", "telecalling", "enquiry-tracker", "zoho", "debtors-tracker"],
-  "mis": ["mis", "zoho", "user-admin"],
   "team-lead": ["telecalling", "enquiry-tracker"],
   "telecaller": ["telecalling"],
   "field-staff": [],
@@ -91,7 +87,7 @@ export interface PositionInput {
 export interface ResolvedPosition {
   position: OrgPosition;
   department: OrgDepartment;
-  /** Human-readable provenance, e.g. "Telecaller roster" / "holds MIS scope". */
+  /** Human-readable provenance, e.g. "Telecaller roster" / "holds sales-head scope". */
   via: string;
   /** The roster/scope-derived value (always computed, even when overridden). */
   auto: OrgPosition;
@@ -112,7 +108,7 @@ function findByEmail<T>(rows: T[], getEmail: (r: T) => unknown, email: string): 
 /**
  * Resolve one login to its org position. A valid manager override wins (the
  * auto value is still reported); otherwise precedence is deliberate and
- * documented: manager scopes first (sales-head, MIS), then the Sales roster
+ * documented: manager scopes first (sales-head), then the Sales roster
  * type, then Operations rosters, then scope-derived buckets (procurement),
  * then HR. Email-exact matching only — no name fallback (the Users portal is
  * the access surface, so a wrong guess is worse than Unmapped; fix the roster
@@ -142,9 +138,6 @@ function resolveAutoPosition(
 
   if (hasScope(scopes, "sales-head")) {
     return { position: "sales-head", department: "sales", via: "holds sales-head scope" };
-  }
-  if (hasScope(scopes, "mis") || hasScope(scopes, "user-admin")) {
-    return { position: "mis", department: "operations", via: "holds MIS scope" };
   }
 
   const tc = findByEmail(rosters.telecallers ?? [], (r) => r.email, email);

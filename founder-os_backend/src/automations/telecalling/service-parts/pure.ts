@@ -38,7 +38,7 @@ export const RISK_LIST_CAP = 25;
  *  of vanishing silently. Callers must skip the sentinel when attributing. */
 export const UNATTRIBUTED_LEADS_KEY = '|unattributed';
 
-/** Sentinel owner for accepted estimates with no creator (MIS daily export). */
+/** Sentinel owner for accepted estimates with no creator (root daily export). */
 export const UNATTRIBUTED_CLOSE_KEY = '|unlinked';
 
 /** Shift a YYYY-MM-DD string by N days (UTC arithmetic on the date parts). */

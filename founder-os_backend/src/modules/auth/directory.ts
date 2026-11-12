@@ -12,7 +12,7 @@ export const DIRECTORY_HIDDEN_MAX = 200;
 /** Scopes granting the wide read (HR included). Managers keep edit rights
  *  separately via `canManage` (user-admin/admin only — same rule as the
  *  Users portal today). HR holders get read-only width on this endpoint. */
-export const DIRECTORY_WIDE_SCOPES = ["admin", "user-admin", "mis", "human-resources"];
+export const DIRECTORY_WIDE_SCOPES = ["admin", "user-admin", "human-resources"];
 
 const normEmail = (v: unknown): string => String(v ?? "").trim().toLowerCase();
 

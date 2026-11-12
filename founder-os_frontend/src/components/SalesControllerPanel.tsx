@@ -161,7 +161,7 @@ export default function SalesControllerPanel() {
   if (!canManage) {
     return (
       <p className="px-1 text-xs text-zinc-500 dark:text-zinc-600">
-        🔒 Controller is restricted to MIS and Sales Head users.
+        🔒 Controller is restricted to root and Sales Head users.
       </p>
     );
   }
@@ -180,7 +180,7 @@ export default function SalesControllerPanel() {
       <section className="rounded-xl border border-zinc-200 bg-zinc-50 p-5 dark:border-zinc-800 dark:bg-zinc-900">
         <h3 className="mb-1 text-lg font-bold">🎛️ Controller</h3>
         <p className="mb-0 text-xs text-zinc-500 dark:text-zinc-400">
-          MIS/sales-head control of the region model — unmapped estimate
+          Root/sales-head control of the region model — unmapped estimate
           linking, history reset and the staff roster.
         </p>
       </section>

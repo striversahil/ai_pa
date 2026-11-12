@@ -88,7 +88,7 @@ export async function logUsage(ctx: any): Promise<void> {
   } catch { /* best-effort */ }
 }
 
-/** MIS readout: aggregate per-user chat turns + gateway token usage over the
+/** Root readout: aggregate per-user chat turns + gateway token usage over the
  *  last `days` days (UTC). Served inside /api/debug/ai-health. */
 export async function readChatUsage(days: number): Promise<{
   total: number;

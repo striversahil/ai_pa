@@ -3,7 +3,7 @@
 //
 // Centralises the pieces worker.ts used to define inline: the Bindings type,
 // env bootstrap, lazy deps(), boot logic, auth/scope guards, cache middleware
-// and the small per-domain helper functions (chat/enquiry send, mis guard,
+// and the small per-domain helper functions (chat/enquiry send, admin guard,
 // live broadcast, waengine media enrichment, csv/lead parsing, …). Route
 // modules import only what they need from here.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -227,7 +227,7 @@ export const AUTH_EXEMPT = [
   '/api/crm/files/',
   // Email OAuth callback: Google redirects here (no session yet on first
   // connect). State token in KV is the CSRF guard. All other /api/email/*
-  // actions stay behind the session gate (+ MIS for sends/writes).
+  // actions stay behind the session gate (+ root for sends/writes).
   '/api/email/oauth/callback',
   // GH Actions runners authenticate with SHARED_SECRET, not a session cookie.
   // These endpoints already enforce requireSecret() in their handlers.
@@ -261,11 +261,15 @@ export function requireSecret(c: any): boolean {
   return provided === expected;
 }
 
-export async function requireMisScope(c: any): Promise<void> {
-  await requireScope(authStore(c), c.req.header('cookie') ?? null, 'mis');
+/** Root-only gate (root user or `admin` scope — nobody holds the scope in
+ *  prod, so this is root in practice). Management endpoints that used to
+ *  accept the retired cross-department role are root-only (founder decision
+ *  2026-11-12); no department scope inherits those powers. */
+export async function requireAdminScope(c: any): Promise<void> {
+  await requireScope(authStore(c), c.req.header('cookie') ?? null, 'admin');
 }
 
-export function misScopeError(c: any, e: unknown) {
+export function adminScopeError(c: any, e: unknown) {
   if (e instanceof AuthError) return c.json({ error: e.message }, (e as any).status ?? 403);
   throw e;
 }

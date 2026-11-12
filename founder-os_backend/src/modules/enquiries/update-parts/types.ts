@@ -15,7 +15,7 @@ export interface RateWriteCtx {
   storedItems: any[];
   privileged: boolean;
   restricted: boolean;
-  /** May stamp the conclude handoff (procurement scope or MIS). Stamp-only,
+  /** May stamp the conclude handoff (procurement scope or root). Stamp-only,
    *  never clear — clearing stays privileged-only. */
   canConclude?: boolean;
 }

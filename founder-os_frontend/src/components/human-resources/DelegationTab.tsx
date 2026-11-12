@@ -67,7 +67,7 @@ export default function DelegationTab({ data, onRefresh, onManageEmployees, onOp
 
       {data.meta.unmatched && !canManage && (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
-          Your login is not linked to an HR team member yet. Ask an HR/MIS user to add you to the HR roster using the same name or email.
+          Your login is not linked to an HR team member yet. Ask an HR user to add you to the HR roster using the same name or email.
         </div>
       )}
       {err && <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 px-3 py-2 text-xs text-rose-500">{err}</div>}

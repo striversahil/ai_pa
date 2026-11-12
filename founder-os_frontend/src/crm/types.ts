@@ -201,7 +201,7 @@ export interface CrmViewerMeta {
   name: string;
   /** Roster region ('' = not mapped). Managers get ''. */
   region: string;
-  /** Root/MIS/sales-head/crm/dispatch — sees every region. */
+  /** Root/sales-head/crm/dispatch — sees every region. */
   isManager: boolean;
   /** Floor transitions (schedule/dispatch/addresses/removal). */
   canWrite: boolean;

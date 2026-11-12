@@ -48,7 +48,7 @@ export function matchSelfRoster(me: { user: { email: string; name: string } } | 
 }
 
   // NOTE: nav tabs are built per-viewer as `visibleTabs` inside the component
-  // (MIS/root additionally see the Controller tab).
+  // (root additionally sees the Controller tab).
 
 export function fmtToday(iso: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);

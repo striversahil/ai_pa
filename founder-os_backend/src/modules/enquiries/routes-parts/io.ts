@@ -71,7 +71,7 @@ export async function enquiryList(store: EnquiryStore, me: MeResponse, opts?: Re
   await attachZohoStatuses(enquiries as any[]);
   if (!opts?.redact) {
     // Sales sees final rates but never margin internals (selectedVendor /
-    // markup stay Management-only). Management (MIS) gets the full row.
+    // markup stay Management-only). Management (root) gets the full row.
     const privileged = canManageRates(me);
     const hideRequests = !canSeeProcurementRequests(me);
     const out = privileged ? enquiries : enquiries.map((e) => stripMarginFields(e, { hideRequests }));
@@ -363,7 +363,7 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
   // item saves carry `items`.
   const privileged = canManageRates(me);
   const restricted = isRestrictedViewer(me);
-  // Acting surface: privileged writers (MIS/admin) working inside the
+  // Acting surface: privileged writers (root/admin) working inside the
   // procurement queue declare `surface: 'procurement'` so their trail stamps
   // read Procurement instead of Management. One-way only — a non-privileged
   // writer can never claim a higher role than their scopes allow.

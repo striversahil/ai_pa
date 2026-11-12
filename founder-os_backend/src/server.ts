@@ -134,7 +134,7 @@ app.use('/api/accounts', accountsRouter);
 // --- Digital Marketing roster + templates + taskbar logging ---
 app.use('/api/digital-marketing', digitalMarketingRouter);
 
-// --- Product Line master CRUD (MIS-gated) ---
+// --- Product Line master CRUD (root-gated) ---
 app.use('/api/product-line', productLineRouter);
 
 
@@ -480,7 +480,7 @@ app.delete('/api/enquiries/:id', async (req, res) => {
   }
   res.status(r.status).json(r.body);
 });
-// Management Review queues (KV-cached, MIS-only) — mirror of the Worker
+// Management Review queues (KV-cached, root-only) — mirror of the Worker
 // GET /api/enquiries/queues. Must stay above `/api/enquiries/:id`.
 app.get('/api/enquiries/queues', async (req, res) => {
   const me = await enquiryMe(req);
@@ -910,17 +910,16 @@ app.get('/api/estimates', asyncHandler(async (req, res) => {
  * Sales-agent call disposition on a conversion follow-up (Lead Conversion
  * view): NO_ANSWER / BUSY / CALLBACK (+callbackDate, max +10 days IST).
  * Express mirror of the Worker route — same setEstimateCallTag validation.
- * MIS may tag any estimate; a signed-in agent only their own assigned ones.
+ * Root may tag any estimate; a signed-in agent only their own assigned ones.
  */
 app.put('/api/estimates/:id/call-tag', asyncHandler(async (req, res) => {
   const { setEstimateCallTag } = require('./automations/telecalling/service');
   const body = req.body || {};
   const me = await getMe(authStore, req.headers.cookie || null);
   if (!me) return res.status(401).json({ error: 'Authentication required' });
-  const scopes: string[] = (me as any)?.scopes ?? [];
-  const isMis = !!((me as any)?.isAdmin) || scopes.includes('mis');
+  const isRoot = !!((me as any)?.isAdmin);
   let actorTelecallerId: string | null = null;
-  if (!isMis) {
+  if (!isRoot) {
     const meEmail = (me as any)?.user?.email ? String((me as any).user.email).toLowerCase().trim() : '';
     const meName = (me as any)?.user?.name ? String((me as any).user.name).toLowerCase().replace(/\s+/g, '') : '';
     const tcs = await prisma.telecaller.findMany({ where: { deleted: false } });
@@ -933,7 +932,7 @@ app.put('/api/estimates/:id/call-tag', asyncHandler(async (req, res) => {
       const exact = tcs.find((t: any) => norm(t.name) === meName);
       if (exact) actorTelecallerId = exact.id;
     }
-    if (!actorTelecallerId) return res.status(403).json({ error: 'only MIS or the assigned sales agent can tag estimates' });
+    if (!actorTelecallerId) return res.status(403).json({ error: 'only root or the assigned sales agent can tag estimates' });
     const current = await prisma.estimate.findUnique({
       where: { estimateId: String(req.params.id) },
       select: { assignedTelecallerId: true },
@@ -947,7 +946,7 @@ app.put('/api/estimates/:id/call-tag', asyncHandler(async (req, res) => {
     estimateId: String(req.params.id),
     tag: body.tag ?? null,
     callbackDate: body.callbackDate ?? null,
-    actorTelecallerId: isMis ? null : actorTelecallerId,
+    actorTelecallerId: isRoot ? null : actorTelecallerId,
   });
   if (!result.ok) return res.status(result.status ?? 400).json({ error: result.error });
   res.status(200).json({
@@ -962,16 +961,15 @@ app.put('/api/estimates/:id/call-tag', asyncHandler(async (req, res) => {
  * PUT /api/estimates/:id/next-step
  * Dated next step (customer commitment) on a conversion follow-up.
  * Express mirror of the Worker route — same setEstimateNextStep validation.
- * MIS may set any estimate; a signed-in agent only their own assigned ones.
+ * Root may set any estimate; a signed-in agent only their own assigned ones.
  */
 app.put('/api/estimates/:id/next-step', asyncHandler(async (req, res) => {
   const { setEstimateNextStep, invalidateRiskCache } = require('./automations/telecalling/service');
   const body = req.body || {};
   const me = await getMe(authStore, req.headers.cookie || null);
   if (!me) return res.status(401).json({ error: 'Authentication required' });
-  const scopes: string[] = (me as any)?.scopes ?? [];
-  const isMis = !!((me as any)?.isAdmin) || scopes.includes('mis');
-  if (!isMis) {
+  const isRoot = !!((me as any)?.isAdmin);
+  if (!isRoot) {
     const meEmail = (me as any)?.user?.email ? String((me as any).user.email).toLowerCase().trim() : '';
     const meName = (me as any)?.user?.name ? String((me as any).user.name).toLowerCase().replace(/\s+/g, '') : '';
     const tcs = await prisma.telecaller.findMany({ where: { deleted: false } });
@@ -985,7 +983,7 @@ app.put('/api/estimates/:id/next-step', asyncHandler(async (req, res) => {
       const exact = tcs.find((t: any) => norm(t.name) === meName);
       if (exact) actorTelecallerId = exact.id;
     }
-    if (!actorTelecallerId) return res.status(403).json({ error: 'only MIS or the assigned sales agent can set next steps' });
+    if (!actorTelecallerId) return res.status(403).json({ error: 'only root or the assigned sales agent can set next steps' });
     const current = await prisma.estimate.findUnique({
       where: { estimateId: String(req.params.id) },
       select: { assignedTelecallerId: true },

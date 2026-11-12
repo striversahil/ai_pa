@@ -60,7 +60,7 @@ export async function asRoot(store: AuthStore, cookieHeader: string | null) {
 }
 
 // ── User-manager gate ─────────────────────────────────────────────────────────
-// Root/admin or anyone holding the `user-admin` scope (e.g. MIS). Managers may
+// Root/admin or anyone holding the `user-admin` scope. Managers may
 // assign roles, but top-down only: NEVER the root user, NEVER anything
 // granting the `admin` scope, NEVER anything granting `user-admin` itself
 // (only root onboards new managers), and NEVER a role holding a scope the
@@ -260,7 +260,7 @@ export async function authSetUserRoles(
 /**
  * Org-position map for the Users portal: one entry per (non-root) login,
  * resolved roster-first (Telecaller/Accounts/Digital-Marketing/HR emails) with
- * scope-derived fallbacks (sales-head, MIS, procurement). `loadRosters` runs
+ * scope-derived fallbacks (sales-head, procurement). `loadRosters` runs
  * AFTER the manager gate passes, so unauthenticated callers never trigger
  * roster reads. Display + guidance only — access still flows via roles.
  */

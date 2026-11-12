@@ -1096,7 +1096,7 @@ export async function amendOrderItems(args: {
  * Cancel the whole SO on the floor (client-confirmed). Sets the local marker
  * and parks the lifecycle at `cancelled` — out of every working queue, kept
  * for audit. Distinct from a Zoho `status=cancelled`; the Zoho sync never
- * clears the marker. MIS can reverse it with `reopenOrderLocal`.
+ * clears the marker. Root can reverse it with `reopenOrderLocal`.
  */
 export async function cancelOrderLocal(args: {
   idOrSo: string;
@@ -1138,7 +1138,7 @@ export async function cancelOrderLocal(args: {
   return { order: await getOrder(str(orderRow.id)), lifecycle: 'cancelled' };
 }
 
-/** Reverse a floor cancel (MIS only — the route enforces it). Re-derives the lifecycle. */
+/** Reverse a floor cancel (root only — the route enforces it). Re-derives the lifecycle. */
 export async function reopenOrderLocal(args: {
   idOrSo: string;
   actor?: string | null;
@@ -1688,7 +1688,7 @@ export async function recomputeLifecyclesById(ids: string[]): Promise<void> {
       const items = itemsBySo.get(str(r.id)) || [];
       if (!items.length) continue; // items not fetched this tick — keep state
       // A floor cancel parks the lifecycle at `cancelled` — the tick must not
-      // resurrect it (only an MIS reopen clears the marker).
+      // resurrect it (only a root reopen clears the marker).
       if (str((r as any).localCancelledAt)) {
         if (str(r.lifecycle) !== 'cancelled') {
           await prisma.crmSalesOrder.update({ where: { id: str(r.id) }, data: { lifecycle: 'cancelled', updatedAt: new Date() } });

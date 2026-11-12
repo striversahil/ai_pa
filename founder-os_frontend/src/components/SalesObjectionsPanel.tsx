@@ -4,7 +4,7 @@
 //
 // Agents file objections they face in the field against an estimate number
 // and/or a client name (free text, at least one required). Every agent on
-// the sales surface sees every objection; managers (MIS/sales-head) reply
+// the sales surface sees every objection; managers (sales-head) reply
 // with coaching and resolve/reopen. Writes broadcast live; the board
 // refetches via useLiveDashboard.
 import React, { useCallback, useMemo, useState } from "react";

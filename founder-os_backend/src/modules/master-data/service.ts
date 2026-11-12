@@ -255,7 +255,7 @@ export async function updateCustomer(
   const managerOnly = changed.filter((k) => MANAGER_ONLY_FIELDS.has(k));
   if (managerOnly.length > 0 && !isManager) {
     throw new MasterDataError(
-      `only the sales-head or MIS can change ${managerOnly.join(', ')}`,
+      `only the sales-head can change ${managerOnly.join(', ')}`,
       403,
     );
   }

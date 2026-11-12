@@ -101,7 +101,7 @@ export function TeamBoard({ team, freqStats, laneStats, backlog }: {
         <div className="px-4 py-2.5 text-xs font-extrabold uppercase tracking-wider text-zinc-600 dark:text-zinc-500 border-b border-zinc-200 dark:border-zinc-800">
           🏆 Per person · completed vs pending <span className="normal-case font-medium">(week starts Monday)</span>
         </div>
-        {team.members.length === 0 && <div className="p-6 text-center text-xs text-zinc-500">No accountants on the roster yet — MIS adds them from the Controller tab.</div>}
+        {team.members.length === 0 && <div className="p-6 text-center text-xs text-zinc-500">No accountants on the roster yet — root adds them from the Controller tab.</div>}
         {team.members.map((m, i) => (
           <div key={m.id} className="flex items-center gap-3 px-4 py-2.5 border-b border-zinc-100 dark:border-zinc-800/60 last:border-0">
             <span className="w-7 text-sm font-bold shrink-0">{medal(i)}</span>

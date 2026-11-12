@@ -2,7 +2,7 @@
 // routes/enquiries.ts — live sales-pipeline enquiry tracker.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { enquiryMe, enquirySend, EnquiryRoutes, createEnquiryStore, authStore, deps, getEstimatesPayload, requireMisScope, misScopeError, type Bindings } from '../context';
+import { enquiryMe, enquirySend, EnquiryRoutes, createEnquiryStore, authStore, deps, getEstimatesPayload, requireAdminScope, adminScopeError, type Bindings } from '../context';
 import { chatTurn, clearSalesChat, executeProposal } from '../../modules/enquiries/chat';
 import { cacheDel } from '../../shared/cache';
 import { getGateway } from '../../shared/ai-gateway';
@@ -299,7 +299,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.get('/api/enquiries', async (c) => {
     const me = await enquiryMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
-    // ?view=procurement lets privileged users (root/MIS) preview exactly what
+    // ?view=procurement lets privileged users (root) preview exactly what
     // procurement sees — the AI-redacted payload, not their full data.
     // ?page=&limit= (10/50) pages newest-first for the queue tables.
     // ?cursor=&limit= (≤100) keyset-pages newest-first — the queue
@@ -343,7 +343,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     // so the cache is fresh after any save. A stale row heals on next edit.
     return c.json(r.body, r.status as any);
   });
-  // ── Management Review queues (KV-cached, MIS-only) ─────────────────────
+  // ── Management Review queues (KV-cached, root-only) ─────────────────────
   // Active + Unprocessed arrive COMPLETE (every open row, however old — no
   // page boundary may ever hide a pending estimate); History pages
   // server-side (`?queue=history&page=&limit=`, newest-first). Per render
@@ -406,7 +406,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if (c.req.query('view') === 'procurement' || EnquiryRoutes.isRestrictedViewer(me)) return c.json([]);
     // "Lead by" roster = ACTIVE + PRESENT sales staff, exactly like the
     // telecalling dashboard: Telecaller rows that are not soft-deleted and not
-    // marked absent (absentSince set by the MIS Controller). Filtered in code
+    // marked absent (absentSince set by the sales Controller). Filtered in code
     // (not in the D1 where-clause) so a shim null-handling quirk can never
     // leak absent staff into the list.
     const { prisma } = deps();
@@ -605,9 +605,9 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     }
   });
   app.get('/api/debug/ai-health', async (c) => {
-    // MIS-gated: usage readout carries per-user emails, and key health is
+    // Root-gated: usage readout carries per-user emails, and key health is
     // owner-sensitive. Only users granted access via the admin panel pass.
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
     try {
       const gw = getGateway(c.env as any);
       const { cacheGet, hasKvCache } = await import('../../shared/cache');
@@ -713,7 +713,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const body = await readBody(c);
     const message = String(body?.message ?? 'Say hello').slice(0, 500);
     // Mock privileged user (bypasses Google OAuth for debug)
-    const me: any = { user: { email: 'debug@local', id: 'debug' }, scopes: ['admin','mis','sales','enquiry-tracker'] };
+    const me: any = { user: { email: 'debug@local', id: 'debug' }, scopes: ['admin','sales','enquiry-tracker'] };
     try {
       const { chatTurn } = await import('../../modules/enquiries/chat');
       const out = await chatTurn(c.env as any, createEnquiryStore(c.env), me, id, message);

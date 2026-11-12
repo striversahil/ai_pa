@@ -282,7 +282,7 @@ export default function DigitalMarketingOpenTasks() {
   const [showNew, setShowNew] = useState(false);
   const [filter, setFilter] = useState<'all' | 'open' | 'done'>('all');
   const meName = (me as any)?.user?.name ?? (me as any)?.user?.email ?? '';
-  const canMIS = !!me && ((me as any).isAdmin || (((me as any).scopes ?? []) as string[]).includes('mis'));
+  const canRoot = !!me && !!(me as any).isAdmin;
   const rows = useMemo(() => {
     const all = tasks.data?.rows ?? [];
     return filter === 'all' ? all : all.filter((r) => r.status === filter);
@@ -319,7 +319,7 @@ export default function DigitalMarketingOpenTasks() {
       )}
       {rows.length > 0 && (
         <div className="grid gap-4">
-          {rows.map((r) => <OpenTaskCard key={r.id} r={r} onChanged={() => tasks.refresh()} canDelete={canMIS || (!!meName && r.createdBy === meName)} />)}
+          {rows.map((r) => <OpenTaskCard key={r.id} r={r} onChanged={() => tasks.refresh()} canDelete={canRoot || (!!meName && r.createdBy === meName)} />)}
         </div>
       )}
       {showNew && <NewOpenTaskModal onClose={() => setShowNew(false)} onCreated={() => { setShowNew(false); tasks.refresh(); }} />}

@@ -136,7 +136,7 @@ export default function InventoryTab({ data, canManage, onRefresh }: {
 
       {inventory.items.length === 0 ? (
         <div className="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-800 px-3 py-10 text-center text-xs text-zinc-500">
-          No inventory items yet. {canManage ? "Add a daily-use item to start tracking stock." : "Ask an MIS user to add inventory items."}
+          No inventory items yet. {canManage ? "Add a daily-use item to start tracking stock." : "Ask root to add inventory items."}
         </div>
       ) : items.length === 0 ? (
         <div className="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-800 px-3 py-10 text-center text-xs text-zinc-500">No items in this filter.</div>

@@ -19,7 +19,7 @@ export { matchSelfRoster } from "./digital-marketing-dashboard/helpers";
 
 export default function AccountsDashboard() {
   const { me } = useAuth();
-  const canMIS = !!me && (me.isAdmin || me.scopes.includes("mis"));
+  const canRoot = !!me && !!me.isAdmin;
   const [view, setView] = useState<DigitalMarketingView>("dashboard");
 
   // Today only — no date filter. The backend serves the current IST day.
@@ -55,10 +55,10 @@ export default function AccountsDashboard() {
   const pendingCount = lane.filter((t) => t.status !== "done" && t.status !== "skipped").length;
   const doneCount = lane.filter((t) => t.status === "done").length;
 
-  // Single manager — no lane split. Controller only for MIS.
+  // Single manager — no lane split. Controller only for root.
   const visibleTabs: { key: DigitalMarketingView; label: string; icon: string }[] = !data
     ? [{ key: "dashboard", label: "Dashboard", icon: "📊" }]
-    : canMIS
+    : canRoot
       ? [
         { key: "dashboard", label: "Dashboard", icon: "📊" },
         { key: "tasks", label: "Tasks", icon: "📋" },
@@ -102,11 +102,11 @@ export default function AccountsDashboard() {
       </div>
 
       <div className="flex flex-col gap-6">
-        {/* Tabs (full-width horizontal row, like Telecalling). Non-MIS viewers
+        {/* Tabs (full-width horizontal row, like Telecalling). Non-root viewers
             only get Dashboard + Tasks — the Controller tab never renders. */}
         <aside className="w-full shrink-0">
           <TabBar
-            items={visibleTabs.filter((t) => t.key !== "controller" || canMIS)}
+            items={visibleTabs.filter((t) => t.key !== "controller" || canRoot)}
             active={view}
             onChange={setView}
           />
@@ -199,7 +199,7 @@ export default function AccountsDashboard() {
         </div>
       )}
 
-      {data && view === "controller" && (canMIS ? <Controller onChanged={() => dash.refresh()} /> : <div className="rounded-xl border p-6 text-sm text-zinc-500">🔒 Controller is restricted to MIS-level users.</div>)}
+      {data && view === "controller" && (canRoot ? <Controller onChanged={() => dash.refresh()} /> : <div className="rounded-xl border p-6 text-sm text-zinc-500">🔒 Controller is restricted to root.</div>)}
         </div>
       </div>
     </div>

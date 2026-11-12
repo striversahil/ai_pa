@@ -1114,7 +1114,7 @@ export class D1PrismaClient {
   get enquiryComment() { return this.model('EnquiryComment'); }
   get soAttachment() { return this.model('SoAttachment'); }
   // CRM points ledger + manual-action layer (tables created by migrations
-  // 0021/0022 — the getters were missing, so ledger writes and MIS actions
+  // 0021/0022 — the getters were missing, so ledger writes and manager actions
   // silently failed on the Worker; restored here).
   get departmentScoreEvent() { return this.model('DepartmentScoreEvent'); }
   get crmOrderAction() { return this.model('CrmOrderAction'); }

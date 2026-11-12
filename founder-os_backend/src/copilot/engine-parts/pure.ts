@@ -172,7 +172,7 @@ export function rateWho(ctx: any): { id: string; root: boolean } {
   return { id, root };
 }
 
-// ── Per-user daily usage log (MIS readout; survives the isolate) ──────────
+// ── Per-user daily usage log (root readout; survives the isolate) ──────────
 // One AWAITED KV write per served turn (refused turns log nothing — this is
 // why the old fire-and-forget turn counters never persisted). Keyed by user
 // + UTC date, 90-day TTL. Root included — root turns cost the same.

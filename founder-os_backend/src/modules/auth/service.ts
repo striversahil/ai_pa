@@ -26,7 +26,6 @@ export const DEFAULT_SCOPES: AuthScope[] = [
   { key: "sheet-analysis", label: "Sheet Analysis", description: "Sheet analysis dashboard" },
   { key: "brain", label: "Brain", description: "Company Brain search" },
   { key: "autopilot", label: "WhatsApp Autopilot", description: "Autopilot task queue and review dashboard" },
-  { key: "mis", label: "MIS", description: "MIS-level control of the telecaller roster (assignment controller)" },
   { key: "telecalling", label: "Telecalling", description: "Telecalling performance dashboard" },
   { key: "sales-head", label: "Sales Head", description: "Sales leaderboard manager — closer picks, region links, roster, history reset" },
   { key: "debtors-tracker", label: "Debtors Tracker", description: "Pending-receivables control desk: debtor ageing, collections ledger and reminder previews" },
@@ -44,12 +43,6 @@ export const DEFAULT_SCOPES: AuthScope[] = [
 ];
 
 export const DEFAULT_ROLES: AuthRole[] = [
-  {
-    key: "mis",
-    label: "MIS",
-    description: "Management information dashboards (Zoho estimates, etc.) + telecalling roster control + user/role assignment (no root access)",
-    scopeKeys: ["mis", "zoho", USER_ADMIN_SCOPE],
-  },
   {
     key: "sales-head",
     label: "Sales Head",
@@ -102,7 +95,7 @@ export async function ensureScopesSeeded(store: AuthStore): Promise<void> {
   }
 }
 
-/** Seed default roles (e.g. MIS) on first use. Additive — creates missing
+/** Seed default roles (e.g. sales-head) on first use. Additive — creates missing
  *  defaults AND merges any new default scopes into an existing same-key role
  *  (never removes). This is how already-seeded roles pick up new capabilities
  *  like user-admin without a DB reset or touching user assignments. */
@@ -242,7 +235,7 @@ export function roleGrantBlocker(viewerScopes: string[], scopeKeys: string[]): s
 }
 
 /** Like requireUser, but also demands user-management rights: root/admin or the
- *  user-admin scope (e.g. MIS). Used as the gate for the Admin panel endpoints;
+ *  user-admin scope. Used as the gate for the Admin panel endpoints;
  *  root-only restrictions (root user, admin scope) are enforced per-endpoint. */
 export async function requireManager(
   store: AuthStore,

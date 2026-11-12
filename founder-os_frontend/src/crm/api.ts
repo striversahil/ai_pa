@@ -125,7 +125,7 @@ export const crmApi = {
       { reason },
     ),
 
-  /** Reverse a floor cancel (MIS only). */
+  /** Reverse a floor cancel (root only). */
   reopen: (id: string) =>
     api.post<{ ok: true; lifecycle: string; order: CrmOrder }>(
       `/crm/orders/${encodeURIComponent(id)}/reopen`,

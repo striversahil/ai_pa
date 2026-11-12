@@ -13,7 +13,7 @@
 //
 // Region ownership is SERVER-side: an agent is locked to the region on their
 // roster row and may only set tentative dispatch dates (the promise) on those
-// orders. Root / MIS / sales-head see every region and can filter with chips.
+// orders. Root / sales-head see every region and can filter with chips.
 // Dispatching, rescheduling and removals stay with the dispatch floor.
 import React, { useMemo, useState } from "react";
 import {

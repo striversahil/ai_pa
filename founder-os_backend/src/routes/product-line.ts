@@ -17,7 +17,7 @@ const router = Router();
 const store = new PrismaAuthStore(prisma);
 const misGuard = asyncHandler(async (req, res, next) => {
   try {
-    await requireScope(store as any, req.headers.cookie || null, 'mis');
+    await requireScope(store as any, req.headers.cookie || null, 'admin');
     next();
   } catch (e) {
     if (e instanceof AuthError) return res.status(e.status).json({ error: e.message });
@@ -25,7 +25,7 @@ const misGuard = asyncHandler(async (req, res, next) => {
   }
 });
 /** Quote writes: whoever holds the `product-line` scope (Admin panel grant),
- *  plus MIS/admin. Products/guide/vendors stay MIS-only. */
+ *  plus root/admin. Products/guide/vendors stay root-only. */
 const quoteGuard = asyncHandler(async (req, res, next) => {
   try {
     await requireScope(store as any, req.headers.cookie || null, 'product-line');
@@ -34,7 +34,7 @@ const quoteGuard = asyncHandler(async (req, res, next) => {
     if (!(e instanceof AuthError)) throw e;
   }
   try {
-    await requireScope(store as any, req.headers.cookie || null, 'mis');
+    await requireScope(store as any, req.headers.cookie || null, 'admin');
     next();
   } catch (e) {
     if (e instanceof AuthError) return res.status(e.status).json({ error: e.message });

@@ -24,7 +24,7 @@ export interface AuthScope {
 }
 
 export interface AuthRole {
-  key: string; // e.g. "mis", "operations"
+  key: string; // e.g. "telecalling", "operations"
   label: string;
   description: string | null;
   /** Automation-dashboard scope keys granted by this role. Roles may ONLY

@@ -55,7 +55,7 @@ export function ExportCard() {
     <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 lg:col-span-2">
       <div className="flex flex-wrap items-center gap-2">
         <div className="min-w-0 flex-1">
-          <h3 className="font-bold text-sm">📤 MIS export — completed vs not completed</h3>
+          <h3 className="font-bold text-sm">📤 Root export — completed vs not completed</h3>
           <div className="text-[11px] text-zinc-500 mt-0.5">Every due task per day with lane, completed / not completed result, who did it, remarks and attachment links. Opens in Excel.</div>
         </div>
         <label className="text-[11px] text-zinc-500 flex items-center gap-1.5">

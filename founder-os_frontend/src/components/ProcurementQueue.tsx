@@ -31,7 +31,7 @@ export { isProcurementPending } from "./procurement-queue/helpers";
 export default function ProcurementQueue() {
   const { me } = useAuth();
   const scopes = me?.scopes ?? [];
-  const allowed = !!me && (me.isAdmin || scopes.includes("mis") || scopes.includes("procurement"));
+  const allowed = !!me && (me.isAdmin || scopes.includes("procurement"));
   // Handle-internally is removed: everything flows through this queue.
   // Legacy internal rows still render their badge; no new flags settable.
   const [lightbox, setLightbox] = useState<{ images: string[]; index: number } | null>(null);
@@ -115,7 +115,7 @@ export default function ProcurementQueue() {
       ? s.loopCount
       : loopTotal(((raw as any).items ?? []) as any[]);
     if (loopRef.current[id] !== undefined && loops > loopRef.current[id]) {
-      const isPrivilegedToast = !!(me as any)?.isRoot || !!me?.isAdmin || (scopes ?? []).includes("mis");
+      const isPrivilegedToast = !!(me as any)?.isRoot || !!me?.isAdmin;
       if (!isPrivilegedToast) {
         if (toastTimer.current) clearTimeout(toastTimer.current);
         setToast({ id, label, title, kind: "loop" });

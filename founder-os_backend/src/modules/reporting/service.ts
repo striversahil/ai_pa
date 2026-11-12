@@ -4,7 +4,7 @@
 // filters it to the viewer's departments so a head's response contains only
 // their own data. Writes are narrow (one section save), always audited, and
 // invalidate the period cache. Heads may save the current + previous ISO week;
-// root/MIS may save any week.
+// root may save any week.
 import { cached, cacheDel } from '../../shared/cache';
 import type { MeResponse } from '../auth/types';
 import {
@@ -187,12 +187,12 @@ export async function saveReportSection(args: {
   if (!def) throw new ReportingError('unknown section', 400);
   if (!/^(\d{4})-W(\d{2})$/.test(period)) throw new ReportingError('bad period (expected YYYY-WNN)', 400);
   if (!canEditDepartment(me, dept)) {
-    throw new ReportingError('only this department head (or root / MIS) can enter this data', 403);
+    throw new ReportingError('only this department head (or root) can enter this data', 403);
   }
   const now = new Date();
   const inWindow = period === currentWeekKey(now) || period === previousWeekKey(now);
   if (!inWindow && !isReportingManager(me)) {
-    throw new ReportingError('this week is locked — only root / MIS can edit it now', 403);
+    throw new ReportingError('this week is locked — only root can edit it now', 403);
   }
 
   const clean = sanitizePayload(dept, section, args.payload);

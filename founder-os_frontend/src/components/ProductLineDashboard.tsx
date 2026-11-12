@@ -17,10 +17,10 @@ import { ModalFoot } from "./product-line-dashboard/ModalFoot";
 
 export default function ProductLineDashboard() {
   const { me } = useAuth();
-  const canEdit = !!me && (!!me.isAdmin || (me.scopes ?? []).includes("mis"));
+  const canEdit = !!me && !!me.isAdmin;
   // Quote entry: whoever holds the `product-line` scope (Admin panel grant),
-  // plus MIS/admin. Products/guide/vendors stay MIS-only.
-  const canQuote = !!me && (!!me.isAdmin || (me.scopes ?? []).includes("mis") || (me.scopes ?? []).includes("product-line"));
+  // plus root/admin. Products/guide/vendors stay root-only.
+  const canQuote = !!me && (!!me.isAdmin || (me.scopes ?? []).includes("product-line"));
   const dash = useLiveDashboard<Payload>(async () => {
     const res = await fetch(workspaceDataUrl("product-line"));
     if (!res.ok) throw new Error("failed to load product line");

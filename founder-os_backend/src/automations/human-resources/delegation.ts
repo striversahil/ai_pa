@@ -26,7 +26,7 @@ const LOG_TAKE = 500;
 
 export function isHrManager(me: any): boolean {
   const scopes = (me?.scopes ?? []) as string[];
-  return !!me?.isAdmin || scopes.includes('mis') || scopes.includes('human-resources');
+  return !!me?.isAdmin || scopes.includes('human-resources');
 }
 
 function normEmail(value: unknown): string {
@@ -342,7 +342,7 @@ export async function updateDelegationTask(
 }
 
 /** Soft-deletes a task. Employees may only delete tasks they created (origin
- *  'self') — HR-assigned work stays until an HR/MIS user removes it. */
+ *  'self') — HR-assigned work stays until an HR user or root removes it. */
 export async function deleteDelegationTask(id: string, me: any, actor: string | null) {
   const current = await taskRow(id);
   const isManager = isHrManager(me);

@@ -9,10 +9,10 @@
 // Access:
 //   read    → `reporting-sheet` (management viewers, read-only all), the
 //             department scopes (`sales-head`, `crm`, `digital-marketing` —
-//             own department), or root / MIS (everything)
-//   enter   → the department's own scope, or root / MIS
+//             own department), or root (everything)
+//   enter   → the department's own scope, or root
 //   window  → heads may save the current + previous ISO week only;
-//             root / MIS may save any week
+//             root may save any week
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import { notifyLive, LiveEvent, type Bindings } from '../context';
@@ -60,7 +60,7 @@ export function registerReportingSheetRoutes(app: Hono<{ Bindings: Bindings }>):
       const period = validPeriod(c.req.query('period') ?? currentWeekKey());
       if (!DEPARTMENTS.some((d) => d.dept === dept)) throw new ReportingError('unknown department', 400);
       if (!canEditDepartment(me, dept)) {
-        throw new ReportingError('only this department head (or root / MIS) can enter this data', 403);
+        throw new ReportingError('only this department head (or root) can enter this data', 403);
       }
       return c.json(await buildAutofill(dept, section, period));
     } catch (e) {

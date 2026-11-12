@@ -15,7 +15,7 @@ import type { ManagementRatesPanelProps, MarkupMode } from "./management-rates-p
 // here so existing imports keep working.
 export { RATE_STATUS_LABEL, fmtINR, ceil5 };
 
-/** MIS-only rate review: vendor rates per item, markup decision, finalize.
+/** Root-only rate review: vendor rates per item, markup decision, finalize.
  *  Finalize PATCHes items + rateStatus='finalized'; the live event pushes the
  *  updated rates to Sales automatically (same useLiveQuery subscription). */
 export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRatesPanelProps) {

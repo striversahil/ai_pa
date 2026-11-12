@@ -1,4 +1,4 @@
-// update.ts — stock writes (MIS/stock-gated in routes; validation here).
+// update.ts — stock writes (root/stock-gated in routes; validation here).
 // SKU is system-generated — createStockItem never accepts one.
 import { prisma } from '../../shared/prisma-d1';
 import { invalidateStockCache, validateDay } from './service';

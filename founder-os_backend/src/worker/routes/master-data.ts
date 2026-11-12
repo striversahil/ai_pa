@@ -8,11 +8,11 @@
 //
 // Access:
 //   read    → `master-data` (dashboard grant), `enquiry-tracker` (the sales
-//             board the table is embedded in), or sales-head / MIS / root
+//             board the table is embedded in), or sales-head / root
 //   edit    → a user the sales-head appointed (`master-data-edit` direct scope)
-//             or sales-head / MIS / root
-//   appoint → sales-head / MIS / root only
-//   import  → sales-head / MIS / root only (bulk replace, not a correction)
+//             or sales-head / root
+//   appoint → sales-head / root only
+//   import  → sales-head / root only (bulk replace, not a correction)
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import { authStore, notifyLive, LiveEvent, type Bindings } from '../context';
@@ -62,7 +62,7 @@ async function requireEdit(c: any) {
 async function requireManager(c: any) {
   const me = await meFor(c);
   if (!me) throw new AuthError('UNAUTHENTICATED', 'Authentication required', 401);
-  if (!isMasterManager(me)) throw new AuthError('FORBIDDEN', 'sales-head, MIS or root only', 403);
+  if (!isMasterManager(me)) throw new AuthError('FORBIDDEN', 'sales-head or root only', 403);
   return me;
 }
 
@@ -109,7 +109,7 @@ export function registerMasterDataRoutes(app: Hono<{ Bindings: Bindings }>): voi
     }
   });
 
-  // ── Record delete (sales-head only — even MIS cannot delete) ─────────────
+  // ── Record delete (sales-head only — even root delegates here) ─────────────
   app.delete('/api/master-data/customers/:id', async (c) => {
     try {
       const me = await requireManager(c);

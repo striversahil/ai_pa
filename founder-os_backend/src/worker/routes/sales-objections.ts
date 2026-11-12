@@ -4,12 +4,12 @@
 //
 // Reads + filing: any telecalling-scoped session (shared sales surface —
 // every agent sees every objection). Replies + resolve/reopen: sales-head /
-// MIS / root only (requireSalesManager, same gate as the roster writes).
+// sales-head / root only (requireSalesManager, same gate as the roster writes).
 // Free-text estimate number / client name by design (v1, no real estimate
 // link); at least one of the two is required.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { isApproved, notifyLive, requireMisScope, type Bindings } from '../context';
+import { isApproved, notifyLive, requireAdminScope, type Bindings } from '../context';
 import { addReply, createObjection, getObjection, listObjections, setObjectionStatus } from '../../modules/sales-objections/store';
 import { cleanObjectionInput } from '../../modules/sales-objections/types';
 import { getViewerMe } from '../viewer';
@@ -20,13 +20,13 @@ async function viewer(c: any): Promise<any | null> {
   if (!me || !isApproved(me)) return null;
   if (me.isAdmin || me.isRoot) return me;
   const scopes: string[] = ((me.scopes ?? []) as string[]).map((s) => String(s).toLowerCase());
-  if (scopes.includes('mis') || scopes.includes('sales-head') || scopes.includes('telecalling') || scopes.includes('sales')) return me;
+  if (scopes.includes('sales-head') || scopes.includes('telecalling') || scopes.includes('sales')) return me;
   return null;
 }
 
-/** Manager gate for replies + resolve/reopen (MIS / sales-head / root). */
+/** Manager gate for replies + resolve/reopen (sales-head / root). */
 async function requireSalesManager(c: any): Promise<boolean> {
-  try { await requireMisScope(c); return true; } catch { /* fall through */ }
+  try { await requireAdminScope(c); return true; } catch { /* fall through */ }
   const me: any = await getViewerMe(c);
   if (!me) return false;
   if (!isApproved(me)) return false;
@@ -74,7 +74,7 @@ export function registerSalesObjectionsRoutes(app: Hono<{ Bindings: Bindings }>)
   app.post('/api/sales-objections/:id/replies', async (c) => {
     const me = await viewer(c);
     if (!me) return c.json({ error: 'authentication required' }, 401);
-    if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head, MIS or root only' }, 403);
+    if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head or root only' }, 403);
     const body = await readBody(c);
     const text = String(body?.text ?? '').trim().slice(0, 2000);
     if (!text) return c.json({ error: 'reply text required' }, 400);
@@ -93,7 +93,7 @@ export function registerSalesObjectionsRoutes(app: Hono<{ Bindings: Bindings }>)
   app.patch('/api/sales-objections/:id', async (c) => {
     const me = await viewer(c);
     if (!me) return c.json({ error: 'authentication required' }, 401);
-    if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head, MIS or root only' }, 403);
+    if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head or root only' }, 403);
     const body = await readBody(c);
     const status = String(body?.status ?? '').trim();
     if (status !== 'open' && status !== 'resolved') return c.json({ error: 'status must be open|resolved' }, 400);

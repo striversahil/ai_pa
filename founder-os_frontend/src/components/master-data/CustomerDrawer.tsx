@@ -303,7 +303,7 @@ export default function CustomerDrawer({
           <SectionTitle hint="Region reassignment is manager-only">Location</SectionTitle>
           {editing && draft ? (
             <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Region" hint={canManage ? undefined : "Sales-head / MIS only"}>
+              <Field label="Region" hint={canManage ? undefined : "Sales-head / root only"}>
                 <select className={inputClass} value={draft.region} disabled={!canManage} onChange={(e) => set("region", e.target.value)}>
                   <option value="">Unmapped</option>
                   {REGIONS.map((r) => <option key={r} value={r}>{r}</option>)}

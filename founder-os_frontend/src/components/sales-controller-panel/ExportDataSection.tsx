@@ -116,7 +116,7 @@ export function ExportDataSection({ rosterRows, showRisk }: { rosterRows: Roster
 
       // Section 4 — Daily (per-day × per-agent: every tag, call, lead)
       rows.push([]);
-      rows.push(["═══ DAILY (DAY × AGENT — MIS DETAIL) ═══"]);
+      rows.push(["═══ DAILY (DAY × AGENT — ROOT DETAIL) ═══"]);
       rows.push(["NOTE: Won day = conversion day from the close ledger (20% generator / 80% closer)."]);
       if (data.dailyError) {
         rows.push([`Daily unavailable: ${data.dailyError}`]);
@@ -174,7 +174,7 @@ export function ExportDataSection({ rosterRows, showRisk }: { rosterRows: Roster
     }
   };
 
-  // Per-estimate MIS export — one row per estimate in the last N days (by
+  // Per-estimate root export — one row per estimate in the last N days (by
   // estimate/sent date), all statuses (sent/accepted/declined/confirmed), with
   // full lead detail. "Converted By" shows ONLY the lead generator's name
   // (from the +100 close ledger, which credits Estimate.createdBy) on
@@ -252,7 +252,7 @@ export function ExportDataSection({ rosterRows, showRisk }: { rosterRows: Roster
         Download the FULL telecalling payload as one CSV — performance (leaderboard), assignments (conversion),
         {showRisk ? " risk (open pipeline)," : ""} daily (day × agent: accepted/declined tags, calls, leads) sections.
         Generated client-side from the live dashboard endpoint. The estimates download below is the
-        per-estimate MIS ledger for the last N days (by sent date) — contact, location, source, lead
+        per-estimate root ledger for the last N days (by sent date) — contact, location, source, lead
         creator and Converted By (lead generator only; blank on declined/open rows).
       </p>
       <div className="flex flex-wrap items-end gap-3">

@@ -2,7 +2,7 @@
 // routes/neodove-campaign.ts — push Customer Master leads into a NeoDove
 // agent campaign (one lead per POST to the agent's custom-integration URL).
 //
-// Worker-only (Express is frozen). Access is sales-head / MIS / root, checked
+// Worker-only (Express is frozen). Access is sales-head / root, checked
 // by scope OR role so a sales-head role holder is never locked out by a missing
 // scope grant (same rule as the telecalling roster).
 //
@@ -29,7 +29,7 @@ async function meFor(c: any) {
   return getViewerMe(c);
 }
 
-/** Root / MIS / sales-head — scope OR role, mirroring the roster gate. */
+/** Root / sales-head — scope OR role, mirroring the roster gate. */
 async function requireCampaignManager(c: any) {
   const me: any = await meFor(c);
   if (!me) throw new AuthError('UNAUTHENTICATED', 'Authentication required', 401);
@@ -37,9 +37,9 @@ async function requireCampaignManager(c: any) {
   const scopes: string[] = me.scopes ?? [];
   const roles: string[] = me.roles ?? [];
   const allowed = !!me.isAdmin
-    || scopes.includes('mis') || roles.includes('mis')
+    
     || scopes.includes('sales-head') || roles.includes('sales-head');
-  if (!allowed) throw new AuthError('FORBIDDEN', 'sales-head, MIS or root only', 403);
+  if (!allowed) throw new AuthError('FORBIDDEN', 'sales-head or root only', 403);
   return me;
 }
 

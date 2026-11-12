@@ -3,7 +3,7 @@
 // SalesWorkspace — the ONE sales surface.
 //
 // Leaderboard, enquiry pipeline, customer book, region dispatch and the
-// MIS/sales-head Controller behind a single sticky horizontal tab bar.
+// Root/sales-head Controller behind a single sticky horizontal tab bar.
 // Enquiries and Customer Master stay global (the whole book is visible to
 // sales); only Dispatch is region-owned (server-enforced from the roster row).
 import React, { useMemo } from "react";
@@ -80,7 +80,7 @@ export default function SalesWorkspace() {
     if (canView(me, "telecalling") || canManage) {
       out.push({ key: "leads", label: "Leads", icon: "🎯" });
     }
-    // Controller is MIS/sales-head only and sits LAST so agents' tabs never shift.
+    // Controller is root/sales-head only and sits LAST so agents' tabs never shift.
     if (canManage) out.push({ key: "controller", label: "Controller", icon: "🎛️" });
     return out;
   }, [me, caps.canView, canManage]);

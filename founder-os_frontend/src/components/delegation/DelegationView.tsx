@@ -5,7 +5,7 @@
 //
 // One task model, two views over the same payload (GET /api/delegation/board):
 //   * employee → "My day": their tasks, stats, add-my-own-task, daily remarks
-//   * HR/MIS   → the same board plus per-member day cards, the day's activity
+//   * HR      → the same board plus per-member day cards, the day's activity
 //                feed and the login-linking panel
 // Every write goes through /api/delegation/* which scopes itself server-side.
 // ─────────────────────────────────────────────────────────────────────────────

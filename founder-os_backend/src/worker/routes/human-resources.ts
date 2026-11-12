@@ -44,12 +44,12 @@ async function access(c: any) {
   const me = await getViewerMe(c);
   if (!me) return { me: null, canManage: false, error: c.json({ error: 'Authentication required' }, 401) };
   const scopes = (me.scopes ?? []) as string[];
-  if (!me.isAdmin && !scopes.includes('mis') && !scopes.includes('human-resources')) {
+  if (!me.isAdmin && !scopes.includes('human-resources')) {
     return { me, canManage: false, error: c.json({ error: "Requires 'human-resources' permission" }, 403) };
   }
   return {
     me,
-    canManage: !!me.isAdmin || scopes.includes('mis') || scopes.includes('human-resources'),
+    canManage: !!me.isAdmin || scopes.includes('human-resources'),
     error: null,
   };
 }
@@ -60,7 +60,7 @@ function errorResponse(c: any, e: unknown) {
 }
 
 export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>): void {
-  // ── Employee master (HR/MIS full access) ────────────────────────────────
+  // ── Employee master (HR/root full access) ────────────────────────────────
   app.get('/api/human-resources/members', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
@@ -356,7 +356,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.post('/api/human-resources/tasks', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    if (!a.canManage) return c.json({ error: 'Only HR/MIS users can create or assign HR tasks' }, 403);
+    if (!a.canManage) return c.json({ error: 'Only HR/root users can create or assign HR tasks' }, 403);
     const body = await readBody(c);
     try {
       const row = await createTask(body || {}, actorLabel(a.me));
@@ -385,7 +385,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.delete('/api/human-resources/tasks/:id', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    if (!a.canManage) return c.json({ error: 'Only HR/MIS users can delete HR tasks' }, 403);
+    if (!a.canManage) return c.json({ error: 'Only HR/root users can delete HR tasks' }, 403);
     try {
       await deleteTask(c.req.param('id') ?? '', actorLabel(a.me));
       notifyLive(c, { type: LiveEvent.HumanResources });
@@ -399,7 +399,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
     const a = await access(c);
     if (a.error) return a.error;
     const includeDeleted = c.req.query('deleted') === '1';
-    if (includeDeleted && !a.canManage) return c.json({ error: 'Only HR/MIS users can view removed inventory items' }, 403);
+    if (includeDeleted && !a.canManage) return c.json({ error: 'Only HR/root users can view removed inventory items' }, 403);
     try {
       return c.json({ items: await listInventoryItems(includeDeleted) });
     } catch (e) { return errorResponse(c, e); }
@@ -416,7 +416,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.post('/api/human-resources/inventory/items', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    if (!a.canManage) return c.json({ error: 'Only HR/MIS users can add inventory items' }, 403);
+    if (!a.canManage) return c.json({ error: 'Only HR/root users can add inventory items' }, 403);
     const body = await readBody(c);
     try {
       const row = await createInventoryItem(body || {}, actorLabel(a.me));
@@ -428,7 +428,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.patch('/api/human-resources/inventory/items/:id', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    if (!a.canManage) return c.json({ error: 'Only HR/MIS users can edit inventory items' }, 403);
+    if (!a.canManage) return c.json({ error: 'Only HR/root users can edit inventory items' }, 403);
     const body = await readBody(c);
     try {
       const row = await updateInventoryItem(c.req.param('id') ?? '', body || {});
@@ -440,7 +440,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.delete('/api/human-resources/inventory/items/:id', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    if (!a.canManage) return c.json({ error: 'Only HR/MIS users can remove inventory items' }, 403);
+    if (!a.canManage) return c.json({ error: 'Only HR/root users can remove inventory items' }, 403);
     try {
       await deleteInventoryItem(c.req.param('id') ?? '');
       notifyLive(c, { type: LiveEvent.HumanResources });
@@ -470,7 +470,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.delete('/api/human-resources/inventory/transactions/:id', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    if (!a.canManage) return c.json({ error: 'Only HR/MIS users can delete stock movements' }, 403);
+    if (!a.canManage) return c.json({ error: 'Only HR/root users can delete stock movements' }, 403);
     try {
       await deleteInventoryTransaction(c.req.param('id') ?? '');
       notifyLive(c, { type: LiveEvent.HumanResources });
@@ -550,7 +550,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
 
   // ── Hiring kit: JD + SOP PDFs per position (many per role) ──────────────
   // PDF bytes live in CHAT_FILES KV (`hrdocs/<uuid>.pdf`); D1 keeps metadata.
-  // Read/upload/delete are all HR/MIS-only (same `access()` gate as the rest
+  // Read/upload/delete are all HR/root-only (same `access()` gate as the rest
   // of the HR dashboard) — no public document URLs.
   app.get('/api/human-resources/hiring-positions', async (c) => {
     const a = await access(c);
@@ -563,7 +563,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.post('/api/human-resources/hiring-positions', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    if (!a.canManage) return c.json({ error: 'Only HR/MIS users can add positions' }, 403);
+    if (!a.canManage) return c.json({ error: 'Only HR/root users can add positions' }, 403);
     const body = await readBody(c);
     try {
       const row = await createHiringPosition(body || {}, actorLabel(a.me));
@@ -575,7 +575,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.post('/api/human-resources/hiring-positions/import', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    if (!a.canManage) return c.json({ error: 'Only HR/MIS users can add positions' }, 403);
+    if (!a.canManage) return c.json({ error: 'Only HR/root users can add positions' }, 403);
     const body = await readBody(c);
     try {
       const out = await importHiringPositions(body?.names, actorLabel(a.me));
@@ -587,7 +587,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.patch('/api/human-resources/hiring-positions/:id', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    if (!a.canManage) return c.json({ error: 'Only HR/MIS users can rename positions' }, 403);
+    if (!a.canManage) return c.json({ error: 'Only HR/root users can rename positions' }, 403);
     const body = await readBody(c);
     try {
       const row = await renameHiringPosition(c.req.param('id') ?? '', body || {});
@@ -599,7 +599,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.delete('/api/human-resources/hiring-positions/:id', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    if (!a.canManage) return c.json({ error: 'Only HR/MIS users can remove positions' }, 403);
+    if (!a.canManage) return c.json({ error: 'Only HR/root users can remove positions' }, 403);
     try {
       const { kvKeys } = await deleteHiringPosition(c.req.param('id') ?? '');
       if (c.env.CHAT_FILES) {
@@ -616,7 +616,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.post('/api/human-resources/hiring-positions/:id/docs', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    if (!a.canManage) return c.json({ error: 'Only HR/MIS users can upload hiring documents' }, 403);
+    if (!a.canManage) return c.json({ error: 'Only HR/root users can upload hiring documents' }, 403);
     if (!c.env.CHAT_FILES) return c.json({ error: 'File storage is not configured' }, 501);
     let form: FormData;
     try {
@@ -663,7 +663,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.delete('/api/human-resources/position-docs/:id', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    if (!a.canManage) return c.json({ error: 'Only HR/MIS users can remove hiring documents' }, 403);
+    if (!a.canManage) return c.json({ error: 'Only HR/root users can remove hiring documents' }, 403);
     try {
       const { kvKey } = await deletePositionDoc(c.req.param('id') ?? '');
       if (kvKey && c.env.CHAT_FILES) {

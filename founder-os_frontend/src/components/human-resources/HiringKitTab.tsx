@@ -18,7 +18,7 @@ import type { HrHiringPosition, HrPositionDoc } from "@/hr/types";
 /**
  * HR hiring kit: job descriptions and SOPs per position (any number of each),
  * viewable inline.
- * HR/MIS-only (the API gate is the same as the rest of the HR dashboard).
+ * HR-only (the API gate is the same as the rest of the HR dashboard).
  */
 export default function HiringKitTab({ designations }: { designations: string[] }) {
   const dash = useLiveDashboard(async () => listHiringPositions(), { events: ["human-resources"], pollMs: 60000 });

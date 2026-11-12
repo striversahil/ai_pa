@@ -1,6 +1,6 @@
 'use client';
 
-// RehomeEstimateSection — Controller: sales-head/MIS can move ANY estimate to
+// RehomeEstimateSection — Controller: sales-head/root can move ANY estimate to
 // any region, regardless of status (sent / accepted / declined) or whether it
 // already has a region. Search hits the existing
 // GET /api/telecalling/estimates endpoint; moves use the existing

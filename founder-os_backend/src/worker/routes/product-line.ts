@@ -1,22 +1,22 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// routes/product-line.ts — Product Line master CRUD (MIS-gated writes).
+// routes/product-line.ts — Product Line master CRUD (root-gated writes).
 // Reads ride the automation data endpoint (/api/automations/product-line/data).
 // Mirror: founder-os_backend/src/routes/product-line.ts (Express alt runtime).
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { requireMisScope, misScopeError, notifyLive, LiveEvent, type Bindings } from '../context';
+import { requireAdminScope, adminScopeError, notifyLive, LiveEvent, type Bindings } from '../context';
 import { AuthError } from '../../modules/auth/types';
 import { getViewerMe } from '../viewer';
 import { readBody } from '../http';
 
 /** Quote writes: whoever holds the `product-line` scope (granted from the
- *  Admin panel), plus MIS/admin. Products/guide/vendors stay MIS-only. */
+ *  Admin panel). Products/guide/vendors stay root-only. */
 async function requireQuoteScope(c: any): Promise<void> {
   const me = await getViewerMe(c);
   if (!me) throw new AuthError('UNAUTHENTICATED', 'Authentication required', 401);
   if (me.isAdmin) return;
   const scopes = (me as any).scopes ?? [];
-  if (!scopes.includes('product-line') && !scopes.includes('mis')) {
+  if (!scopes.includes('product-line')) {
     throw new AuthError('FORBIDDEN', "Requires 'product-line' permission", 403);
   }
 }
@@ -38,7 +38,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
   const PHOTO_PREFIX = 'product-photo/';
   const PHOTO_MAX_BYTES = 5 * 1024 * 1024;
   app.get('/api/product-line/photos', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
     if (!c.env.CHAT_FILES) return c.json({ error: 'File storage is not configured' }, 501);
     try {
       const list = await (c.env.CHAT_FILES as any).list({ prefix: PHOTO_PREFIX, limit: 100 });
@@ -52,7 +52,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
     }
   });
   app.post('/api/product-line/photos', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
     if (!c.env.CHAT_FILES) return c.json({ error: 'File storage is not configured' }, 501);
     let form: FormData;
     try {
@@ -82,7 +82,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
   });
   // ── Products ──
   app.post('/api/product-line/products', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
     try {
       const { createProduct } = await import('../../automations/product-line/update');
       const row = await createProduct(await readBody(c));
@@ -91,7 +91,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
     } catch (e: any) { return writeError(c, e); }
   });
   app.patch('/api/product-line/products/:id', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
     try {
       const { updateProduct } = await import('../../automations/product-line/update');
       const row = await updateProduct(c.req.param('id') ?? '', await readBody(c));
@@ -100,7 +100,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
     } catch (e: any) { return writeError(c, e); }
   });
   app.delete('/api/product-line/products/:id', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
     try {
       const { deleteProduct } = await import('../../automations/product-line/update');
       const out = await deleteProduct(c.req.param('id') ?? '');
@@ -110,7 +110,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
   });
   // ── Guide ──
   app.post('/api/product-line/guide', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
     try {
       const { createGuide } = await import('../../automations/product-line/update');
       const row = await createGuide(await readBody(c));
@@ -119,7 +119,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
     } catch (e: any) { return writeError(c, e); }
   });
   app.patch('/api/product-line/guide/:id', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
     try {
       const { updateGuide } = await import('../../automations/product-line/update');
       const row = await updateGuide(c.req.param('id') ?? '', await readBody(c));
@@ -128,7 +128,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
     } catch (e: any) { return writeError(c, e); }
   });
   app.delete('/api/product-line/guide/:id', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
     try {
       const { deleteGuide } = await import('../../automations/product-line/update');
       const out = await deleteGuide(c.req.param('id') ?? '');
@@ -138,7 +138,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
   });
   // ── Vendors ──
   app.post('/api/product-line/vendors', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
     try {
       const { createVendor } = await import('../../automations/product-line/update');
       const row = await createVendor(await readBody(c));
@@ -147,7 +147,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
     } catch (e: any) { return writeError(c, e); }
   });
   app.patch('/api/product-line/vendors/:id', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
     try {
       const { updateVendor } = await import('../../automations/product-line/update');
       const row = await updateVendor(c.req.param('id') ?? '', await readBody(c));
@@ -156,7 +156,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
     } catch (e: any) { return writeError(c, e); }
   });
   app.delete('/api/product-line/vendors/:id', async (c) => {
-    try { await requireMisScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
     try {
       const { deleteVendor } = await import('../../automations/product-line/update');
       const out = await deleteVendor(c.req.param('id') ?? '');
@@ -164,9 +164,9 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
       return c.json(out);
     } catch (e: any) { return writeError(c, e); }
   });
-  // ── Rates (holders of the `product-line` scope + MIS/admin) ──
+  // ── Rates (holders of the `product-line` scope + root) ──
   app.post('/api/product-line/rates', async (c) => {
-    try { await requireQuoteScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireQuoteScope(c); } catch (e) { return adminScopeError(c, e); }
     try {
       const { createRate } = await import('../../automations/product-line/update');
       const row = await createRate(await readBody(c));
@@ -175,7 +175,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
     } catch (e: any) { return writeError(c, e); }
   });
   app.patch('/api/product-line/rates/:id', async (c) => {
-    try { await requireQuoteScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireQuoteScope(c); } catch (e) { return adminScopeError(c, e); }
     try {
       const body = await readBody(c);
       if ((body as any)?.active !== undefined && Object.keys(body as any).length === 1) {
@@ -192,7 +192,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
   });
   // Hard delete: the quote row is gone completely.
   app.delete('/api/product-line/rates/:id', async (c) => {
-    try { await requireQuoteScope(c); } catch (e) { return misScopeError(c, e); }
+    try { await requireQuoteScope(c); } catch (e) { return adminScopeError(c, e); }
     try {
       const { deleteRate } = await import('../../automations/product-line/update');
       const out = await deleteRate(c.req.param('id') ?? '');

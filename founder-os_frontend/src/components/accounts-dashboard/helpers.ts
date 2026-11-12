@@ -64,7 +64,7 @@ export function matchSelfRoster(me: { user: { email: string; name: string } } | 
 export const ACTOR_KEY = "accounts_actor_id";
 
 // NOTE: nav tabs are built per-viewer as `visibleTabs` inside the component
-// (MIS/root see every lane; others see Dashboard + their own "My Tasks").
+// (root sees every lane; others see Dashboard + their own "My Tasks").
 
 export function fmtToday(iso: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);

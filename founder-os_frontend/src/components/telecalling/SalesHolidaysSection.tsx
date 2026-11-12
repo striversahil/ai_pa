@@ -1,6 +1,6 @@
 'use client';
 
-// SalesHolidaysSection — Controller: sales-head/MIS marks national holidays.
+// SalesHolidaysSection — Controller: sales-head/root marks national holidays.
 // A holiday accrues ₹0 target like a Sunday, so it shrinks that week's due and
 // the carry-out deficit. Past or future dates both allowed — the ledger
 // recomputes from the start on every dashboard load, so a backdated mark

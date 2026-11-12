@@ -2,7 +2,7 @@
 //
 // Read-only Q&A over the Product Line master (products, guide checklists,
 // vendors, quotes) on the shared engine (src/copilot). No writes — the catalogue
-// is edited through the dashboard modals (MIS-gated). The only proposal it
+// is edited through the dashboard modals (root-gated). The only proposal it
 // emits is ask_question (answerable question cards); everything else is prose.
 import type { ToolDefinition } from '../../shared/ai-gateway';
 import type { CopilotDef } from '../../copilot/types';
@@ -194,12 +194,12 @@ async function execTool(ctx: ProductCtx, name: string, args: Record<string, any>
 /** Product-line department definition for the shared engine. */
 export const productLineCopilotDef: CopilotDef<ProductCtx> = {
   id: 'product-line',
-  // Same gate as quote reads: product-line scope, MIS, or admin.
+  // Same gate as quote reads: product-line scope or admin.
   checkAccess: (me: any) => {
     if (!me) return { status: 401, error: 'Authentication required' };
     if ((me as any).isAdmin) return null;
     const scopes: string[] = (me as any).scopes ?? [];
-    if (scopes.includes('product-line') || scopes.includes('mis')) return null;
+    if (scopes.includes('product-line')) return null;
     return { status: 403, error: "Requires 'product-line' permission" };
   },
   buildCtx: (env, me, extra) => ({

@@ -189,7 +189,7 @@ export async function recordInventoryTransaction(
   const item: any = await prisma.humanResourcesInventoryItem.findUnique({ where: { id: data.itemId } });
   if (!item || item.deleted) throw new HrError('inventory item not found', 404);
   if (data.txnType === 'adjustment' && !access.canManage) {
-    throw new HrError('Only HR/MIS users can adjust stock', 403);
+    throw new HrError('Only HR users or root can adjust stock', 403);
   }
 
   const stock = await itemStats(String(item.id));

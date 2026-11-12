@@ -50,7 +50,7 @@ export default function EnquiryTracker() {
   // whoever can open this dashboard sees the full sales pipeline — no
   // in-view department gates here.
   const { me } = useAuth();
-  const isAdmin = !!me?.isAdmin || (me?.scopes ?? []).includes("mis") || (me?.scopes ?? []).includes("admin");
+  const isAdmin = !!me?.isAdmin || (me?.scopes ?? []).includes("admin");
   const {
     enquiries, comments, agents, currentAgent, loaded,
     addEnquiry, updateEnquiry, deleteEnquiry,
@@ -58,7 +58,7 @@ export default function EnquiryTracker() {
     saveError: itemsSaveError, dismissSaveError: dismissItemsSaveError,
     mergeSingle, hasMore, loadMore, loadedCount,
   } = useEnquiryData("sales", { pageSize: 100 });
-  // Fallback telecaller roster for root/MIS: /api/enquiries/agents is filtered for restricted viewers; Telecaller table is the source of truth for UN fallback
+  // Fallback telecaller roster for root: /api/enquiries/agents is filtered for restricted viewers; Telecaller table is the source of truth for UN fallback
   const [telecallers, setTelecallers] = useState<any[]>([]);
   useEffect(() => {
     if (!isAdmin) return;
@@ -162,7 +162,7 @@ export default function EnquiryTracker() {
     const prevLoops = loopCountRef.current[id];
     loopCountRef.current[id] = loopCount;
     if (prevLoops !== undefined && loopCount > prevLoops) {
-      const isPrivilegedToast = !!(me as any)?.isRoot || !!me?.isAdmin || (me?.scopes ?? []).includes("mis") || (me?.scopes ?? []).includes("admin");
+      const isPrivilegedToast = !!(me as any)?.isRoot || !!me?.isAdmin || (me?.scopes ?? []).includes("admin");
       if (!isPrivilegedToast) flashToast(id, label, title, "loop");
     }
   });

@@ -109,7 +109,7 @@ export interface MasterDataPayload {
 }
 
 /** Fields an appointed editor may change. Region ownership stays with
- *  sales-head/MIS (see EDITOR_FIELDS vs MANAGER_FIELDS in service.ts).
+ *  sales-head (see EDITOR_FIELDS vs MANAGER_FIELDS in service.ts).
  *  Client type is editor-assignable but value-constrained: the base must be
  *  one of the sales-head's allowed bases (ClientTypeRule); the tag is a free
  *  qualifier. The server normalizes both into customerType/base/tag. */

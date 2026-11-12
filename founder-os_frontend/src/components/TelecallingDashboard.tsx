@@ -94,7 +94,7 @@ export default function TelecallingDashboard() {
     if (selfAgentId) setRegionFilter(regionKey(selfRegion));
   }, [selfAgentId, selfRegion]);
 
-  // ── MIS estimate assignment overrides (lock to one agent / never assign) ──
+  // ── Root estimate assignment overrides (lock to one agent / never assign) ──
   const [overrideBusy, setOverrideBusy] = useState(false);
 
   // Prefetch EVERY region's pipeline in parallel (one round of requests),
@@ -483,7 +483,7 @@ export default function TelecallingDashboard() {
                   {(unmappedBlock?.count ?? 0) > 0 && (
                     <button
                       onClick={() => setRegionFilter(regionFilter === "UNMAPPED" ? null : "UNMAPPED")}
-                      title="Open estimates with no region — MIS should link them"
+                      title="Open estimates with no region — root should link them"
                       className={`shrink-0 inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-sm font-semibold border transition-colors ${
                         regionFilter === "UNMAPPED"
                           ? "bg-amber-600 text-white border-amber-600 shadow-sm"

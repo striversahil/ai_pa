@@ -3,7 +3,7 @@
 
 export type TaskStatus = "pending" | "in_progress" | "done";
 export type TaskPriority = "low" | "normal" | "high" | "urgent";
-/** hr = delegated by HR/MIS; self = created by the employee. */
+/** hr = delegated by HR; self = created by the employee. */
 export type TaskOrigin = "hr" | "self";
 export type ExpenseType = "fixed" | "variable" | "field_staff";
 export type PaymentMode = "cash" | "upi" | "bank" | "card" | "other";
@@ -314,7 +314,7 @@ export interface HrTask {
   priority: TaskPriority;
   status: TaskStatus;
   remark: string | null;
-  /** hr = delegated by HR/MIS; self = the employee created it. */
+  /** hr = delegated by HR; self = the employee created it. */
   origin?: TaskOrigin;
   createdByMemberId?: string | null;
   createdBy: string | null;

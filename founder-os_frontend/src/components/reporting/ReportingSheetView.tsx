@@ -2,7 +2,7 @@
 
 // ReportingSheetView — weekly management review across departments.
 //
-// Root/MIS see every department; a head sees only their own. Each section is a
+// Root sees every department; a head sees only their own. Each section is a
 // descriptor-driven EntryForm (auto-fill where a live source exists, hand entry
 // elsewhere). Subscribes only to the typed `reporting` live event.
 import { useEffect, useMemo, useState } from "react";
@@ -151,7 +151,7 @@ export default function ReportingSheetView() {
           <h1 className="font-heading text-2xl font-bold text-zinc-900 dark:text-white">Reporting Sheet</h1>
           <p className="mt-0.5 text-caption text-[var(--text-secondary)]">
             Weekly management review · {periodItem ? `${periodItem.label} (${periodItem.from} → ${periodItem.to})` : data.period}
-            {!data.editable && <span className="text-[var(--text-tertiary)]"> · locked (past week — root / MIS can still edit)</span>}
+            {!data.editable && <span className="text-[var(--text-tertiary)]"> · locked (past week — root can still edit)</span>}
           </p>
         </div>
         <label className="flex flex-col gap-1">

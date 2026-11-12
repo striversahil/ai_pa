@@ -26,7 +26,7 @@ export interface MapRosterConflict {
   name: string;
 }
 
-/** Map a directory login onto the sales roster (sales-head/MIS/HR).
+/** Map a directory login onto the sales roster (sales-head/HR).
  *  Throws on duplicate email with `linkTo` attached — caller offers Link. */
 export async function mapRosterFromDirectory(input: MapRosterInput): Promise<unknown> {
   const res = await fetch("/api/telecallers/from-directory", {
@@ -47,7 +47,7 @@ export async function mapRosterFromDirectory(input: MapRosterInput): Promise<unk
 
 /** Link a directory login onto an existing roster row (HR-owned mapping).
  *  Uses the scoped link endpoint so HR holders can link (the legacy PUT stays
- *  sales-head/MIS-only and untouched). */
+ *  sales-head-only and untouched). */
 export async function linkRosterByLogin(rowId: string, userId: string): Promise<unknown> {
   const res = await fetch("/api/telecallers/link", {
     method: "POST",
