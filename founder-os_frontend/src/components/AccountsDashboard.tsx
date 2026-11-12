@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo, useRef, useState } from "react";
-import { useLiveDashboard, useOptimisticMutation, patchRowInLists, mapRowInLists } from "@/hooks/useLiveData";
+import { useLiveQuery, useOptimisticMutation, patchRowInLists, mapRowInLists } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
 import { TabBar } from "@/components/ui/TabBar";
 import PaymentDues from "@/components/accounts/PaymentDues";
@@ -30,13 +30,20 @@ export default function AccountsDashboard() {
   // pollMs safety net: a stalled request can never wedge the view forever —
   // the 30s hook timeout turns it into an error and the next poll recovers.
   // Loading renders non-destructively (spinner only before first payload).
-  const dash = useLiveDashboard<DashData>(async () => {
+  //
+  // Refetch scope: this payload is ~280 KB (task lanes + 300-row history +
+  // paid history), so refetching it on EVERY `data-changed` event (WhatsApp,
+  // CRM sync, enquiries, chat…) is what made the tab crawl. Every write that
+  // can change these numbers broadcasts `accounts` (all accounts routes
+  // notifyLive(Accounts)), and the 60s poll covers anything that does not, so
+  // the hook is narrowed to that one event.
+  const dash = useLiveQuery<DashData>(async () => {
     // Identity rides along so the backend scopes the payload to the viewer's
     // own lane (MIS/root skip scoping server-side).
     const res = await fetch(`${workspaceDataUrl("accounts")}${actorPick ? `?as=${encodeURIComponent(actorPick)}` : ""}`, { cache: "no-store" });
     if (!res.ok) throw new Error(`Load failed (HTTP ${res.status})`);
     return res.json();
-  }, { pollMs: 60000 });
+  }, { events: ["accounts"], pollMs: 60000 });
 
   const data = dash.data;
   // Shared optimistic module (useLiveData): every write paints instantly and
