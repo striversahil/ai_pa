@@ -26,8 +26,7 @@ import type {
   EnquiryStore,
 } from "./types";
 import { normalizeVisibility, isoOrUndefined, rateIdxOrUndefined, normalizeQty, parseItemMedia, parseItemRates, parseDiscountPercent, strictNum, numOrUndefined, parseItems, parseRequirements } from "./parse";
-import { MemoryEnquiryStore } from "./store-parts/pure";
-import { D1EnquiryStore } from "./store-parts/io";
+import { MemoryEnquiryStore, D1EnquiryStore } from "./store-parts/io";
 
 // Pieces split into ./store-parts/ (importable on their own); re-exported for compat.
 export { mapEnquiry, mapComment, sanitize } from "./store-parts/pure";

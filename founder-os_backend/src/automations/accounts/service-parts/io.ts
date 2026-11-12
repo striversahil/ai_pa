@@ -5,7 +5,7 @@ import { SEED_TASKS } from "../seed-tasks";
 import { logger } from "../../../shared/logger";
 import { cacheDel, cached } from "../../../shared/cache";
 import { mirrorRosterRow } from "../../../modules/core/sync";
-import { isDueOn, slotsFor, slotKey, SLOT_MAIN, SLOT_SENIOR, SLOT_JUNIOR, normName, LANE_SLOTS, addDays, istDateStr, flagOverdue, DATA_CACHE_PREFIX, UNSCHEDULED_RULES, parseRule, windowGraceStart, toAttachmentJson, missStreak, summarizePayments, DATA_TTL_MS, ISO_DAY, diffDays, fmtMins, normId, cleanTemplateInput, toPaymentAttachment, toPaymentRow, mondayOf } from "./pure";
+import { isDueOn, slotsFor, slotKey, SLOT_MAIN, SLOT_SENIOR, SLOT_JUNIOR, normName, LANE_SLOTS, addDays, istDateStr, DATA_CACHE_PREFIX, UNSCHEDULED_RULES, parseRule, windowGraceStart, toAttachmentJson, missStreak, summarizePayments, DATA_TTL_MS, ISO_DAY, diffDays, fmtMins, normId, cleanTemplateInput, toPaymentAttachment, toPaymentRow, mondayOf } from "./pure";
 import type { LaneScope, PaymentAttachment, PaymentDueRow } from "./types";
 
 export async function ensureSeedTemplates(): Promise<void> {
@@ -142,6 +142,15 @@ export async function splitSharedMains(): Promise<number> {
   }
   if (split) await invalidateAccountsCache();
   return split;
+}
+
+/** No-op since the per-day model: past unresolved rows are NOT rewritten.
+ *  They stay pending/inprogress on their own day and read as "not done" in
+ *  the Incomplete tab. Legacy `overdue` rows (materialised before this
+ *  change) are still treated as incomplete at serve time. Kept for the
+ *  rollover call-site compat. */
+export async function flagOverdue(_todayStr: string): Promise<number> {
+  return 0;
 }
 
 /**

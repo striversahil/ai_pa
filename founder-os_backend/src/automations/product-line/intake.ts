@@ -11,9 +11,9 @@
 import { SPEC_SYNONYMS, SPEC_SYN_MAP } from "./intake-parts/pure";
 
 // Pieces split into ./intake-parts/ (importable on their own); re-exported for compat.
-export { resolveSpecKeys, captureSpecs, canonicalAttrKey } from "./intake-parts/pure";
+export { resolveSpecKeys, canonicalAttrKey } from "./intake-parts/pure";
+export { captureSpecs, productLineIntakeDef } from "./intake-parts/io";
 export type { FiledRate } from "./intake-parts/types";
-export { productLineIntakeDef } from "./intake-parts/io";
 
 for (const g of SPEC_SYNONYMS) {
   const all = new Set(g);

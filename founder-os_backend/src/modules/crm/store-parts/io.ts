@@ -10,8 +10,17 @@ import type { EstimateRegionIndex } from "../region";
 import { deriveLifecycle, effectiveQty, validateSchedule, validateReschedule, validateDispatch, resolveDispatchQty, validateAmend, validateLocalCancel, isOverdueItem } from "../scheduling";
 import type { DispatchProof, ItemLike, ScheduleEntry, RescheduleEntry, DispatchEntry, AmendQtyChange, AmendRemove, AmendAdd } from "../scheduling";
 import { logger } from "../../../shared/logger";
-import { ITEM_BATCH, toItemView, str, toOrderView, num, iso, proofFile, CrmError, isPdfFile, isImageFile, assertWorkable, mirrorOrderTouch, PROOF_DOC_SLOTS, PROOF_DOC_RULES, REGION_LOOKUP_BATCH, dayAdd, FLOOR_WINDOW_DAYS, SCORE_STAGES, STAGE_COMPLETION, isCompleteInZoho, orderStage, STAGE_DEPT, ORDER_COLS, sqlValue, ITEM_COLS, isChargeLine, lineKeyFor } from "./pure";
+import { ITEM_BATCH, toItemView, str, toOrderView, num, iso, proofFile, CrmError, isPdfFile, isImageFile, assertWorkable, PROOF_DOC_SLOTS, PROOF_DOC_RULES, REGION_LOOKUP_BATCH, dayAdd, FLOOR_WINDOW_DAYS, SCORE_STAGES, STAGE_COMPLETION, isCompleteInZoho, orderStage, STAGE_DEPT, ORDER_COLS, sqlValue, ITEM_COLS, isChargeLine, lineKeyFor } from "./pure";
 import type { ListArgs, ProofFile, ActionResult, ProofDocSlot, SyncedOrder, SyncVerify, SyncResult, ScoreStage } from "./types";
+
+/** Phase 4a dual-write: project the touched order spine into core (never throws). */
+export async function mirrorOrderTouch(orderId: string): Promise<void> {
+  try {
+    const { mirrorOrders } = await import('../../core/orders');
+    const id = String(orderId ?? '');
+    if (id) await mirrorOrders([id]);
+  } catch { /* non-fatal */ }
+}
 
 /** Attach the derived flags the UI needs (overdue / due-today / can-*). */
 export function withFlags(order: CrmOrderRow, today: string): CrmOrderRow {

@@ -2,6 +2,8 @@
 // service.ts re-exports everything public here, so existing imports keep working.
 import { prisma } from "../../../shared/prisma";
 import { logger } from "../../../shared/logger";
+import { syncTelecallersFromNeodove } from "../roster";
+import { sweepEnquiryEstimateLinks } from "../enquiry-links";
 import { getEpochDate, closePointsFor, getConvertersMap, EPOCH_SETTING_KEY } from "../scoring";
 import { loadCreatorIndex, loadAcceptedSnapshot, groupAcceptedByWeek, groupAcceptedByWeekFiltered, roundAgg } from "../accepted";
 import type { AcceptedSnapshot, AcceptedAgg, AcceptedEstimate } from "../accepted";
@@ -10,7 +12,6 @@ import type { AutomationContext } from "../../../modules/automation/types";
 import { DATE_RE, istDate, IN_BATCH } from "../util";
 import { cached } from "../../../shared/cache";
 import { overlayCallTags, overlayNextSteps } from "../call-tags";
-import { syncTelecallersFromNeodove } from "../roster";
 import { isValidRegion, REGIONS, tlRegions, DAILY_TL_RESELLER_TARGET, TL_LEVELS } from "../regions";
 import type { TlLevel, RegionId } from "../regions";
 import { loadDeclinedSnapshot } from "../declined";
@@ -43,6 +44,15 @@ export async function getEnquiryLeadCounts(from: string, to: string): Promise<Ma
     logger.warn({ err: e?.message }, 'enquiry lead counts read failed — leads show 0');
   }
   return out;
+}
+
+/** Daily automation run: refresh the roster, resolve pending enquiry→estimate
+ *  region links. (The old assignment dealing is retired — regions own
+ *  estimates now.) */
+export async function runLeadConversion(): Promise<{ linked: number }> {
+  await syncTelecallersFromNeodove();
+  try { await sweepEnquiryEstimateLinks(); } catch { /* non-fatal — run still completes */ }
+  return { linked: 0 };
 }
 
 /**

@@ -1,8 +1,6 @@
 // Extracted verbatim from service.ts by scripts/refactor/split-module.mjs.
 // service.ts re-exports everything public here, so existing imports keep working.
 import type { EstimateRisk } from "../risk";
-import { syncTelecallersFromNeodove } from "../roster";
-import { sweepEnquiryEstimateLinks } from "../enquiry-links";
 import { istDate } from "../util";
 
 // ── Accepted-value targets ─────────────────────────────────────────────────
@@ -42,15 +40,6 @@ export const UNATTRIBUTED_LEADS_KEY = '|unattributed';
 
 /** Sentinel owner for accepted estimates with no creator (MIS daily export). */
 export const UNATTRIBUTED_CLOSE_KEY = '|unlinked';
-
-/** Daily automation run: refresh the roster, resolve pending enquiry→estimate
- *  region links. (The old assignment dealing is retired — regions own
- *  estimates now.) */
-export async function runLeadConversion(): Promise<{ linked: number }> {
-  await syncTelecallersFromNeodove();
-  try { await sweepEnquiryEstimateLinks(); } catch { /* non-fatal — run still completes */ }
-  return { linked: 0 };
-}
 
 /** Shift a YYYY-MM-DD string by N days (UTC arithmetic on the date parts). */
 export function shiftDays(dateStr: string, days: number): string {

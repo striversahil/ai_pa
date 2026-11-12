@@ -7,8 +7,33 @@ import { TOKEN_MIN_SHARED, tokenOverlap, matchTokens, TOKEN_MIN_SCORE } from "..
 import { cacheGet, cacheSet } from "../../../shared/cache";
 import type { CopilotExecResult, CopilotDef } from "../../../copilot/types";
 import type { ToolDefinition } from "../../../shared/ai-gateway";
+import { resolveSpecKeys, matchProducts, validDate, missing, canonicalAttrKey, parseAttrValues, pageArgs, includes, rateCard, vendorCanon, aliasList, norm, matchVendors } from "./pure";
 import type { IntakeDraft, FiledRate, IntakeCtx } from "./types";
-import { matchProducts, captureSpecs, validDate, missing, canonicalAttrKey, parseAttrValues, pageArgs, includes, rateCard, vendorCanon, aliasList, norm, matchVendors } from "./pure";
+
+/**
+ * Capture vendor-worded specs against a product guide: values normalized,
+ * keys resolved to real attrKeys, leftovers appended to notes (never stored
+ * as spec keys). Pass guide=[] when the product is unknown — everything
+ * stays verbatim and `unchecked` tells the caller keys weren't validated.
+ */
+export async function captureSpecs(
+  raw: unknown,
+  guide: { attrKey: string; question: string }[],
+): Promise<{ specs: Record<string, string>; notes: string; unmapped: { key: string; value: string }[]; conflicts: string[]; unchecked: boolean }> {
+  const { normalizeSpecValue } = await import('../normalize');
+  const clean: Record<string, string> = {};
+  if (raw && typeof raw === 'object') {
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      const key = String(k).trim().slice(0, 120);
+      const val = normalizeSpecValue(v);
+      if (key && val) clean[key] = val;
+    }
+  }
+  if (!guide.length) return { specs: clean, notes: '', unmapped: [], conflicts: [], unchecked: true };
+  const r = resolveSpecKeys(clean, guide);
+  const notes = r.unmapped.map((u) => `${u.key}: ${u.value}`).join('; ').slice(0, 2000);
+  return { specs: r.mapped, notes, unmapped: r.unmapped, conflicts: r.conflicts, unchecked: false };
+}
 
 export async function ensureVendorId(d: IntakeDraft): Promise<string | null> {
   if (d.vendorId) return d.vendorId;

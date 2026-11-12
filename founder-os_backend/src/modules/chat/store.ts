@@ -2,9 +2,8 @@
 // Two implementations: D1 (Cloudflare Worker) and Prisma (Express/Postgres).
 // The Worker build imports ONLY this file; the Prisma implementation lives in
 // store-prisma.ts so the Prisma client never enters the Worker bundle.
-import { MemoryChatStore } from "./store-parts/pure";
+import { MemoryChatStore, D1ChatStore } from "./store-parts/io";
 import type { ChatStore } from "./store-parts/types";
-import { D1ChatStore } from "./store-parts/io";
 
 // Pieces split into ./store-parts/ (importable on their own); re-exported for compat.
 export type { ChatUser, ChatChannel, ChatAttachment, ChatMessage, ChatReaction, ChatStore } from "./store-parts/types";

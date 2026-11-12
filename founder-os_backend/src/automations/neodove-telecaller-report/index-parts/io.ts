@@ -197,6 +197,10 @@ export async function loadZohoByAgent(nameMap: Record<string, string>): Promise<
   return result;
 }
 
+export async function handler(ctx: AutomationContext): Promise<void> {
+  ctx.log('info', 'neodove-telecaller-report: data is pushed by GH Actions runner; nothing to execute here');
+}
+
 export async function data(ctx: AutomationContext): Promise<any> {
   const q = ctx.subject ?? {};
   let from = typeof q.from === 'string' && DATE_RE.test(q.from) ? q.from : undefined;

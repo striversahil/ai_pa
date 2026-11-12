@@ -28,8 +28,7 @@ import { asRedactedViewCache, hashItem, redactCommentList, redactEnquiryRows, st
 
 // Pieces split into ./routes-parts/ (importable on their own); re-exported for compat.
 export type { EnquiryResult, RedactOpts, ProcQueueOpts } from "./routes-parts/types";
-export { enquiryList, procurementQueueList, enquiryGetRedacted, enquiryAddRequirement, enquiryUpdate, enquiryDelete, enquiryGet, enquiryComments, enquiryAddComment } from "./routes-parts/pure";
-export { enquiryCreate, enquiryIntake } from "./routes-parts/io";
+export { enquiryList, procurementQueueList, enquiryGetRedacted, enquiryCreate, enquiryAddRequirement, enquiryUpdate, enquiryDelete, enquiryGet, enquiryComments, enquiryIntake, enquiryAddComment } from "./routes-parts/io";
 
 export {
   isRestrictedViewer,

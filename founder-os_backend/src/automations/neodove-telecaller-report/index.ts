@@ -30,8 +30,8 @@
 
 
 // Pieces split into ./index-parts/ (importable on their own); re-exported for compat.
-export { CONNECTED_CALLS_PER_DAY, LEADS_PER_AGENT_PER_DAY, computeAgentKra, handler } from "./index-parts/pure";
+export { CONNECTED_CALLS_PER_DAY, LEADS_PER_AGENT_PER_DAY, computeAgentKra } from "./index-parts/pure";
 export type { NeodoveAgentRow, AgentKra } from "./index-parts/types";
-export { invalidateNeodoveCache, getNeodoveAgentMap, getAllNeodoveAgents, getNeodoveRangeMap, getLatestNeodoveDay, data } from "./index-parts/io";
+export { invalidateNeodoveCache, getNeodoveAgentMap, getAllNeodoveAgents, getNeodoveRangeMap, getLatestNeodoveDay, handler, data } from "./index-parts/io";
 
 

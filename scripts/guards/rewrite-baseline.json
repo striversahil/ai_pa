@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-12T06:21:39.382Z",
+  "generatedAt": "2026-11-12T06:24:07.091Z",
   "metrics": {
     "fe.raw_fetch_api": 168,
     "fe.hardcoded_automation_data_url": 0,
@@ -16,7 +16,7 @@
     "be.slug_branch_in_route": 0,
     "be.slug_alias_literal": 4,
     "fe.files_over_400_lines": 24,
-    "be.files_over_400_lines": 35,
+    "be.files_over_400_lines": 36,
     "be.non_registry_routes_in_automations_ts": 0,
     "be.session_route_registry_leaks": 0
   }

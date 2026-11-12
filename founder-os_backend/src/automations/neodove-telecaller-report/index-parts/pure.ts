@@ -1,6 +1,5 @@
 // Extracted verbatim from index.ts by scripts/refactor/split-module.mjs.
 // index.ts re-exports everything public here, so existing imports keep working.
-import type { AutomationContext } from "../../../modules/automation/types";
 import type { NeodoveAgentRow, TrafficLight, AgentKra } from "./types";
 
 export const CONNECTED_CALLS_PER_DAY = 120;
@@ -124,8 +123,4 @@ export function computeAgentKra(
     zohoEstimates: zoho?.estimates ?? 0,
     zohoPipelineValue: zoho?.value ?? 0,
   };
-}
-
-export async function handler(ctx: AutomationContext): Promise<void> {
-  ctx.log('info', 'neodove-telecaller-report: data is pushed by GH Actions runner; nothing to execute here');
 }

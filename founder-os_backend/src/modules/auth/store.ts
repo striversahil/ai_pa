@@ -1,6 +1,5 @@
-import { MemoryAuthStore } from "./store-parts/pure";
+import { MemoryAuthStore, D1AuthStore } from "./store-parts/io";
 import type { AuthStore } from "./store-parts/types";
-import { D1AuthStore } from "./store-parts/io";
 
 // Pieces split into ./store-parts/ (importable on their own); re-exported for compat.
 export type { AuthStore } from "./store-parts/types";

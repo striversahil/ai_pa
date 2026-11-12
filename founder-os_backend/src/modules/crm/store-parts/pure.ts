@@ -3,15 +3,6 @@
 import type { CrmItemRow, ItemState, CrmOrderRow, Lifecycle } from "../types";
 import type { ProofFile, ProofDocSlot, ScoreStage, SyncedOrder } from "./types";
 
-/** Phase 4a dual-write: project the touched order spine into core (never throws). */
-export async function mirrorOrderTouch(orderId: string): Promise<void> {
-  try {
-    const { mirrorOrders } = await import('../../core/orders');
-    const id = String(orderId ?? '');
-    if (id) await mirrorOrders([id]);
-  } catch { /* non-fatal */ }
-}
-
 // ── Mapping ────────────────────────────────────────────────────────────────
 
 export const iso = (v: any): string | null => {

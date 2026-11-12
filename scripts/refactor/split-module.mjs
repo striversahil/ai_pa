@@ -118,7 +118,10 @@ for (const u of [...units, ...[...unitByName.values()].filter((x) => x.keep)]) {
   for (const n of u.names) refs.delete(n);
   u._refs = refs;
   u.hasJsx = flags.jsx;
-  u.touchesDb = [...refs].some((r) => DB_HINTS.has(r)) || [...refs].some((r) => importsByLocal.get(r) && /prisma|store|cache|gateway|engine|service|d1|context|storage|repository|queue|outbound|whatsapp\/|fetch-page|web-search|google_sheets|ai\//i.test(importsByLocal.get(r).spec));
+  const srcText = u.stmts.map((st) => text.slice(st.getStart(), st.getEnd())).join('\n');
+  // Async/await/then = I/O for classification (a pure.ts must be safe to call
+  // without a database, cache or network).
+  u.touchesDb = /\basync\b|\bawait\b|\.then\(/.test(srcText) || [...refs].some((r) => DB_HINTS.has(r)) || [...refs].some((r) => importsByLocal.get(r) && /prisma|store|cache|gateway|engine|service|d1|context|storage|repository|queue|outbound|whatsapp\/|fetch-page|web-search|google_sheets|ai\//i.test(importsByLocal.get(r).spec));
   for (const r of refs) { const t = unitByName.get(r); if (t && t !== u) u.deps.add(t); }
 }
 // Stmts that stay (default export, side effects) reference names too: those can still be extracted (main imports them).

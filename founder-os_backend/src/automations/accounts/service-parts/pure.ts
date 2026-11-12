@@ -287,15 +287,6 @@ export function missStreak(t: any, anchor: string, unresolved: Set<string>): num
   return n;
 }
 
-/** No-op since the per-day model: past unresolved rows are NOT rewritten.
- *  They stay pending/inprogress on their own day and read as "not done" in
- *  the Incomplete tab. Legacy `overdue` rows (materialised before this
- *  change) are still treated as incomplete at serve time. Kept for the
- *  rollover call-site compat. */
-export async function flagOverdue(_todayStr: string): Promise<number> {
-  return 0;
-}
-
 // ── MIS export: past-N-days full ledger ─────────────────────────────────────
 // One row per (date × due task): status, who, remark, attachment links.
 // Read-only (never creates instances) — a complete view of what was

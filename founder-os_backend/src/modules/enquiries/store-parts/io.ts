@@ -1,9 +1,106 @@
 // Extracted verbatim from store.ts by scripts/refactor/split-module.mjs.
 // store.ts re-exports everything public here, so existing imports keep working.
-import { encodeEnquiryCursor, istDayKey, nextDailyNo } from "../types";
+import { istDayKey, encodeEnquiryCursor, nextDailyNo } from "../types";
 import type { EnquiryStore, Enquiry, EnquiryComment } from "../types";
-import { normalizeVisibility } from "../parse";
-import { mapEnquiry, mapComment, sanitize, newId } from "./pure";
+import { composeSearchText, normalizeVisibility } from "../parse";
+import { newId, mapEnquiry, mapComment, sanitize } from "./pure";
+
+// ── In-memory (dev / fallback) ────────────────────────────────────────────────
+export class MemoryEnquiryStore implements EnquiryStore {
+  enquiries: Enquiry[] = [];
+  comments: EnquiryComment[] = [];
+  seq = 1;
+  private dailyCounters = new Map<string, number>();
+
+  async allocateDailyNo(now: Date = new Date()): Promise<number> {
+    const key = istDayKey(now);
+    const next = (this.dailyCounters.get(key) ?? 0) + 1;
+    this.dailyCounters.set(key, next);
+    return next;
+  }
+
+  async listEnquiries() {
+    return [...this.enquiries].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+  async listEnquiriesPaged(offset: number, limit: number) {
+    const all = [...this.enquiries].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return { rows: all.slice(offset, offset + limit), total: all.length };
+  }
+  async listEnquiriesCursor(cursor: { createdAt: string; id: string } | null, limit: number) {
+    const lim = Math.min(100, Math.max(1, Math.floor(limit)));
+    const all = [...this.enquiries].sort(
+      (a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id),
+    );
+    let start = 0;
+    if (cursor) {
+      const i = all.findIndex(
+        (e) => e.createdAt < cursor.createdAt || (e.createdAt === cursor.createdAt && e.id < cursor.id),
+      );
+      start = i === -1 ? all.length : i;
+    }
+    const slice = all.slice(start, start + lim + 1);
+    const rows = slice.slice(0, lim);
+    const last = rows[rows.length - 1];
+    return {
+      rows,
+      nextCursor: slice.length > lim && last ? encodeEnquiryCursor(last.createdAt, last.id) : null,
+    };
+  }
+  async listCommentsFor(enquiryIds: string[]) {
+    const set = new Set(enquiryIds);
+    return this.comments.filter((c) => set.has(c.enquiryId)).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+  async searchEnquiries(query: string, limit: number) {
+    const lim = Math.min(50, Math.max(1, Math.floor(limit)));
+    const q = String(query ?? "").trim().toLowerCase();
+    const num = /^\d{1,9}$/.test(q) ? Number(q) : null;
+    const hit = (e: Enquiry) => {
+      if (num !== null && Number((e as any)?.dailyNo) === num) return true;
+      // Same identity mark as the D1 searchText column (composed on the fly
+      // here — the memory store is dev-only, no write path maintains it).
+      return composeSearchText(e).includes(q);
+    };
+    const all = [...this.enquiries]
+      .filter(hit)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
+    const slice = all.slice(0, lim + 1);
+    return { rows: slice.slice(0, lim), hasMore: slice.length > lim };
+  }
+  async getStaffAttribution() {
+    // Memory runtime has no roster — Field Staff referrals are rejected there.
+    return null;
+  }
+  async getEnquiry(id: string) {
+    return this.enquiries.find((e) => e.id === id) ?? null;
+  }
+  async createEnquiry(data: Omit<Enquiry, "id" | "createdAt" | "updatedAt">) {
+    const now = new Date().toISOString();
+    const e: Enquiry = { ...data, id: newId(), createdAt: now, updatedAt: now };
+    this.enquiries.push(e);
+    return e;
+  }
+  async updateEnquiry(id: string, updates: Partial<Omit<Enquiry, "id" | "createdAt">>) {
+    const i = this.enquiries.findIndex((e) => e.id === id);
+    if (i === -1) return null;
+    this.enquiries[i] = { ...this.enquiries[i], ...updates, updatedAt: new Date().toISOString() };
+    return this.enquiries[i];
+  }
+  async deleteEnquiry(id: string) {
+    this.enquiries = this.enquiries.filter((e) => e.id !== id);
+    this.comments = this.comments.filter((c) => c.enquiryId !== id);
+  }
+  async listComments(enquiryId: string) {
+    return this.comments.filter((c) => c.enquiryId === enquiryId).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+  async addComment(data: Omit<EnquiryComment, "id" | "createdAt">) {
+    const c: EnquiryComment = { ...data, id: newId(), createdAt: new Date().toISOString() };
+    this.comments.push(c);
+    return c;
+  }
+  async listAllComments() {
+    return this.comments;
+  }
+}
 
 // ── D1 (Cloudflare Worker) ───────────────────────────────────────────────────
 export class D1EnquiryStore implements EnquiryStore {

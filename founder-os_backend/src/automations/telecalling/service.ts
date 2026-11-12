@@ -50,9 +50,9 @@ import {
 } from './targets';
 
 // Pieces split into ./service-parts/ (importable on their own); re-exported for compat.
-export { toCloseMultiplier, UNATTRIBUTED_LEADS_KEY, UNATTRIBUTED_CLOSE_KEY, runLeadConversion, periodRange, periodPrefix } from "./service-parts/pure";
+export { toCloseMultiplier, UNATTRIBUTED_LEADS_KEY, UNATTRIBUTED_CLOSE_KEY, periodRange, periodPrefix } from "./service-parts/pure";
+export { runLeadConversion, computeTelecallingDaily, getTelecallingDashboardData, computeTelecallingDashboardData, listSalesHolidays, markSalesHoliday, unmarkSalesHoliday } from "./service-parts/io";
 export type { TelecallingDailyRow, SalesHoliday } from "./service-parts/types";
-export { computeTelecallingDaily, getTelecallingDashboardData, computeTelecallingDashboardData, listSalesHolidays, markSalesHoliday, unmarkSalesHoliday } from "./service-parts/io";
 
 //── Facade re-exports (Phase-R split) ─────────────────────────────────────────
 // service.ts keeps the region run + leaderboard; every name moved to a sibling
