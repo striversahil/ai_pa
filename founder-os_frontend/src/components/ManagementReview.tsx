@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLiveDashboard, useLiveEvent } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
 import ManagementRatesPanel from "@/components/ManagementRatesPanel";
@@ -13,48 +13,11 @@ import { matchesEnquiryQuery } from "@/enquiry/search";
 import { toEnquiry } from "@/enquiry/normalize";
 import { enquirySalesSignal } from "@/enquiry/sales-signal";
 import { preserveItemMedia } from "@/enquiry/merge";
+import { isManagementPending } from "./management-review/helpers";
+import { PageJumper } from "./management-review/PageJumper";
 
-/** Only correct-spec, rate-UNAVAILABLE, rated-but-unfinalized items need a
- *  decision — flagged items stay with Sales until the spec is fixed, then
- *  flow back here. Rate-available items skip the loop entirely. */
-export function isManagementPending(e: Enquiry): boolean {
-  return isManagementPendingEnquiry(e);
-}
-
-// Numbered page jumper (History footer): ‹ Prev · 1 … 4 5 6 … 12 · Next ›.
-// Windowed to 7 slots so it stays compact at hundreds of pages. Pages over
-// the COMPLETE local history set — every row, however old, no 100-row cap.
-function pageWindow(current: number, total: number): Array<number | "…"> {
-  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
-  const set = new Set<number>([1, 2, current - 1, current, current + 1, total - 1, total]);
-  const nums = [...set].filter((n) => n >= 1 && n <= total).sort((a, b) => a - b);
-  const out: Array<number | "…"> = [];
-  for (let i = 0; i < nums.length; i++) {
-    if (i > 0 && nums[i] - nums[i - 1] > 1) out.push("…");
-    out.push(nums[i]);
-  }
-  return out;
-}
-
-function PageJumper({ page, totalPages, onJump }: { page: number; totalPages: number; onJump: (n: number) => void }) {
-  if (totalPages <= 1) return null;
-  const btn = "px-2.5 py-1 rounded-lg border border-[var(--border-card)] text-xs font-bold cursor-pointer bg-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]";
-  const btnSel = "px-2.5 py-1 rounded-lg border-0 text-xs font-extrabold cursor-pointer bg-[var(--color-brand-indigo)] text-white";
-  return (
-    <div className="flex items-center gap-1">
-      <button type="button" disabled={page <= 1} onClick={() => onJump(page - 1)} className={`${btn} disabled:opacity-40`}>‹ Prev</button>
-      {pageWindow(page, totalPages).map((p, i) =>
-        p === "…" ? (
-          <span key={`gap-${i}`} className="px-1 text-xs text-[var(--text-tertiary)]">…</span>
-        ) : (
-          <button key={p} type="button" onClick={() => onJump(p)}
-            className={p === page ? btnSel : btn} aria-current={p === page ? "page" : undefined}>{p}</button>
-        ),
-      )}
-      <button type="button" disabled={page >= totalPages} onClick={() => onJump(page + 1)} className={`${btn} disabled:opacity-40`}>Next ›</button>
-    </div>
-  );
-}
+// Pieces split into ./management-review/ (importable on their own); re-exported for compat.
+export { isManagementPending } from "./management-review/helpers";
 
 // Management Review dashboard (mounted as the `enquiry-management`
 // automation). TABULAR with queue tabs (Active / Pending from Sales /

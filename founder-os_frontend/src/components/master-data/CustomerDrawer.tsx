@@ -1,12 +1,7 @@
 "use client";
 
-// CustomerDrawer — the full record for one customer, with inline editing for
-// appointed editors. Region / sub-area / state stay manager-only (ownership is
-// the sales-head's call), matching the server's MANAGER_ONLY_FIELDS. Client
-// type is editor-assignable but value-constrained: the base must come from the
-// sales-head's allowed list (ClientTypeRule), the tag is a free qualifier.
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import type { CustomerPatch, DuplicateReview, MasterCustomer, MasterCustomerDetail, TypeBaseEntry } from "@/master-data/types";
+import { useEffect, useMemo, useState } from "react";
+import type { DuplicateReview, MasterCustomer, MasterCustomerDetail, TypeBaseEntry } from "@/master-data/types";
 import { getMasterCustomer, getTypeBases, patchMasterCustomer, deleteMasterCustomer, setDuplicateReview } from "@/master-data/api";
 import {
   REVIEW_LABELS, countHint, formatDate, formatPhone, initials,
@@ -16,80 +11,10 @@ import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import {
   Drawer, Field, GhostButton, PrimaryButton, ReadOnlyValue, SectionTitle, inputClass,
 } from "./ui";
-
-interface Draft {
-  displayName: string;
-  companyName: string;
-  customerType: string;
-  typeTag: string;
-  contactPerson: string;
-  designation: string;
-  phones: string;
-  emails: string;
-  gstin: string;
-  pincode: string;
-  cityVerified: string;
-  billingAddress: string;
-  status: string;
-  notes: string;
-  region: string;
-  subArea: string;
-  state: string;
-}
-
-const DRAFT_KEYS: Array<keyof Draft> = [
-  "displayName", "companyName", "customerType", "typeTag", "contactPerson", "designation", "phones", "emails",
-  "gstin", "pincode", "cityVerified", "billingAddress", "status", "notes", "region",
-  "subArea", "state",
-];
-
-const MANAGER_KEYS = new Set<keyof Draft>(["region", "subArea", "state"]);
-
-const REGIONS = ["R1", "R2", "R3", "R4"];
-
-function toDraft(c: MasterCustomerDetail): Draft {
-  return {
-    displayName: c.name,
-    companyName: c.company,
-    customerType: c.typeBase,
-    typeTag: c.typeTag,
-    contactPerson: c.contact,
-    designation: c.designation,
-    phones: c.phones.join("\n"),
-    emails: c.emails.join("\n"),
-    gstin: c.gstin,
-    pincode: c.pincode,
-    cityVerified: c.cityVerified,
-    billingAddress: c.billingAddress,
-    status: c.status,
-    notes: c.notes,
-    region: c.region,
-    subArea: c.subArea,
-    state: c.state,
-  };
-}
-
-function draftToPatch(draft: Draft, original: Draft, canManage: boolean): CustomerPatch {
-  const patch: Record<string, unknown> = {};
-  for (const key of DRAFT_KEYS) {
-    if (draft[key] === original[key]) continue;
-    if (MANAGER_KEYS.has(key) && !canManage) continue;
-    if (key === "phones") {
-      const list = draft.phones.split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean);
-      patch.phones = list;
-    } else if (key === "emails") {
-      const list = draft.emails.split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean);
-      patch.emails = list;
-    } else {
-      patch[key] = draft[key];
-    }
-  }
-  return patch as CustomerPatch;
-}
-
-function ChipRow({ children }: { children: ReactNode }) {
-  return <div className="flex flex-wrap items-center gap-2">{children}</div>;
-}
+import type { Draft } from "./customer-drawer/types";
+import { toDraft, draftToPatch, REGIONS } from "./customer-drawer/helpers";
+import { ChipRow } from "./customer-drawer/ChipRow";
+import { Pill } from "./customer-drawer/Pill";
 
 export default function CustomerDrawer({
   customerId, seed, canEdit, canManage, canDelete, onClose, onSaved, onDeleted,
@@ -532,31 +457,4 @@ export default function CustomerDrawer({
       </div>
     </Drawer>
   );
-}
-
-function StatusPill({ status }: { status: string }) {
-  const active = String(status ?? "").toLowerCase() !== "inactive";
-  return (
-    <span
-      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-        active
-          ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-          : "bg-zinc-500/10 text-zinc-500 dark:text-zinc-400"
-      }`}
-    >
-      <span className={`h-1.5 w-1.5 rounded-full ${active ? "bg-emerald-500" : "bg-zinc-400"}`} />
-      {status}
-    </span>
-  );
-}
-
-function Pill({ tone, label }: { tone: "rose" | "amber" | "zinc" | "indigo" | "emerald"; label: string }) {
-  const tones = {
-    rose: "bg-rose-500/10 text-rose-600 dark:text-rose-400",
-    amber: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-    zinc: "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400",
-    indigo: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",
-    emerald: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-  } as const;
-  return <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${tones[tone]}`}>{label}</span>;
 }

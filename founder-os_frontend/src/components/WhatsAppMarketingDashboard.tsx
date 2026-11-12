@@ -1,68 +1,12 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useLiveRefresh } from "@/hooks/useLiveEvents";
 import { workspaceDataUrl } from "@/workspaces/api";
-
-type LeadStats = {
-  total: number;
-  sent: number;
-  delivered: number;
-  read: number;
-  failed: number;
-  pending: number;
-};
-
-type Campaign = {
-  id: string;
-  name: string;
-  description: string | null;
-  type: string;
-  provider: string;
-  status: string;
-  scheduleType: string;
-  scheduledAt: string | null;
-  cron: string | null;
-  timezone: string;
-  templateName: string | null;
-  messageBody: string | null;
-  mediaUrl: string | null;
-  enabled: boolean;
-  lastRunAt: string | null;
-  runCount: number;
-  stats: LeadStats;
-  recentRuns: { id: string; status: string; total: number; sent: number; failed: number; startedAt: string }[];
-};
-
-type DashboardData = {
-  kpis: {
-    campaigns: number;
-    active: number;
-    draft: number;
-    paused: number;
-    completed: number;
-    totalLeads: number;
-    providers: { waba: { configured: boolean } };
-  };
-  campaigns: Campaign[];
-  recentRuns: { id: string; status: string; total: number; sent: number; failed: number; startedAt: string }[];
-};
-
-const statusColor: Record<string, string> = {
-  active: "text-emerald-300 bg-emerald-500/10 border-emerald-500/30",
-  draft: "text-zinc-700 dark:text-zinc-300 bg-zinc-500/10 border-zinc-500/30",
-  paused: "text-amber-300 bg-amber-500/10 border-amber-500/30",
-  completed: "text-sky-300 bg-sky-500/10 border-sky-500/30",
-  archived: "text-zinc-600 dark:text-zinc-500 bg-zinc-500/5 border-zinc-500/20",
-};
-
-const leadStatusColor: Record<string, string> = {
-  pending: "text-zinc-500 dark:text-zinc-400",
-  sent: "text-sky-300",
-  delivered: "text-emerald-300",
-  read: "text-emerald-400",
-  failed: "text-rose-400",
-};
+import type { DashboardData, Campaign } from "./whats-app-marketing-dashboard/types";
+import { Kpi } from "./whats-app-marketing-dashboard/Kpi";
+import { statusColor, leadStatusColor } from "./whats-app-marketing-dashboard/helpers";
+import { MiniStat } from "./whats-app-marketing-dashboard/MiniStat";
 
 export default function WhatsAppMarketingDashboard() {
   const [data, setData] = useState<DashboardData | null>(null);
@@ -489,24 +433,6 @@ export default function WhatsAppMarketingDashboard() {
           </table>
         </div>
       )}
-    </div>
-  );
-}
-
-function Kpi({ label, value, accent = "text-zinc-900 dark:text-zinc-100" }: { label: string; value: number; accent?: string }) {
-  return (
-    <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-900/60 p-4">
-      <div className={`text-2xl font-semibold ${accent}`}>{value}</div>
-      <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-500">{label}</div>
-    </div>
-  );
-}
-
-function MiniStat({ label, value, cls = "text-zinc-700 dark:text-zinc-300" }: { label: string; value: number; cls?: string }) {
-  return (
-    <div className="rounded-lg bg-zinc-50/40 dark:bg-zinc-900/40 px-2 py-1.5">
-      <div className={`text-sm font-medium ${cls}`}>{value}</div>
-      <div className="text-[10px] text-zinc-600 dark:text-zinc-500">{label}</div>
     </div>
   );
 }

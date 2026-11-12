@@ -10,82 +10,10 @@ import { useLiveDashboard } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
 import ProductCopilot from "./ProductCopilot";
 import { workspaceDataUrl } from "@/workspaces/api";
-
-// Mirror: founder-os_backend/src/automations/product-line/types.ts
-interface ProductRow { id: string; category: string; name: string; aliases: string[]; active: boolean; guideCount: number; rateCount: number; }
-interface GuideRow { id: string; productId: string; attrKey: string; question: string; guideNote: string | null; sortOrder: number; isRequired: boolean; condition: Record<string, unknown> | null; active: boolean; }
-interface VendorRow { id: string; name: string; contactPerson: string | null; contactPhone1: string | null; contactPhone2: string | null; location: string | null; address: string | null; yearEstablished: number | null; vendorType: string; active: boolean; rateCount: number; }
-interface RateRow {
-  id: string; vendorId: string; vendorName: string | null; vendorType: string | null;
-  productId: string | null; productName: string | null; attrKey: string; attrValues: Record<string, string>;
-  pricePerUnit: number | null; unit: string; discountPercent: number | null; baseRate: number | null;
-  weightPerUnit: number | null; packageQty: string | null; packageDims: string | null;
-  moq: string | null; deliveryDays: number | null; quotedAt: string; enquiryRef: string | null; notes?: string | null; missingSpecs: string[] | null; active: boolean;
-  imageUrl: string | null; videoUrl: string | null;
-}
-interface Payload { products: ProductRow[]; guide: Record<string, GuideRow[]>; vendors: VendorRow[]; rates: RateRow[]; }
-interface Detail { product: ProductRow & { createdAt: string }; guide: GuideRow[]; rates: RateRow[]; }
-
-/* ── Design tokens (single place, theme-aware via app CSS vars) ── */
-const panel = "bg-[var(--bg-card)] border border-[var(--border-card)] rounded-2xl";
-const field = "w-full px-3 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl outline-none focus:border-brand-indigo text-sm text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] transition-colors";
-const label = "block text-[11px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]";
-const primaryBtn = "inline-flex items-center gap-1.5 px-3.5 py-2 bg-brand-indigo text-white font-bold text-xs rounded-xl hover:opacity-90 disabled:opacity-40 cursor-pointer border-0 transition-opacity";
-const ghostBtn = "inline-flex items-center gap-1.5 px-3 py-1.5 border border-[var(--border-card)] hover:bg-[var(--bg-input)] font-bold text-xs rounded-xl cursor-pointer bg-transparent text-[var(--text-primary)] transition-colors";
-const dangerBtn = "inline-flex items-center gap-1.5 px-3 py-1.5 font-bold text-xs rounded-xl cursor-pointer border border-[color-mix(in_srgb,var(--color-danger)_30%,transparent)] text-[var(--color-danger)] hover:bg-[var(--color-danger)] hover:text-white bg-transparent transition-colors";
-const iconBtn = "inline-flex items-center justify-center h-7 w-7 rounded-lg text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-input)] cursor-pointer bg-transparent border-0 transition-colors";
-
-async function api(path: string, method: string, body?: unknown): Promise<void> {
-  const res = await fetch(path, {
-    method,
-    headers: { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  if (!res.ok) {
-    let msg = `HTTP ${res.status}`;
-    try { msg = String((await res.json())?.error ?? msg); } catch { /* keep */ }
-    throw new Error(msg);
-  }
-}
-
-const fmtINR = (n: number | null | undefined): string =>
-  n == null ? "—" : `₹${Number(n).toLocaleString("en-IN")}`;
-
-/* ── Client-side form validation (backend re-validates; the UI must never
- *  send what it can already tell is wrong, and never surface raw DB errors) ── */
-const isHttpUrl = (s: string): boolean => /^https?:\/\/.+/i.test(s.trim());
-/** Photo values the backend accepts: uploaded KV path or https URL. */
-const isPhotoValue = (s: string): boolean => {
-  const t = s.trim();
-  return t !== "" && (isHttpUrl(t) || t.startsWith("/api/chat/files/"));
-};
-const isNum = (s: string): boolean => s.trim() !== "" && Number.isFinite(Number(s));
-
-const shortDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return isNaN(d.getTime()) ? "—" : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
-};
-
-/* Stable muted hue per category (dot accents, not gradients). */
-const HUES = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#a855f7", "#14b8a6", "#f97316"];
-function hueFor(s: string): string {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-  return HUES[h % HUES.length];
-}
-
-function attrLabel(key: string, guide: GuideRow[]): string {
-  const hit = guide.find((g) => g.attrKey === key);
-  if (hit) return hit.question.length > 64 ? hit.question.slice(0, 64) + "…" : hit.question;
-  return key.replace(/_/g, " ");
-}
-
-function specSummary(r: RateRow): string {
-  const vals = Object.values(r.attrValues ?? {});
-  if (!vals.length) return r.unit || "standard spec";
-  return vals.slice(0, 2).join(" · ");
-}
+import type { Payload, Detail, ProductRow, GuideRow, VendorRow, RateRow } from "./product-line-dashboard/types";
+import { api, panel, ghostBtn, isNum, isPhotoValue, isHttpUrl, fmtINR, attrLabel, shortDate, primaryBtn, iconBtn, hueFor, specSummary, field, dangerBtn, label } from "./product-line-dashboard/helpers";
+import { ModalShell } from "./product-line-dashboard/ModalShell";
+import { ModalFoot } from "./product-line-dashboard/ModalFoot";
 
 export default function ProductLineDashboard() {
   const { me } = useAuth();
@@ -1026,34 +954,6 @@ export default function ProductLineDashboard() {
       )}
       {/* Product-line copilot: same AI interface as sales, own tool set (read-only) */}
       <ProductCopilot />
-    </div>
-  );
-}
-
-/* ── Shared modal chrome ── */
-function ModalShell({ title, onClose, narrow, children }: { title: string; onClose: () => void; narrow?: boolean; children: React.ReactNode }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/55 backdrop-blur-[2px]" onClick={onClose}>
-      <div className={`${panel} w-full ${narrow ? "max-w-sm" : "max-w-md"} max-h-[90vh] overflow-y-auto`} onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center gap-2 px-5 py-4 border-b border-[var(--border-card)]/70 sticky top-0 bg-[var(--bg-card)] rounded-t-2xl">
-          <h3 className="flex-1 font-extrabold tracking-tight text-[var(--text-primary)]">{title}</h3>
-          <button type="button" onClick={onClose} aria-label="Close" className={iconBtn}><X size={16} /></button>
-        </div>
-        <div className="px-5 py-4 space-y-3.5">{children}</div>
-      </div>
-    </div>
-  );
-}
-
-function ModalFoot({ onCancel, onSave, busy, disabled, danger }: { onCancel: () => void; onSave: () => void; busy: boolean; disabled?: boolean; danger?: string }) {
-  return (
-    <div className="flex justify-end gap-2 pt-1">
-      <button type="button" onClick={onCancel} className={ghostBtn}>Cancel</button>
-      {danger ? (
-        <button type="button" disabled={busy || disabled} onClick={onSave} className={dangerBtn}>{busy ? "Working…" : danger}</button>
-      ) : (
-        <button type="button" disabled={busy || disabled} onClick={onSave} className={primaryBtn}><Check size={14} /> {busy ? "Saving…" : "Save"}</button>
-      )}
     </div>
   );
 }

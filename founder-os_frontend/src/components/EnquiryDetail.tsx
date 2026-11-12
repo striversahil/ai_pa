@@ -1,5 +1,5 @@
-import React, { useState, useRef } from "react";
-import { Agent, Enquiry, Comment, EnquiryItem, enquiryLabel } from "../types";
+import { useState, useRef } from "react";
+import { EnquiryItem, enquiryLabel } from "../types";
 import ChatbaseCopilot from "./ChatbaseCopilot";
 import { useIntake } from "../hooks/useIntake";
 import ClientProfile from "./ClientProfile";
@@ -8,34 +8,7 @@ import Modal from "./Modal";
 import ItemBoxList, { blankItem } from "./ItemBoxList";
 import { companiesDiffer } from "@/enquiry/company";
 import { isOpenSpecFlag } from "@/enquiry/queue";
-
-interface EnquiryDetailProps {
-  selectedEnquiry: Enquiry;
-  agents: Agent[];
-  currentAgent: Agent;
-  comments: Comment[];
-  onUpdateStatus: (id: string, newStatus: Enquiry["status"]) => void;
-  onUpdateAgent: (id: string, newAgentId: string) => void;
-  onAddComment: (comment: Comment) => void;
-  onUpdateItems?: (id: string, items: EnquiryItem[] | ((prev: EnquiryItem[]) => EnquiryItem[])) => Promise<any> | void;
-  /** Server-side append of an "Add via AI" raw requirement (preferred — never echoes stale items). */
-  onAddRequirement?: (id: string, text: string, imageUrls?: string[]) => Promise<any> | void;
-  /** Accept a price-memory suggestion: marks the item rate-available (skips the loop). */
-  onAcceptSuggestion?: (id: string, itemIndex: number) => Promise<void>;
-  onMarkSent?: (id: string) => Promise<void>;
-  /** Reopen a sent enquiry for additional scope (any team member). */
-  onReviseSent?: (id: string) => Promise<void>;
-  /** Last save failure from useEnquiryData (bannered — never a silent revert). */
-  saveError?: string | null;
-  onDismissSaveError?: () => void;
-  onDeleteEnquiry: (id: string) => void;
-  onOpenEdit: (enq: Enquiry) => void;
-  onBack: () => void;
-  onOpenLightbox: (url: string, list?: string[], idx?: number) => void;
-  redacted?: boolean;
-  /** Vendor-rate visibility forwarded to SpecificationsSection. */
-  ratesMode?: "none" | "edit" | "view";
-}
+import type { EnquiryDetailProps } from "./enquiry-detail/types";
 
 export default function EnquiryDetail({
   selectedEnquiry,

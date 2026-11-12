@@ -1,21 +1,14 @@
 "use client";
 
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { useAuth } from "@/auth/AuthContext";
 import { USER_ADMIN_SCOPE } from "@/auth/permissions";
 import { POSITION_META, POSITION_ORDER, displayNameOf, positionOf, type PositionInfo } from "@/auth/org-positions";
 import AdminTable from "./admin/AdminTable";
 import { Drawer, UserDrawer, RoleDrawer } from "./admin/AdminDrawers";
 import type { ScopeRow, RoleRow, UserRow, DashboardRow } from "./admin/AdminDrawers";
-
-type Tab = "users" | "roles" | "scopes";
-
-function fmtDate(iso: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ""));
-  if (!m) return "—";
-  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  return `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]} ${m[1]}`;
-}
+import type { Tab } from "./user-admin/types";
+import { fmtDate } from "./user-admin/helpers";
 
 export default function UserAdmin() {
   const { me, refresh } = useAuth();

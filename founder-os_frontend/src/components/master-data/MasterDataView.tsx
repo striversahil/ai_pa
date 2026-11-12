@@ -9,20 +9,7 @@
 // by the drawer. Subscribes ONLY to the typed `master-data` live event —
 // the payload must not reload on every unrelated `data-changed` broadcast.
 import { useEffect, useMemo, useState } from "react";
-import {
-  Download,
-  Inbox,
-  Receipt,
-  RefreshCw,
-  ScanSearch,
-  Search,
-  SlidersHorizontal,
-  Upload,
-  UserCog,
-  Users,
-  type LucideIcon,
-} from "lucide-react";
-import dynamic from "next/dynamic";
+import { Download, Inbox, Receipt, RefreshCw, ScanSearch, Search, SlidersHorizontal, Upload, UserCog, Users } from "lucide-react";
 import { useLiveQuery } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
 import { getCapabilities, getMasterData } from "@/master-data/api";
@@ -36,20 +23,8 @@ import { formatDate, pct, regionLabel, relativeTime } from "@/master-data/normal
 import { Chip, FilterSelect, GhostButton, PrimaryButton } from "./ui";
 import CustomersTab from "./CustomersTab";
 import DuplicatesTab from "./DuplicatesTab";
-
-const CustomerDrawer = dynamic(() => import("./CustomerDrawer"), { ssr: false });
-const EditorsPanel = dynamic(() => import("./EditorsPanel"), { ssr: false });
-const ImportModal = dynamic(() => import("./ImportModal"), { ssr: false });
-
-const DUPLICATE_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: "", label: "All rows" },
-  { value: "all", label: "All duplicates" },
-  { value: "open", label: "Needs review" },
-  { value: "reviewed", label: "Reviewed" },
-  { value: "High", label: "High confidence" },
-  { value: "Medium", label: "Medium confidence" },
-  { value: "Review", label: "Review tier" },
-];
+import { Kpi } from "./master-data-view/Kpi";
+import { DUPLICATE_OPTIONS, CustomerDrawer, EditorsPanel, ImportModal } from "./master-data-view/helpers";
 
 export default function MasterDataView({ onStats }: { onStats?: (total: number) => void }) {
   const { me } = useAuth();
@@ -402,25 +377,6 @@ export default function MasterDataView({ onStats }: { onStats?: (total: number) 
           <p className="mt-0.5 text-sm font-bold text-zinc-900 dark:text-zinc-100">{toast.message}</p>
         </div>
       )}
-    </div>
-  );
-}
-
-function Kpi({ label, value, accent, icon: Icon, sub }: {
-  label: string;
-  value: number | string;
-  accent: string;
-  icon: LucideIcon;
-  sub: string;
-}) {
-  return (
-    <div className="rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/60">
-      <div className="flex items-center justify-between">
-        <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">{label}</span>
-        <Icon className={`h-3.5 w-3.5 ${accent}`} />
-      </div>
-      <div className={`mt-1 text-xl font-semibold tabular-nums ${accent}`}>{typeof value === "number" ? value.toLocaleString("en-IN") : value}</div>
-      <div className="mt-0.5 truncate text-[11px] text-zinc-500" title={sub}>{sub}</div>
     </div>
   );
 }

@@ -1,4 +1,5 @@
 "use client";
+
 import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   NAV_ITEMS,
@@ -15,65 +16,12 @@ import {
   useSidebarFloat,
   useSidebarOrder,
 } from "@/hooks/useSidebarCustom";
-import { APP_THEMES, APP_ACCENTS, type AppThemeId } from "@/hooks/useTheme";
-import {
-  LayoutGrid,
-  FileText,
-  Tag,
-  PhoneCall,
-  Radio,
-  Megaphone,
-  Table2,
-  Bot,
-  PackageCheck,
-  ClipboardCheck,
-  Crown,
-  Palette,
-  Check,
-  TrendingUp,
-  Pin,
-  PinOff,
-  RotateCcw,
-  type LucideIcon,
-} from "lucide-react";
+import { APP_THEMES, APP_ACCENTS } from "@/hooks/useTheme";
+import { LayoutGrid, Palette, Check, Pin, PinOff, RotateCcw } from "lucide-react";
+import type { SidebarProps, SidebarRow } from "./sidebar/types";
+import { DASH_ICONS } from "./sidebar/helpers";
+
 export type { ViewType } from "./nav";
-
-interface SidebarRow {
-  key: string;
-  label: string;
-  icon: LucideIcon;
-  target: NavTarget;
-  isActive: boolean;
-  isDashboard: boolean;
-}
-
-const DASH_ICONS: Record<string, LucideIcon> = {
-  "zoho-sent-analyzer": FileText,
-  "dpp-prices-dashboard": Tag,
-  "neodove-telecaller-report": PhoneCall,
-  "wa-engine-monitor": Radio,
-  "whatsapp-marketing": Megaphone,
-  "whatsapp-autopilot": Bot,
-  "sheet-analysis": Table2,
-  sales: TrendingUp,
-  crm: PackageCheck,
-  "enquiry-procurement": ClipboardCheck,
-  "enquiry-management": Crown,
-  "telecalling-agent-analysis": Table2,
-};
-
-interface SidebarProps {
-  activeView: ViewType;
-  activeSlug: string | null;
-  onNavigate: (target: NavTarget) => void;
-  theme: AppThemeId;
-  onSetTheme: (id: AppThemeId) => void;
-  accent: string | null;
-  onSetAccent: (value: string | null) => void;
-  me: { email: string; name: string; picture: string | null } | null;
-  onLogout: () => void;
-  canView: (view: string) => boolean;
-}
 
 /**
  * Collapsed icon rail that expands to the full sidebar on hover (or when a

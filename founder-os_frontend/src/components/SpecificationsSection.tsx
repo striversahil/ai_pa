@@ -1,34 +1,17 @@
 import React, { useState } from "react";
-import { Enquiry, EnquiryItem, parseMoneyInput } from "../types";
+import { EnquiryItem, parseMoneyInput } from "../types";
 import AdditionalRequirementModal from "./AdditionalRequirementModal";
 import ToggleSwitch from "./ToggleSwitch";
 import IntakeItemMeta from "./IntakeItemMeta";
 import AiProcessingLoader from "./AiProcessingLoader";
-import { missingForItem, unmatchedMissing, SHOW_INTAKE_REMARKS, type IntakeSuggestion } from "../hooks/useIntake";
+import { missingForItem, unmatchedMissing, SHOW_INTAKE_REMARKS } from "../hooks/useIntake";
 import { cleanQty, duplicateItem } from "./ItemBoxList";
 import LoopCards from "@/components/LoopCards";
 import { openLoops } from "@/enquiry/loops";
 import { isOpenSpecFlag } from "@/enquiry/queue";
 import { filesToUploadedMedia, dragHasFiles } from "../lib/imageFiles";
-
-/** ~10MB per file (stored as data-URI on the item; server re-checks). */
-const MAX_MEDIA_BYTES = 10 * 1024 * 1024;
-
-interface SpecificationsSectionProps {
-  selectedEnquiry: Enquiry;
-  onOpenLightbox: (url: string, list?: string[], idx?: number) => void;
-  onAddRequirement?: (text: string, images: string[]) => void;
-  onUpdateItems?: (items: EnquiryItem[] | ((prev: EnquiryItem[]) => EnquiryItem[])) => void;
-  redacted?: boolean;
-  /** Vendor-rate visibility per view: sales sees finals only ('none');
-   *  procurement collects rates ('edit'); management reviews them ('view'). */
-  ratesMode?: "none" | "edit" | "view";
-  /** AI intake (suggestions + missing slots) rendered per item row.
-   *  `ready:false` = the GH intake action hasn't finished yet. */
-  intake?: { suggestions: IntakeSuggestion[]; missing: string[]; ready?: boolean } | null;
-  /** Sales 1-click quote-from-memory (marks rateAvailable on the item). */
-  onAcceptSuggestion?: (itemIndex: number) => void;
-}
+import type { SpecificationsSectionProps } from "./specifications-section/types";
+import { MAX_MEDIA_BYTES } from "./specifications-section/helpers";
 
 export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox, onAddRequirement, onUpdateItems, redacted = false, ratesMode, intake, onAcceptSuggestion }: SpecificationsSectionProps) {
   const mode: "none" | "edit" | "view" = ratesMode ?? (!!onUpdateItems ? "edit" : "none");

@@ -80,3 +80,42 @@ with sync_playwright() as p:
     ctx.close()
     b.close()
 print(f"\n{sum(results)}/{len(results)} passed")
+
+# ── Every workspace (and every Sales tab) renders without page errors ─────────
+import json as _json
+with sync_playwright() as p2:
+    b2=p2.chromium.launch()
+    ctx=b2.new_context(service_workers="block")
+    ctx.add_cookies([{"name":"fos_session","value":"sess-root","url":BASE}])
+    pg=ctx.new_page()
+    errs=[]; pg.on("pageerror", lambda e: errs.append(str(e)))
+    pg.goto(BASE+"/session"); pg.get_by_role("heading", name="Workspace").wait_for(timeout=20000)
+    slugs=[w["slug"] for w in _json.loads(pg.evaluate("fetch('/api/session/workspaces').then(r=>r.text())"))]
+    bad=[]
+    for s in slugs:
+        before=len(errs)
+        pg.goto(BASE+f"/session/{s}"); pg.wait_for_timeout(2200)
+        if len(errs)>before: bad.append((s, errs[before][:120]))
+    check(f"root: all {len(slugs)} workspaces render with no page errors", not bad, str(bad[:3]))
+    pg.goto(BASE+"/session/sales"); pg.wait_for_timeout(2500)
+    tabs=["My Work","Leads","Leaderboard","Enquiries","Customer Master","Dispatch","Call Log","Field","Objections","Controller"]
+    seen=[]; before=len(errs)
+    for t in tabs:
+        btn=pg.get_by_role("button", name=t, exact=False)
+        if btn.count():
+            btn.first.click(); pg.wait_for_timeout(1500); seen.append(t)
+    check(f"root: Sales tabs {seen} render with no page errors", len(errs)==before, "; ".join(errs[before:])[:200])
+    for path in ["/session/accounts","/session/digital-marketing"]:
+        pg.goto(BASE+path); pg.wait_for_timeout(2000)
+        before=len(errs)
+        for i in range(pg.get_by_role("button").count()):
+            b_=pg.get_by_role("button").nth(i)
+            try:
+                lbl=(b_.inner_text(timeout=500) or "").strip()
+            except Exception: continue
+            if lbl in ("Controller","Team","Board","Exports","Roster","Templates"):
+                try: b_.click(timeout=1000); pg.wait_for_timeout(800)
+                except Exception: pass
+        check(f"root: {path} tabs render with no page errors", len(errs)==before, "; ".join(errs[before:])[:200])
+    b2.close()
+print(f"\n{sum(results)}/{len(results)} passed (incl. all-workspaces sweep)")

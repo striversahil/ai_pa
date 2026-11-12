@@ -2,95 +2,14 @@
 
 import { useMemo, useState } from "react";
 import type { CustomerAgeingRow } from "@/debtors-tracker/types";
-import { BUCKET_LABELS, CUSTOMER_SITUATIONS, CUSTOMER_SITUATION_LABELS, formatINR, shortDate, situationLabel } from "@/debtors-tracker/types";
+import { BUCKET_LABELS, CUSTOMER_SITUATION_LABELS, formatINR, shortDate, situationLabel } from "@/debtors-tracker/types";
 import { debtorRegionLabel, debtorRegionOf, matchesDebtorRegion, type DebtorRegionFilter } from "@/debtors-tracker/regions";
-import { formatPromiseDate, promiseStatus, promiseStatusLabel, todayIST } from "@/debtors-tracker/promise";
+import { todayIST } from "@/debtors-tracker/promise";
 import { Chip, EmptyState, TD, TDR, TH, THR, TableShell } from "../ui";
-
-const DUE_COLS = [
-  { label: BUCKET_LABELS.D0, pick: (r: CustomerAgeingRow) => r.bucket0to30 },
-  { label: BUCKET_LABELS.D31, pick: (r: CustomerAgeingRow) => r.bucket31to60 },
-  { label: BUCKET_LABELS.D61, pick: (r: CustomerAgeingRow) => r.bucket61to90 },
-  { label: BUCKET_LABELS.D91, pick: (r: CustomerAgeingRow) => r.bucket91to180 },
-  { label: BUCKET_LABELS.D181, pick: (r: CustomerAgeingRow) => r.bucketAbove180 },
-] as const;
-
-type SortKey =
-  | "customerName"
-  | "contact"
-  | "lastFollowUpDate"
-  | "lastInvoiceDate"
-  | "situation"
-  | "totalReceivable"
-  | "notDue"
-  | "bucket0to30"
-  | "bucket31to60"
-  | "bucket61to90"
-  | "bucket91to180"
-  | "bucketAbove180"
-  | "grossDue"
-  | "advanceReceived"
-  | "netDue";
-type SortDir = "asc" | "desc";
-
-/** New columns default to asc for text, desc for dates/amounts. */
-function defaultDir(key: SortKey): SortDir {
-  return key === "customerName" || key === "contact" || key === "situation" ? "asc" : "desc";
-}
-
-const SITUATION_ORDER = ["", ...CUSTOMER_SITUATIONS];
-
-const SITUATION_BADGE: Record<string, string> = {
-  NOT_ANSWERING: "bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300",
-  BUSY: "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300",
-  CALLBACK: "bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-300",
-  PROMISED_TO_PAY: "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300",
-  DISPUTED: "bg-orange-50 text-orange-700 dark:bg-orange-500/10 dark:text-orange-300",
-  PAID_CLOSED: "bg-zinc-100 text-zinc-600 dark:bg-zinc-500/10 dark:text-zinc-400",
-};
-
-function SituationBadge({ situation }: { situation: string }) {
-  if (!situation) return <span className="text-zinc-400 dark:text-zinc-500">Unset</span>;
-  const cls = SITUATION_BADGE[situation] ?? "bg-indigo-50 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300";
-  return (
-    <span className={`inline-block rounded-full px-1.5 py-0.5 text-[10px] font-medium ${cls}`}>
-      {situationLabel(situation) || situation}
-    </span>
-  );
-}
-
-/**
- * Promise is deliberately independent of the situation: after "Promised to pay"
- * a later "Not answering" call keeps the date as "Last promise" until a newer
- * promise replaces it (or Paid / Closed clears it).
- */
-function PromiseBadge({ row, today }: { row: CustomerAgeingRow; today: string }) {
-  const settled = row.netDue <= 0 || row.situation === "PAID_CLOSED";
-  if (settled) return null;
-  if (!row.promisedDate) {
-    if (row.situation !== "PROMISED_TO_PAY") return null;
-    return (
-      <span className="inline-block rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">
-        No promise date
-      </span>
-    );
-  }
-  const state = promiseStatus(row.promisedDate, today);
-  const cls = state === "overdue"
-    ? "bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300"
-    : state === "today"
-      ? "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300"
-      : "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300";
-  const isCurrent = row.situation === "PROMISED_TO_PAY";
-  return (
-    <span
-      className={`inline-block rounded-full px-1.5 py-0.5 text-[10px] font-medium ${cls}`}
-      title={`${isCurrent ? "Promised" : "Last promised"} ${formatPromiseDate(row.promisedDate)}${row.promisedBy ? ` · set by ${row.promisedBy}` : ""}`}
-    >
-      {isCurrent ? "Promise" : "Last promise"} {shortDate(row.promisedDate)} · {promiseStatusLabel(row.promisedDate, today)}
-    </span>
-  );
-}
+import type { SortKey, SortDir } from "./ageing-tab/types";
+import { defaultDir, SITUATION_ORDER, DUE_COLS } from "./ageing-tab/helpers";
+import { SituationBadge } from "./ageing-tab/SituationBadge";
+import { PromiseBadge } from "./ageing-tab/PromiseBadge";
 
 export default function AgeingTab({
   customers, onGoToAccounts, onEditContact, onEditSituation, onFollowUp, onViewLedger, canAccounts,

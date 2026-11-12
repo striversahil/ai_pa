@@ -1,35 +1,14 @@
 "use client";
 
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { LiveInvoice } from "@/debtors-tracker/types";
 import { planZipFiles, uploadInvoicePdf } from "@/debtors-tracker/api";
 import { BUCKET_LABELS, formatDays, formatINR, shortDate } from "@/debtors-tracker/types";
 import { describeSortSpecs, isDefaultSort, nextSortSpecs, type SortSpec } from "@/debtors-tracker/multi-sort";
 import { useColumnOrder } from "@/hooks/useColumnOrder";
 import { Card, Chip, EmptyState, SearchInput, SortableTh, TDC, TDCR, TableShell, bucketBadge } from "../ui";
-
-const BUCKET_CHIPS = ["ALL", "NOT_DUE", "D0", "D31", "D61", "D91", "D181", "PAID"] as const;
-
-const INVOICE_TEXT_FIRST = new Set(["customer", "invoice", "dueMonth", "bucket", "status", "owner", "place", "remarks"]);
-const DEFAULT_INVOICE_SORT: SortSpec[] = [{ key: "date", dir: "desc" }];
-const INVOICE_SORT_LABELS: Record<string, string> = {
-  customer: "Customer", invoice: "Invoice", date: "Date", due: "Due", dueMonth: "Due Month",
-  amount: "Amount", received: "Received", balance: "Balance", overdue: "Overdue",
-  bucket: "Bucket", status: "Call / Payment", owner: "Owner", place: "State / Region", remarks: "Remarks",
-};
-
-const DEFAULT_COLUMNS = [
-  "customer", "invoice", "pdf", "date", "due", "dueMonth", "amount", "received",
-  "balance", "overdue", "bucket", "status", "owner", "place", "remarks", "edit",
-] as const;
-
-type InvoiceColumn = {
-  key: string;
-  label?: string;
-  align?: "right";
-  ariaLabel?: string;
-  render: (inv: LiveInvoice) => ReactNode;
-};
+import { DEFAULT_INVOICE_SORT, DEFAULT_COLUMNS, INVOICE_TEXT_FIRST, INVOICE_SORT_LABELS, BUCKET_CHIPS } from "./invoices-tab/helpers";
+import type { InvoiceColumn } from "./invoices-tab/types";
 
 export default function InvoicesTab({
   invoices, onEdit, onGoToAccounts, canAccounts, onChanged,

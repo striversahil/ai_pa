@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import type { Enquiry, EnquiryItem, EnquiryItemRate } from "@/types";
+import { useState, useEffect } from "react";
+import type { EnquiryItem, EnquiryItemRate } from "@/types";
 import { parseMoneyInput, parseSignedMoneyInput, historyDateChip } from "@/types";
 import { RATE_STATUS_LABEL, fmtINR, ceil5, finalRound, shareKey } from "@/enquiry/pricing";
 import { itemHasUnreviewedQuotes, isOpenSpecFlag } from "@/enquiry/queue";
@@ -9,17 +9,11 @@ import LoopCards from "@/components/LoopCards";
 import { openLoops } from "@/enquiry/loops";
 import ItemRateForm from "@/components/ItemRateForm";
 import Lightbox from "@/components/Lightbox";
+import type { ManagementRatesPanelProps, MarkupMode } from "./management-rates-panel/types";
 
 // Re-exported from @/enquiry/pricing (single home for pricing math); kept
 // here so existing imports keep working.
 export { RATE_STATUS_LABEL, fmtINR, ceil5 };
-
-type MarkupMode = "percent" | "final";
-
-interface ManagementRatesPanelProps {
-  enquiry: Enquiry;
-  onSave: (items: EnquiryItem[], finalize: boolean) => Promise<void> | void;
-}
 
 /** MIS-only rate review: vendor rates per item, markup decision, finalize.
  *  Finalize PATCHes items + rateStatus='finalized'; the live event pushes the

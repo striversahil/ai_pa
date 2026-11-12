@@ -1,68 +1,11 @@
 "use client";
 
-// ManualCallsPanel — TEMPORARY Call Log tab (founder 2026-11-04).
-//
-// Backfill while NeoDove is unreliable: hand-counted CONNECTED calls per agent
-// per IST day + screenshot proof. A month calendar picks the day (back-navigate
-// freely); each roster agent gets one connected-calls number + one screenshot
-// for that day. The manager-only toggle at the top selects which source the
-// leaderboard reads: manual (this log) or NeoDove.
-//
-// Delete this file + the "calls" tab + backend manual-calls module/routes when
-// NeoDove is trusted again.
-import React, { useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useAuth } from "@/auth/AuthContext";
 import { useLiveDashboard } from "@/hooks/useLiveData";
 import { hasSalesManagerAccess } from "./SalesControllerPanel";
-
-interface Agent {
-  id: string;
-  name: string;
-  region: string;
-}
-
-interface Entry {
-  id: string;
-  telecallerId: string;
-  day: string;
-  connectedCalls: number;
-  note: string;
-  hasScreenshot: boolean;
-  screenshotName: string;
-  updatedAt?: string | null;
-}
-
-interface Payload {
-  mode: "manual" | "neodove" | "device";
-  day: string;
-  from: string;
-  to: string;
-  agents: Agent[];
-  entries: Entry[];
-}
-
-const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-function istToday(): string {
-  try {
-    return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
-  } catch {
-    return new Date().toISOString().slice(0, 10);
-  }
-}
-
-function monthRange(month: string): { from: string; to: string } {
-  const [y, m] = month.split("-").map(Number);
-  const from = `${month}-01`;
-  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
-  return { from, to: `${month}-${String(last).padStart(2, "0")}` };
-}
-
-function shiftMonth(month: string, delta: number): string {
-  const [y, m] = month.split("-").map(Number);
-  const d = new Date(Date.UTC(y, m - 1 + delta, 1));
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
-}
+import { istToday, monthRange, DAY_RE, shiftMonth } from "./manual-calls-panel/helpers";
+import type { Payload, Entry, Agent } from "./manual-calls-panel/types";
 
 export default function ManualCallsPanel() {
   const { me } = useAuth();

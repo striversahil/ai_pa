@@ -1,64 +1,10 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useLiveRefresh } from "@/hooks/useLiveEvents";
 import { workspaceDataUrl } from "@/workspaces/api";
-
-type Kpi = {
-  label: string;
-  value: string | number;
-  sub?: string;
-  accent?: "indigo" | "emerald" | "rose" | "amber" | "violet";
-};
-
-type Warning = {
-  sNo: string;
-  company: string;
-  field: string;
-  issue: string;
-  severity: "critical" | "warning";
-};
-
-type Table = {
-  title: string;
-  columns: string[];
-  rows: (string | number)[][];
-};
-
-type Insight = {
-  name: string;
-  role: string;
-  badge: string;
-  desc: string;
-};
-
-type SheetData = {
-  meta: {
-    analysis: string;
-    title: string;
-    spreadsheetUrl: string;
-    range: string;
-    rowsRead: number;
-    configured: boolean;
-    generatedAt: string;
-    error?: string;
-  };
-  kpis?: Kpi[];
-  warnings?: Warning[];
-  insights?: { good: Insight[]; inconsistent: Insight[] };
-  tables?: Table[];
-};
-
-const ACCENT_CLASS: Record<string, { text: string; glow: string }> = {
-  indigo: { text: "text-indigo-400", glow: "bg-indigo-500/10" },
-  emerald: { text: "text-emerald-400", glow: "bg-emerald-500/10" },
-  rose: { text: "text-rose-400", glow: "bg-rose-500/10" },
-  amber: { text: "text-amber-400", glow: "bg-amber-500/10" },
-  violet: { text: "text-violet-400", glow: "bg-violet-500/10" },
-};
-
-const formatIso = (d: Date) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+import type { SheetData } from "./sheet-analysis-dashboard/types";
+import { formatIso, ACCENT_CLASS } from "./sheet-analysis-dashboard/helpers";
 
 export default function SheetAnalysisDashboard({ slug }: { slug: string }) {
   const [data, setData] = useState<SheetData | null>(null);
