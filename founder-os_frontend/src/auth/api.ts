@@ -4,8 +4,8 @@ import type { DirectoryResponse } from "./directory";
 
 async function readError(res: Response): Promise<string> {
   try {
-    const j = await res.json();
-    return String((j as any)?.error ?? `request failed (${res.status})`);
+    const j: { error?: unknown } = await res.json();
+    return String(j?.error ?? `request failed (${res.status})`);
   } catch {
     return `request failed (${res.status})`;
   }

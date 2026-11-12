@@ -125,8 +125,9 @@ export function canView(me: AuthUserMe | null, viewOrSlug: string): boolean {
   }
   if (viewOrSlug === "admin") {
     // Admin panel: full admins plus user-managers (e.g. MIS holders of the
-    // user-admin scope). Root-only powers inside are gated separately.
-    return me.scopes.includes(USER_ADMIN_SCOPE);
+    // user-admin scope) plus HR holders of the human-resources scope (they get
+    // the read-only employee directory; manage powers stay gated separately).
+    return me.scopes.includes(USER_ADMIN_SCOPE) || me.scopes.includes("human-resources");
   }
   // Main-platform views are fail-closed (unknown view = denied). Dashboard
   // slugs fall back to slug-as-scope so new automations work with zero edits.

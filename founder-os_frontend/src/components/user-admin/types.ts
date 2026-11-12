@@ -2,4 +2,4 @@
 // UserAdmin.tsx re-exports everything public here, so existing imports keep working.
 
 
-export type Tab = "users" | "roles" | "scopes";
+export type Tab = "users" | "roles" | "scopes" | "directory";

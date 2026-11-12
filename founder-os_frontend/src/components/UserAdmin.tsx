@@ -5,6 +5,7 @@ import { useAuth } from "@/auth/AuthContext";
 import { USER_ADMIN_SCOPE } from "@/auth/permissions";
 import { POSITION_META, POSITION_ORDER, displayNameOf, positionOf, type PositionInfo } from "@/auth/org-positions";
 import AdminTable from "./admin/AdminTable";
+import DirectoryTab from "./user-admin/DirectoryTab";
 import { Drawer, UserDrawer, RoleDrawer } from "./admin/AdminDrawers";
 import type { ScopeRow, RoleRow, UserRow, DashboardRow } from "./admin/AdminDrawers";
 import type { Tab } from "./user-admin/types";
@@ -44,14 +45,21 @@ export default function UserAdmin() {
     setUserDrafts(ud);
   }, []);
 
-  useEffect(() => {
-    if (me && (me.isRoot || me.scopes.includes(USER_ADMIN_SCOPE))) void load();
-  }, [me, load]);
-  const reload = useCallback(() => { void load(); void refresh(); }, [load, refresh]);
-
   const scopeLabel = useCallback((key: string) => scopes.find((s) => s.key === key)?.label || key, [scopes]);
   const isRoot = !!me?.isRoot;
   const canManage = isRoot || !!me?.scopes.includes(USER_ADMIN_SCOPE);
+  const isHR = !!me?.scopes.includes("human-resources");
+  // Directory viewers: managers (existing Users portal) + HR holders (read-only
+  // width on the new directory endpoint; manage powers stay user-admin gated).
+  const canViewDirectory = canManage || isHR;
+
+  useEffect(() => {
+    if (me && canManage) void load();
+  }, [me, canManage, load]);
+  // HR-only viewers land on the directory (they have no Users/Roles/Scopes
+  // tabs) — derived during render, no setState-in-effect.
+  const viewTab: Tab = !canManage && isHR ? "directory" : tab;
+  const reload = useCallback(() => { void load(); void refresh(); }, [load, refresh]);
   const isAdminRole = (scopeKeys: string[]) => scopeKeys.map((s) => s.toLowerCase()).includes("admin");
   // Top-down delegation: a non-root manager may only pass on scopes root
   // granted THEM. Null = root (everything grantable). The backend enforces
@@ -192,12 +200,15 @@ export default function UserAdmin() {
   const visibleUsers = usersInRole.filter((u) =>
     !positionFilter || positionOf(positions, u.id).position === positionFilter);
 
-  if (!me || !canManage) return <div className="p-8 text-zinc-500">Admin access required.</div>;
+  if (!me || !canViewDirectory) return <div className="p-8 text-zinc-500">Admin access required.</div>;
 
-  const tabs: { key: Tab; label: string; count: number }[] = [
-    { key: "users", label: "Users", count: users.length },
-    ...(isRoot ? [{ key: "roles" as Tab, label: "Roles", count: roles.length }] : []),
-    { key: "scopes", label: "Scopes", count: scopes.length },
+  const tabs: { key: Tab; label: string; count?: number }[] = [
+    { key: "directory", label: "Directory" },
+    ...(canManage ? [
+      { key: "users" as Tab, label: "Users", count: users.length },
+      ...(isRoot ? [{ key: "roles" as Tab, label: "Roles", count: roles.length }] : []),
+      { key: "scopes" as Tab, label: "Scopes", count: scopes.length },
+    ] : []),
   ];
 
   return (
@@ -205,11 +216,13 @@ export default function UserAdmin() {
       <div>
         <h1 className="text-3xl font-bold font-heading">User & Permission Management</h1>
         <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          {isRoot ? `Root: ${me.user.email}.` : `Signed in as ${me.user.email} (user manager).`} Assign roles to users; a role grants the automation dashboards you define for it.
-          {!isRoot && " You can only grant dashboards root gave you — the root user, admin/user-manager roles, and anything outside your own access are root-only."}
+          {isRoot ? `Root: ${me.user.email}.` : canManage ? `Signed in as ${me.user.email} (user manager).` : `Signed in as ${me.user.email} (HR directory).`} {canManage && "Assign roles to users; a role grants the automation dashboards you define for it."}
+          {!isRoot && canManage && " You can only grant dashboards root gave you — the root user, admin/user-manager roles, and anything outside your own access are root-only."}
+          {!canManage && " Read-only directory of every login except root and root-hidden emails."}
         </p>
       </div>
 
+      {canManage && (
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
           { label: "Users", value: users.length },
@@ -223,18 +236,23 @@ export default function UserAdmin() {
           </div>
         ))}
       </div>
+      )}
 
       <div className="flex flex-wrap gap-1.5">
         {tabs.map((t) => (
           <button key={t.key} onClick={() => setTab(t.key)}
-            className={`px-4 py-2 rounded-xl text-sm font-bold cursor-pointer border-0 ${tab === t.key ? "bg-indigo-600 text-white" : "bg-zinc-100 dark:bg-zinc-900 text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800"}`}>
+            className={`px-4 py-2 rounded-xl text-sm font-bold cursor-pointer border-0 ${viewTab === t.key ? "bg-indigo-600 text-white" : "bg-zinc-100 dark:bg-zinc-900 text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800"}`}>
             {t.label}
-            <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[11px] ${tab === t.key ? "bg-white/25" : "bg-zinc-200 dark:bg-zinc-800"}`}>{t.count}</span>
+            {t.count !== undefined && <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[11px] ${viewTab === t.key ? "bg-white/25" : "bg-zinc-200 dark:bg-zinc-800"}`}>{t.count}</span>}
           </button>
         ))}
       </div>
 
-      {tab === "users" && (
+      {viewTab === "directory" && (
+        <DirectoryTab canManage={canManage} isRoot={isRoot} onManage={(id) => setManagingId(id)} />
+      )}
+
+      {viewTab === "users" && canManage && (
         <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4 sm:p-6">
           <AdminTable<UserRow>
             rows={visibleUsers}
@@ -360,7 +378,7 @@ export default function UserAdmin() {
         </section>
       )}
 
-      {tab === "roles" && isRoot && (
+      {viewTab === "roles" && isRoot && (
         <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4 sm:p-6">
           <AdminTable<RoleRow>
             rows={roles}
@@ -415,7 +433,7 @@ export default function UserAdmin() {
         </section>
       )}
 
-      {tab === "scopes" && (
+      {viewTab === "scopes" && (
         <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4 sm:p-6">
           <p className="text-xs text-zinc-500 mb-4">
             Permission catalog — every scope the backend auto-seeds (automation <span className="font-mono">rule.json</span> values + built-ins), which dashboards it unlocks, and how many roles/users it reaches. Read-only: scopes appear here on their own when a new automation declares one.
