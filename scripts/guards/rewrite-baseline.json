@@ -1,13 +1,13 @@
 {
-  "generatedAt": "2026-11-12T05:47:57.700Z",
+  "generatedAt": "2026-11-12T05:57:04.715Z",
   "metrics": {
-    "fe.raw_fetch_api": 192,
-    "fe.hardcoded_automation_data_url": 26,
-    "fe.hardcoded_automations_nav": 3,
+    "fe.raw_fetch_api": 168,
+    "fe.hardcoded_automation_data_url": 0,
+    "fe.hardcoded_automations_nav": 0,
     "fe.local_inr_formatter": 14,
     "fe.local_date_formatter": 12,
     "fe.adhoc_modal_overlay": 31,
-    "fe.slug_alias_literal": 10,
+    "fe.slug_alias_literal": 1,
     "be.getme_boilerplate": 2,
     "be.autherror_catch_boilerplate": 5,
     "be.json_body_catch": 199,

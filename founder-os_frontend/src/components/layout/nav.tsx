@@ -1,7 +1,8 @@
 import type { LucideIcon } from "lucide-react";
-import { Sparkles, MessageCircle, Workflow, ShieldCheck, MessagesSquare, Mail, Settings, ListChecks } from "lucide-react";
+import { Sparkles, MessageCircle, Workflow, ShieldCheck, MessagesSquare, Mail, Settings, ListChecks, LayoutGrid } from "lucide-react";
 
 export type ViewType =
+  | "session"
   | "briefing"
   | "delegation"
   | "whatsapp"
@@ -20,6 +21,11 @@ export interface NavItem {
 }
 
 export const NAV_ITEMS: NavItem[] = [
+  // The signed-in viewer's dashboards (/session). First, so a login whose
+  // current view is denied lands here (page.tsx auto-routes to the first
+  // accessible item).
+  { view: "session", label: "Workspace", icon: LayoutGrid, mobile: true },
+  // Automation REGISTRY console (admin only — canView gates it).
   { view: "automations", label: "Automations", icon: Workflow, mobile: true },
   // Employee delegation board — every approved login, HR or not.
   { view: "delegation", label: "Delegation", icon: ListChecks, mobile: true },
@@ -35,14 +41,20 @@ export const NAV_ITEMS: NavItem[] = [
 
 export const MOBILE_NAV_ITEMS = NAV_ITEMS.filter((i) => i.mobile);
 
-// Navigation targets: a main view or an automation dashboard slug.
+/** Every top-level view the router accepts (derived — add a view in NAV_ITEMS only). */
+export const VIEW_TYPES: ViewType[] = NAV_ITEMS.map((i) => i.view);
+
+// Navigation targets: a main view or a workspace (dashboard) slug.
 export type NavTarget =
   | { type: "view"; view: ViewType }
   | { type: "dashboard"; slug: string };
 
 export function navTargetPath(t: NavTarget): string {
-  if (t.type === "dashboard") return `/automations/${t.slug}`;
+  // Dashboards live under /session for everyone (workspaces); /automations is
+  // the registry console only.
+  if (t.type === "dashboard") return `/session/${t.slug}`;
   const paths: Record<ViewType, string> = {
+    session: "/session",
     briefing: "/briefing",
     delegation: "/delegation",
     whatsapp: "/whatsapp",

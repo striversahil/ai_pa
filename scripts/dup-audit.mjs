@@ -70,7 +70,7 @@ const METRICS = [
     why: 'Components navigate to "/automations/..." themselves instead of using the workspace host',
     files: feFiles,
     re: /["'`]#?\/automations(\/|["'`])/g,
-    allow: (p) => p.includes('/src/workspaces/') || p.includes('/src/views/') || p.endsWith('/layout/nav.tsx') || p.endsWith('/hooks/useHashRoute.ts'),
+    allow: (p) => p.includes('/src/workspaces/') || p.includes('/src/views/') || p.endsWith('/layout/nav.tsx') || p.endsWith('/hooks/useHashRoute.ts') || p.endsWith('/src/app/page.tsx'),
   },
   {
     key: 'fe.local_inr_formatter',

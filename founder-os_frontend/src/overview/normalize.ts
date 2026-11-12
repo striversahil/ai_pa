@@ -31,6 +31,9 @@ export function normalizeOverview(raw: unknown): OverviewPayload | null {
   };
 }
 
+/** Link to a workspace from an overview card. Workspaces live under /session
+ *  for everyone (the old hash-style links never reached the path router, so
+ *  they were inert). */
 export function sectionLink(slug: string): string {
-  return `#/automations/${slug}`;
+  return `/session/${slug}`;
 }

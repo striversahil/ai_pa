@@ -12,12 +12,16 @@ import MobileDrawer from "../components/layout/MobileDrawer";
 import { AuthProvider, useAuth } from "@/auth/AuthContext";
 import LoginScreen from "@/components/LoginScreen";
 import UserAdmin from "@/components/UserAdmin";
-import { NAV_ITEMS, navTargetPath, type NavTarget, type ViewType } from "@/components/layout/nav";
+import { NAV_ITEMS, VIEW_TYPES, navTargetPath, type NavTarget, type ViewType } from "@/components/layout/nav";
+import { WorkspaceHostProvider } from "@/workspaces/WorkspaceHost";
+import { useWorkspaces } from "@/workspaces/useWorkspaces";
+import { canonicalNavSlug } from "@/workspaces/aliases";
 
 // Heavy views are lazy-loaded so only the active view's JS is fetched & parsed.
 const FounderAssistant = dynamic(() => import("../components/FounderAssistant"), { ssr: false });
 const WhatsAppDashboard = dynamic(() => import("../components/WhatsAppDashboard"), { ssr: false });
-const Automations = dynamic(() => import("../components/Automations"), { ssr: false });
+const AutomationsView = dynamic(() => import("../views/automations/AutomationsView"), { ssr: false });
+const SessionView = dynamic(() => import("../views/session/SessionView"), { ssr: false });
 const ChatRoom = dynamic(() => import("../components/ChatRoom"), { ssr: false });
 const DelegationView = dynamic(() => import("../components/delegation/DelegationView"), { ssr: false });
 const EmailDashboard = dynamic(() => import("../components/EmailDashboard"), { ssr: false });
@@ -39,25 +43,33 @@ function AppInner() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const { route, navigate } = useHashRoute();
-  const rawSub = route.view === "automations" ? route.sub : null;
-  // Legacy dashboard slug alias (Payment Tracker → Debtors Tracker).
-  const sub = rawSub === "payment-tracker" ? "debtors-tracker" : rawSub;
-  const activeView: ViewType =
-    (["briefing", "delegation", "whatsapp", "automations", "chat", "admin", "email", "settings"] as ViewType[]).includes(route.view as ViewType)
-      ? (route.view as ViewType)
-      : "automations";
+  // Workspaces (dashboards) live at /session/<slug>. Legacy URLs —
+  // /automations/<slug> bookmarks and absorbed slugs (payment-tracker,
+  // telecalling, …) — are redirected in place (replace, no back-button trap).
+  const sub = route.view === "session" ? route.sub : null;
+  useEffect(() => {
+    if (route.view === "automations" && route.sub) {
+      navigate(`/session/${canonicalNavSlug(route.sub)}`, { replace: true });
+    } else if (route.view === "session" && route.sub && canonicalNavSlug(route.sub) !== route.sub) {
+      navigate(`/session/${canonicalNavSlug(route.sub)}`, { replace: true });
+    }
+  }, [route.view, route.sub, navigate]);
+  // Unknown paths fall back to /automations; a viewer without registry access
+  // is then auto-routed to their first accessible view (Workspace) below.
+  const activeView: ViewType = VIEW_TYPES.includes(route.view as ViewType) ? (route.view as ViewType) : "automations";
 
   // Views this user can actually reach: accessible main nav views + role-granted dashboards.
   const accessibleMain = useMemo(() => NAV_ITEMS.filter((i) => canView(i.view)), [canView]);
   const dashboards = useDashboardNav();
+  const { workspaces, loading: workspacesLoading } = useWorkspaces();
 
   const viewDenied =
     activeView !== "admin" &&
-    !(activeView === "automations" && sub
-      ? // Dashboard slugs are resolved against the live, permission-filtered
-        // sidebar list (server-provided scopes) so new dashboard automations
-        // need zero per-slug edits here; canView() is the fallback.
-        dashboards.some((d) => d.slug === sub) || canView(sub)
+    !(activeView === "session" && sub
+      ? // Workspace slugs are resolved against the live, server-filtered list
+        // (GET /api/session/workspaces) so new dashboards need zero per-slug
+        // edits here; canView() is the fallback (admins, implied scopes).
+        workspaces.some((w) => w.slug === sub) || canView(sub)
       : canView(activeView));
 
   // If the current view is denied but the user has SOMETHING they can access,
@@ -66,6 +78,11 @@ function AppInner() {
   useEffect(() => {
     if (loading || !me) return;
     if (!viewDenied) return;
+    // A legacy /automations/<slug> link is being redirected to /session/<slug>
+    // by the effect above — don't race it to the first accessible view.
+    if (route.view === "automations" && route.sub) return;
+    // Don't bounce a workspace deep link before the workspace list arrives.
+    if (activeView === "session" && sub && workspacesLoading) return;
     const first: NavTarget | null =
       accessibleMain[0]
         ? { type: "view", view: accessibleMain[0].view }
@@ -73,7 +90,7 @@ function AppInner() {
           ? { type: "dashboard", slug: dashboards[0].slug }
           : null;
     if (first) navigate(navTargetPath(first));
-  }, [viewDenied, loading, me, accessibleMain, dashboards, navigate]);
+  }, [viewDenied, loading, me, accessibleMain, dashboards, navigate, activeView, sub, workspacesLoading, route.view, route.sub]);
 
   const navigateTo = useCallback((target: NavTarget) => {
     navigate(navTargetPath(target));
@@ -149,8 +166,15 @@ function AppInner() {
           {activeView === "chat" && <ChatRoom />}
           {activeView === "email" && <EmailDashboard />}
           {activeView === "settings" && <SettingsDashboard />}
+          {activeView === "session" && (
+            <WorkspaceHostProvider basePath="/session" navigate={navigate}>
+              <SessionView slug={sub} />
+            </WorkspaceHostProvider>
+          )}
           {activeView === "automations" && (
-            <Automations slug={sub} onNavigate={navigate} />
+            <WorkspaceHostProvider basePath="/automations" navigate={navigate}>
+              <AutomationsView />
+            </WorkspaceHostProvider>
           )}
           </>
           )}

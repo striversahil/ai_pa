@@ -21,7 +21,7 @@ function parsePath(): HashRoute {
  * `navigate()` still accepts legacy "/x" strings and normalizes them to "/x",
  * so existing call sites keep working while URLs stay professional.
  */
-export function useHashRoute(): { route: HashRoute; navigate: (path: string) => void } {
+export function useHashRoute(): { route: HashRoute; navigate: (path: string, opts?: { replace?: boolean }) => void } {
   const [route, setRoute] = useState<HashRoute>(parsePath);
 
   useEffect(() => {
@@ -35,11 +35,13 @@ export function useHashRoute(): { route: HashRoute; navigate: (path: string) => 
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
-  const navigate = useCallback((path: string) => {
+  const navigate = useCallback((path: string, opts?: { replace?: boolean }) => {
     const clean = path.startsWith("#") ? path.slice(1) : path;
     const target = clean.startsWith("/") ? clean : `/${clean}`;
     if (window.location.pathname + window.location.search === target) return;
-    window.history.pushState(null, "", target);
+    // replace: legacy-URL redirects must not leave a back-button trap.
+    if (opts?.replace) window.history.replaceState(null, "", target);
+    else window.history.pushState(null, "", target);
     setRoute(parsePath());
   }, []);
 

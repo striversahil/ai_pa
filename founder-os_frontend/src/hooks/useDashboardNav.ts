@@ -1,7 +1,7 @@
 "use client";
-import { useLiveQuery } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
-import { VIEW_SCOPE, grantedScopes } from "@/auth/permissions";
+import { VIEW_SCOPE } from "@/auth/permissions";
+import { useWorkspaces } from "@/workspaces/useWorkspaces";
 
 export interface DashboardNavItem {
   slug: string;
@@ -22,28 +22,15 @@ export function dashboardScopes(a: { slug: string; scope?: string | null; scopes
   return a.scopes?.length ? a.scopes : [dashboardScope(a)];
 }
 
-/** Automation dashboards the current user is allowed to see (live).
- *  Admin/root users don't get the sidebar Dashboards section — they reach every
- *  dashboard via the Automations registry. Roles grant dashboards to regular users. */
+/** Sidebar "Dashboards" section: the viewer's workspaces, already filtered by
+ *  scope on the server (GET /api/session/workspaces). Admin/root users don't
+ *  get the section — they open everything from the Workspace page. */
 export function useDashboardNav(): DashboardNavItem[] {
   const { me } = useAuth();
-  const automations = useLiveQuery<Array<{ slug: string; name: string; hasDashboard: boolean; scope?: string | null; scopes?: string[] | null }>>(
-    async () => {
-      const res = await fetch("/api/automations");
-      if (!res.ok) throw new Error("failed to load automations");
-      return res.json();
-    },
-    { events: ["automation", "automations"] },
-  );
-  if (me?.isAdmin) return [];
-  // Access is resolved against the server-provided scope (dynamic — no per-slug
-  // frontend edits needed for new dashboard automations).
-  if (!me) return [];
-  const granted = grantedScopes(me);
-  return (automations.data ?? [])
-    .filter((a) => a.hasDashboard && dashboardScopes(a).some((s) => granted.has(String(s).toLowerCase())))
-    .map((a) => ({
-      slug: a.slug, name: a.name,
-      scope: dashboardScope(a), scopes: dashboardScopes(a),
-    }));
+  const { workspaces } = useWorkspaces();
+  if (!me || me.isAdmin) return [];
+  return workspaces.map((w) => ({
+    slug: w.slug, name: w.name,
+    scope: dashboardScope(w), scopes: dashboardScopes(w),
+  }));
 }

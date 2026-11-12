@@ -108,6 +108,11 @@ export function canView(me: AuthUserMe | null, viewOrSlug: string): boolean {
   // The Automations REGISTRY page is root/admin-only. Non-root users reach
   // their dashboards individually (useDashboardNav) — never the full registry.
   if (viewOrSlug === "automations") return false;
+  if (viewOrSlug === "session") {
+    // Workspace (/session): every approved member. The page lists only the
+    // workspaces the server grants (GET /api/session/workspaces).
+    return me.scopes.length > 0 || me.roles.length > 0;
+  }
   if (viewOrSlug === "chat") {
     // Team chat: available to every approved member (any granted scope/role).
     return me.scopes.length > 0 || me.roles.length > 0;
