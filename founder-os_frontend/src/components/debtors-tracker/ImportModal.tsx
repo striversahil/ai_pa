@@ -64,7 +64,7 @@ export default function ImportModal({ kind, onClose, onDone }: Props) {
       const merged = r.merged ? `, ${r.merged} advance duplicate${r.merged === 1 ? "" : "s"} merged` : "";
       const conflicts = r.conflicts?.length ? `, ${r.conflicts.length} invoice-no conflicts flagged (not merged)` : "";
       const msg = kind === "debtors"
-        ? `Debtors imported — ${r.created ?? 0} new, ${r.updated ?? 0} updated${restored}${r.rebooked ? `, ${r.rebooked} collections re-booked` : ""}${conflicts}${r.skippedLines ? `, ${r.skippedLines} lines skipped` : ""}.`
+        ? `Debtors imported — ${r.created ?? 0} new, ${r.updated ?? 0} updated${restored}${r.rebooked ? `, ${r.rebooked} collections re-booked` : ""}${r.pdfsRelinked ? `, ${r.pdfsRelinked} invoice PDF${r.pdfsRelinked === 1 ? "" : "s"} re-linked` : ""}${conflicts}${r.skippedLines ? `, ${r.skippedLines} lines skipped` : ""}.`
         : `Collections imported — ${r.created ?? 0} new, ${r.duplicated ?? 0} duplicates skipped${merged}${restored}, ${r.matchedByInvoice ?? 0} by invoice no, ${r.matchedByCustomer ?? 0} by customer fallback, ${r.advances ?? 0} customer advances, ${r.unmatched ?? 0} unmatched${conflicts}.`;
       onDone(msg);
     } catch (e: any) {

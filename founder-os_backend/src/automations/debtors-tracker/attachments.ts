@@ -36,33 +36,57 @@ export function trailingNumber(s: string): string {
 }
 
 /**
- * Financial year of an invoiceNo (`BUI/24-25/751` → `24-25`,
- * `BUI/TI0476/17-18` → `17-18`, `1836` → ``). Serials restart every FY, so
- * this is the other half of the match key. Last `YY-YY` run wins.
+ * Financial year of an invoiceNo or filename (`BUI/24-25/751` → `24-25`,
+ * `BUI/TI0476/17-18` → `17-18`, `BUI_26_27_719.pdf` → `26-27`,
+ * `1836` → ``). Serials restart every FY, so this is the other half of the
+ * match key. The separator may be `/`, `-`, `_`, `.`, space or anything
+ * else non-alphanumeric (founder note: the two sides don't always use the
+ * same one) — every overlapping `YY<sep>YY` run is a candidate and only a
+ * CONSECUTIVE pair (second = first + 1, e.g. 24-25, never 25/10 from a year
+ * fragment glued to a serial) counts, so `BUI/TI0476/17-18` can't misread
+ * as FY 76-17. `20XX<sep>YY` (`Invoices FY 2024-25-945`) resolves the same
+ * way. Last valid win (matches the old dash-only behavior on dash data).
  */
+function fyCandidates(s: string): string[] {
+  const out: string[] = [];
+  const str = String(s || '');
+  for (let i = 0; i + 4 < str.length + 1; i++) {
+    const a = str.slice(i, i + 2);
+    const sep = str[i + 2];
+    const b = str.slice(i + 3, i + 5);
+    if (a.length === 2 && b.length === 2 && /^[0-9]+$/.test(a) && /^[0-9]+$/.test(b) && sep && !/[A-Za-z0-9]/.test(sep)) {
+      if ((parseInt(a, 10) + 1) % 100 === parseInt(b, 10)) out.push(`${a}-${b}`);
+    }
+  }
+  for (const m of str.matchAll(/20(\d{2})([^A-Za-z0-9])(\d{2})/g)) {
+    if ((parseInt(m[1], 10) + 1) % 100 === parseInt(m[3], 10)) out.push(`${m[1]}-${m[3]}`);
+  }
+  return out;
+}
+
+function lastFy(s: string): string {
+  const c = fyCandidates(s);
+  return c.length ? c[c.length - 1] : '';
+}
+
+/** Financial year of an invoiceNo (`BUI/24-25/751` → `24-25`, `1836` → ``). */
 export function fyOfInvoiceNo(s: string): string {
-  const ms = String(s || '').match(/(\d{2})-(\d{2})/g);
-  if (!ms || ms.length === 0) return '';
-  return ms[ms.length - 1];
+  return lastFy(s);
 }
 
-/**
- * Financial year + serial of a zip filename (`BUI_26-27_751.pdf` →
- * `26-27`; `Invoices FY 2024-25-945.pdf` → `24-25`). `''` = no FY found.
- */
+/** Financial year of a zip filename (`BUI_26-27_751.pdf` → `26-27`). */
 export function fyOfFileName(s: string): string {
-  const base = String(s || '').replace(/\.pdf$/i, '').trim();
-  const ms = base.match(/(\d{2})-(\d{2})/g);
-  if (!ms || ms.length === 0) return '';
-  return ms[ms.length - 1];
+  return lastFy(String(s || '').replace(/\.pdf$/i, ''));
 }
 
-/** Normalized full-text key for exact matching (separators unified). */
+/** Normalized full-text key for exact matching (separators unified: spaces,
+ *  underscores, slashes, dashes, backslashes AND dots — `BUI/26-27/719`,
+ *  `BUI_26-27_719.pdf` and `BUI.26-27.719.pdf` are the same invoice). */
 export function exactKey(s: string): string {
   return String(s || '')
     .replace(/\.pdf$/i, '')
     .toLowerCase()
-    .replace(/[\s_\-/\\]+/g, '')
+    .replace(/[\s_\-/\\.]+/g, '')
     .trim();
 }
 
@@ -163,6 +187,55 @@ export interface ZipMatchPlan {
   skippedAlreadyAttached: number;
 }
 
+/**
+ * Re-link orphaned PDFs after a wipe + re-paste (founder decision
+ * 2026-11-13: a reset never deletes invoice PDFs).
+ *
+ * `resetDebtorsTracker` hard-deletes the invoice rows but keeps the
+ * attachment rows + KV bytes; the re-paste creates NEW invoice ids, so the
+ * old rows point at dead ids and their PDFs would silently vanish. This
+ * re-points orphans (same normalized invoiceNo) at the live row — but ONLY
+ * when exactly one live invoice carries that number AND it has no PDF yet,
+ * so a fresh manual attach and same-number-different-customer conflicts are
+ * never clobbered. Returns the re-linked count for the import report.
+ */
+export async function relinkOrphanAttachments(
+  liveInvoices: { id: string; invoiceNo: string }[],
+): Promise<number> {
+  if (!liveInvoices.length) return 0;
+  const liveIds = new Set(liveInvoices.map((i) => String(i.id)));
+  const primaries = await loadPrimaryPdfByInvoice().catch(() => new Map());
+  const all: any[] = await (prisma as any).debtorInvoiceAttachment.findMany({}).catch(() => []);
+  const orphans = all.filter((o) => !liveIds.has(String(o?.invoiceId ?? '')));
+  if (!orphans.length) return 0;
+  const liveByNo = new Map<string, { id: string; invoiceNo: string }[]>();
+  for (const inv of liveInvoices) {
+    const k = normalizeInvoiceNo(String(inv?.invoiceNo ?? ''));
+    if (!k) continue;
+    if (!liveByNo.has(k)) liveByNo.set(k, []);
+    liveByNo.get(k)!.push(inv);
+  }
+  let relinked = 0;
+  for (const [key, cands] of liveByNo) {
+    if (cands.length !== 1) continue; // same no under several customers — manual
+    const inv = cands[0];
+    if (primaries.has(String(inv.id))) continue; // already carries a PDF
+    const mine = orphans.filter(
+      (o) => normalizeInvoiceNo(String(o?.invoiceNo ?? '')) === key,
+    );
+    if (!mine.length) continue;
+    for (const o of mine) {
+      await (prisma as any).debtorInvoiceAttachment.update({
+        where: { id: String(o.id) },
+        data: { invoiceId: String(inv.id) },
+      }).catch(() => {});
+      relinked++;
+    }
+  }
+  if (relinked) await invalidateDebtorsCache();
+  return relinked;
+}
+
 /** Plan a bulk-zip import without writing anything (dry-run + real import). */
 export async function planZipMatches(files: { fileName: string }[]): Promise<ZipMatchPlan> {
   const invoices: any[] = await (prisma as any).debtorInvoice.findMany({
@@ -214,7 +287,10 @@ export async function planZipMatches(files: { fileName: string }[]): Promise<Zip
     }
     const raw = byTrail.get(t) ?? [];
     if (raw.length === 0) {
-      plan.unmapped.push({ fileName: name, trailing: t, fileFy, note: `no live invoice ends in ${t}` });
+      plan.unmapped.push({
+        fileName: name, trailing: t, fileFy,
+        note: fileFy ? `FY ${fileFy} has no live invoice for #${t}` : `no live invoice ends in ${t}`,
+      });
       continue;
     }
     // FY gate: a known file FY only matches the same invoice FY. Either side
@@ -238,9 +314,15 @@ export async function planZipMatches(files: { fileName: string }[]): Promise<Zip
       // Every same-FY candidate is attached elsewhere, or the number exists
       // only under a different FY — either way there is nothing to attach.
       const otherFys = [...new Set(raw.map((inv: any) => fyOfInvoiceNo(String(inv?.invoiceNo ?? ''))).filter(Boolean))];
+      const sameFyHasPdf = raw.some((inv: any) => {
+        const same = fileFy && fyOfInvoiceNo(String(inv?.invoiceNo ?? '')) === fileFy;
+        return same && primaries.has(String(inv.id));
+      });
       const note = otherFys.length > 0 && fileFy && !otherFys.includes(fileFy)
-        ? `FY ${fileFy} has no live invoice for #${t} (ledger has ${otherFys.map((y) => `FY ${y}`).join(', ')})${raw.some((inv: any) => primaries.has(String(inv.id))) ? '; same-FY row already has a PDF' : ''}`
-        : `no unmatched live invoice ends in ${t}`;
+        ? `FY ${fileFy} has no live invoice for #${t} (ledger has ${otherFys.map((y) => `FY ${y}`).join(', ')})`
+        : fileFy
+          ? `FY ${fileFy} has no live invoice for #${t}${sameFyHasPdf ? ' (same-FY row already has a PDF)' : ''}`
+          : `no live invoice ends in ${t}`;
       plan.unmapped.push({ fileName: name, trailing: t, fileFy, note });
     }
   }

@@ -8,6 +8,7 @@ import { DebtorsTrackerError } from "../errors";
 import { todayIST, round2, pickText, isAdvanceCollection } from "../shared";
 import { ensureCustomers, isValidRegionInput, normalizeRegion } from "../customers";
 import { invalidateDebtorsCache } from "../cache";
+import { relinkOrphanAttachments } from "../attachments";
 import { realInvoiceMatches, findAdvancePlaceholder, advanceDuplicateIds } from "../dedupe";
 import type { UnmatchedIndex } from "./types";
 import { pickUnmatched, invKeyOf, compositeKey, custKeyOf, resolveBaseReceived, collectionDedupKey, pickInvoiceForCollection, INVOICE_EDITABLE_FIELDS } from "./pure";
@@ -217,6 +218,15 @@ export async function importDebtors(text: string, importedBy: string): Promise<D
     email: r.contactMail,
     region: r.region,
   })), importedBy);
+  // A wipe + re-paste gives every invoice a new id — re-link the PDFs that
+  // survived the reset (founder decision 2026-11-13: reset never deletes
+  // invoice PDFs) instead of leaving them orphaned and invisible.
+  const liveNow: { id: string; invoiceNo: string }[] = [];
+  for (const row of rows) {
+    const inv = byComposite.get(compositeKey(normalizeInvoiceNo(row.invoiceNo), normalizeCustomerName(row.customerName)));
+    if (inv && !inv.deleted) liveNow.push({ id: String(inv.id), invoiceNo: String(inv.invoiceNo) });
+  }
+  const pdfsRelinked = await relinkOrphanAttachments(liveNow).catch(() => 0);
   await invalidateDebtorsCache();
 
   return {
@@ -224,6 +234,7 @@ export async function importDebtors(text: string, importedBy: string): Promise<D
     created, updated, rebooked, restored, conflicts,
     skippedLines: skipped.length,
     skipped,
+    pdfsRelinked,
   };
 }
 

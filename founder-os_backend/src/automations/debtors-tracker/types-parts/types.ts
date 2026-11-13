@@ -70,6 +70,8 @@ export interface DebtorImportReport {
   restored: number;
   /** Same invoice no under another customer — kept as separate receivables. */
   conflicts: ImportConflict[];
+  /** Invoice PDFs re-linked after a wipe + re-paste (reset never deletes them). */
+  pdfsRelinked?: number;
   skippedLines: number;
   skipped: string[];
 }

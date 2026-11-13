@@ -99,7 +99,8 @@ export default function AccountsTab({
           <h3 className="text-sm font-medium text-rose-700 dark:text-rose-300">Danger zone</h3>
           <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
             Wipes every invoice and collection, then starts fresh. Use this before pasting a completely new
-            dataset; normal sheet updates do not need a reset.
+            dataset; normal sheet updates do not need a reset. Attached invoice PDFs are kept — they re-link
+            automatically to the matching invoices on the next paste.
           </p>
           <button
             onClick={onReset}

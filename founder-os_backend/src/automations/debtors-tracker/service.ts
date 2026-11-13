@@ -24,7 +24,7 @@ export {
 export { getDebtorsTrackerData } from './payload';
 export {
   addInvoiceAttachment, deleteInvoiceAttachment, listInvoiceAttachments,
-  loadPrimaryPdfByInvoice, planZipMatches, trailingNumber,
+  loadPrimaryPdfByInvoice, planZipMatches, relinkOrphanAttachments, trailingNumber,
 } from './attachments';
 export { getCustomerLedger } from './customer-ledger';
 export {
