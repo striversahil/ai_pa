@@ -15,7 +15,7 @@ import {
   importCollections, importDebtors, getDebtorsTrackerData, DebtorsTrackerError,
   updateInvoiceFields, deleteInvoice, deleteCollection, resetDebtorsTracker,
   INVOICE_EDITABLE_FIELDS, FOLLOW_UP_FIELDS, updateCustomerSituation, runReminderDryRun, updateCustomerContact, getCustomerLedger,
-  recordReceivablesExport, addCustomerRemark, deleteCustomerRemark, listCustomerRemarks, addTopPick, removeTopPick,
+  recordReceivablesExport, addCustomerRemark, deleteCustomerRemark, listCustomerRemarks, addTopPick, removeTopPick, setTopN,
   addInvoiceAttachment, deleteInvoiceAttachment, listInvoiceAttachments, planZipMatches,
 } from '../../automations/debtors-tracker/service';
 import { parseCollectionsTsv, parseDebtorsTsv } from '../../automations/debtors-tracker/parse';
@@ -355,6 +355,19 @@ function registerDebtorsTrackerPrefix(app: Hono<{ Bindings: Bindings }>, prefix:
       await removeTopPick(c.req.param('customerKey'));
       notifyLive(c, { type: LiveEvent.Debtors });
       return c.json({ ok: true });
+    } catch (e) { return errorResponse(c, e); }
+  });
+
+  // TEMPORARY Top-N size (2026-11-13): accounts-only shared config. Drop with 0140.
+  app.put(`${prefix}/top-config`, async (c) => {
+    try {
+      await requireAccountsScope(c);
+    } catch (e) { return scopeError(c, e); }
+    const body = await readBody(c);
+    try {
+      const topN = await setTopN((body as any)?.topN);
+      notifyLive(c, { type: LiveEvent.Debtors });
+      return c.json({ ok: true, topN });
     } catch (e) { return errorResponse(c, e); }
   });
 

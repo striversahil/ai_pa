@@ -13,7 +13,7 @@ import { buildCustomerAgeing, buildLiveInvoices } from './ledger';
 import { buildReceiptAgeing, receiptBucketAt } from './receipt-ageing';
 import { latestReminderByCustomer, loadRecentReminders, reminderConfigured, reminderMode } from './reminders';
 import { loadRemarkIndex } from './remarks';
-import { listTopPicks } from './top-picks';
+import { getTopN, listTopPicks } from './top-picks';
 import { isAdvanceCollection, round2, todayIST } from './shared';
 import { normalizeInvoiceNo } from './types';
 import type {
@@ -27,7 +27,7 @@ export async function getDebtorsTrackerData(): Promise<DebtorsTrackerPayload> {
 
 async function computePayload(): Promise<DebtorsTrackerPayload> {
   const today = todayIST();
-  const [invoiceRows, collRows, contacts, reminders, remarkIndex, pdfByInvoice, topPicks] = await Promise.all([
+  const [invoiceRows, collRows, contacts, reminders, remarkIndex, pdfByInvoice, topPicks, topN] = await Promise.all([
     prisma.debtorInvoice.findMany({ where: { deleted: false } }) as Promise<any[]>,
     prisma.paymentCollection.findMany({ where: { deleted: false } }) as Promise<any[]>,
     loadCustomerContacts(),
@@ -35,6 +35,7 @@ async function computePayload(): Promise<DebtorsTrackerPayload> {
     loadRemarkIndex(),
     loadPrimaryPdfByInvoice().catch(() => new Map()),
     listTopPicks().catch(() => []),
+    getTopN().catch(() => 20),
   ]);
 
   const { liveInvoices, advanceByCustomer } = buildLiveInvoices(invoiceRows, collRows, today);
@@ -178,6 +179,7 @@ async function computePayload(): Promise<DebtorsTrackerPayload> {
     receiptAgeing,
     reminders: liveReminders,
     topPicks: topPicks.map((t) => t.customerKey),
+    topN,
     meta: {
       asOfIST: today,
       totalInvoices: liveInvoices.length,

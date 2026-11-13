@@ -112,6 +112,11 @@ export interface DebtorsTrackerPayload {
    * gross due. Drop with migration 0140.
    */
   topPicks: string[];
+  /**
+   * TEMPORARY (2026-11-13): shared auto Top-N size (accountant-set,
+   * `debtors:top_n`). Mirror: frontend types.ts — keep identical.
+   */
+  topN: number;
   /** Week/month receipts split by the invoice ageing bucket on receipt date. */
   receiptAgeing: ReceiptAgeingSplit;
   /** Latest reminder attempts (dry-run now, live later). */

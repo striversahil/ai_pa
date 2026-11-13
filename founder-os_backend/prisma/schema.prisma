@@ -1920,8 +1920,8 @@ model DebtorsExportEvent {
 }
 
 // Debtors Tracker — TEMPORARY Top-receivables pins (2026-11-13).
-// Manual accountant pins only; auto top-N by gross due is client-side.
-// Drop with migration 0140 when the drive ends.
+// Manual accountant pins only; auto top-N by total receivable uses the shared
+// `debtors:top_n` Setting. Drop with migration 0140 when the drive ends.
 model DebtorsTopPick {
   id           String   @id @default(uuid())
   customerKey  String   @unique

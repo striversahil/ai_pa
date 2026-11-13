@@ -234,6 +234,12 @@ export interface DebtorsTrackerPayload {
    * — keep identical. Drop with migration 0140.
    */
   topPicks: string[];
+  /**
+   * TEMPORARY (2026-11-13): shared auto Top-N size (accountant-set).
+   * MIRROR: founder-os_backend/src/automations/debtors-tracker/types-parts/types.ts
+   * — keep identical. Drop with migration 0140.
+   */
+  topN: number;
   meta: {
     asOfIST: string;
     totalInvoices: number;
@@ -286,12 +292,13 @@ export const TOP_DEFAULT_N = 20;
 
 /**
  * TEMPORARY (2026-11-13): the Top set = manual accountant pins ∪ auto top-N
- * by gross due (ranked desc, only positive dues). MIRROR: the manual keys
- * come from `DebtorsTrackerPayload.topPicks` (backend `DebtorsTopPick`).
+ * by TOTAL receivable (ranked desc, only positive dues). MIRROR: the manual
+ * keys come from `DebtorsTrackerPayload.topPicks` (backend `DebtorsTopPick`),
+ * the size from `DebtorsTrackerPayload.topN` (shared, accountant-set).
  * Drop with migration 0140.
  */
 export function buildTopSet(
-  customers: Pick<CustomerAgeingRow, "customerKey" | "grossDue">[],
+  customers: Pick<CustomerAgeingRow, "customerKey" | "totalReceivable">[],
   manualKeys: readonly string[] = [],
   n: number = TOP_DEFAULT_N,
 ): Set<string> {
@@ -303,8 +310,8 @@ export function buildTopSet(
   const count = Number.isFinite(n) ? Math.max(0, Math.floor(n)) : TOP_DEFAULT_N;
   if (count > 0) {
     const ranked = [...customers]
-      .filter((r) => (r.grossDue || 0) > 0)
-      .sort((a, b) => (b.grossDue || 0) - (a.grossDue || 0))
+      .filter((r) => (r.totalReceivable || 0) > 0)
+      .sort((a, b) => (b.totalReceivable || 0) - (a.totalReceivable || 0))
       .slice(0, count);
     for (const r of ranked) out.add(String(r.customerKey || "").toLowerCase());
   }

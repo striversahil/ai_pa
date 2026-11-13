@@ -37,7 +37,7 @@ export { updateCustomerContact, updateCustomerSituation } from './customers';
 export { CUSTOMER_SITUATIONS, CUSTOMER_SITUATION_LABELS } from './situation';
 export { addCustomerRemark, deleteCustomerRemark, listCustomerRemarks } from './remarks';
 export type { CustomerRemark } from './remarks';
-export { addTopPick, listTopPicks, removeTopPick } from './top-picks';
+export { addTopPick, listTopPicks, removeTopPick, getTopN, setTopN, TOP_DEFAULT_N } from './top-picks';
 export type { TopPick } from './types';
 export { PROMISE_PRESET_DAYS, MAX_PROMISE_DAYS } from './promise';
 export {

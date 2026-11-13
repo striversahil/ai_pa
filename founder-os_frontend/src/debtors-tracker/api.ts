@@ -213,6 +213,23 @@ export async function removeTopPick(customerKey: string): Promise<void> {
   });
 }
 
+/** TEMPORARY (2026-11-13): accounts-only shared Top-N size. Drop with migration 0140. */
+export async function saveTopN(topN: number): Promise<number> {
+  const res = await fetch(`/api/debtors-tracker/top-config`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ topN }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.error || `Request failed (${res.status})`);
+  }
+  const body = (await res.json().catch(() => ({}))) as { topN?: unknown };
+  const n = Number(body?.topN);
+  if (!Number.isFinite(n)) throw new Error("Top-N response was invalid");
+  return n;
+}
+
 /** Accounts only: log today's reminder dry-run previews. */
 export async function runReminderDryRun(): Promise<void> {
   await request(`/api/debtors-tracker/reminders/run`, { method: "POST" });

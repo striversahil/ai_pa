@@ -2,8 +2,8 @@
 
 import { useMemo, useState } from "react";
 import type { CustomerAgeingRow } from "@/debtors-tracker/types";
-import { BUCKET_LABELS, CUSTOMER_SITUATION_LABELS, TOP_DEFAULT_N, buildTopSet, formatINR, shortDate, situationLabel } from "@/debtors-tracker/types";
-import { addTopPick, removeTopPick } from "@/debtors-tracker/api";
+import { BUCKET_LABELS, CUSTOMER_SITUATION_LABELS, buildTopSet, formatINR, shortDate, situationLabel } from "@/debtors-tracker/types";
+import { addTopPick, removeTopPick, saveTopN } from "@/debtors-tracker/api";
 import { debtorRegionLabel, debtorRegionOf, matchesDebtorRegion, type DebtorRegionFilter } from "@/debtors-tracker/regions";
 import { todayIST } from "@/debtors-tracker/promise";
 import { Chip, EmptyState, TD, TDR, TH, THR, TableShell } from "../ui";
@@ -13,11 +13,12 @@ import { SituationBadge } from "./ageing-tab/SituationBadge";
 import { PromiseBadge } from "./ageing-tab/PromiseBadge";
 
 export default function AgeingTab({
-  customers, topPicks, onGoToAccounts, onEditContact, onEditSituation, onFollowUp, onViewLedger, onTopChanged, canAccounts,
+  customers, topPicks, topN, onGoToAccounts, onEditContact, onEditSituation, onFollowUp, onViewLedger, onTopChanged, canAccounts,
 }: {
   customers: CustomerAgeingRow[];
-  /** TEMPORARY (2026-11-13): manual Top pins from the payload. Drop with 0140. */
+  /** TEMPORARY (2026-11-13): manual Top pins + shared Top-N from the payload. Drop with 0140. */
   topPicks: string[];
+  topN: number;
   onGoToAccounts: () => void;
   onEditContact: (customer: CustomerAgeingRow) => void;
   onEditSituation: (customer: CustomerAgeingRow) => void;
@@ -33,17 +34,9 @@ export default function AgeingTab({
   const [groupBy, setGroupBy] = useState(false);
   // TEMPORARY Top focus (2026-11-13): Top-only bypasses the region filter.
   const [topOnly, setTopOnly] = useState(false);
-  const [topN, setTopN] = useState<number>(() => {
-    try {
-      const raw = window.localStorage.getItem("debtors-top-n");
-      const n = raw == null ? NaN : Number.parseInt(raw, 10);
-      return Number.isFinite(n) && n >= 0 && n <= 500 ? n : TOP_DEFAULT_N;
-    } catch {
-      return TOP_DEFAULT_N;
-    }
-  });
   const [topErr, setTopErr] = useState<string | null>(null);
   const [topBusy, setTopBusy] = useState<string | null>(null);
+  const [savingN, setSavingN] = useState(false);
   const today = useMemo(() => todayIST(), []);
 
   const changeSort = (key: SortKey) => {
@@ -85,12 +78,18 @@ export default function AgeingTab({
   }, [topPicks]);
   const topSet = useMemo(() => buildTopSet(customers, topPicks, topN), [customers, topPicks, topN]);
 
-  const setTopNAndPersist = (n: number) => {
-    const clamped = Number.isFinite(n) ? Math.min(500, Math.max(0, Math.floor(n))) : TOP_DEFAULT_N;
-    setTopN(clamped);
+  const saveSharedTopN = async (n: number) => {
+    if (!canAccounts || savingN) return;
+    setTopErr(null);
+    setSavingN(true);
     try {
-      window.localStorage.setItem("debtors-top-n", String(clamped));
-    } catch { /* private mode */ }
+      await saveTopN(n);
+      onTopChanged();
+    } catch (e: any) {
+      setTopErr(e?.message ?? "Could not update Top N");
+    } finally {
+      setSavingN(false);
+    }
   };
 
   const togglePin = async (r: CustomerAgeingRow) => {
@@ -197,7 +196,7 @@ export default function AgeingTab({
           {topSet.has(String(r.customerKey || "").toLowerCase()) && (
             <span
               className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
-              title={manualSet.has(String(r.customerKey || "").toLowerCase()) ? "Pinned by accounts" : `Auto Top-${topN} by gross due`}
+              title={manualSet.has(String(r.customerKey || "").toLowerCase()) ? "Pinned by accounts" : `Auto Top-${topN} by total receivable`}
             >
               Top
             </span>
@@ -323,17 +322,22 @@ export default function AgeingTab({
         <Chip active={topOnly} onClick={() => setTopOnly((v) => !v)} title="Show only Top receivables — ignores the region filter">
           Top only{topOnly ? "" : ` (${topSet.size})`}
         </Chip>
-        <label className="flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400" title="Auto Top-N size by gross due (manual pins always show)">
+        <label className="flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400" title={canAccounts ? "Shared auto Top-N by total receivable — every dashboard reads the same N" : `Shared Top ${topN} by total receivable (accounts sets it)`}>
           Top N
-          <input
-            type="number"
-            min={0}
-            max={500}
-            step={1}
-            value={topN}
-            onChange={(e) => setTopNAndPersist(Number(e.target.value))}
-            className="w-16 rounded-lg border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-800 outline-none focus:border-indigo-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
-          />
+          {canAccounts ? (
+            <input
+              type="number"
+              min={0}
+              max={500}
+              step={1}
+              value={topN}
+              disabled={savingN}
+              onChange={(e) => void saveSharedTopN(Number(e.target.value))}
+              className="w-16 rounded-lg border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-800 outline-none focus:border-indigo-500 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+            />
+          ) : (
+            <span className="font-semibold tabular-nums text-zinc-700 dark:text-zinc-200">{topN}</span>
+          )}
         </label>
         {topErr && <span className="text-xs text-rose-600 dark:text-rose-400">{topErr}</span>}
         <div className="flex-1" />

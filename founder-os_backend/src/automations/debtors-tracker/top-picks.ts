@@ -15,6 +15,41 @@ export type { TopPick };
 
 const ACTOR_MAX = 120;
 
+/** Shared auto Top-N size (Setting row — every dashboard reads the same N). */
+export const TOP_N_KEY = 'debtors:top_n';
+export const TOP_DEFAULT_N = 20;
+const TOP_N_MAX = 500;
+
+function normalizeTopN(raw: unknown): number {
+  const n = typeof raw === 'number' ? raw : Number.parseInt(String(raw ?? ''), 10);
+  if (!Number.isFinite(n)) return TOP_DEFAULT_N;
+  return Math.min(TOP_N_MAX, Math.max(0, Math.floor(n)));
+}
+
+/** Shared Top-N (accountant-set; defaults to 20 before the first save). */
+export async function getTopN(): Promise<number> {
+  try {
+    const row: any = await prisma.setting.findUnique({ where: { key: TOP_N_KEY } });
+    const v = row ? String((row as any).value ?? '') : '';
+    if (!v.trim()) return TOP_DEFAULT_N;
+    return normalizeTopN(v);
+  } catch {
+    return TOP_DEFAULT_N;
+  }
+}
+
+/** Accounts-only: set the shared Top-N for every dashboard. */
+export async function setTopN(n: unknown): Promise<number> {
+  const value = normalizeTopN(n);
+  await prisma.setting.upsert({
+    where: { key: TOP_N_KEY },
+    update: { value: String(value) },
+    create: { key: TOP_N_KEY, value: String(value) },
+  });
+  await invalidateDebtorsCache();
+  return value;
+}
+
 function pickView(row: any): TopPick {
   return {
     customerKey: String(row.customerKey || ''),

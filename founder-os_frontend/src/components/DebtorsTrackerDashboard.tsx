@@ -293,6 +293,7 @@ export default function DebtorsTrackerDashboard() {
         <AgeingTab
           customers={data.customers}
           topPicks={data.topPicks ?? []}
+          topN={data.topN ?? 20}
           canAccounts={canAccounts}
           onGoToAccounts={() => setView("accounts")}
           onEditContact={setContact}

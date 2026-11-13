@@ -20,9 +20,11 @@ const routes = readFileSync(join(root, 'founder-os_backend', 'src', 'worker', 'r
 const ageing = readFileSync(join(root, 'founder-os_frontend', 'src', 'components', 'debtors-tracker', 'tabs', 'AgeingTab.tsx'), 'utf8');
 
 describe('debtors Top pins (temporary)', () => {
-  it('backend and frontend payloads both carry topPicks: string[]', () => {
+  it('backend and frontend payloads both carry topPicks + shared topN', () => {
     assert.match(beTypes, /topPicks:\s*string\[\]/, 'backend payload missing topPicks');
     assert.match(feTypes, /topPicks:\s*string\[\]/, 'frontend payload missing topPicks');
+    assert.match(beTypes, /topN:\s*number/, 'backend payload missing shared topN');
+    assert.match(feTypes, /topN:\s*number/, 'frontend payload missing shared topN');
   });
 
   it('migration 0140 creates DebtorsTopPick', () => {
@@ -42,5 +44,6 @@ describe('debtors Top pins (temporary)', () => {
     // Top-only must bypass the region predicate (Top ignores region).
     assert.match(ageing, /topOnly \? true : matchesDebtorRegion/, 'Top-only must skip the region filter');
     assert.match(ageing, /buildTopSet/, 'auto top-N union missing');
+    assert.match(ageing, /saveTopN/, 'shared Top-N save missing');
   });
 });
