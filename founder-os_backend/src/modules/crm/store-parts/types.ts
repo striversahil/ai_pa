@@ -72,6 +72,11 @@ export interface SyncedOrder {
   createdTime?: string;
   /** Full line items — present only when the runner fetched this order's detail. */
   items?: any[];
+  /** Backfill-only: this historical order is already fully dispatched in the
+   *  real world (not on the pending list). New lines insert as `dispatched`
+   *  with full qty instead of `unscheduled`. Existing rows are never
+   *  overwritten — only brand-new lines take this state. */
+  completeHistory?: boolean;
 }
 
 export interface SyncVerify {

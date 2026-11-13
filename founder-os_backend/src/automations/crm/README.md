@@ -122,6 +122,15 @@ on a per-tick budget (80 orders, ~2s apart) and accumulate newest-first; a floor
 order shows "No line items captured yet" until the fetcher reaches it (a 30-day
 cold start clears in ~2 ticks).
 
+One-off historical backfill (2026-11-13): `CRM_BACKFILL_FROM=2026-01-01 node
+scripts/crm-runner.js` (or the manual `CRM backfill 2026` workflow, same
+serial-Zoho concurrency group as the 15-min cron) pages Zoho until
+`created_time` passes the floor and POSTs ~40-order chunks with
+`{ backfill:true }`. The Worker then bypasses the 30-day cutoff, skips
+miss/score/mirror writes, and inserts `completeHistory` lines as fully
+dispatched; `pending_so.json` keys import open for the qty-aware pending split
+applied afterwards. Resumable — tracked orders with items are skipped.
+
 ## Points (DepartmentScoreEvent)
 
 Scored inside `syncOrders()` from **status moves since the last tick** — the

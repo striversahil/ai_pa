@@ -27,6 +27,8 @@
  * Env: WORKER_URL, SHARED_SECRET (both from GH secrets).
  */
 const { workerRequest } = require('./runner-lib');
+const fs = require('fs');
+const path = require('path');
 const CORE = '../founder-os_backend/src/shared/sync-core/';
 const { API, ZOHO_STATUSES, CRM } = require(CORE + 'contract');
 const { parseCurlFile } = require(CORE + 'zoho-auth');
@@ -376,8 +378,201 @@ function createdDayIso(so) {
   return istDateString(t);
 }
 
+// Line-item slimming: raw Zoho items carry ~80 keys each; keep display scalars
+// only (objects/arrays in these fields break React rendering downstream).
+// Shared by the per-tick detail pass and the one-off backfill below.
+const SLIM_KEYS = ['line_item_id', 'item_id', 'name', 'description', 'sku', 'item_code', 'quantity', 'unit', 'rate', 'item_total'];
+const slimItem = (li) => {
+  const o = {};
+  for (const k of SLIM_KEYS) {
+    const v = li[k];
+    if (v === undefined || v === '' || v === null) continue;
+    if (typeof v === 'object') continue;
+    o[k] = v;
+  }
+  return o;
+};
+
+// ── One-off historical backfill ──────────────────────────────────────────────
+// CRM_BACKFILL_FROM=2026-01-01 node scripts/crm-runner.js
+//
+// Walks Zoho page by page until created_time falls before the floor (Zoho has
+// no date filter), fetches details ONLY for orders D1 does not track yet (plus
+// tracked rows still without items), and POSTs them in ~40-order chunks with
+// { backfill:true } — the Worker bypasses the 30-day cutoff, skips miss/score/
+// mirror, and inserts `completeHistory` lines as fully dispatched. Pending-map
+// SOs (pending_so.json keys) post with completeHistory:false so their lines
+// land unscheduled, ready for the qty-aware pending split applied afterwards.
+//
+// Resumable: already-tracked orders (with items) are skipped on re-run, so a
+// crash mid-run simply re-fetches state and continues. The normal 15-min cron
+// tick is untouched (this branch returns before it).
+async function runBackfill() {
+  const fromDay = String(process.env.CRM_BACKFILL_FROM || '2026-01-01').slice(0, 10);
+  const today = istDateString(new Date());
+  console.log(`crm-runner: BACKFILL mode from ${fromDay} — paging Zoho until created_time < floor`);
+
+  // What D1 already tracks (drives the skip set) + the pending-map SOs.
+  let localOrders = [];
+  try {
+    const state = await workerRequest(API.crmState);
+    localOrders = Array.isArray(state?.orders) ? state.orders : [];
+  } catch (e) {
+    console.log(`crm-runner backfill: floor state unavailable (${e.message}) — aborting, retry later`);
+    process.exit(1);
+  }
+  const localByKey = new Map(localOrders.map((o) => [`${o.org || ''}:${o.so}`, o]));
+  const pendingSet = new Set();
+  const pendingCandidates = [
+    path.join(__dirname, '..', 'pending_so.json'),
+    path.join(process.cwd(), 'pending_so.json'),
+    path.join(process.cwd(), '..', 'pending_so.json'),
+  ];
+  for (const p of pendingCandidates) {
+    try {
+      if (fs.existsSync(p)) {
+        const parsed = JSON.parse(fs.readFileSync(p, 'utf8'));
+        for (const k of Object.keys(parsed)) pendingSet.add(String(k));
+        console.log(`crm-runner backfill: pending map ${p} (${pendingSet.size} SOs)`);
+        break;
+      }
+    } catch (e) {
+      console.log(`crm-runner backfill: pending map ${p} unreadable (${e.message})`);
+    }
+  }
+  if (!pendingSet.size) console.log('crm-runner backfill: no pending map found — everything imports as dispatched history');
+
+  // Page Zoho (newest first) until the created floor is passed.
+  const all = [];
+  const activeBySo = new Map();
+  for (const org of orgIds.length ? orgIds : [orgId]) {
+    let stop = false;
+    for (let page = 1; page <= 60 && !stop; page++) {
+      if (page > 1) await sleep(1500);
+      const json = await zohoFetchList(buildSalesOrdersUrl(page, org), 3);
+      const salesorders = json.salesorders || [];
+      if (salesorders.length === 0) break;
+      let oldest = '';
+      for (const so of salesorders) {
+        const day = createdDayIso(so);
+        if (day && (!oldest || day < oldest)) oldest = day;
+        if (!day || day < fromDay) continue;
+        const soNum = so.salesorder_number || '';
+        if (!soNum) continue;
+        const row = orderRow(so, today, org);
+        all.push({ so: soNum, org, day, row });
+        if (so.salesorder_id && !activeBySo.has(org + ':' + soNum)) {
+          activeBySo.set(org + ':' + soNum, { id: so.salesorder_id, row });
+        }
+      }
+      console.log(`crm-runner backfill: org ${org} page ${page} — ${salesorders.length} rows, oldest ${oldest || '?'}`);
+      if (salesorders.length < 200 || (oldest && oldest < fromDay)) stop = true;
+    }
+  }
+  console.log(`crm-runner backfill: ${all.length} Zoho SO(s) since ${fromDay}`);
+
+  // Skip what D1 already tracks with items — only missing rows (plus tracked
+  // rows still without items, e.g. SO-11764) need a detail call + POST.
+  const todo = all.filter(({ so, org }) => {
+    const local = localByKey.get(`${org}:${so}`);
+    if (!local) return true;
+    return Number(local.itemCount) === 0;
+  });
+  const skipped = all.length - todo.length;
+  console.log(`crm-runner backfill: ${todo.length} to import, ${skipped} already tracked (skipped)`);
+
+  const CHUNK = 40;
+  let fetched = 0;
+  let posted = 0;
+  let created = 0;
+  let detailErrors = 0;
+  let batch = [];
+  const postBatch = async () => {
+    if (!batch.length) return;
+    const res = await workerRequest(API.crmOrdersSync, {
+      method: 'POST',
+      body: { date: today, orders: batch, backfill: true },
+      timeoutMs: 240000,
+    });
+    created += Number(res?.created || 0);
+    posted += batch.length;
+    console.log(
+      `crm-runner backfill: posted ${batch.length} → created ${res?.created || 0}, ` +
+        `updated ${res?.updated || 0}, items ${res?.itemsUpserted || 0} (${posted}/${todo.length})`,
+    );
+    batch = [];
+  };
+  for (const { so, org, day, row } of todo) {
+    const hit = activeBySo.get(org + ':' + so);
+    if (!hit?.id) {
+      detailErrors++;
+      continue;
+    }
+    let detail;
+    try {
+      detail = await fetchOrderDetail(hit.id, org);
+    } catch (e) {
+      detailErrors++;
+      if (e?.message && String(e.message).includes('circuit open')) {
+        console.log('crm-runner backfill: detail circuit open — posting what we have, aborting fetch loop');
+        break;
+      }
+      console.log(`crm-runner backfill: detail fetch failed for ${so}: ${e.message}`);
+      await sleep(1200 + Math.random() * 1300);
+      continue;
+    }
+    batch.push({
+      so,
+      org,
+      zohoId: hit.id,
+      customer: row.customer || '',
+      total: row.total,
+      status: row.status || '',
+      orderStatus: row.orderStatus || '',
+      invoicedStatus: row.invoicedStatus || '',
+      shippedStatus: row.shippedStatus || '',
+      paidStatus: row.paidStatus || '',
+      salesperson: row.salesperson || '',
+      ref: row.ref || '',
+      billingAddress: detail.billingAddress || '',
+      shippingAddress: detail.shippingAddress || '',
+      paymentTerms: detail.paymentTerms || '',
+      createdDate: day,
+      createdTime: day,
+      items: (detail.items || []).filter((li) => !isChargeLine(li)).map(slimItem),
+      // Pending-map SOs import open (the qty-aware split runs afterwards);
+      // everything else is already dispatched in the real world.
+      completeHistory: !pendingSet.has(so),
+    });
+    fetched++;
+    await sleep(1200 + Math.random() * 1300);
+    if (batch.length >= CHUNK) {
+      try {
+        await postBatch();
+      } catch (e) {
+        console.log(`crm-runner backfill: chunk POST failed (${e.message}) — retry continues with next chunk`);
+        detailErrors++;
+      }
+    }
+  }
+  try {
+    await postBatch();
+  } catch (e) {
+    console.log(`crm-runner backfill: final chunk POST failed (${e.message})`);
+    process.exit(1);
+  }
+  console.log(
+    `crm-runner backfill: done — ${fetched} detail(s), ${posted} posted, ${created} created, ` +
+      `${detailErrors} error(s), ${todo.length - fetched} unfetched`,
+  );
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 async function main() {
+  if (process.env.CRM_BACKFILL_FROM) {
+    await runBackfill();
+    return;
+  }
   console.log('crm-runner: fetching sales orders from Zoho Books');
   const today = istDateString(new Date());
   const fetchedAt = new Date().toISOString();
@@ -492,19 +687,6 @@ async function main() {
     stages[s].value = Math.round(stages[s].value * 100) / 100;
   }
 
-  // Line-item slimming: raw Zoho items carry ~80 keys each; keep display scalars
-  // only (objects/arrays in these fields break React rendering downstream).
-  const SLIM_KEYS = ['line_item_id', 'item_id', 'name', 'description', 'sku', 'item_code', 'quantity', 'unit', 'rate', 'item_total'];
-  const slimItem = (li) => {
-    const o = {};
-    for (const k of SLIM_KEYS) {
-      const v = li[k];
-      if (v === undefined || v === '' || v === null) continue;
-      if (typeof v === 'object') continue;
-      o[k] = v;
-    }
-    return o;
-  };
   // Per-tick detail budget. Each detail call is ONE Zoho request (it returns
   // both the line items and the client addresses) and Zoho Books allows
   // ~100 requests/min per org; the cron jobs run in a serial group, so this

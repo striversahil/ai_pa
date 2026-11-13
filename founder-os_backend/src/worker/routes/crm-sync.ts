@@ -11,6 +11,8 @@
 //   absent from the scan      → missCount++ → flagged `deleted_source` at 2
 //   verified 404 by id        → flagged immediately (definitive)
 //   flagged order reappears   → self-heals to active
+//   backfill:true             → bypass window/complete skips, no miss/score/mirror;
+//                              `completeHistory` lines insert as dispatched.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import { notifyLive, requireSecret, type Bindings } from '../context';
@@ -46,6 +48,8 @@ function normalizeOrder(o: any): SyncedOrder | null {
     createdDate: String(o?.createdDate ?? o?.createdTime ?? o?.created_time ?? ''),
     createdTime: String(o?.createdTime ?? o?.created_time ?? ''),
     items: Array.isArray(o?.items) ? o.items : undefined,
+    // Backfill-only: historical orders already dispatched in the real world.
+    completeHistory: o?.completeHistory === true,
   };
 }
 
@@ -81,6 +85,7 @@ export function registerCrmSyncRoutes(app: Hono<{ Bindings: Bindings }>): void {
       const result = await syncOrders({
         day,
         orders,
+        backfill: body?.backfill === true,
         verify: {
           present: stringList(body?.verify?.present),
           gone: stringList(body?.verify?.gone),

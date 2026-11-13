@@ -1,0 +1,29 @@
+name: CRM backfill 2026 (one-off)
+
+on:
+  # Manual only. Paces Zoho at ~1 call/2s; shares the cron-every-15min
+  # concurrency group so it never double-pings Books alongside a live tick
+  # (queued ticks run after it instead).
+  workflow_dispatch:
+    inputs:
+      from:
+        description: "Zoho created_time floor (YYYY-MM-DD, inclusive)"
+        default: "2026-01-01"
+
+concurrency:
+  group: cron-every-15min
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: backfill 2026 sales orders (Zoho → D1, backfill mode)
+        env:
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+          SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
+          CRM_BACKFILL_FROM: ${{ github.event.inputs.from }}
+        run: node scripts/crm-runner.js

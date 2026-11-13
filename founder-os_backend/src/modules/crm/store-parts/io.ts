@@ -1201,9 +1201,14 @@ export async function syncOrders(args: {
   day: string;
   orders: SyncedOrder[];
   verify?: SyncVerify;
+  /** One-off historical backfill: bypass the 30-day create cutoff + the
+   *  never-create-complete skip, disable miss/deletion detection, skip points
+   *  and the core mirror. Existing rows keep local schedule state. */
+  backfill?: boolean;
 }): Promise<SyncResult> {
   const day = args.day || istToday();
   const orders = Array.isArray(args.orders) ? args.orders : [];
+  const backfill = !!args.backfill;
   const verifyPresent = new Set((args.verify?.present || []).map((k) => String(k)));
   const verifyGone = new Set((args.verify?.gone || []).map((k) => String(k)));
 
@@ -1253,7 +1258,7 @@ export async function syncOrders(args: {
     }
   };
   const newOrderCredits: Array<{ soNumber: string; salesperson: string | null; day: string }> = [];
-  const withItems: Array<{ soId: string; items: any[] }> = [];
+  const withItems: Array<{ soId: string; items: any[]; completeHistory?: boolean; completeHistoryAt?: string }> = [];
   const now = new Date();
   const today = istToday();
 
@@ -1268,12 +1273,13 @@ export async function syncOrders(args: {
     const createdDate = str(o.createdDate || o.createdTime).slice(0, 10);
 
     if (!existing) {
-      if (isCompleteInZoho(o) && !cancelled) {
+      if (!backfill && isCompleteInZoho(o) && !cancelled) {
         // Never on the floor — do not create history rows for closed orders.
+        // (Backfill bypasses: 2026 Zoho rows are all open-status history.)
         result.skipped++;
         continue;
       }
-      if (/^\d{4}-\d{2}-\d{2}$/.test(createdDate) && createdDate < cutoff) {
+      if (!backfill && /^\d{4}-\d{2}-\d{2}$/.test(createdDate) && createdDate < cutoff) {
         // Older than the floor window — Zoho keeps it, the floor does not.
         result.skipped++;
         continue;
@@ -1311,12 +1317,13 @@ export async function syncOrders(args: {
         createdAt: now,
         updatedAt: now,
       });
-      if (!cancelled && createdDate === today) {
+      if (!backfill && !cancelled && createdDate === today) {
         // New-order points only when Zoho says it was created today (never
-        // re-credit on a cold start).
+        // re-credit on a cold start). Backfill never scores.
         newOrderCredits.push({ soNumber, salesperson: str(o.salesperson) || null, day });
       }
-      if (Array.isArray(o.items) && o.items.length) withItems.push({ soId: id, items: o.items });
+      if (Array.isArray(o.items) && o.items.length)
+        withItems.push({ soId: id, items: o.items, completeHistory: !!o.completeHistory, completeHistoryAt: createdDate });
       continue;
     }
 
@@ -1356,7 +1363,8 @@ export async function syncOrders(args: {
     const regionChanged = str(existing.region) !== nextRegion;
     if (str(existing.fingerprint) === fp && !healedNow && !addrChanged && !payChanged && !regionChanged) {
       result.unchanged++;
-      if (Array.isArray(o.items) && o.items.length) withItems.push({ soId: str(existing.id), items: o.items });
+      if (Array.isArray(o.items) && o.items.length)
+        withItems.push({ soId: str(existing.id), items: o.items, completeHistory: !!o.completeHistory, completeHistoryAt: createdDate || str(existing.createdDate) });
       continue;
     }
     await prisma.crmSalesOrder.update({
@@ -1391,8 +1399,9 @@ export async function syncOrders(args: {
 
     // ── Department points for pipeline movement ────────────────────────────
     // Only orders we already track are scored (a first sighting is never
-    // back-credited — a cold start must not flood the ledger).
-    if (!healedNow) {
+    // back-credited — a cold start must not flood the ledger). Backfill never
+    // scores.
+    if (!healedNow && !backfill) {
       const prevStage = orderStage({
         status: str(existing.status),
         orderStatus: str(existing.orderStatus),
@@ -1428,7 +1437,8 @@ export async function syncOrders(args: {
         // A regression (credit note / manual revert) scores nothing.
       }
     }
-    if (Array.isArray(o.items) && o.items.length) withItems.push({ soId: str(existing.id), items: o.items });
+    if (Array.isArray(o.items) && o.items.length)
+      withItems.push({ soId: str(existing.id), items: o.items, completeHistory: !!o.completeHistory, completeHistoryAt: createdDate || str(existing.createdDate) });
   }
 
   // Bulk insert the new rows. D1 caps bound parameters per statement, so the
@@ -1438,11 +1448,13 @@ export async function syncOrders(args: {
     result.created = await insertOrders(toCreate);
   }
 
-  for (const { soId, items } of withItems) {
-    result.itemsUpserted += await upsertItems(soId, items);
+  for (const { soId, items, completeHistory, completeHistoryAt } of withItems) {
+    result.itemsUpserted += await upsertItems(soId, items, { completeHistory, completeHistoryAt });
   }
 
-  // Mark rows missing from this tick.
+  // Mark rows missing from this tick. Backfill posts intentional subsets —
+  // it must never advance the deletion detector.
+  if (!backfill) {
   for (const [key, row] of byKey) {
     if (seen.has(key)) continue;
     if (str(row.sourceState) !== 'active') continue;
@@ -1488,6 +1500,7 @@ export async function syncOrders(args: {
     result.missIncremented++;
     result.missing.push({ so: soNumber, org, zohoId: str(row.zohoId) });
   }
+  }
 
   // Stage completions detected above (status moves since the last tick).
   const scoreEvents: any[] = stageCredits.map((c) => ({
@@ -1510,7 +1523,7 @@ export async function syncOrders(args: {
       day: c.day,
     });
   }
-  if (scoreEvents.length) {
+  if (!backfill && scoreEvents.length) {
     try {
       await prisma.departmentScoreEvent.createMany({ data: scoreEvents });
     } catch (e: any) {
@@ -1526,10 +1539,13 @@ export async function syncOrders(args: {
   }
 
   // Phase 4a dual-write: project the synced batch into the core order spine.
-  try {
-    const { mirrorOrdersByKeys } = await import('../../core/orders');
-    if (seen.size) await mirrorOrdersByKeys([...seen]);
-  } catch { /* non-fatal */ }
+  // Skipped in backfill mode (historical rows must not touch the core spine).
+  if (!backfill) {
+    try {
+      const { mirrorOrdersByKeys } = await import('../../core/orders');
+      if (seen.size) await mirrorOrdersByKeys([...seen]);
+    } catch { /* non-fatal */ }
+  }
 
   return result;
 }
@@ -1612,10 +1628,22 @@ export async function insertItems(rows: any[]): Promise<number> {
   return written;
 }
 
-export async function upsertItems(soId: string, rawItems: any[]): Promise<number> {
+export async function upsertItems(
+  soId: string,
+  rawItems: any[],
+  opts?: { completeHistory?: boolean; completeHistoryAt?: string },
+): Promise<number> {
   const existing = (await prisma.crmSoItem.findMany({ where: { soId } })) as any[];
   const byKey = new Map(existing.map((r) => [str(r.lineKey), r]));
   const now = new Date();
+  // Historical backfill date → dispatchedAt for brand-new history lines.
+  // Falls back to now when the order date is unparseable.
+  let historyAt: Date | null = null;
+  if (opts?.completeHistory) {
+    const raw = str(opts?.completeHistoryAt).slice(0, 10);
+    const parsed = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? new Date(`${raw}T00:00:00Z`) : null;
+    historyAt = parsed && !Number.isNaN(parsed.getTime()) ? parsed : now;
+  }
   let written = 0;
   const seenKeys = new Set<string>();
 
@@ -1655,6 +1683,10 @@ export async function upsertItems(soId: string, rawItems: any[]): Promise<number
       await prisma.crmSoItem.update({ where: { id: str(found.id) }, data: payload });
     } else {
       const qty = num(li.quantity ?? li.qty);
+      // Backfill history: brand-new lines land as fully dispatched. Existing
+      // lines are never touched here (found branch above), so the pending-map
+      // states applied earlier survive a re-post.
+      const history = !!opts?.completeHistory;
       pending.push({
         id: crypto.randomUUID(),
         soId,
@@ -1662,11 +1694,11 @@ export async function upsertItems(soId: string, rawItems: any[]): Promise<number
         ...payload,
         qty,
         itemTotal: num(li.item_total) || Math.round(qty * rate * 100) / 100,
-        dispatchState: 'unscheduled',
+        dispatchState: history ? 'dispatched' : 'unscheduled',
         tentativeDispatchDate: null,
         delayReason: null,
-        dispatchedQty: 0,
-        dispatchedAt: null,
+        dispatchedQty: history ? qty : 0,
+        dispatchedAt: history ? historyAt : null,
         scheduledBy: null,
         scheduledAt: null,
         createdAt: now,
