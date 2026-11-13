@@ -24,6 +24,9 @@ export interface InvoicePdfRef {
   url: string;
   source: string;
   uploadedBy: string;
+  /** Invoice number read from INSIDE the PDF (`FY/serial`, e.g. `24-25/777`).
+   *  Zip filenames lie (86/250 differ from content); '' = not audited yet. */
+  contentKey: string;
   createdAt: string;
 }
 
@@ -97,6 +100,7 @@ export function toPdfRef(row: any): InvoicePdfRef {
     url: `/api/debtors-tracker/invoice-files/${String(row?.id ?? '')}`,
     source: String(row?.source ?? 'manual'),
     uploadedBy: String(row?.uploadedBy ?? ''),
+    contentKey: String(row?.contentKey ?? ''),
     createdAt: row?.createdAt instanceof Date ? row.createdAt.toISOString() : String(row?.createdAt ?? ''),
   };
 }
@@ -140,6 +144,8 @@ export async function addInvoiceAttachment(input: {
   kvKey: string;
   source: 'bulk-zip' | 'manual';
   uploadedBy: string;
+  /** Invoice number read from inside the PDF (`FY/serial`); '' when unknown. */
+  contentKey?: string;
 }): Promise<InvoicePdfRef> {
   const inv = await getInvoiceOrThrow(input.invoiceId);
   const mime = String(input.mime || 'application/pdf');
@@ -157,6 +163,7 @@ export async function addInvoiceAttachment(input: {
       kvKey: String(input.kvKey),
       source: input.source === 'bulk-zip' ? 'bulk-zip' : 'manual',
       uploadedBy: String(input.uploadedBy || '').slice(0, 200),
+      contentKey: String(input.contentKey || '').slice(0, 40),
       createdAt: new Date(),
     },
   });

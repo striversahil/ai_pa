@@ -1769,6 +1769,10 @@ model DebtorInvoiceAttachment {
   kvKey      String?  @unique
   source     String   @default("manual") // bulk-zip | manual
   uploadedBy String   @default("")
+  // Invoice number read from INSIDE the PDF (`FY/serial`, e.g. `24-25/777`).
+  // Zip filenames lie (86/250 differ from content); this is the ground truth
+  // (migration 0142, backfilled from the founder-audited invoice_link.json).
+  contentKey String   @default("")
   createdAt  DateTime @default(now())
 
   @@index([invoiceId])

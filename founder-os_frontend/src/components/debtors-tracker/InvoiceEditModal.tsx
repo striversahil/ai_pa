@@ -181,7 +181,7 @@ export default function InvoiceEditModal({ invoice, onClose, onSaved, canAccount
                 {invoice.invoicePdf.fileName}
               </a>
               <span className="text-[11px] text-zinc-500">
-                ({invoice.invoicePdf.source === "bulk-zip" ? "from zip" : "manual"}{invoice.invoicePdf.uploadedBy ? ` · ${invoice.invoicePdf.uploadedBy}` : ""})
+                ({invoice.invoicePdf.source === "bulk-zip" ? "from zip" : "manual"}{invoice.invoicePdf.uploadedBy ? ` · ${invoice.invoicePdf.uploadedBy}` : ""}{invoice.invoicePdf.contentKey ? ` · content: ${invoice.invoicePdf.contentKey}` : ""})
               </span>
               <a href={`${invoice.invoicePdf.url}?download=1`} className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-2.5 py-1 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800">
                 Download

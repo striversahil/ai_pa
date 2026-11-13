@@ -45,6 +45,7 @@ async function computePayload(): Promise<DebtorsTrackerPayload> {
       (inv as any).invoicePdf = {
         id: String(pdf.id), fileName: String(pdf.fileName), url: String(pdf.url),
         source: String(pdf.source), uploadedBy: String(pdf.uploadedBy || ''),
+        contentKey: String((pdf as any).contentKey || ''),
       };
     }
   }

@@ -221,6 +221,8 @@ export interface LiveInvoice {
     url: string;
     source: string;
     uploadedBy: string;
+    /** Invoice number read from INSIDE the PDF (`FY/serial`); '' = not audited. */
+    contentKey: string;
   } | null;
 }
 
