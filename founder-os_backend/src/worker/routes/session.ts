@@ -23,6 +23,10 @@ function scopeFor(slug: string): { scope: string; scopes: string[] } {
 }
 
 async function workspacesFor(viewer: Awaited<ReturnType<typeof getViewer>>): Promise<WorkspaceRow[]> {
+  // DEV-ONLY (2026-11-14): Workspace pilot is root-only while under
+  // development. Non-root gets an empty list so the grid + sidebar hide.
+  // Revert to scope-filtered list when widening beyond root.
+  if (!viewer.isRoot) return [];
   const { prisma } = deps();
   const rows = await prisma.automation.findMany({ orderBy: { createdAt: 'asc' } });
   return listWorkspaces(rows.map((r: any) => ({ slug: r.slug, name: r.name })), viewer, scopeFor);
@@ -42,5 +46,10 @@ export function registerSessionRoutes(app: Hono<{ Bindings: Bindings }>): void {
     return c.json(await workspacesFor(viewer));
   });
 
-  app.get('/api/session/workspaces/:slug/data', (c) => serveWorkspaceData(c, c.req.param('slug')));
+  app.get('/api/session/workspaces/:slug/data', async (c) => {
+    // DEV-ONLY (2026-11-14): all workspace data is root-only with the list.
+    const viewer = await getViewer(c);
+    if (!viewer.isRoot) return c.json({ error: 'Workspace is in development — root only' }, 403);
+    return serveWorkspaceData(c, c.req.param('slug'));
+  });
 }

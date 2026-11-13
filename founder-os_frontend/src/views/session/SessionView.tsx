@@ -10,6 +10,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useMemo } from "react";
 import { WorkspaceFrame, usePinnedWorkspaces, useWorkspaces, useWorkspaceHost, type WorkspaceSummary } from "@/workspaces";
+import { useAuth } from "@/auth/AuthContext";
 
 export default function SessionView({ slug }: { slug: string | null }) {
   if (slug) return <WorkspaceFrame slug={slug} backLabel="All workspaces" />;
@@ -17,6 +18,7 @@ export default function SessionView({ slug }: { slug: string | null }) {
 }
 
 function WorkspaceGrid() {
+  const { me } = useAuth();
   const { workspaces, loading } = useWorkspaces();
   const { pinned, isPinned, toggle } = usePinnedWorkspaces();
   const host = useWorkspaceHost();
@@ -57,7 +59,12 @@ function WorkspaceGrid() {
         <h1 className="font-heading text-3xl font-bold tracking-tight">Workspace</h1>
         <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">The dashboards you have access to.</p>
       </div>
-      {loading && workspaces.length === 0 ? (
+      {me && !me.isRoot ? (
+        <div className="flex min-h-[40vh] flex-col items-center justify-center gap-2 text-center">
+          <div className="text-4xl">🛠️</div>
+          <p className="max-w-md text-sm text-zinc-500 dark:text-zinc-400">Workspace is in development — visible to root only for now.</p>
+        </div>
+      ) : loading && workspaces.length === 0 ? (
         <div className="flex items-center justify-center py-20 text-zinc-500 dark:text-zinc-400">
           <span className="animate-pulse">Loading workspaces...</span>
         </div>
