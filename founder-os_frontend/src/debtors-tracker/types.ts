@@ -228,6 +228,12 @@ export interface DebtorsTrackerPayload {
   collections: LiveCollection[];
   receiptAgeing: ReceiptAgeingSplit;
   reminders: LiveReminder[];
+  /**
+   * TEMPORARY (2026-11-13): manual accountant Top pins (customer keys).
+   * MIRROR: founder-os_backend/src/automations/debtors-tracker/types-parts/types.ts
+   * — keep identical. Drop with migration 0140.
+   */
+  topPicks: string[];
   meta: {
     asOfIST: string;
     totalInvoices: number;
@@ -273,6 +279,36 @@ export const CUSTOMER_SITUATION_LABELS: Record<CustomerSituation, string> = {
 export function situationLabel(situation: string): string {
   const key = String(situation || "").trim().toUpperCase();
   return (CUSTOMER_SITUATION_LABELS as Record<string, string>)[key] ?? "";
+}
+
+/** TEMPORARY (2026-11-13): default auto Top-N size. Drop with migration 0140. */
+export const TOP_DEFAULT_N = 20;
+
+/**
+ * TEMPORARY (2026-11-13): the Top set = manual accountant pins ∪ auto top-N
+ * by gross due (ranked desc, only positive dues). MIRROR: the manual keys
+ * come from `DebtorsTrackerPayload.topPicks` (backend `DebtorsTopPick`).
+ * Drop with migration 0140.
+ */
+export function buildTopSet(
+  customers: Pick<CustomerAgeingRow, "customerKey" | "grossDue">[],
+  manualKeys: readonly string[] = [],
+  n: number = TOP_DEFAULT_N,
+): Set<string> {
+  const out = new Set<string>();
+  for (const k of manualKeys) {
+    const key = String(k || "").trim().toLowerCase();
+    if (key) out.add(key);
+  }
+  const count = Number.isFinite(n) ? Math.max(0, Math.floor(n)) : TOP_DEFAULT_N;
+  if (count > 0) {
+    const ranked = [...customers]
+      .filter((r) => (r.grossDue || 0) > 0)
+      .sort((a, b) => (b.grossDue || 0) - (a.grossDue || 0))
+      .slice(0, count);
+    for (const r of ranked) out.add(String(r.customerKey || "").toLowerCase());
+  }
+  return out;
 }
 
 const inrFmt = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 });

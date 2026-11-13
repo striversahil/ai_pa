@@ -197,6 +197,22 @@ export async function deleteCustomerRemark(customerKey: string, remarkId: string
   );
 }
 
+/** TEMPORARY (2026-11-13): accounts-only Top pin. Drop with migration 0140. */
+export async function addTopPick(customerKey: string): Promise<void> {
+  await request(`/api/debtors-tracker/top-picks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ customerKey }),
+  });
+}
+
+/** TEMPORARY (2026-11-13): accounts-only Top unpin. Drop with migration 0140. */
+export async function removeTopPick(customerKey: string): Promise<void> {
+  await request(`/api/debtors-tracker/top-picks/${encodeURIComponent(customerKey)}`, {
+    method: "DELETE",
+  });
+}
+
 /** Accounts only: log today's reminder dry-run previews. */
 export async function runReminderDryRun(): Promise<void> {
   await request(`/api/debtors-tracker/reminders/run`, { method: "POST" });

@@ -22,6 +22,6 @@
 
 // Pieces split into ./types-parts/ (importable on their own); re-exported for compat.
 export { DEBTOR_COLUMNS_LEGEND, COLLECTION_COLUMNS_LEGEND, BUCKETS, BUCKET_LABELS, bucketFromPastedLabel, normalizeCustomerName, normalizeCustomerKey, normalizeInvoiceNo } from "./types-parts/pure";
-export type { DebtorRow, CollectionRow, InvoiceNoConflict, ImportConflict, DebtorImportReport, CollectionImportReport, DebtorsTrackerPayload, CustomerAgeingRow, LiveInvoice, Bucket, ReceiptBucketKey, ReceiptBucketCell, ReceiptBucketWindow, ReceiptAgeingSplit, LiveCollection, CustomerLedgerEntryType, CustomerLedgerEntry, CustomerLedgerTotals, CustomerLedger, LiveReminder } from "./types-parts/types";
+export type { DebtorRow, CollectionRow, InvoiceNoConflict, ImportConflict, DebtorImportReport, CollectionImportReport, DebtorsTrackerPayload, CustomerAgeingRow, LiveInvoice, Bucket, ReceiptBucketKey, ReceiptBucketCell, ReceiptBucketWindow, ReceiptAgeingSplit, LiveCollection, CustomerLedgerEntryType, CustomerLedgerEntry, CustomerLedgerTotals, CustomerLedger, LiveReminder, TopPick } from "./types-parts/types";
 
 

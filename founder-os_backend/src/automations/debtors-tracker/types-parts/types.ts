@@ -87,8 +87,7 @@ export interface CollectionImportReport extends DebtorImportReport {
 
 /** Live-updated dashboard payload — GET /api/debtors-tracker/data. */
 export interface DebtorsTrackerPayload {
-  summary: {
-    totalReceivable: number;
+  summary: {    totalReceivable: number;
     notDue: number;
     grossDue: number;
     advanceReceived: number;
@@ -106,6 +105,13 @@ export interface DebtorsTrackerPayload {
   customers: CustomerAgeingRow[];
   invoices: LiveInvoice[];
   collections: LiveCollection[];
+  /**
+   * TEMPORARY (2026-11-13): manual accountant Top pins (customer keys).
+   * Mirror: founder-os_frontend/src/debtors-tracker/types.ts — keep identical.
+   * The Top chip is the union of these + the client-side auto top-N by
+   * gross due. Drop with migration 0140.
+   */
+  topPicks: string[];
   /** Week/month receipts split by the invoice ageing bucket on receipt date. */
   receiptAgeing: ReceiptAgeingSplit;
   /** Latest reminder attempts (dry-run now, live later). */
@@ -285,6 +291,14 @@ export interface CustomerLedgerTotals {
   unappliedReceived: number;
   /** invoiceBalance − unappliedReceived. */
   netReceivable: number;
+}
+
+/** TEMPORARY (2026-11-13): one manual accountant Top pin. Drop with 0140. */
+export interface TopPick {
+  customerKey: string;
+  customerName: string;
+  pickedBy: string;
+  createdAt: string;
 }
 
 /** GET /api/debtors-tracker/customers/:customerKey/ledger */

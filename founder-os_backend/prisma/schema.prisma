@@ -1919,6 +1919,19 @@ model DebtorsExportEvent {
   @@index([createdAt])
 }
 
+// Debtors Tracker — TEMPORARY Top-receivables pins (2026-11-13).
+// Manual accountant pins only; auto top-N by gross due is client-side.
+// Drop with migration 0140 when the drive ends.
+model DebtorsTopPick {
+  id           String   @id @default(uuid())
+  customerKey  String   @unique
+  customerName String   @default("")
+  pickedBy     String   @default("")
+  createdAt    DateTime @default(now())
+
+  @@index([createdAt])
+}
+
 // ── CRM order workflow (migration 0097) ──────────────────────────────────────
 // The dispatch floor: SOs sync from Zoho into rows, line items carry the
 // tentative dispatch date, and every promise/slip is appended to the audit.

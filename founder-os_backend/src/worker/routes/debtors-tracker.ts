@@ -15,7 +15,7 @@ import {
   importCollections, importDebtors, getDebtorsTrackerData, DebtorsTrackerError,
   updateInvoiceFields, deleteInvoice, deleteCollection, resetDebtorsTracker,
   INVOICE_EDITABLE_FIELDS, FOLLOW_UP_FIELDS, updateCustomerSituation, runReminderDryRun, updateCustomerContact, getCustomerLedger,
-  recordReceivablesExport, addCustomerRemark, deleteCustomerRemark, listCustomerRemarks,
+  recordReceivablesExport, addCustomerRemark, deleteCustomerRemark, listCustomerRemarks, addTopPick, removeTopPick,
   addInvoiceAttachment, deleteInvoiceAttachment, listInvoiceAttachments, planZipMatches,
 } from '../../automations/debtors-tracker/service';
 import { parseCollectionsTsv, parseDebtorsTsv } from '../../automations/debtors-tracker/parse';
@@ -329,6 +329,30 @@ function registerDebtorsTrackerPrefix(app: Hono<{ Bindings: Bindings }>, prefix:
         const { mirrorRemarkPromise } = await import('../../modules/core/finance');
         await mirrorRemarkPromise(c.req.param('remarkId'));
       } catch { /* non-fatal */ }
+      notifyLive(c, { type: LiveEvent.Debtors });
+      return c.json({ ok: true });
+    } catch (e) { return errorResponse(c, e); }
+  });
+
+  // ── TEMPORARY Top pins (2026-11-13): accounts-only pin/unpin. Drop with 0140. ──
+  app.post(`${prefix}/top-picks`, async (c) => {
+    try {
+      await requireAccountsScope(c);
+    } catch (e) { return scopeError(c, e); }
+    const body = await readBody(c);
+    try {
+      const pick = await addTopPick(String((body as any)?.customerKey ?? ''), await actorName(c));
+      notifyLive(c, { type: LiveEvent.Debtors });
+      return c.json({ ok: true, pick });
+    } catch (e) { return errorResponse(c, e); }
+  });
+
+  app.delete(`${prefix}/top-picks/:customerKey`, async (c) => {
+    try {
+      await requireAccountsScope(c);
+    } catch (e) { return scopeError(c, e); }
+    try {
+      await removeTopPick(c.req.param('customerKey'));
       notifyLive(c, { type: LiveEvent.Debtors });
       return c.json({ ok: true });
     } catch (e) { return errorResponse(c, e); }

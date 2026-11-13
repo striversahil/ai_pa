@@ -292,12 +292,14 @@ export default function DebtorsTrackerDashboard() {
       {data && activeView === "ageing" && (
         <AgeingTab
           customers={data.customers}
+          topPicks={data.topPicks ?? []}
           canAccounts={canAccounts}
           onGoToAccounts={() => setView("accounts")}
           onEditContact={setContact}
           onEditSituation={setSituation}
           onFollowUp={followUp}
           onViewLedger={setLedgerCustomer}
+          onTopChanged={() => refreshAfterMutation()}
         />
       )}
       {data && activeView === "invoices" && (

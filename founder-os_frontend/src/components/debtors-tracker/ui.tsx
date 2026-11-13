@@ -87,16 +87,18 @@ export function EmptyState({
 }
 
 export function Chip({
-  active, onClick, children, count,
+  active, onClick, children, count, title,
 }: {
   active: boolean;
   onClick: () => void;
   children: ReactNode;
   count?: number;
+  title?: string;
 }) {
   return (
     <button
       onClick={onClick}
+      title={title}
       className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors ${
         active
           ? "bg-indigo-500/10 text-indigo-600 ring-1 ring-indigo-500/40 dark:text-indigo-400"
