@@ -83,6 +83,10 @@ function AppInner() {
     if (route.view === "automations" && route.sub) return;
     // Don't bounce a workspace deep link before the workspace list arrives.
     if (activeView === "session" && sub && workspacesLoading) return;
+    // Dashboards arrive async (useWorkspaces); routing before they load sends
+    // normal users to Delegation even though a dashboard exists. Wait for the
+    // list for non-admins (admins never have dashboard rows by design).
+    if (!me.isAdmin && workspacesLoading) return;
     const first: NavTarget | null =
       dashboards[0]
         ? { type: "dashboard", slug: dashboards[0].slug }
