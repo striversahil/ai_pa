@@ -15,8 +15,6 @@ import {
   invalidateRiskCache,
   deleteCloseHistory,
   isValidRegion,
-  isValidTlLevel,
-  tlPairError,
   listSalesHolidays,
   markSalesHoliday,
   unmarkSalesHoliday,
@@ -26,7 +24,6 @@ import {
   setManualSegment,
   setTypeRule,
 } from '../../automations/telecalling/client-segments';
-import { normalizeAgentPhone } from '../../automations/telecalling/util';
 import { getViewerMe } from '../viewer';
 import { readBody } from '../http';
 
@@ -55,53 +52,12 @@ async function requireRosterManager(c: any): Promise<boolean> {
   return scopes.includes('human-resources') || !!me.isAdmin;
 }
 
-/** Shared create-data builder for POST /api/telecallers + from-directory (one
- *  home — validation and field mapping live here, never copied per route). */
-function telecallerCreateData(body: any): { error?: string; data?: Record<string, unknown> } {
-  if (!body?.name) return { error: 'name required' };
-  if (body.type !== undefined && body.type !== '' && body.type !== 'telecaller' && body.type !== 'field_staff' && body.type !== 'team_lead') {
-    return { error: "type must be 'telecaller', 'field_staff' or 'team_lead'" };
-  }
-  const staffType = body.type === 'field_staff' ? 'field_staff' : body.type === 'team_lead' ? 'team_lead' : 'telecaller';
-  // Second region is a Team-Lead-only concept — never store it on other types.
-  const secondRegion = staffType === 'team_lead' && body.region2 ? String(body.region2) : '';
-  if (body.tlLevel !== undefined && body.tlLevel !== '' && !isValidTlLevel(body.tlLevel)) return { error: 'tlLevel must be TL1 or TL2 (or unset)' };
-  if (body.region !== undefined && body.region !== '' && !isValidRegion(body.region)) return { error: 'region must be R1–R4 (or unset)' };
-  if (body.region2 !== undefined && body.region2 !== '' && !isValidRegion(body.region2)) return { error: 'region2 must be R1–R4 (or empty)' };
-  {
-    // TL1 = exactly two DIFFERENT regions when both are set (the pair is
-    // sales-head assigned; existing single-region TL1 rows stay valid until
-    // the sales-head completes the pair in the Controller). region2 only
-    // exists on team_lead rows — validate the coerced value.
-    const pairErr = tlPairError(body.tlLevel ?? '', body.region ?? '', secondRegion);
-    if (pairErr) return { error: pairErr };
-  }
-  return {
-    data: {
-      name: String(body.name).trim(),
-      email: body.email ?? null,
-      // Normalized: the NeoDove phone join compares normalized digits.
-      phone: body.phone ? normalizeAgentPhone(body.phone) || null : null,
-      whatsapp: body.whatsapp ?? null,
-      tlLevel: body.tlLevel ? String(body.tlLevel) : '',
-      region: body.region ? String(body.region) : '',
-      region2: secondRegion,
-      type: staffType,
-      // Field staff never close — they only generate leads.
-      assignEstimateFollowUps: staffType === 'field_staff' ? false : (body.assignEstimateFollowUps ?? true),
-      order: body.order ?? 0,
-      neodoveUserId: body.neodoveUserId ?? null,
-      neodoveUserName: body.neodoveUserName ?? null,
-    },
-  };
-}
 
 export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): void {
-  // ── Telecaller roster (staff ↔ hierarchy ↔ region) ────────────────────────────
-  // READ is root + sales-head + HR (HR owns employment mapping and needs the
-  // roster to Map/Link; founder decision 2026-11-12); roster WRITES below stay
-  // sales-head via requireSalesManager except the HR-capable mapping
-  // endpoints which use requireRosterManager.
+  // ── Telecaller roster READ (staff ↔ hierarchy ↔ region) ───────────────────────
+  // Root + sales-head + HR. Writes moved to the Organization chart
+  // (worker/routes/org.ts — PUT /api/org/people/:id); this module keeps the
+  // read for the leaderboard, Export section and field-staff picker.
   app.get('/api/telecallers', async (c) => {
     try { await requireAdminScope(c); }
     catch (e) { if (!(await requireRosterManager(c))) return adminScopeError(c, e); }
@@ -160,165 +116,6 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
       }),
     );
     return c.json({ telecallers: withCounts });
-  });
-
-  app.post('/api/telecallers', async (c) => {
-    // Sales roster writes are sales-head writes (founder decision:
-    // sales-head holds complete authority inside sales).
-    if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head or root only' }, 403);
-    const { prisma } = deps();
-    const body = await readBody(c);
-    const parsed = telecallerCreateData(body);
-    if (parsed.error) return c.json({ error: parsed.error }, 400);
-    const tc = await prisma.telecaller.create({ data: parsed.data as any });
-    // Roster feeds the cached leaderboard region lists + field-staff picker — invalidate + go live.
-    try { await invalidateRiskCache(); } catch { /* non-fatal */ }
-    try { const { invalidateFieldStaffCache } = await import('../../modules/field-visits/service'); await invalidateFieldStaffCache(); } catch { /* non-fatal */ }
-    notifyLive(c, { type: LiveEvent.Telecalling });
-    return c.json(tc, 201);
-  });
-
-  // ── Roster mapping queue (Phase A; Worker-only, no Express mirror) ─────────
-  // Map a directory login onto the sales roster: HR creates the person, HR (or
-  // sales-head) assigns region (+type/name) here. Email already rostered →
-  // 409 with linkTo (frontend offers Link = attach email onto that row instead).
-  app.post('/api/telecallers/from-directory', async (c) => {
-    if (!(await requireRosterManager(c))) return c.json({ error: 'sales-head, HR or root only' }, 403);
-    const { prisma } = deps();
-    const fromBody = await readBody(c);
-    const userId = String(fromBody?.userId ?? '');
-    if (!userId) return c.json({ error: 'userId required (pick a login from the directory)' }, 400);
-    let user: any = null;
-    try {
-      const users = await authStore(c).listUsers();
-      user = (users as any[]).find((u) => String(u.id) === userId) ?? null;
-    } catch { /* user table unavailable — 404 below */ }
-    if (!user) return c.json({ error: 'login not found' }, 404);
-    if (user.isRoot) return c.json({ error: 'the root login cannot be rostered' }, 403);
-    const loginEmail = String(user.email ?? '').trim();
-    if (!loginEmail) return c.json({ error: 'login has no email — set one before mapping' }, 400);
-    if (!fromBody?.region) return c.json({ error: 'region required (R1–R4)' }, 400);
-    const existing = await prisma.telecaller.findMany({}).catch(() => []);
-    const clash = (existing as any[]).find((t) => String(t.email ?? '').toLowerCase().trim() === loginEmail.toLowerCase() && !t.deleted);
-    if (clash) return c.json({ error: 'email already on the roster — link instead', linkTo: clash.id, name: clash.name }, 409);
-    const fromParsed = telecallerCreateData({ ...fromBody, name: fromBody?.name || user.name || loginEmail, email: loginEmail });
-    if (fromParsed.error) return c.json({ error: fromParsed.error }, 400);
-    const mapped = await prisma.telecaller.create({ data: fromParsed.data as any });
-    try { await invalidateRiskCache(); } catch { /* non-fatal */ }
-    try { const { invalidateFieldStaffCache } = await import('../../modules/field-visits/service'); await invalidateFieldStaffCache(); } catch { /* non-fatal */ }
-    // New roster rows project into core (directory sources + Core assignment
-    // display converge on next read; mirror never throws).
-    try { const { mirrorRosterRow } = await import('../../modules/core/sync'); await mirrorRosterRow('telecaller', (mapped as any).id ?? mapped); } catch { /* non-fatal */ }
-    notifyLive(c, { type: LiveEvent.Telecalling });
-    return c.json(mapped, 201);
-  });
-
-  // Link a directory login onto an EXISTING roster row (HR-owned mapping).
-  // Body: { rowId, userId }. The login's email is attached to the row after
-  // verifying no OTHER live row already claims it (409 with that row's id).
-  app.post('/api/telecallers/link', async (c) => {
-    if (!(await requireRosterManager(c))) return c.json({ error: 'sales-head, HR or root only' }, 403);
-    const { prisma } = deps();
-    const linkBody = await readBody(c);
-    const rowId = String(linkBody?.rowId ?? '');
-    const linkUserId = String(linkBody?.userId ?? '');
-    if (!rowId || !linkUserId) return c.json({ error: 'rowId and userId required' }, 400);
-    let linkUser: any = null;
-    try {
-      const users = await authStore(c).listUsers();
-      linkUser = (users as any[]).find((u) => String(u.id) === linkUserId) ?? null;
-    } catch { /* user table unavailable — 404 below */ }
-    if (!linkUser) return c.json({ error: 'login not found' }, 404);
-    if (linkUser.isRoot) return c.json({ error: 'the root login cannot be rostered' }, 403);
-    const linkEmail = String(linkUser.email ?? '').trim();
-    if (!linkEmail) return c.json({ error: 'login has no email — set one before linking' }, 400);
-    const rows = await prisma.telecaller.findMany({}).catch(() => []);
-    const target = (rows as any[]).find((t) => String(t.id) === rowId && !t.deleted);
-    if (!target) return c.json({ error: 'roster row not found' }, 404);
-    const other = (rows as any[]).find((t) => String(t.id) !== rowId && !t.deleted && String(t.email ?? '').toLowerCase().trim() === linkEmail.toLowerCase());
-    if (other) return c.json({ error: 'email already on another roster row', linkTo: other.id, name: other.name }, 409);
-    const linked = await prisma.telecaller.update({ where: { id: rowId }, data: { email: linkEmail } });
-    try { await invalidateRiskCache(); } catch { /* non-fatal */ }
-    try { const { invalidateFieldStaffCache } = await import('../../modules/field-visits/service'); await invalidateFieldStaffCache(); } catch { /* non-fatal */ }
-    try { const { mirrorRosterRow } = await import('../../modules/core/sync'); await mirrorRosterRow('telecaller', rowId); } catch { /* non-fatal */ }
-    notifyLive(c, { type: LiveEvent.Telecalling });
-    return c.json(linked);
-  });
-
-  app.put('/api/telecallers/:id', async (c) => {
-    // Sales roster writes are sales-head writes (see POST above).
-    if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head or root only' }, 403);
-    const { prisma } = deps();
-    const body = await readBody(c);
-    const data: Record<string, unknown> = {};
-    if (body.name !== undefined) data.name = String(body.name).trim();
-    if (body.email !== undefined) data.email = body.email;
-    if (body.phone !== undefined) data.phone = body.phone ? normalizeAgentPhone(body.phone) || null : null;
-    if (body.whatsapp !== undefined) data.whatsapp = body.whatsapp;
-    if (body.type !== undefined) {
-      if (body.type !== 'telecaller' && body.type !== 'field_staff' && body.type !== 'team_lead') return c.json({ error: "type must be 'telecaller', 'field_staff' or 'team_lead'" }, 400);
-      data.type = String(body.type);
-    }
-    if (body.assignEstimateFollowUps !== undefined) data.assignEstimateFollowUps = body.assignEstimateFollowUps;
-    // Field staff never close — they only generate leads.
-    if (data.type === 'field_staff') data.assignEstimateFollowUps = false;
-    if (body.order !== undefined) data.order = body.order;
-    if (body.neodoveUserId !== undefined) data.neodoveUserId = body.neodoveUserId;
-    if (body.neodoveUserName !== undefined) data.neodoveUserName = body.neodoveUserName;
-    if (body.tlLevel !== undefined) {
-      if (body.tlLevel !== '' && !isValidTlLevel(body.tlLevel)) return c.json({ error: 'tlLevel must be TL1 or TL2 (or unset)' }, 400);
-      data.tlLevel = String(body.tlLevel);
-    }
-    if (body.region !== undefined) {
-      if (body.region !== '' && !isValidRegion(body.region)) return c.json({ error: 'region must be R1–R4 (or unset)' }, 400);
-      data.region = String(body.region);
-    }
-    if (body.region2 !== undefined) {
-      if (body.region2 !== '' && !isValidRegion(body.region2)) return c.json({ error: 'region2 must be R1–R4 (or empty)' }, 400);
-      data.region2 = String(body.region2);
-    }
-    if (body.tlLevel !== undefined || body.region !== undefined || body.region2 !== undefined || body.type !== undefined) {
-      // Re-validate the resulting pair: fetch current row so a partial update
-      // (e.g. only region2) still checks the full TL1 pair.
-      try {
-        const current: any = await prisma.telecaller.findUnique({ where: { id: c.req.param('id') }, select: { tlLevel: true, region: true, region2: true, type: true } });
-        const resolvedType = body.type !== undefined ? String(body.type) : String(current?.type ?? 'telecaller');
-        // region2 is Team-Lead-only: changing away from team_lead clears it,
-        // and it can never be set on other types.
-        if (resolvedType !== 'team_lead') {
-          data.region2 = '';
-        }
-        const pairErr = tlPairError(
-          body.tlLevel !== undefined ? body.tlLevel : current?.tlLevel,
-          body.region !== undefined ? body.region : current?.region,
-          resolvedType === 'team_lead' ? (body.region2 !== undefined ? body.region2 : (current as any)?.region2) : '',
-        );
-        if (pairErr) return c.json({ error: pairErr }, 400);
-      } catch { /* row read failed — the update below surfaces it */ }
-    }
-    if (body.deleted !== undefined) {
-      data.deleted = !!body.deleted;
-      if (body.deleted === false && body.assignEstimateFollowUps === undefined) data.assignEstimateFollowUps = false;
-    }
-    const tc = await prisma.telecaller.update({ where: { id: c.req.param('id') }, data });
-    try { await invalidateRiskCache(); } catch { /* non-fatal */ }
-    try { const { invalidateFieldStaffCache } = await import('../../modules/field-visits/service'); await invalidateFieldStaffCache(); } catch { /* non-fatal */ }
-    notifyLive(c, { type: LiveEvent.Telecalling });
-    return c.json(tc);
-  });
-
-  app.delete('/api/telecallers/:id', async (c) => {
-    // Sales roster writes are sales-head writes (see POST above).
-    if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head or root only' }, 403);
-    const { prisma } = deps();
-    await prisma.telecaller.update({
-      where: { id: c.req.param('id') },
-      data: { deleted: true, assignEstimateFollowUps: false },
-    });
-    try { await invalidateRiskCache(); } catch { /* non-fatal */ }
-    try { const { invalidateFieldStaffCache } = await import('../../modules/field-visits/service'); await invalidateFieldStaffCache(); } catch { /* non-fatal */ }
-    notifyLive(c, { type: LiveEvent.Telecalling });
-    return c.json({ ok: true });
   });
 
   // ── NeoDove phone directory (sales-head) ────────────────────────────

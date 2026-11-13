@@ -52,6 +52,7 @@ import { registerCallLogRoutes } from './worker/routes/call-log';
 import { registerFieldStaffRoutes } from './worker/routes/field-staff';
 import { registerSalesObjectionsRoutes } from './worker/routes/sales-objections';
 import { registerWorkRoutes } from './worker/routes/work';
+import { registerOrgRoutes } from './worker/routes/org';
 import { registerDashboardRoutes } from './worker/routes/dashboards';
 import { registerLeadRoutes } from './worker/routes/leads';
 import { scheduled } from './worker/cron';
@@ -97,6 +98,7 @@ registerCallLogRoutes(app);
 registerFieldStaffRoutes(app);
 registerSalesObjectionsRoutes(app);
 registerWorkRoutes(app);
+registerOrgRoutes(app);
 registerDashboardRoutes(app);
 registerLeadRoutes(app);
 

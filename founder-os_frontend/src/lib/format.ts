@@ -76,3 +76,20 @@ export const fmtShortDate = (iso?: string): string => {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 };
+
+/** Session recency for the org chart: "Active now" / "Active 2h ago" /
+ *  "Never signed in". (organization chart inspector) */
+export function relActive(iso: string | null | undefined): string {
+  if (!iso) return "Never signed in";
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return "Never signed in";
+  const mins = Math.max(0, Math.floor((Date.now() - t) / 60000));
+  if (mins < 1) return "Active now";
+  if (mins < 60) return `Active ${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `Active ${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "Active yesterday";
+  if (days < 30) return `Active ${days}d ago`;
+  return `Active ${Math.floor(days / 30)}mo ago`;
+}

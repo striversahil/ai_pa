@@ -37,6 +37,9 @@ const allowlist = new Set([
   // organization chart — MIS is a position TITLE with no login position
   'founder-os_frontend/src/hr/organization.ts',
   'scripts/guards/org-chart-parity.test.mjs',
+  // org person module — same chart-title mirror, grants nothing (MIS → "")
+  'founder-os_backend/src/modules/org/access.ts',
+  'scripts/guards/org-access.test.mjs',
 ]);
 
 const NOISE = /mis-imported|mismatch|mis-aimed|dismiss|promise|promis|missing|admission|optimis|permission|permis|submit|transmit/i;
