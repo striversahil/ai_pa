@@ -84,10 +84,10 @@ function AppInner() {
     // Don't bounce a workspace deep link before the workspace list arrives.
     if (activeView === "session" && sub && workspacesLoading) return;
     const first: NavTarget | null =
-      accessibleMain[0]
-        ? { type: "view", view: accessibleMain[0].view }
-        : dashboards[0]
-          ? { type: "dashboard", slug: dashboards[0].slug }
+      dashboards[0]
+        ? { type: "dashboard", slug: dashboards[0].slug }
+        : accessibleMain[0]
+          ? { type: "view", view: accessibleMain[0].view }
           : null;
     if (first) navigate(navTargetPath(first));
   }, [viewDenied, loading, me, accessibleMain, dashboards, navigate, activeView, sub, workspacesLoading, route.view, route.sub]);
