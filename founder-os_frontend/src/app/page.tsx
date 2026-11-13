@@ -85,8 +85,9 @@ function AppInner() {
     if (activeView === "session" && sub && workspacesLoading) return;
     // Dashboards arrive async (useWorkspaces); routing before they load sends
     // normal users to Delegation even though a dashboard exists. Wait for the
-    // list for non-admins (admins never have dashboard rows by design).
-    if (!me.isAdmin && workspacesLoading) return;
+    // list for everyone except root (root has no dashboard rows by design —
+    // it opens everything from the Workspace page).
+    if (!me.isRoot && workspacesLoading) return;
     const first: NavTarget | null =
       dashboards[0]
         ? { type: "dashboard", slug: dashboards[0].slug }

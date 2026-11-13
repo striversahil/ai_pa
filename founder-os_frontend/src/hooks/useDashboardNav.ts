@@ -23,12 +23,13 @@ export function dashboardScopes(a: { slug: string; scope?: string | null; scopes
 }
 
 /** Sidebar "Dashboards" section: the viewer's workspaces, already filtered by
- *  scope on the server (GET /api/session/workspaces). Admin/root users don't
- *  get the section — they open everything from the Workspace page. */
+ *  scope on the server (GET /api/session/workspaces). Root opens everything
+ *  from the (root-only, DEV-ONLY) Workspace page, so only root skips the
+ *  section — non-root admins need it while Workspace is hidden. */
 export function useDashboardNav(): DashboardNavItem[] {
   const { me } = useAuth();
   const { workspaces } = useWorkspaces();
-  if (!me || me.isAdmin) return [];
+  if (!me || me.isRoot) return [];
   return workspaces.map((w) => ({
     slug: w.slug, name: w.name,
     scope: dashboardScope(w), scopes: dashboardScopes(w),
