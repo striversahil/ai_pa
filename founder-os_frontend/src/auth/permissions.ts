@@ -30,7 +30,9 @@ export const VIEW_SCOPE: Record<string, string> = {
   "whatsapp-autopilot": "autopilot",
   "enquiry-tracker": "enquiry-tracker",
   "enquiry-procurement": "procurement",
-  "enquiry-management": "mis",
+  // Management Review: its own grantable scope (same pattern as every other
+  // dashboard — slug-as-scope, no special cases, no person named in code).
+  "enquiry-management": "enquiry-management",
   "telecalling-agent-analysis": "sheet-analysis",
   "crm": "crm",
   "samarth-overview": "samarth",
@@ -79,6 +81,7 @@ export const DASHBOARD_SCOPES = [
   "debtors-tracker",
   "human-resources",
   "enquiry-tracker",
+  "enquiry-management",
   "crm",
   "dispatch",
   "sales",
@@ -97,6 +100,10 @@ export interface AuthUserMe {
 
 export function canView(me: AuthUserMe | null, viewOrSlug: string): boolean {
   if (!me) return false;
+  // DEV-ONLY (2026-11-14): Workspace grid is root-only while under
+  // development. Placed before the isAdmin shortcut so even admins hide it.
+  // Sidebar dashboard rows + /session/<slug> stay scope-gated as before.
+  if (viewOrSlug === "session") return me.isRoot;
   // Founder email service: ROOT ONLY — not even admins. The backend
   // /api/email/* endpoints enforce the same check independently.
   if (viewOrSlug === "email") return me.isRoot;
@@ -108,11 +115,6 @@ export function canView(me: AuthUserMe | null, viewOrSlug: string): boolean {
   // The Automations REGISTRY page is root/admin-only. Non-root users reach
   // their dashboards individually (useDashboardNav) — never the full registry.
   if (viewOrSlug === "automations") return false;
-  if (viewOrSlug === "session") {
-    // Workspace (/session): every approved member. The page lists only the
-    // workspaces the server grants (GET /api/session/workspaces).
-    return me.scopes.length > 0 || me.roles.length > 0;
-  }
   if (viewOrSlug === "chat") {
     // Team chat: available to every approved member (any granted scope/role).
     return me.scopes.length > 0 || me.roles.length > 0;
