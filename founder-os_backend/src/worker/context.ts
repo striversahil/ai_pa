@@ -274,6 +274,21 @@ export function adminScopeError(c: any, e: unknown) {
   throw e;
 }
 
+/**
+ * Single-line admin gate. Replaces the per-handler
+ * `try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }`
+ * copies (~30 sites). Returns null when the gate passes, else the error
+ * response — so handlers stay `const denied = await adminGuard(c); if (denied) return denied;`.
+ */
+export async function adminGuard(c: any): Promise<Response | null> {
+  try {
+    await requireAdminScope(c);
+    return null;
+  } catch (e) {
+    return adminScopeError(c, e);
+  }
+}
+
 export function isAuthorized(c: any): boolean {
   const auth = c.req.header('Authorization') || '';
   return auth === `Bearer ${c.env.SHARED_SECRET}`;

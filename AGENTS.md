@@ -68,7 +68,7 @@ Founder OS: WhatsApp + Zoho Estimates + telecalling CRM behind a Next.js dashboa
 - **Viewer scoping** for workspace data lives ONLY in `src/modules/workspaces/scoping.ts` (guard `workspace-scoping.test.mjs`). Never add `if (slug === ...)` to a route.
 - **Public data**: only `telecalling` + `neodove-telecaller-report` (`publicData: true`, founder decision). Don't add more without a decision.
 - **Dashboard components are host-agnostic**: data URLs only via `src/workspaces/api.ts#workspaceDataUrl`, navigation via `useWorkspaceHost()`; never the strings `/automations` or `/api/automations`. New dashboard = catalog entry + one line in `src/workspaces/registry.tsx`.
-- **Helpers**: session user = `getViewerMe(c)` / `getViewer(c)` (`worker/viewer.ts`); request body = `readBody(c)` (`worker/http.ts`). Don't re-inline either.
+- **Helpers**: session user = `getViewerMe(c)` / `getViewer(c)` / `requireViewer(c)` (`worker/viewer.ts`); request body = `readBody(c)`, write errors = `writeError(c, e, fallback)` (`worker/http.ts`); admin gate = `adminGuard(c)` (`worker/context.ts`); scope spellings = `ScopeKeys` (`modules/auth/types.ts`). Don't re-inline any of them.
 - **Ratchet**: `node scripts/dup-audit.mjs .` measures duplication; `scripts/guards/rewrite-ratchet.test.mjs` fails CI if any count grows. After lowering one: `node scripts/dup-audit.mjs . --write-baseline scripts/guards/rewrite-baseline.json`. Log rewrite work in `docs/rewrite-log.md`.
 - **Verification for data-path changes**: `cd founder-os_backend && node scripts/build-worker.mjs && node scripts/workspace-parity.mjs snapshot /tmp/a` before, `… snapshot /tmp/b` after, `… compare /tmp/a /tmp/b`; plus `node scripts/session-e2e.mjs`. UI: `scripts/e2e/` (Playwright).
 

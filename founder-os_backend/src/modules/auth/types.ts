@@ -2,6 +2,30 @@
 
 export const ROOT_EMAIL = "striversahil@gmail.com";
 
+/**
+ * Canonical scope keys (single home for the string literals scattered across
+ * worker/routes/*). Values must stay in sync with DEFAULT_SCOPES in
+ * modules/auth/service.ts — that table owns labels/descriptions, this object
+ * owns the spellings route guards compare against.
+ */
+export const ScopeKeys = {
+  Admin: "admin",
+  Accounts: "accounts",
+  DebtorsTracker: "debtors-tracker",
+  PaymentTracker: "payment-tracker",
+  Crm: "crm",
+  Dispatch: "dispatch",
+  Telecalling: "telecalling",
+  SalesHead: "sales-head",
+  MasterData: "master-data",
+  MasterDataEdit: "master-data-edit",
+  HumanResources: "human-resources",
+  DigitalMarketing: "digital-marketing",
+  UserAdmin: "user-admin",
+} as const;
+
+export type ScopeKey = (typeof ScopeKeys)[keyof typeof ScopeKeys];
+
 export interface AuthUser {
   id: string;
   email: string;

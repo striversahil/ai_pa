@@ -3,7 +3,8 @@
 // Mirror: founder-os_backend/src/routes/accounts.ts (Express alt runtime).
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { deps, requireAdminScope, adminScopeError, notifyLive, LiveEvent, MAX_ATTACHMENT_BYTES, type Bindings } from '../context';
+import { deps, adminGuard, notifyLive, LiveEvent, MAX_ATTACHMENT_BYTES, type Bindings } from '../context';
+import { ScopeKeys } from '../../modules/auth/types';
 import {
   listAccountants, createAccountant, updateAccountant,
   listTemplates, createTemplate, updateTemplate, logTask, getAccountsExport,
@@ -14,7 +15,7 @@ import {
   listCashEntries, createCashEntry, updateCashEntry, deleteCashEntry,
 } from '../../automations/accounts/cash';
 import { getViewerMe } from '../viewer';
-import { readBody } from '../http';
+import { readBody, writeError } from '../http';
 
 async function actorName(c: any): Promise<string | null> {
   try {
@@ -27,7 +28,7 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
   // ── Roster (root-only, like /api/telecallers: reads and writes) ──────────
   // The dashboard gets the names it needs via data().roster (no emails).
   app.get('/api/accounts/roster', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     const { prisma } = deps();
     void prisma;
     const rows = await listAccountants(c.req.query('deleted') === '1');
@@ -35,27 +36,27 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
   });
 
   app.post('/api/accounts/roster', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     const body = await readBody(c);
     try {
       const row = await createAccountant(body || {});
       notifyLive(c, { type: LiveEvent.Accounts });
       return c.json(row, 201);
-    } catch (e: any) { return c.json({ error: e?.message ?? 'create failed' }, 400); }
+    } catch (e: any) { return writeError(c, e, 'create failed'); }
   });
 
   app.put('/api/accounts/roster/:id', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     const body = await readBody(c);
     try {
       const row = await updateAccountant(c.req.param('id'), body || {});
       notifyLive(c, { type: LiveEvent.Accounts });
       return c.json(row);
-    } catch (e: any) { return c.json({ error: e?.message ?? 'update failed' }, 400); }
+    } catch (e: any) { return writeError(c, e, 'update failed'); }
   });
 
   app.delete('/api/accounts/roster/:id', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     await updateAccountant(c.req.param('id'), { deleted: true });
     notifyLive(c, { type: LiveEvent.Accounts });
     return c.json({ ok: true });
@@ -63,33 +64,33 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
 
   // ── Templates (root-only reads/writes; dashboard reads via data()) ──────
   app.get('/api/accounts/templates', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     const rows = await listTemplates(c.req.query('all') === '1');
     return c.json({ templates: rows });
   });
 
   app.post('/api/accounts/templates', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     const body = await readBody(c);
     try {
       const row = await createTemplate(body || {});
       notifyLive(c, { type: LiveEvent.Accounts });
       return c.json(row, 201);
-    } catch (e: any) { return c.json({ error: e?.message ?? 'create failed' }, 400); }
+    } catch (e: any) { return writeError(c, e, 'create failed'); }
   });
 
   app.put('/api/accounts/templates/:id', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     const body = await readBody(c);
     try {
       const row = await updateTemplate(c.req.param('id'), body || {});
       notifyLive(c, { type: LiveEvent.Accounts });
       return c.json(row);
-    } catch (e: any) { return c.json({ error: e?.message ?? 'update failed' }, 400); }
+    } catch (e: any) { return writeError(c, e, 'update failed'); }
   });
 
   app.delete('/api/accounts/templates/:id', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     await updateTemplate(c.req.param('id'), { active: false });
     notifyLive(c, { type: LiveEvent.Accounts });
     return c.json({ ok: true });
@@ -103,7 +104,7 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
     const me = await getViewerMe(c).catch(() => null);
     if (!me) throw new Error('Authentication required');
     const scopes = ((me as any)?.scopes ?? []) as string[];
-    if ((me as any)?.isAdmin || scopes.includes('accounts')) return me;
+    if ((me as any)?.isAdmin || scopes.includes(ScopeKeys.Accounts)) return me;
     throw new Error("Requires 'accounts' permission");
   }
 
@@ -117,7 +118,7 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
       const row = await createTemplate({ ...(body || {}), kind: 'payment' });
       notifyLive(c, { type: LiveEvent.Accounts });
       return c.json(row, 201);
-    } catch (e: any) { return c.json({ error: e?.message ?? 'create failed' }, 400); }
+    } catch (e: any) { return writeError(c, e, 'create failed'); }
   });
 
   app.put('/api/accounts/payments/:id', async (c) => {
@@ -136,7 +137,7 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
       const row = await updateTemplate(c.req.param('id'), { ...(body || {}), kind: 'payment' });
       notifyLive(c, { type: LiveEvent.Accounts });
       return c.json(row);
-    } catch (e: any) { return c.json({ error: e?.message ?? 'update failed' }, 400); }
+    } catch (e: any) { return writeError(c, e, 'update failed'); }
   });
 
   app.delete('/api/accounts/payments/:id', async (c) => {
@@ -151,7 +152,7 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
       await updateTemplate(c.req.param('id'), { active: false });
       notifyLive(c, { type: LiveEvent.Accounts });
       return c.json({ ok: true });
-    } catch (e: any) { return c.json({ error: e?.message ?? 'delete failed' }, 400); }
+    } catch (e: any) { return writeError(c, e, 'delete failed'); }
   });
 
   // Mark a billing cycle paid (amount + reference). Creates the cycle
@@ -177,7 +178,7 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
       );
       notifyLive(c, { type: LiveEvent.Accounts });
       return c.json(row);
-    } catch (e: any) { return c.json({ error: e?.message ?? 'pay failed' }, 400); }
+    } catch (e: any) { return writeError(c, e, 'pay failed'); }
   });
 
   // ── Dispatch cash report (Worker-only) ────────────────────────────────
@@ -188,14 +189,14 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
     const me = await getViewerMe(c).catch(() => null);
     if (!me) throw new Error('Authentication required');
     const scopes = ((me as any)?.scopes ?? []) as string[];
-    if ((me as any)?.isAdmin || scopes.includes('accounts') || scopes.includes('dispatch')) return me;
+    if ((me as any)?.isAdmin || scopes.includes(ScopeKeys.Accounts) || scopes.includes(ScopeKeys.Dispatch)) return me;
     throw new Error("Requires 'accounts' or 'dispatch' permission");
   }
   async function cashWriteGate(c: any) {
     const me = await getViewerMe(c).catch(() => null);
     if (!me) throw new Error('Authentication required');
     const scopes = ((me as any)?.scopes ?? []) as string[];
-    if ((me as any)?.isAdmin || scopes.includes('accounts')) return me;
+    if ((me as any)?.isAdmin || scopes.includes(ScopeKeys.Accounts)) return me;
     throw new Error("Requires 'accounts' permission");
   }
 
@@ -207,7 +208,7 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
     try {
       const { entries, summary } = await listCashEntries(1000);
       return c.json({ entries, summary });
-    } catch (e: any) { return c.json({ error: e?.message ?? 'load failed' }, 400); }
+    } catch (e: any) { return writeError(c, e, 'load failed'); }
   });
 
   app.post('/api/accounts/cash', async (c) => {
@@ -221,7 +222,7 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
       const row = await createCashEntry(body || {}, me?.user?.name ?? me?.user?.email ?? null);
       notifyLive(c, { type: LiveEvent.Accounts });
       return c.json(row, 201);
-    } catch (e: any) { return c.json({ error: e?.message ?? 'create failed' }, 400); }
+    } catch (e: any) { return writeError(c, e, 'create failed'); }
   });
 
   app.patch('/api/accounts/cash/:id', async (c) => {
@@ -234,7 +235,7 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
       const row = await updateCashEntry(c.req.param('id'), body || {});
       notifyLive(c, { type: LiveEvent.Accounts });
       return c.json(row);
-    } catch (e: any) { return c.json({ error: e?.message ?? 'update failed' }, 400); }
+    } catch (e: any) { return writeError(c, e, 'update failed'); }
   });
 
   app.delete('/api/accounts/cash/:id', async (c) => {
@@ -246,16 +247,16 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
       await deleteCashEntry(c.req.param('id'));
       notifyLive(c, { type: LiveEvent.Accounts });
       return c.json({ ok: true });
-    } catch (e: any) { return c.json({ error: e?.message ?? 'delete failed' }, 400); }
+    } catch (e: any) { return writeError(c, e, 'delete failed'); }
   });
 
   // ── Root export: date-range full ledger (pending/inprogress/done + remarks + file links) ──
   app.get('/api/accounts/export', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     try {
       const origin = new URL(c.req.url).origin;
       return c.json(await getAccountsExport(c.req.query('days'), origin, c.req.query('from'), c.req.query('to')));
-    } catch (e: any) { return c.json({ error: e?.message ?? 'export failed' }, 400); }
+    } catch (e: any) { return writeError(c, e, 'export failed'); }
   });
 
   // ── Taskbar logging (any signed-in accounts viewer) ──
@@ -275,7 +276,7 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
       );
       notifyLive(c, { type: LiveEvent.Accounts });
       return c.json(row);
-    } catch (e: any) { return c.json({ error: e?.message ?? 'log failed' }, 400); }
+    } catch (e: any) { return writeError(c, e, 'log failed'); }
   });
 
   // ── Proof attachments (bytes in CHAT_FILES KV; any signed-in viewer) ──
@@ -308,7 +309,7 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
       return c.json({ ok: true, attachment: toAttachmentJson(row) }, 201);
     } catch (e: any) {
       try { await c.env.CHAT_FILES.delete(key); } catch { /* orphan bytes best-effort */ }
-      return c.json({ error: e?.message ?? 'attach failed' }, 400);
+      return writeError(c, e, 'attach failed');
     }
   });
 
@@ -338,8 +339,7 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
     const row: any = await getAttachment(c.req.param('id') ?? '').catch(() => null);
     if (!row) return c.json({ error: 'Attachment not found' }, 404);
     const actor = await actorName(c);
-    let isRoot = false;
-    try { await requireAdminScope(c); isRoot = true; } catch { /* fall through */ }
+    const isRoot = (await adminGuard(c)) === null;
     if (!isRoot && actor && String(row.uploadedBy) !== String(actor)) {
       return c.json({ error: 'Only the uploader or root can remove this file' }, 403);
     }
