@@ -73,7 +73,7 @@ const RULES: Record<string, Partial<AutomationDefinition>> = {
     id: 'enquiry-procurement', name: 'Sourcing Queue (Pre-Sale Vendor Rates)', description: 'Pending-only vendor-rate queue: items awaiting rates, client PII hidden. No daily pipeline — just what needs rates now.', type: 'handler', trigger: { type: 'manual' }, scope: 'procurement', enabled: true,
   },
   'enquiry-management': {
-    id: 'enquiry-management', name: 'Management Review', description: 'Pending-only rate review: rated items awaiting markup + finalize. No daily pipeline — just what needs a decision now.', type: 'handler', trigger: { type: 'manual' }, scope: 'admin', enabled: true,
+    id: 'enquiry-management', name: 'Management Review', description: 'Pending-only rate review: rated items awaiting markup + finalize. No daily pipeline — just what needs a decision now.', type: 'handler', trigger: { type: 'manual' }, scope: 'enquiry-management', enabled: true,
   },
   'dpp-prices-dashboard': {
     id: 'dpp-prices-dashboard', name: 'DPP Prices → Dashboard', description: 'Parse DPP price messages into PriceQuote rows and compute KRA/KPI for the dashboard.', type: 'rule',

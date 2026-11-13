@@ -8,6 +8,9 @@
 import { prisma } from '../../shared/prisma';
 import { logger } from '../../shared/logger';
 import { invalidateRiskCache } from './risk';
+import { isValidRegion } from './regions';
+import { normalizeClientKey, buildMasterIndex, pickWritebackRegion } from './client-segments-parts/pure';
+import { classifyClients, loadMasterEntries } from './client-segments-parts/io';
 
 function normEst(s: unknown): string {
   return String(s ?? '').trim();
@@ -57,6 +60,17 @@ export async function linkEnquiryEstimate(opts: {
     const updates: Record<string, unknown> = {};
     if (!hasCreator) updates.createdBy = agentId;
     if (staffRegion && !estRegion) updates.region = staffRegion;
+    if (!updates.region && !estRegion) {
+      // Region-less creator (sales-head/manager rows carry no roster region):
+      // resolve the home region through the Customer Master (exact-or-manual,
+      // single-region — never guessed; fuzzy stays ledger-only).
+      try {
+        const home = (await masterHomeRegions([String((est as any)?.customerName ?? '')])).get(
+          normalizeClientKey((est as any)?.customerName),
+        );
+        if (home) updates.region = home;
+      } catch { /* fail-open: row stays Unmapped */ }
+    }
     if (Object.keys(updates).length === 0) return { linked: false, reason: 'already-linked' };
     await prisma.estimate.update({ where: { estimateId: est.estimateId }, data: updates });
     try { await invalidateRiskCache(); } catch { /* non-fatal */ }
@@ -66,6 +80,36 @@ export async function linkEnquiryEstimate(opts: {
     logger.warn({ err: e?.message, estNo }, 'linkEnquiryEstimate failed');
     return { linked: false, reason: 'error' };
   }
+}
+
+/**
+ * Customer-Master home regions, batched (one classify + one master read no
+ * matter how many names). Keyed by normalized client key → '' when the write
+ * rule refuses (ambiguous/fuzzy/unmatched — those stay Unmapped for a human
+ * re-home). Fail-open: any read failure resolves every name to ''.
+ */
+export async function masterHomeRegions(names: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const keys = [...new Set((names ?? []).map((n) => normalizeClientKey(n)).filter(Boolean))];
+  if (keys.length === 0) return out;
+  try {
+    const [cls, master] = await Promise.all([
+      classifyClients(names.filter((n) => normalizeClientKey(n))),
+      loadMasterEntries(),
+    ]);
+    const idx = buildMasterIndex(master);
+    const regionOf = (i: number): string => String((master as any[])[i]?.region ?? '').trim();
+    for (const key of keys) {
+      const entry = cls.get(key) as any;
+      const hits = idx.exact.get(key) ?? [];
+      const exactRegions = hits.map(regionOf);
+      const region = pickWritebackRegion(entry, exactRegions);
+      out.set(key, isValidRegion(region) ? region : '');
+    }
+  } catch (e: any) {
+    logger.warn({ err: e?.message }, 'masterHomeRegions failed — rows stay Unmapped');
+  }
+  return out;
 }
 
 /**
@@ -84,7 +128,7 @@ export async function healConvertedAttribution(): Promise<{ scanned: number; cre
   try {
     const estimates = await prisma.estimate.findMany({
       where: { status: { in: ['accepted', 'confirmed'] } },
-      select: { estimateId: true, estimateNumber: true, organizationId: true, createdBy: true, region: true },
+      select: { estimateId: true, estimateNumber: true, organizationId: true, createdBy: true, region: true, customerName: true },
     });
     const needing = ((estimates as any[]) ?? []).filter(
       (e) => !String(e?.createdBy ?? '').trim() || !String(e?.region ?? '').trim(),
@@ -96,6 +140,11 @@ export async function healConvertedAttribution(): Promise<{ scanned: number; cre
       prisma.enquiry.findMany({ select: { estNumber: true, assignedAgentId: true, organizationId: true } }),
       prisma.telecaller.findMany({ select: { id: true, region: true } }),
     ]);
+    // Region-less creators (sales-head rows) resolve through the Customer
+    // Master — batched once for the whole sweep, never guessed.
+    const masterMap = await masterHomeRegions(
+      needing.filter((e) => !String((e as any)?.region ?? '').trim()).map((e) => String((e as any)?.customerName ?? '')),
+    );
     const byNum = new Map<string, any[]>();
     for (const q of (enquiries as any[]) ?? []) {
       const num = normEst(q?.estNumber);
@@ -118,6 +167,7 @@ export async function healConvertedAttribution(): Promise<{ scanned: number; cre
       let region = String((e as any)?.region ?? '').trim();
       if (!creator && pick) creator = String((pick as any)?.assignedAgentId ?? '').trim();
       if (!region && creator) region = String(regionById.get(creator) ?? '');
+      if (!region) region = masterMap.get(normalizeClientKey((e as any)?.customerName)) ?? '';
       const data: Record<string, unknown> = {};
       if (creator && creator !== String((e as any)?.createdBy ?? '')) { data.createdBy = creator; creators += 1; }
       if (region && region !== String((e as any)?.region ?? '')) { data.region = region; regions += 1; }
@@ -137,7 +187,9 @@ export async function healConvertedAttribution(): Promise<{ scanned: number; cre
  *   1. creator (`createdBy`) → their roster region;
  *   2. mapping enquiry's assigned agent (the B2B creator) → createdBy + region;
  *   3. legacy `assignedTelecallerId` holder → region only (never invents a
- *      creator from the old individual-assignment model).
+ *      creator from the old individual-assignment model);
+ *   4. Customer-Master home region (exact-or-manual, single-region — the
+ *      sales-head path, whose roster rows carry no region; never guessed).
  * Rows with none of these signals stay in the privileged Unmapped bucket.
  * Idempotent; runs after the enquiry sweep.
  */
@@ -167,6 +219,9 @@ export async function healUnmappedEstimateRegions(): Promise<{ scanned: number; 
       const region = String(t?.region ?? '').trim();
       if (region) regionById.set(String(t.id), region);
     }
+    // Region-less creators (sales-head rows) resolve through the Customer
+    // Master — batched once for the whole sweep, never guessed.
+    const masterMap = await masterHomeRegions(needing.map((e) => String((e as any)?.customerName ?? '')));
 
     for (const e of needing) {
       const data: Record<string, unknown> = {};
@@ -190,6 +245,7 @@ export async function healUnmappedEstimateRegions(): Promise<{ scanned: number; 
         const holder = String((e as any)?.assignedTelecallerId ?? '').trim();
         if (holder) region = regionById.get(holder) ?? '';
       }
+      if (!region) region = masterMap.get(normalizeClientKey((e as any)?.customerName)) ?? '';
       if (region) data.region = region;
       if (Object.keys(data).length === 0) continue;
       await prisma.estimate.update({

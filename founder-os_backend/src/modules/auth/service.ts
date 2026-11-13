@@ -38,6 +38,7 @@ export const DEFAULT_SCOPES: AuthScope[] = [
   { key: "reporting-sheet", label: "Reporting Sheet", description: "Weekly management review — view all departments (read-only unless a department scope is also held)" },
   { key: "sales", label: "Sales Agent", description: "Sales agent identity — roster entry with contact details and incentive mapping" },
   { key: "procurement", label: "Procurement", description: "Procurement view of the enquiry tracker — same pipeline, no client PII and no lead attribution" },
+  { key: "enquiry-management", label: "Management Review", description: "Finalize rates, share with sales and answer sales/procurement queries" },
   { key: "samarth", label: "Samarth Overview", description: "One-page concise highlight across all dashboards (Samarth view)" },
   { key: "sahil", label: "Sahil Overview", description: "One-page concise highlight across all dashboards (Sahil view)" },
 ];

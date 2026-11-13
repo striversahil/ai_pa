@@ -21,7 +21,7 @@
 
 // Pieces split into ./client-segments-parts/ (importable on their own); re-exported for compat.
 export type { ClientSegmentKind, ClientCandidate, ClientClass, ClientQueueRow } from "./client-segments-parts/types";
-export { normalizeClientKey } from "./client-segments-parts/pure";
+export { normalizeClientKey, pickWritebackRegion } from "./client-segments-parts/pure";
 export { classifyClients, loadClientQueue, setTypeRule, setManualSegment } from "./client-segments-parts/io";
 
 

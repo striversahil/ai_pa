@@ -19,6 +19,25 @@ export function tokensOf(normalized: string): string[] {
   return normalized.split(' ').filter((t) => t.length >= 2);
 }
 
+/** Region write-back rule (pure): which Customer-Master resolutions are safe
+ *  to WRITE onto an estimate's region. Stricter than the ledger on purpose —
+ *  writes move deals between regions permanently, while the ledger only tops
+ *  up targets (and already counts fuzzy ₹ via re-homing). Manual overrides
+ *  (the sales-head's explicit per-client decision) always win; exact matches
+ *  write only when every master row under the key sits in ONE region; fuzzy /
+ *  ambiguous / region-less resolutions never write (row stays Unmapped for a
+ *  human re-home). Mirror: backend enquiry-links.ts masterHomeRegions. */
+export function pickWritebackRegion(entry: { matchKind?: unknown; masterRegion?: unknown } | null | undefined, exactRegions: string[]): string {
+  const kind = String((entry as any)?.matchKind ?? '');
+  const region = String((entry as any)?.masterRegion ?? '').trim();
+  if (!/^(R1|R2|R3|R4)$/.test(region)) return '';
+  if (kind === 'manual') return region;
+  if (kind !== 'exact') return '';
+  const uniq = [...new Set(exactRegions.map((r) => String(r ?? '').trim()).filter((r) => /^(R1|R2|R3|R4)$/.test(r)))];
+  if (uniq.length !== 1) return '';
+  return uniq[0] === region ? region : uniq[0];
+}
+
 /** Mill families count as end consumers unless a sales-head rule says
  *  otherwise (the rule table seeds exactly this; kept as a default so a
  *  fresh DB without the migration still resolves auto matches sanely). */

@@ -163,6 +163,9 @@ function registerDebtorsTrackerPrefix(app: Hono<{ Bindings: Bindings }>, prefix:
   });
 
   // ── Fresh start: wipe ledgers (hard delete) + reminders + KV cache ──
+  // Invoice PDFs are deliberately NOT wiped (founder decision 2026-11-13):
+  // attachment rows + KV bytes survive, and the next ageing-sheet paste
+  // re-links them to the new invoice rows (see relinkOrphanAttachments).
   app.delete(`${prefix}/data`, async (c) => {
     try {
       await requireAccountsScope(c);

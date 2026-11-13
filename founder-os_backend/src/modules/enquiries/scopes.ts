@@ -5,7 +5,9 @@
 //
 //   isRestrictedViewer — procurement-safe viewer check (open to every viewer
 //     since 2026-09-22; everyone else redacted).
-//   canManageRates   — privileged = root only (markup + finalize).
+//   canManageRates   — privileged = Management Review access (markup +
+//     finalize): root/admin, or anyone holding the `enquiry-management`
+//     scope granted in Users & Permissions. No person is named in code.
 //   redactEnquiryPII / stripMarginFields — response-shape guards (stored rows
 //     untouched).
 //   normalizeMoneyInput / validateRatesInput — money validation (400s, never
@@ -32,10 +34,13 @@ export function redactEnquiryPII<T extends Record<string, any>>(enquiry: T): T {
   return out as T;
 }
 
-/** Privileged = can decide markup + finalize rates (root only). */
+/** Privileged = holds Management Review access: root/admin, or anyone granted
+ *  the `enquiry-management` scope in Users & Permissions (roles or direct
+ *  grants — the admin panel is the only place access is decided). */
 export function canManageRates(me: MeResponse): boolean {
   if (!me) return false;
-  return !!(me.isAdmin || (me as any).isRoot);
+  if (me.isAdmin || (me as any).isRoot) return true;
+  return ((me as any).scopes || []).includes('enquiry-management');
 }
 
 /** May stamp the procurement handoff ("Enquiry Concluded", stamp-only, never

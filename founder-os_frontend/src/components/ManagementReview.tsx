@@ -26,9 +26,10 @@ export { isManagementPending } from "./management-review/helpers";
 // information (client, requirements, all items clubbed with their rates,
 // markup + finalize).
 export default function ManagementReview() {
-  const { me } = useAuth();
-  const scopes = me?.scopes ?? [];
-  const allowed = !!me && !!me.isAdmin;
+  const { me, canView } = useAuth();
+  // Access = whoever the admin panel grants the Management Review scope to
+  // (same pattern as every dashboard — mirrors backend canManageRates).
+  const allowed = !!me && canView("enquiry-management");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // Queue tabs: Active (awaiting YOUR decision) / Query (sales asks — answer
   // or forward to procurement) / Pending from Sales (spec-flagged — ball with
