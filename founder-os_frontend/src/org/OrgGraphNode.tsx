@@ -8,6 +8,7 @@
 import { memo } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import type { OrgPerson } from "@/org/api";
+import { wingOfDepartment, type OrgWing } from "@/hr/organization";
 
 export interface OrgNodeData extends Record<string, unknown> {
   title: string;
@@ -17,26 +18,26 @@ export interface OrgNodeData extends Record<string, unknown> {
   selected: boolean;
 }
 
-export const DEPT_STYLES: Record<string, { ring: string; bar: string; chip: string }> = {
+/** Node chrome groups by wing (3 colours), not department (4) — Accounts
+ *  reads under Operations, Digital Marketing under Marketing. */
+export const WING_STYLES: Record<OrgWing, { ring: string; bar: string; chip: string; dot: string }> = {
   Sales: {
     ring: "border-indigo-500/60",
     bar: "bg-indigo-500",
     chip: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-300",
+    dot: "bg-indigo-500",
   },
-  "Digital Marketing": {
+  Marketing: {
     ring: "border-fuchsia-500/60",
     bar: "bg-fuchsia-500",
     chip: "bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-300",
+    dot: "bg-fuchsia-500",
   },
-  Accounts: {
-    ring: "border-emerald-500/60",
-    bar: "bg-emerald-500",
-    chip: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300",
-  },
-  "Operations & Support": {
+  Operations: {
     ring: "border-amber-500/60",
     bar: "bg-amber-500",
     chip: "bg-amber-500/10 text-amber-600 dark:text-amber-300",
+    dot: "bg-amber-500",
   },
 };
 
@@ -46,7 +47,8 @@ function OrgGraphNode({ data }: NodeProps) {
   const d = data as unknown as OrgNodeData;
   const active = d.people.filter((p) => p.employee.active);
   const logins = active.filter((p) => p.login).length;
-  const style = (d.department && DEPT_STYLES[d.department]) || FALLBACK;
+  const wing = wingOfDepartment(d.department);
+  const style = (wing && WING_STYLES[wing]) || FALLBACK;
   return (
     <div
       className={`w-[228px] rounded-2xl border-2 bg-white shadow-sm transition-shadow dark:bg-zinc-950 ${
@@ -64,8 +66,10 @@ function OrgGraphNode({ data }: NodeProps) {
           </span>
         </div>
         <div className="mt-1 flex items-center justify-between gap-2">
-          {d.department ? (
-            <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${style.chip}`}>{d.department}</span>
+          {wing ? (
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${style.chip}`} title={d.department ?? wing}>
+              {wing}{d.department && d.department !== wing ? ` · ${d.department}` : ""}
+            </span>
           ) : (
             <span className="text-[10px] font-bold uppercase tracking-wide text-zinc-400">top</span>
           )}

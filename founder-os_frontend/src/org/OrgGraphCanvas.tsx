@@ -10,18 +10,24 @@ import {
   type Node, type Edge,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { buildOrgTree, type OrgTreeNode } from "@/hr/organization";
+import { buildOrgTree, wingOfDepartment, type OrgTreeNode } from "@/hr/organization";
 import type { OrgPerson } from "@/org/api";
-import OrgGraphNode, { type OrgNodeData } from "./OrgGraphNode";
+import OrgGraphNode, { WING_STYLES, type OrgNodeData } from "./OrgGraphNode";
 
 export const orgNodeTypes = { orgNode: OrgGraphNode };
 
-const DEPT_HEX: Record<string, string> = {
+const WING_HEX: Record<string, string> = {
   Sales: "#6366f1",
-  "Digital Marketing": "#d946ef",
-  Accounts: "#10b981",
-  "Operations & Support": "#f59e0b",
+  Marketing: "#d946ef",
+  Operations: "#f59e0b",
 };
+
+/** Legend row for the three wings (positions each wing covers). */
+const WING_LEGEND: Array<{ wing: "Sales" | "Marketing" | "Operations"; covers: string }> = [
+  { wing: "Sales", covers: "Sales Head · Team Lead · Telecaller · Field Staff" },
+  { wing: "Marketing", covers: "Digital Marketing Sr · Jr" },
+  { wing: "Operations", covers: "MIS · Procurement · HR · Accounts" },
+];
 
 const NODE_W = 228;
 const GAP_X = 48;
@@ -108,7 +114,19 @@ export default function OrgGraphCanvas({ people, selected, onSelect }: {
   }, [peopleByTitle, selected]);
 
   return (
-    <div className="h-[520px] w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
+    <div className="relative h-[520px] w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
+      <div className="pointer-events-none absolute left-3 top-3 z-10 flex flex-wrap gap-1.5">
+        {WING_LEGEND.map(({ wing, covers }) => (
+          <span
+            key={wing}
+            title={covers}
+            className="flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white/95 px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide text-zinc-600 shadow-sm dark:border-zinc-700 dark:bg-zinc-950/95 dark:text-zinc-300"
+          >
+            <span className={`h-2 w-2 rounded-full ${WING_STYLES[wing].dot}`} />
+            {wing}
+          </span>
+        ))}
+      </div>
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -124,7 +142,7 @@ export default function OrgGraphCanvas({ people, selected, onSelect }: {
         <MiniMap
           pannable
           zoomable
-          nodeColor={(n) => DEPT_HEX[String((n.data as any)?.department ?? "")] ?? "#a1a1aa"}
+          nodeColor={(n) => WING_HEX[wingOfDepartment(String((n.data as any)?.department ?? "")) ?? ""] ?? "#a1a1aa"}
         />
         <Controls showInteractive={false} />
       </ReactFlow>

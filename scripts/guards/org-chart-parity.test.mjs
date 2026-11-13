@@ -108,6 +108,24 @@ describe('organization chart parity (frontend mirror ↔ organization.json)', ()
     assert.deepEqual(org.loginPositionsFor('Junior Accountant'), ['accountant']);
   });
 
+  it('wings group the chart into Sales / Marketing / Operations (display-only)', () => {
+    // Founder reading: Sales = whole Sales dept, Marketing = Digital
+    // Marketing, Operations = MIS + Procurement + HR + Accounts. Departments
+    // and permissions are untouched — the graph colours/legend group by wing.
+    assert.deepEqual(org.wingOfDepartment('Sales'), 'Sales');
+    assert.deepEqual(org.wingOfDepartment('Digital Marketing'), 'Marketing');
+    assert.deepEqual(org.wingOfDepartment('Accounts'), 'Operations');
+    assert.deepEqual(org.wingOfDepartment('Operations & Support'), 'Operations');
+    for (const d of org.ORG_DEPARTMENTS) {
+      assert.ok(org.wingOfDepartment(d), `${d} has no wing — the graph legend would miss it`);
+    }
+    assert.deepEqual(org.wingOfTitle('Telecaller'), 'Sales');
+    assert.deepEqual(org.wingOfTitle('Digital Marketing - Junior'), 'Marketing');
+    assert.deepEqual(org.wingOfTitle('Senior Accountant'), 'Operations');
+    assert.deepEqual(org.wingOfTitle('MIS'), 'Operations');
+    assert.deepEqual(org.wingOfTitle('nope'), null);
+  });
+
   it('title lookup is trimmed + tolerant of unknown/legacy free text', () => {
     assert.equal(org.isOrgTitle('  Telecaller '), true);
     assert.equal(org.isOrgTitle('SR. SALES EXEC'), false);

@@ -6,8 +6,14 @@
 // state (relative last login), granted dashboards, and sales fields.
 // Edit opens the person drawer (only when the server says canManage).
 import type { OrgPerson } from "@/org/api";
-import { orgPosition, responsibilityLine } from "@/hr/organization";
+import { orgPosition, responsibilityLine, wingOfTitle } from "@/hr/organization";
 import { relActive } from "@/lib/format";
+
+const WING_CHIP: Record<string, string> = {
+  Sales: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-300",
+  Marketing: "bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-300",
+  Operations: "bg-amber-500/10 text-amber-600 dark:text-amber-300",
+};
 
 function SalesLine({ p }: { p: OrgPerson }) {
   const r = p.roster;
@@ -40,6 +46,7 @@ export default function OrgInspector({ title, people, onEdit, onClose }: {
   onClose: () => void;
 }) {
   const pos = orgPosition(title);
+  const wing = wingOfTitle(title);
   const active = people.filter((p) => p.employee.active);
   const inactive = people.filter((p) => !p.employee.active);
   const logins = active.filter((p) => p.login).length;
@@ -47,7 +54,14 @@ export default function OrgInspector({ title, people, onEdit, onClose }: {
     <aside className="w-full shrink-0 space-y-3 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950 lg:w-[340px]">
       <div className="flex items-start justify-between gap-2">
         <div>
-          <h3 className="text-sm font-extrabold text-zinc-900 dark:text-zinc-100">{title}</h3>
+          <h3 className="flex flex-wrap items-center gap-1.5 text-sm font-extrabold text-zinc-900 dark:text-zinc-100">
+            {title}
+            {wing && (
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide ${WING_CHIP[wing]}`}>
+                {wing}
+              </span>
+            )}
+          </h3>
           <p className="mt-0.5 text-[11px] text-zinc-500">
             {pos ? responsibilityLine(pos) : "Top of the chart"}
             {pos?.department ? ` · ${pos.department}` : ""}

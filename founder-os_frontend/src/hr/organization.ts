@@ -81,6 +81,39 @@ export const ORG_POSITIONS: OrgPosition[] = ORG_CHART_JSON.organization.departme
 
 export const ORG_DEPARTMENTS: string[] = ORG_CHART_JSON.organization.departments.map((d) => d.name);
 
+/**
+ * Display wing — the three-way split the founder reads the chart in.
+ * Sales = the whole Sales department; Marketing = Digital Marketing;
+ * Operations = MIS + Procurement + HR + Accounts (both accountant levels).
+ *
+ * Display-only: `organization.json` departments and backend permissions are
+ * untouched — the graph groups nodes/legend by wing so the distinction is
+ * visible at a glance.
+ */
+export type OrgWing = "Sales" | "Marketing" | "Operations";
+
+export const ORG_WINGS: OrgWing[] = ["Sales", "Marketing", "Operations"];
+
+const WING_OF_DEPARTMENT: Record<string, OrgWing> = {
+  Sales: "Sales",
+  "Digital Marketing": "Marketing",
+  Accounts: "Operations",
+  "Operations & Support": "Operations",
+};
+
+/** Wing a chart department belongs to (null for the synthetic top node). */
+export function wingOfDepartment(department: string | null | undefined): OrgWing | null {
+  if (!department) return null;
+  return WING_OF_DEPARTMENT[String(department).trim()] ?? null;
+}
+
+/** Wing a chart position belongs to (null for unknown titles). */
+export function wingOfTitle(title: string | null | undefined): OrgWing | null {
+  const pos = BY_TITLE.get(String(title ?? "").trim());
+  if (!pos) return null;
+  return wingOfDepartment(pos.department);
+}
+
 const BY_TITLE = new Map(ORG_POSITIONS.map((p) => [p.title, p]));
 
 export function orgPosition(title: string): OrgPosition | null {
