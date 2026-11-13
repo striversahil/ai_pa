@@ -5,6 +5,7 @@ import { useLiveDashboard } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
 import DelegationTab from "./human-resources/DelegationTab";
 import EmployeesTab from "./human-resources/EmployeesTab";
+import OrganizationTab from "./human-resources/OrganizationTab";
 import HiringKitTab from "./human-resources/HiringKitTab";
 import AttendanceTab from "./human-resources/AttendanceTab";
 import LeavesTab from "./human-resources/LeavesTab";
@@ -15,7 +16,7 @@ import type { HrDashboardData } from "@/hr/types";
 import { currentMonthIST, monthLabel, shiftMonth } from "@/hr/format";
 import { workspaceDataUrl } from "@/workspaces/api";
 
-type HrView = "employees" | "hiring-kit" | "delegation" | "attendance" | "leaves" | "payroll" | "expenses" | "inventory";
+type HrView = "organization" | "employees" | "hiring-kit" | "delegation" | "attendance" | "leaves" | "payroll" | "expenses" | "inventory";
 
 type HrTab = { key: HrView; label: string; icon: string };
 
@@ -23,6 +24,9 @@ const GROUPS: { label: string; tabs: HrTab[] }[] = [
   {
     label: "People",
     tabs: [
+      // Founder decision 2026-11-13: the live organization chart leads the tab
+      // bar — HR's first question is "who is in which position".
+      { key: "organization", label: "Organization", icon: "⌂" },
       { key: "employees", label: "Employees", icon: "◉" },
       { key: "hiring-kit", label: "Hiring kit", icon: "▣" },
       { key: "attendance", label: "Attendance", icon: "◷" },
@@ -42,7 +46,7 @@ const GROUPS: { label: string; tabs: HrTab[] }[] = [
 
 export default function HumanResourcesDashboard({ onNavigate }: { onNavigate?: (path: string) => void } = {}) {
   const { me } = useAuth();
-  const [view, setView] = useState<HrView>("employees");
+  const [view, setView] = useState<HrView>("organization");
   const [month, setMonth] = useState(currentMonthIST());
 
   const dash = useLiveDashboard<HrDashboardData>(async () => {
@@ -53,6 +57,7 @@ export default function HumanResourcesDashboard({ onNavigate }: { onNavigate?: (
 
   const data = dash.data;
   const counts: Record<HrView, number | null> = {
+    organization: null,
     employees: data ? data.employees.activeCount : null,
     "hiring-kit": null,
     delegation: data ? data.meta.counts.open : null,
@@ -127,6 +132,7 @@ export default function HumanResourcesDashboard({ onNavigate }: { onNavigate?: (
               Failed to load: {String(dash.error)} <button onClick={() => dash.refresh()} className="ml-2 underline">Retry</button>
             </div>
           )}
+          {view === "organization" && <OrganizationTab />}
           {view === "employees" && <EmployeesTab />}
           {view === "hiring-kit" && (
             <HiringKitTab

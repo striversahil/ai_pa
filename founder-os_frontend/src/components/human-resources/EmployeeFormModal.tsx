@@ -4,11 +4,13 @@ import React, { useEffect, useState } from "react";
 import Modal from "../Modal";
 import SalaryComponentsEditor from "./SalaryComponentsEditor";
 import SalaryPlanEditor from "./SalaryPlanEditor";
+import OrgPositionPicker from "./OrgPositionPicker";
 import { EMPLOYMENT_TYPES, EMPLOYMENT_TYPE_LABEL, type EmploymentType, type HrEmployee, type HrSalaryComponent, type HrSalaryTemplate } from "@/hr/types";
 import { applySalaryPlan, jsonRequest, listSalaryTemplates, readError, reapplySalaryPlan } from "@/hr/api";
 import { fileToDataUrl, uploadMediaFile } from "@/lib/imageFiles";
 import { resolveSalary } from "@/hr/salary";
 import { initials, todayIST } from "@/hr/format";
+import { isOrgTitle } from "@/hr/organization";
 
 const field = "w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-3 py-2 text-sm outline-none focus:border-indigo-500";
 const label = "block text-[11px] font-bold uppercase tracking-wide text-zinc-500 mb-1";
@@ -116,6 +118,9 @@ export default function EmployeeFormModal({ employee, onClose, onSaved }: {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.name.trim()) { setErr("Employee name is required"); return; }
+    // Founder decision 2026-11-13: every employee occupies a chart position —
+    // free-text designations are no longer accepted from this form.
+    if (!isOrgTitle(form.designation)) { setErr("Pick the organization position from the chart"); return; }
     if (templateId && (!editing || planDirty)) {
       const amount = Number(planAmount);
       if (!(amount > 0)) { setErr("Enter the monthly salary amount for the selected template"); return; }
@@ -210,8 +215,6 @@ export default function EmployeeFormModal({ employee, onClose, onSaved }: {
                 <span className="text-[10px] font-bold uppercase tracking-wide text-zinc-400">{editing ? "Locked" : "BUI-###"}</span>
               </div>
             </div>
-            <div><label className={label}>Designation</label><input value={form.designation} onChange={(e) => set("designation", e.target.value)} className={field} /></div>
-            <div><label className={label}>Department</label><input value={form.department} onChange={(e) => set("department", e.target.value)} className={field} /></div>
             <div><label className={label}>Office phone</label><input value={form.phone} onChange={(e) => set("phone", e.target.value)} className={field} /></div>
             <div><label className={label}>Office email</label><input value={form.email} onChange={(e) => set("email", e.target.value)} className={field} /></div>
             <div>
@@ -221,6 +224,17 @@ export default function EmployeeFormModal({ employee, onClose, onSaved }: {
             <div><label className={label}>Date of birth</label><input type="date" value={form.dateOfBirth} onChange={(e) => set("dateOfBirth", e.target.value)} className={field} /></div>
             <div><label className={label}>Address</label><input value={form.address} onChange={(e) => set("address", e.target.value)} className={field} /></div>
           </div>
+        </Section>
+
+        {/* Organization chart position — replaces the free-text Designation and
+            Department inputs (founder decision 2026-11-13). Picking a node is
+            the only way to set both, so seats/tree/reporting never drift. */}
+        <Section title="Organization role">
+          <OrgPositionPicker
+            designation={form.designation}
+            department={form.department}
+            onChange={(next) => setForm((prev) => ({ ...prev, designation: next.title, department: next.department }))}
+          />
         </Section>
 
         <Section title="Personal details">

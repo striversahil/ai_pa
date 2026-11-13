@@ -78,14 +78,24 @@ describe('roster mapping queue contract (Phase A)', () => {
     assert.ok(!getBlock.includes("app.put('/api/telecallers/:id'"), 'read gate change must not touch the legacy PUT');
   });
 
-  it('HR register reuses the mapping queue (composition, never a fork)', () => {
-    const wrapper = readFileSync(join(BACKEND_DIR, '..', 'founder-os_frontend', 'src', 'components', 'human-resources', 'RegisterMappingSection.tsx'), 'utf8');
-    assert.ok(wrapper.includes('RosterMappingSection'), 'HR wrapper must render the shared queue');
-    assert.ok(wrapper.includes('fetchSalesRoster'), 'HR wrapper must read via the domain api');
-    assert.ok(!wrapper.includes('/api/telecallers/from-directory'), 'HR wrapper must not re-implement mapping (no fork)');
-    assert.ok(!wrapper.includes('mapRosterFromDirectory'), 'HR wrapper must not call mapping directly (delegates to the shared queue)');
-    assert.ok(!wrapper.includes('regionById'), 'HR wrapper must not copy picker state (no fork)');
-    const employees = readFileSync(join(BACKEND_DIR, '..', 'founder-os_frontend', 'src', 'components', 'human-resources', 'EmployeesTab.tsx'), 'utf8');
-    assert.ok(employees.includes('RegisterMappingSection'), 'Employees tab must host the register queue (HR active tool)');
+  it('mapping lives in the HR Organization tree (one home, composition — never a fork)', () => {
+    const fe = join(BACKEND_DIR, '..', 'founder-os_frontend', 'src');
+    const row = readFileSync(join(fe, 'components', 'human-resources', 'OrgLoginMapRow.tsx'), 'utf8');
+    assert.ok(row.includes('mapRosterFromDirectory'), 'tree row must call the domain api mapper');
+    assert.ok(row.includes('linkRosterByLogin'), 'tree row must offer Link on a 409');
+    assert.ok(row.includes('linkTo'), 'tree row must read linkTo off the conflict');
+    assert.ok(!row.includes('fetch('), 'tree row must never fetch inline (domain api only)');
+
+    const node = readFileSync(join(fe, 'components', 'human-resources', 'OrgNodeCard.tsx'), 'utf8');
+    assert.ok(node.includes('OrgLoginMapRow'), 'org tree node must host the Map/Link row');
+
+    // Founder decision 2026-11-13: the unmapped-logins queue left both the HR
+    // Employees tab and the Sales Controller — the org tree is its one home.
+    const employees = readFileSync(join(fe, 'components', 'human-resources', 'EmployeesTab.tsx'), 'utf8');
+    assert.ok(!employees.includes('MappingSection'), 'Employees tab must no longer host a mapping queue');
+    assert.ok(employees.includes('listMembers'), 'employee read must go through the domain api (no raw fetch)');
+
+    const controller = readFileSync(join(fe, 'components', 'SalesControllerPanel.tsx'), 'utf8');
+    assert.ok(!controller.includes('MappingSection'), 'Sales Controller must no longer host a mapping queue');
   });
 });

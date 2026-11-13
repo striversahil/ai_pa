@@ -1,5 +1,5 @@
 import type {
-  HrDelegationBoard, HrDelegationTask, HrHiringPosition, HrPositionDoc,
+  HrDelegationBoard, HrDelegationTask, HrEmployee, HrHiringPosition, HrPositionDoc,
   HrSalaryPreview, HrSalaryTemplate, HrTaskLog, HiringDocKind,
 } from "./types";
 
@@ -160,4 +160,13 @@ export async function fetchTaskHistory(id: string): Promise<{ task: HrDelegation
 export async function setMemberLoginEmail(memberId: string, loginEmail: string | null): Promise<void> {
   const res = await jsonRequest(`/api/delegation/members/${memberId}/login-email`, "PUT", { loginEmail });
   if (!res.ok) throw new Error(await readError(res));
+}
+
+/** Employee master read (active + inactive). One fetcher for every HR surface
+ *  that needs seats (Employees tab, Organization tree) — never a raw fetch. */
+export async function listMembers(): Promise<HrEmployee[]> {
+  const res = await jsonRequest("/api/human-resources/members", "GET");
+  if (!res.ok) throw new Error(await readError(res));
+  const body = await res.json();
+  return (body?.members ?? []) as HrEmployee[];
 }

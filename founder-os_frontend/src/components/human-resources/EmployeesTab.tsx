@@ -3,10 +3,9 @@
 import React, { useMemo, useState } from "react";
 import ConfirmDialog from "../ui/ConfirmDialog";
 import EmployeeFormModal from "./EmployeeFormModal";
-import RegisterMappingSection from "./RegisterMappingSection";
 import { useLiveDashboard } from "@/hooks/useLiveData";
 import type { HrEmployee } from "@/hr/types";
-import { jsonRequest, readError } from "@/hr/api";
+import { jsonRequest, listMembers, readError } from "@/hr/api";
 import { initials, money, shortDate } from "@/hr/format";
 
 function EmployeeCard({ employee, onEdit, onToggle, onDelete }: {
@@ -56,9 +55,7 @@ function EmployeeCard({ employee, onEdit, onToggle, onDelete }: {
 
 export default function EmployeesTab() {
   const dash = useLiveDashboard<{ members: HrEmployee[] }>(async () => {
-    const res = await fetch("/api/human-resources/members", { cache: "no-store" });
-    if (!res.ok) throw new Error(`Load failed (HTTP ${res.status})`);
-    return res.json();
+    return { members: await listMembers() };
   }, { events: ["human-resources"], pollMs: 60000 });
   const [query, setQuery] = useState("");
   const [view, setView] = useState<"active" | "inactive" | "all">("active");
@@ -121,17 +118,12 @@ export default function EmployeesTab() {
         <button onClick={() => setForm({ open: true, employee: null })} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-500">Add employee</button>
       </div>
 
-      {/* HR register → sales-roster mapping (single writer; same queue as the
-          Controller, run by HR). Collapsed by default so the employee list
-          stays the primary view. */}
-      <details>
-        <summary className="cursor-pointer text-xs font-bold text-indigo-500 hover:underline">
-          Login → roster mapping (unmapped logins waiting)
-        </summary>
-        <div className="mt-2">
-          <RegisterMappingSection />
-        </div>
-      </details>
+      {/* Founder decision 2026-11-13: the unmapped-logins mapping queue moved
+          into the Organization tab's tree nodes (one home). This tab stays the
+          employee master only. */}
+      <p className="text-[11px] text-zinc-500">
+        Login → sales-roster mapping lives in the <b>Organization</b> tab: open a position to see its logins.
+      </p>
 
       {err && <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 px-3 py-2 text-xs text-rose-500">{err}</div>}
       {dash.loading && !dash.data && <div className="py-12 text-center text-sm text-zinc-500 animate-pulse">Loading employees…</div>}

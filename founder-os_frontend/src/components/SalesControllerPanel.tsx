@@ -15,7 +15,6 @@ import { UnmappedSection } from "./sales-controller-panel/UnmappedSection";
 import { HistoryResetSection } from "./sales-controller-panel/HistoryResetSection";
 import { ExportDataSection } from "./sales-controller-panel/ExportDataSection";
 import { RosterSection } from "./sales-controller-panel/RosterSection";
-import { RosterMappingSection } from "./sales-controller-panel/RosterMappingSection";
 import { RosterEditModal } from "./sales-controller-panel/RosterEditModal";
 
 // Pieces split into ./sales-controller-panel/ (importable on their own); re-exported for compat.
@@ -215,7 +214,8 @@ export default function SalesControllerPanel() {
         refreshAll={refreshAll}
       />
       <ExportDataSection rosterRows={rosterRows} showRisk />
-      <RosterMappingSection rosterRows={rosterRows} refreshAll={refreshAll} />
+      {/* Login → roster mapping moved into the HR Organization tab's tree nodes
+          (founder decision 2026-11-13). The Controller keeps roster CRUD only. */}
       <RosterSection
         rosterRows={rosterRows}
         busy={busy}
