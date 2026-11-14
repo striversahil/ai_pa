@@ -17,7 +17,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import {
-  authStore, getMe, isApproved, requireAdminScope, requireScope, adminScopeError,
+  authStore, getMe, isApproved, requireAdminScope, requireScope, adminScopeError, adminGuard,
   notifyLive, broadcastLive, LiveEvent, MAX_ATTACHMENT_BYTES, deps,
   type Bindings,
 } from '../context';
@@ -170,7 +170,7 @@ export function registerCrmAttachmentRoutes(app: Hono<{ Bindings: Bindings }>): 
 
   // Delete attachment (row + bytes) — root only.
   app.delete('/api/crm/attachments/:id', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     const { prisma } = deps();
     const row: any = await prisma.soAttachment.findUnique({ where: { id: c.req.param('id') ?? '' } }).catch(() => null);
     if (!row) return c.json({ error: 'Attachment not found' }, 404);

@@ -21,6 +21,7 @@ export const ScopeKeys = {
   MasterDataEdit: "master-data-edit",
   HumanResources: "human-resources",
   DigitalMarketing: "digital-marketing",
+  Sales: "sales",
   UserAdmin: "user-admin",
 } as const;
 

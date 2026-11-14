@@ -5,7 +5,7 @@
 // routes/telecalling.ts (Phase-3 split). URLs unchanged.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { deps, requireSecret, requireAdminScope, adminScopeError, notifyLive, LiveEvent, kolkataDateStr, getEstimatesPayload, refreshNeodoveReport, isApproved, type Bindings } from '../context';
+import { deps, requireSecret, adminGuard, notifyLive, LiveEvent, kolkataDateStr, getEstimatesPayload, refreshNeodoveReport, isApproved, type Bindings } from '../context';
 import { getViewerMe } from '../viewer';
 import { readBody } from '../http';
 
@@ -34,7 +34,7 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
   // latest action per SO on top of Zoho's raw status, so the snapshot reflects
   // the manual change and the points diff scores it automatically.
   app.post('/api/crm/actions', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     const body = await readBody(c);
     const soNumber = String(body?.soNumber || '').trim();
     const action = String(body?.action || '').trim().toLowerCase();
@@ -141,7 +141,7 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
   // invalidation), oldest first; the dashboard button loops it until
   // `remaining` hits 0, so no single request outruns worker limits.
   app.post('/api/neodove/backfill', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     try {
       const shift = (ymd: string, n: number): string => {
         const [y, m, d] = ymd.split('-').map(Number);

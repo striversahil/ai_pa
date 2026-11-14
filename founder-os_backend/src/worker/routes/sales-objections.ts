@@ -9,30 +9,31 @@
 // link); at least one of the two is required.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { isApproved, notifyLive, requireAdminScope, type Bindings } from '../context';
+import { isApproved, notifyLive, adminGuard, type Bindings } from '../context';
+import { ScopeKeys } from '../../modules/auth/types';
 import { addReply, createObjection, getObjection, listObjections, setObjectionStatus } from '../../modules/sales-objections/store';
 import { cleanObjectionInput } from '../../modules/sales-objections/types';
-import { getViewerMe } from '../viewer';
+import { requireViewer } from '../viewer';
 import { readBody } from '../http';
 
 async function viewer(c: any): Promise<any | null> {
-  const me: any = await getViewerMe(c).catch(() => null);
+  const me: any = await requireViewer(c).catch(() => null);
   if (!me || !isApproved(me)) return null;
   if (me.isAdmin || me.isRoot) return me;
   const scopes: string[] = ((me.scopes ?? []) as string[]).map((s) => String(s).toLowerCase());
-  if (scopes.includes('sales-head') || scopes.includes('telecalling') || scopes.includes('sales')) return me;
+  if (scopes.includes(ScopeKeys.SalesHead) || scopes.includes(ScopeKeys.Telecalling) || scopes.includes(ScopeKeys.Sales)) return me;
   return null;
 }
 
 /** Manager gate for replies + resolve/reopen (sales-head / root). */
 async function requireSalesManager(c: any): Promise<boolean> {
-  try { await requireAdminScope(c); return true; } catch { /* fall through */ }
-  const me: any = await getViewerMe(c);
+  if ((await adminGuard(c)) === null) return true;
+  const me: any = await requireViewer(c).catch(() => null);
   if (!me) return false;
   if (!isApproved(me)) return false;
   const scopes: string[] = me.scopes ?? [];
   const roles: string[] = me.roles ?? [];
-  return scopes.includes('sales-head') || roles.includes('sales-head') || !!me.isAdmin;
+  return scopes.includes(ScopeKeys.SalesHead) || roles.includes('sales-head') || !!me.isAdmin;
 }
 
 function actorOf(me: any): { id: string; name: string } {
