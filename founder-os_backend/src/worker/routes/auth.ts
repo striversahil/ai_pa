@@ -2,28 +2,8 @@
 // routes/auth.ts — Google OAuth + user/role/scope admin API.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { authStore, deps, publicOrigin, isSecure, AuthRoutes, type Bindings } from '../context';
-import { listAccountants } from '../../automations/accounts/service';
-import { listDigitalMarketingManagers } from '../../automations/digital-marketing/service';
-import { listEmployees } from '../../automations/human-resources/employees';
+import { authStore, publicOrigin, isSecure, AuthRoutes, type Bindings } from '../context';
 import { readBody } from '../http';
-
-/** Shared roster snapshot loader (directory roster links reuse it — one home). */
-async function loadRosterSnapshot() {
-  const { prisma } = deps();
-  const [tcs, accts, mkts, hrs] = await Promise.all([
-    prisma.telecaller.findMany({}).catch(() => []),
-    listAccountants(false).catch(() => []),
-    listDigitalMarketingManagers(false).catch(() => []),
-    listEmployees(false).catch(() => []),
-  ]);
-  return {
-    telecallers: (tcs as any[]).map((t) => ({ id: t.id ?? null, email: t.email ?? null, name: t.name ?? null, type: t.type ?? null, region: t.region ?? null })),
-    accountants: (accts as any[]).map((r) => ({ id: (r as any).id ?? null, email: r.email ?? null, name: r.name ?? null, role: r.role ?? null })),
-    marketers: (mkts as any[]).map((r) => ({ id: (r as any).id ?? null, email: r.email ?? null, name: r.name ?? null, role: r.role ?? null })),
-    hrMembers: (hrs as any[]).map((r) => ({ id: (r as any).id ?? null, email: r.email ?? null, loginEmail: r.loginEmail ?? null, name: r.name ?? null, designation: (r as any).designation ?? null })),
-  };
-}
 
 export function registerAuthRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.get('/api/auth/google', async (c) => {
@@ -48,35 +28,6 @@ export function registerAuthRoutes(app: Hono<{ Bindings: Bindings }>): void {
   });
   app.get('/api/auth/users', async (c) => {
     const r = await AuthRoutes.authListUsers(authStore(c), c.req.header('cookie') ?? null);
-    return c.json(r.body, r.status as any);
-  });
-  // ── Unified employee directory (view-first; Worker-only, no Express mirror) ─
-  // One entry per non-root login: identity + roster source links.
-  // Managers + HR-scope holders read; HR cannot manage.
-  app.get('/api/auth/directory', async (c) => {
-    const r = await AuthRoutes.authDirectory(authStore(c), c.req.header('cookie') ?? null, loadRosterSnapshot);
-    return c.json(r.body, r.status as any);
-  });
-  // ── Core assignments (read-only; Worker-only, no Express mirror) ──────────
-  // Per-login primary designation from locked core tables + the department →
-  // designation catalog HR assigns from. Same gate as the directory; writes
-  // need a human (locked core — see docs/core-change-requests).
-  app.get('/api/auth/core-assignments', async (c) => {
-    const r = await AuthRoutes.authCoreAssignments(authStore(c), c.req.header('cookie') ?? null, async () => {
-      try {
-        const { prisma } = deps();
-        const p: any = prisma as any;
-        if (typeof p.corePosition?.findMany !== 'function') return null;
-        const [departments, positions, links, empPositions, empDepts] = await Promise.all([
-          p.coreDepartment.findMany({}).catch(() => []),
-          p.corePosition.findMany({}).catch(() => []),
-          p.coreUserLink.findMany({}).catch(() => []),
-          p.coreEmpPosition.findMany({}).catch(() => []),
-          p.coreEmpDept.findMany({}).catch(() => []),
-        ]);
-        return { departments, positions, links, empPositions, empDepts };
-      } catch { return null; }
-    });
     return c.json(r.body, r.status as any);
   });
   app.delete('/api/auth/users/:id', async (c) => {

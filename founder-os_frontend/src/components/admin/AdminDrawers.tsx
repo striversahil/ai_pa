@@ -1,7 +1,11 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { displayNameOf } from "@/auth/directory";
+
+/** Display name: manager-set override wins, else the Google-provided name. */
+export function displayNameOf(user: { name: string; displayName?: string | null }): string {
+  return (user.displayName ?? "").trim() || user.name;
+}
 
 export interface ScopeRow { key: string; label: string; description: string | null; }
 export interface RoleRow { key: string; label: string; description: string | null; scopeKeys: string[]; }
