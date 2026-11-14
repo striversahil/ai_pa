@@ -2,14 +2,13 @@
 // handlers stay thin orchestrators; all logic lives here. Re-exported via
 // ../routes.ts so existing imports keep working.
 import { requireUser, listUsers } from "../service";
-import { asRoot } from "./io";
 import { AuthStore } from "../store";
 import { AuthError } from "../types";
 import { resolveOrgPosition, POSITION_SUGGESTED_SCOPES } from "../positions";
 import type { RosterSnapshot } from "../positions";
 import {
-  DIRECTORY_HIDDEN_KEY, DIRECTORY_WIDE_SCOPES,
-  normalizeHiddenEmails, directorySources, hasAnyScope,
+  DIRECTORY_WIDE_SCOPES,
+  directorySources, hasAnyScope,
 } from "../directory";
 import type { DirectoryRosters } from "../directory";
 import type { AuthResult } from "./types";
@@ -18,16 +17,14 @@ import { json, isTargetRoot } from "./pure";
 /**
  * Unified employee directory (view-first): one entry per non-root login with
  * org position (roster-first, same resolver as the Users portal) + roster
- * source links (ids only). Root + `hr:hiddenLoginEmails` rows are visible to
- * root only (flagged); everyone else gets the list minus hidden. HR holders
- * (`human-resources` scope) get read-only width (`canManage: false`) — they
- * cannot edit users/roles through any other endpoint (unchanged gates).
+ * source links (ids only). HR holders (`human-resources` scope) get read-only
+ * width (`canManage: false`) — they cannot edit users/roles through any other
+ * endpoint (unchanged gates).
  */
 export async function authDirectory(
   store: AuthStore,
   cookieHeader: string | null,
   loadRosters: () => Promise<RosterSnapshot & DirectoryRosters>,
-  loadHidden: () => Promise<unknown>,
 ): Promise<AuthResult> {
   try {
     const me = await requireUser(store, cookieHeader);
@@ -43,19 +40,15 @@ export async function authDirectory(
     const wide = root || hasAnyScope(scopes, DIRECTORY_WIDE_SCOPES);
     if (!wide) return json(403, { error: "Requires HR or user-management access" });
     const canManage = root || hasAnyScope(scopes, ["admin", "user-admin"]);
-    const [rosters, hiddenRaw] = await Promise.all([loadRosters(), loadHidden().catch(() => [])]);
-    const hidden = new Set(normalizeHiddenEmails(hiddenRaw));
+    const rosters = await loadRosters();
     const users = (await listUsers(store)).filter((u: any) => !isTargetRoot(u));
     const rows: Array<{
       id: string; email: string; name: string; position: string; department: string;
       via: string; auto: string; override: string | null; suggestedScopes: string[];
       sources: Array<{ id: string; kind: "telecaller" | "accountant" | "marketer" | "hr-member"; label: string }>;
-      hidden?: boolean;
     }> = [];
     for (const u of users as any[]) {
       const email = String(u.email ?? "");
-      const isHidden = hidden.has(email.trim().toLowerCase());
-      if (isHidden && !root) continue;
       const entryScopes: string[] = [...(u.scopes ?? [])];
       try {
         const snap = await store.getAuthSnapshot(u.id);
@@ -78,43 +71,9 @@ export async function authDirectory(
         override: (u.positionOverride ?? null) as string | null,
         suggestedScopes: POSITION_SUGGESTED_SCOPES[r.position] ?? [],
         sources: directorySources(email, rosters as DirectoryRosters),
-        ...(isHidden ? { hidden: true } : {}),
       });
     }
-    return json(200, { directory: rows, canManage, hiddenCount: root ? hidden.size : undefined });
-  } catch (e: any) {
-    const err = e instanceof AuthError ? e : new AuthError("FORBIDDEN", e?.message);
-    return json(err.status, { error: err.message });
-  }
-}
-
-/** Root-only read of the hidden-login list (HR never sees the list itself). */
-export async function authGetHiddenLogins(
-  store: AuthStore,
-  cookieHeader: string | null,
-  loadHidden: () => Promise<unknown>,
-): Promise<AuthResult> {
-  try {
-    await asRoot(store, cookieHeader);
-    return json(200, { hidden: normalizeHiddenEmails(await loadHidden()) });
-  } catch (e: any) {
-    const err = e instanceof AuthError ? e : new AuthError("FORBIDDEN", e?.message);
-    return json(err.status, { error: err.message });
-  }
-}
-
-/** Root-only write of the hidden-login list (HR never sees the list itself). */
-export async function authSetHiddenLogins(
-  store: AuthStore,
-  cookieHeader: string | null,
-  body: { hidden?: unknown },
-  saveHidden: (emails: string[]) => Promise<void>,
-): Promise<AuthResult> {
-  try {
-    await asRoot(store, cookieHeader);
-    const clean = normalizeHiddenEmails(body?.hidden);
-    await saveHidden(clean);
-    return json(200, { ok: true, hidden: clean });
+    return json(200, { directory: rows, canManage });
   } catch (e: any) {
     const err = e instanceof AuthError ? e : new AuthError("FORBIDDEN", e?.message);
     return json(err.status, { error: err.message });
@@ -123,9 +82,9 @@ export async function authSetHiddenLogins(
 
 /** Core assignment catalog + per-login primary designation (read-only).
  *  Reads locked core tables (departments, positions, user links, primary
- *  emp_position/emp_dept rows) — never writes. Same gate + hidden filtering
- *  as the directory: managers + HR holders read, HR read-only, root sees
- *  hidden too. Assignment WRITES need a human (locked core) — see
+ *  emp_position/emp_dept rows) — never writes. Same gate as the directory:
+ *  managers + HR holders read, HR read-only. Assignment WRITES need a human
+ *  (locked core) — see
  *  docs/core-change-requests/2026-11-12-core-assignment-write.md. */
 export interface CoreCatalogPosition {
   id: string;
@@ -153,7 +112,6 @@ export interface CoreAssignmentRow {
 export async function authCoreAssignments(
   store: AuthStore,
   cookieHeader: string | null,
-  loadHidden: () => Promise<unknown>,
   loadCore: () => Promise<{
     departments: any[];
     positions: any[];
@@ -175,9 +133,8 @@ export async function authCoreAssignments(
     const wide = root || hasAnyScope(scopes, DIRECTORY_WIDE_SCOPES);
     if (!wide) return json(403, { error: "Requires HR or user-management access" });
     const canManage = root || hasAnyScope(scopes, ["admin", "user-admin"]);
-    const [hiddenRaw, core] = await Promise.all([loadHidden().catch(() => []), loadCore().catch(() => null)]);
+    const core = await loadCore().catch(() => null);
     if (!core) return json(200, { assignments: {}, catalog: { departments: [] }, canManage, coreUnavailable: true });
-    const hidden = new Set(normalizeHiddenEmails(hiddenRaw));
     const posById = new Map((core.positions as any[]).map((p) => [String(p.id), p]));
     const deptById = new Map((core.departments as any[]).map((d) => [String(d.id), d]));
     const empByUser = new Map((core.links as any[]).map((l) => [String(l.authUserId), String(l.employeeId)]));
@@ -194,8 +151,6 @@ export async function authCoreAssignments(
     const users = (await listUsers(store)).filter((u: any) => !isTargetRoot(u));
     const assignments: Record<string, CoreAssignmentRow> = {};
     for (const u of users as any[]) {
-      const email = String(u.email ?? "");
-      if (hidden.has(email.trim().toLowerCase()) && !root) continue;
       const empId = empByUser.get(String(u.id));
       if (!empId) continue;
       const ap = primaryPos.get(empId);
@@ -233,5 +188,3 @@ export async function authCoreAssignments(
     return json(err.status, { error: err.message });
   }
 }
-
-export { DIRECTORY_HIDDEN_KEY };

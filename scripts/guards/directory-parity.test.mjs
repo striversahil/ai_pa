@@ -1,6 +1,6 @@
 // directory-parity.test.mjs — Guard: unified employee directory contract.
-// View-first: one read endpoint + root-only hidden list; no behavior change to
-// existing users/positions endpoints; no Express mirror; Worker-only routes.
+// View-first: directory + core-assignments reads; no behavior change to
+// existing users endpoints; no Express mirror; Worker-only routes.
 //
 // Run: `node --test "scripts/guards/*.test.mjs"`
 import { describe, it } from 'node:test';
@@ -18,21 +18,13 @@ const routes = read(join('modules', 'auth', 'routes.ts'));
 const worker = read(join('worker', 'routes', 'auth.ts'));
 
 describe('unified directory contract (view-first)', () => {
-  it('single hidden-key constant shared backend-wide', () => {
-    assert.ok(pure.includes('hr:hiddenLoginEmails'), 'hidden Setting key must be defined once');
-    assert.ok(part.includes('DIRECTORY_HIDDEN_KEY'), 'io must use the shared key, not a literal');
-    assert.ok(worker.includes('DIRECTORY_HIDDEN_KEY'), 'worker route must use the shared key');
-  });
-
-  it('root is never listed; hidden visible to root only', () => {
+  it('root is never listed', () => {
     assert.ok(part.includes('isTargetRoot'), 'root exclusion must be enforced');
-    assert.ok(part.includes('if (isHidden && !root) continue'), 'hidden rows drop for non-root');
-    assert.ok(part.includes('hidden: true'), 'hidden rows flagged for root');
   });
 
-  it('existing users/positions gates untouched (no widening)', () => {
+  it('existing users gate untouched (no widening)', () => {
     const io = read(join('modules', 'auth', 'routes-parts', 'io.ts'));
-    assert.ok(io.includes('await asUserManager(store, cookieHeader)'), 'users/positions keep the manager gate');
+    assert.ok(io.includes('await asUserManager(store, cookieHeader)'), 'users keep the manager gate');
     assert.ok(!io.includes('human-resources'), 'io.ts gains no HR widening');
   });
 
@@ -42,18 +34,18 @@ describe('unified directory contract (view-first)', () => {
     assert.ok(part.includes('["admin", "user-admin"]'), 'manage stays admin/user-admin only');
   });
 
-  it('hidden list is root-only read/write with validation', () => {
-    assert.ok(part.includes('asRoot(store, cookieHeader)'), 'hidden endpoints require root');
-    assert.ok(pure.includes('DIRECTORY_HIDDEN_MAX'), 'hidden list must be capped');
-    assert.ok(part.includes('normalizeHiddenEmails'), 'hidden input must be normalized');
+  it('no hidden-login filtering (removed 2026-11-14)', () => {
+    assert.ok(!part.includes('Hidden') && !part.includes('hidden'), 'no hidden-login code in the directory part');
+    assert.ok(!pure.includes('hidden') && !pure.includes('Hidden'), 'no hidden-login code in directory helpers');
+    assert.ok(!worker.includes('hidden-logins'), 'no hidden-logins worker route');
   });
 
-  it('Worker-only: three routes registered, no Express mirror', () => {
-    for (const p of ['/api/auth/directory', '/api/auth/hidden-logins', '/api/auth/core-assignments']) {
+  it('Worker-only: two routes registered, no Express mirror', () => {
+    for (const p of ['/api/auth/directory', '/api/auth/core-assignments']) {
       assert.ok(worker.includes(`'${p}'`), `missing worker route ${p}`);
     }
     assert.ok(routes.includes('authDirectory'), 'routes.ts must re-export authDirectory');
-    assert.ok(routes.includes('authGetHiddenLogins') && routes.includes('authSetHiddenLogins'), 'routes.ts must re-export hidden fns');
+    assert.ok(!routes.includes('HiddenLogins'), 'routes.ts must not re-export hidden fns');
     assert.ok(routes.includes('authCoreAssignments'), 'routes.ts must re-export authCoreAssignments');
   });
 
@@ -62,15 +54,15 @@ describe('unified directory contract (view-first)', () => {
     assert.ok(!pure.includes('toLowerCase().includes('), 'no fuzzy name matching');
   });
 
-  it('frontend mirror exists for key + shape', () => {
+  it('frontend mirror exists for shape', () => {
     const fe = readFileSync(join(BACKEND_DIR, '..', 'founder-os_frontend', 'src', 'auth', 'directory.ts'), 'utf8');
-    assert.ok(fe.includes('hr:hiddenLoginEmails'), 'frontend must mirror the hidden key doc');
+    assert.ok(!fe.includes('hidden'), 'frontend must not mirror a hidden key');
     assert.ok(fe.includes('modules/auth/directory.ts'), 'frontend must name its backend mirror');
   });
 });
 
 describe('core assignments contract (read-only)', () => {
-  it('same gate + hidden filtering as the directory, root never listed', () => {
+  it('same gate as the directory, root never listed', () => {
     assert.ok(part.includes('authCoreAssignments'), 'assignments reader must exist');
     assert.ok(part.includes('isTargetRoot'), 'root exclusion must be enforced');
     assert.ok(part.includes('DIRECTORY_WIDE_SCOPES'), 'assignments must share the directory gate');

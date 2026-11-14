@@ -1,13 +1,6 @@
 // Org directory helpers — framework-free (no imports) so Worker and Express
 // can both use them. Mirror: founder-os_frontend/src/auth/directory.ts
-// (HIDDEN semantics + row shape) — change both together, never drift.
-
-// Setting key holding the root-defined hidden-login email list (JSON array).
-// Visible to root only; every other caller gets rows minus these logins.
-export const DIRECTORY_HIDDEN_KEY = "hr:hiddenLoginEmails";
-
-/** Max hidden emails root may store (abuse cap, not a product limit). */
-export const DIRECTORY_HIDDEN_MAX = 200;
+// (row shape, email-exact sources) — change both together, never drift.
 
 /** Scopes granting the wide read (HR included). Managers keep edit rights
  *  separately via `canManage` (user-admin/admin only — same rule as the
@@ -15,21 +8,6 @@ export const DIRECTORY_HIDDEN_MAX = 200;
 export const DIRECTORY_WIDE_SCOPES = ["admin", "user-admin", "human-resources"];
 
 const normEmail = (v: unknown): string => String(v ?? "").trim().toLowerCase();
-
-/** Normalize a stored/provided hidden list: lowercase, de-duped, capped. */
-export function normalizeHiddenEmails(input: unknown): string[] {
-  const arr = Array.isArray(input) ? input : [];
-  const out: string[] = [];
-  const seen = new Set<string>();
-  for (const v of arr) {
-    const e = normEmail(v);
-    if (!e || !e.includes("@") || seen.has(e)) continue;
-    seen.add(e);
-    out.push(e);
-    if (out.length >= DIRECTORY_HIDDEN_MAX) break;
-  }
-  return out;
-}
 
 /** Roster row with identity links (ids are link-only, never access). */
 export interface DirectoryRosterRow {

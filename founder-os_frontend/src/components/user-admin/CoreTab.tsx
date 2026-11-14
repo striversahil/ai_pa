@@ -10,7 +10,7 @@
 import { useMemo, useState } from "react";
 import AdminTable from "../admin/AdminTable";
 import {
-  fetchDirectory, fetchCoreAssignments, fetchHiddenLogins, saveHiddenLogins,
+  fetchDirectory, fetchCoreAssignments,
 } from "@/auth/api";
 import type { DirectoryRow } from "@/auth/directory";
 import type { CoreAssignmentRow } from "@/auth/core";
@@ -19,7 +19,6 @@ import { useLiveDashboard } from "@/hooks/useLiveData";
 
 interface CoreTabProps {
   canManage: boolean;
-  isRoot: boolean;
   onManage: (userId: string) => void;
 }
 
@@ -27,7 +26,7 @@ interface CorePerson extends DirectoryRow {
   assigned?: CoreAssignmentRow | null;
 }
 
-export default function CoreTab({ canManage, isRoot, onManage }: CoreTabProps) {
+export default function CoreTab({ canManage, onManage }: CoreTabProps) {
   const dash = useLiveDashboard(async () => {
     const [dir, core] = await Promise.all([fetchDirectory(), fetchCoreAssignments()]);
     const rows: CorePerson[] = dir.directory.map((r) => ({
@@ -39,10 +38,6 @@ export default function CoreTab({ canManage, isRoot, onManage }: CoreTabProps) {
   const rows = useMemo(() => dash.data?.rows ?? [], [dash.data]);
   const catalog = useMemo(() => dash.data?.catalog?.departments ?? [], [dash.data]);
   const [deptFilter, setDeptFilter] = useState("");
-  const [hidden, setHidden] = useState<string[] | null>(null);
-  const [draft, setDraft] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [note, setNote] = useState<string | null>(null);
 
   const assignedCount = useMemo(() => rows.filter((r) => r.assigned).length, [rows]);
 
@@ -56,23 +51,6 @@ export default function CoreTab({ canManage, isRoot, onManage }: CoreTabProps) {
       return pos?.label && deptFilter === pos.department;
     });
   }, [rows, deptFilter]);
-
-  const saveHidden = async () => {
-    setSaving(true);
-    setNote(null);
-    try {
-      const list = draft.split("\n").map((s) => s.trim()).filter(Boolean);
-      const saved = await saveHiddenLogins(list);
-      setHidden(saved);
-      setDraft(saved.join("\n"));
-      dash.refresh();
-      setNote(`Hidden list saved (${saved.length} emails). Takes effect immediately.`);
-    } catch (e) {
-      setNote(e instanceof Error ? e.message : "Save failed");
-    } finally {
-      setSaving(false);
-    }
-  };
 
   return (
     <div className="space-y-4">
@@ -114,9 +92,7 @@ export default function CoreTab({ canManage, isRoot, onManage }: CoreTabProps) {
                   <span className="flex items-center gap-2.5 min-w-0">
                     <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-xs font-bold text-white">{((r.name || r.email || "U")).charAt(0).toUpperCase()}</span>
                     <span className="min-w-0">
-                      <span className="block font-semibold truncate">{r.name || r.email}
-                        {r.hidden && <span className="ml-1.5 text-[10px] bg-amber-500/20 text-amber-500 px-1.5 py-0.5 rounded" title="Root-hidden login — visible to root only">HIDDEN</span>}
-                      </span>
+                      <span className="block font-semibold truncate">{r.name || r.email}</span>
                       <span className="block text-[11px] text-zinc-500 truncate">{r.email}</span>
                     </span>
                   </span>
@@ -168,33 +144,6 @@ export default function CoreTab({ canManage, isRoot, onManage }: CoreTabProps) {
               }] : []),
             ]}
           />
-        </section>
-      )}
-
-      {isRoot && (
-        <section className="bg-zinc-50 dark:bg-zinc-900 border border-amber-500/30 rounded-xl p-4 sm:p-6">
-          <h3 className="text-sm font-bold">Hidden logins <span className="font-normal text-zinc-500">(root only — invisible to everyone else, HR included)</span></h3>
-          <p className="text-xs text-zinc-500 mt-1 mb-3">One email per line. Hidden logins keep working; they just never appear outside this page.</p>
-          <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={4} spellCheck={false}
-            placeholder={"name@example.com"}
-            className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-3 py-2 text-xs font-mono outline-none focus:border-indigo-500" />
-          <div className="mt-2 flex items-center gap-2">
-            <button onClick={async () => {
-              try {
-                const h = await fetchHiddenLogins();
-                setHidden(h);
-                setDraft(h.join("\n"));
-              } catch { setHidden([]); }
-            }}
-              className="rounded-lg border border-zinc-300 dark:border-zinc-700 text-xs font-bold px-3 py-2 cursor-pointer bg-white dark:bg-zinc-950">
-              Load current{hidden ? ` (${hidden.length})` : ""}
-            </button>
-            <button onClick={saveHidden} disabled={saving}
-              className="rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-3 py-2 disabled:opacity-40 cursor-pointer border-0">
-              {saving ? "Saving…" : "Save hidden list"}
-            </button>
-            {note && <span className="text-xs text-zinc-500">{note}</span>}
-          </div>
         </section>
       )}
     </div>

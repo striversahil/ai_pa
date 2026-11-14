@@ -218,7 +218,7 @@ export default function UserAdmin() {
         <p className="text-sm text-zinc-500 dark:text-zinc-400">
           {isRoot ? `Root: ${me.user.email}.` : canManage ? `Signed in as ${me.user.email} (user manager).` : `Signed in as ${me.user.email} (HR directory).`} {canManage && "Assign roles to users; a role grants the automation dashboards you define for it."}
           {!isRoot && canManage && " You can only grant dashboards root gave you — the root user, admin/user-manager roles, and anything outside your own access are root-only."}
-          {!canManage && " Read-only Core people view: assigned designations, roster links, every login except root and root-hidden emails."}
+          {!canManage && " Read-only Core people view: assigned designations, roster links, every login except root."}
         </p>
       </div>
 
@@ -249,7 +249,7 @@ export default function UserAdmin() {
       </div>
 
       {viewTab === "core" && (
-        <CoreTab canManage={canManage} isRoot={isRoot} onManage={(id) => setManagingId(id)} />
+        <CoreTab canManage={canManage} onManage={(id) => setManagingId(id)} />
       )}
 
       {viewTab === "users" && canManage && (

@@ -25,22 +25,3 @@ export async function fetchCoreAssignments(): Promise<CoreAssignmentsResponse> {
   if (!res.ok) throw new Error(await readError(res));
   return res.json();
 }
-
-/** Root-only: hidden-login email list. */
-export async function fetchHiddenLogins(): Promise<string[]> {
-  const res = await fetch("/api/auth/hidden-logins", { cache: "no-store" });
-  if (!res.ok) throw new Error(await readError(res));
-  const j = await res.json();
-  return (j.hidden ?? []) as string[];
-}
-
-/** Root-only: replace the hidden-login email list. */
-export async function saveHiddenLogins(hidden: string[]): Promise<string[]> {
-  const res = await fetch("/api/auth/hidden-logins", {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ hidden }),
-  });
-  if (!res.ok) throw new Error(await readError(res));
-  return ((await res.json()).hidden ?? []) as string[];
-}

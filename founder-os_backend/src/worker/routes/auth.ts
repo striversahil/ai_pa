@@ -6,7 +6,6 @@ import { authStore, deps, publicOrigin, isSecure, AuthRoutes, type Bindings } fr
 import { listAccountants } from '../../automations/accounts/service';
 import { listDigitalMarketingManagers } from '../../automations/digital-marketing/service';
 import { listEmployees } from '../../automations/human-resources/employees';
-import { DIRECTORY_HIDDEN_KEY } from '../../modules/auth/directory';
 import { readBody } from '../http';
 
 /** Shared roster snapshot loader (positions + directory reuse it — one home). */
@@ -24,15 +23,6 @@ async function loadRosterSnapshot() {
     marketers: (mkts as any[]).map((r) => ({ id: (r as any).id ?? null, email: r.email ?? null, name: r.name ?? null, role: r.role ?? null })),
     hrMembers: (hrs as any[]).map((r) => ({ id: (r as any).id ?? null, email: r.email ?? null, loginEmail: r.loginEmail ?? null, name: r.name ?? null, designation: (r as any).designation ?? null })),
   };
-}
-
-async function loadHiddenEmails(): Promise<unknown> {
-  try {
-    const { prisma } = deps();
-    const row = await (prisma as any).setting.findUnique({ where: { key: DIRECTORY_HIDDEN_KEY } }).catch(() => null);
-    const v = (row as any)?.value;
-    try { return JSON.parse(String(v ?? "[]")); } catch { return []; }
-  } catch { return []; }
 }
 
 export function registerAuthRoutes(app: Hono<{ Bindings: Bindings }>): void {
@@ -91,24 +81,10 @@ export function registerAuthRoutes(app: Hono<{ Bindings: Bindings }>): void {
     return c.json(r.body, r.status as any);
   });
   // ── Unified employee directory (view-first; Worker-only, no Express mirror) ─
-  // One entry per non-root login: position + roster source links. Root sees
-  // all incl. hidden (flagged); managers + HR-scope holders see all-minus-hidden.
+  // One entry per non-root login: position + roster source links.
+  // Managers + HR-scope holders read; HR cannot manage.
   app.get('/api/auth/directory', async (c) => {
-    const r = await AuthRoutes.authDirectory(authStore(c), c.req.header('cookie') ?? null, loadRosterSnapshot, loadHiddenEmails);
-    return c.json(r.body, r.status as any);
-  });
-  // Root-defined hidden-login list (root-only read/write; HR never sees it).
-  app.get('/api/auth/hidden-logins', async (c) => {
-    const r = await AuthRoutes.authGetHiddenLogins(authStore(c), c.req.header('cookie') ?? null, loadHiddenEmails);
-    return c.json(r.body, r.status as any);
-  });
-  app.put('/api/auth/hidden-logins', async (c) => {
-    const body = await readBody(c);
-    const { prisma } = deps();
-    const r = await AuthRoutes.authSetHiddenLogins(authStore(c), c.req.header('cookie') ?? null, body ?? {}, async (emails) => {
-      const value = JSON.stringify(emails);
-      await (prisma as any).setting.upsert({ where: { key: DIRECTORY_HIDDEN_KEY }, update: { value }, create: { key: DIRECTORY_HIDDEN_KEY, value } });
-    });
+    const r = await AuthRoutes.authDirectory(authStore(c), c.req.header('cookie') ?? null, loadRosterSnapshot);
     return c.json(r.body, r.status as any);
   });
   // ── Core assignments (read-only; Worker-only, no Express mirror) ──────────
@@ -116,7 +92,7 @@ export function registerAuthRoutes(app: Hono<{ Bindings: Bindings }>): void {
   // designation catalog HR assigns from. Same gate as the directory; writes
   // need a human (locked core — see docs/core-change-requests).
   app.get('/api/auth/core-assignments', async (c) => {
-    const r = await AuthRoutes.authCoreAssignments(authStore(c), c.req.header('cookie') ?? null, loadHiddenEmails, async () => {
+    const r = await AuthRoutes.authCoreAssignments(authStore(c), c.req.header('cookie') ?? null, async () => {
       try {
         const { prisma } = deps();
         const p: any = prisma as any;
