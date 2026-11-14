@@ -4,7 +4,7 @@
 // (never raw SQL here). All rules live in ./access.ts (pure).
 import { setUserScopes } from "../auth/service";
 import type { AuthStore } from "../auth/store-parts/types";
-import { canManagePerson, rosterTypeFor, isChartTitle } from "./access";
+import { canManagePerson, rosterTypeFor, isChartTitle, retireRosterOnSave } from "./access";
 import { fail, normEmail, isPrivileged, heldScopes } from "./types";
 import type { AssignInput } from "./types";
 import { isValidRegion, isValidTlLevel, tlPairError } from "../../automations/telecalling/service";
@@ -125,8 +125,24 @@ export async function assignPerson(opts: {
     try { await bustRosterCaches(); } catch { /* non-fatal */ }
     try { const { mirrorRosterRow } = await import("../core/sync"); await mirrorRosterRow("telecaller", rowId); } catch { /* non-fatal */ }
   } else if (existing) {
-    // Left Sales: retire the roster row so the leaderboard drops them.
-    await retireRosterRow(prisma, (existing as any).id);
+    // Left Sales: retire the roster row so the leaderboard drops them —
+    // UNLESS the linked login still holds sales-head power. "Sales Head"
+    // maps to no roster type, so without this guard every save of the head's
+    // own card silently orphaned all their deals (deleted rows are skipped
+    // by creator inference and the agents list alike).
+    let holdsSalesHeadPower = false;
+    if (login) {
+      try {
+        const [scopes, roles] = await Promise.all([
+          store.getUserScopeKeys(login.id).catch(() => [] as string[]),
+          store.getUserRoleKeys(login.id).catch(() => [] as string[]),
+        ]);
+        holdsSalesHeadPower = [...scopes, ...roles].some((s) => String(s).toLowerCase() === 'sales-head');
+      } catch { /* fail-closed: retire as before */ }
+    }
+    if (retireRosterOnSave({ rosterType, holdsSalesHeadPower })) {
+      await retireRosterRow(prisma, (existing as any).id);
+    }
   }
   if (input.active === false && existing) {
     await retireRosterRow(prisma, (existing as any).id);

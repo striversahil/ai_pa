@@ -137,8 +137,8 @@ export default function ProcurementItemCard({
         onAnswer={(id, text, media) => onLoopAnswer(id, text, media)}
         onWithdraw={(id) => onLoopWithdraw(id)}
         onOpenLightbox={onOpenLightbox}
-        askKinds={["spec", "not_available", "note"]}
-        askLabels={{ spec: "Incorrect Spec", not_available: "Not Available", note: "Note" }}
+        askKinds={["spec", "not_available"]}
+        askLabels={{ spec: "Incorrect Spec", not_available: "Not Available" }}
       />
 
       {media.length > 0 && (

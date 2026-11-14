@@ -38,7 +38,6 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
   const [reqOpen, setReqOpen] = useState<number | null>(null);
   const [reqNote, setReqNote] = useState("");
   const [flagBusy, setFlagBusy] = useState(false);
-  // Per-item note drafts are handled inside LoopCards (immediate sends).
   // Per-item forwardable note: procurement's salesNote for the selected vendor,
   // editable by founder before finalizing (forwarded to sales with finalRate).
   const [salesNotes, setSalesNotes] = useState<Record<number, string>>({});
@@ -783,7 +782,6 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                     onWithdraw={(id) => loopWithdrawNow(i, id)}
                     onReject={(id) => loopRejectNow(i, id)}
                     onOpenLightbox={openLightbox}
-                    askKinds={["note"]}
                   />
                   <button type="button" onClick={() => handleClearNotAvailable(i)} disabled={flagBusy}
                     className="px-2.5 py-1.5 bg-transparent border border-[var(--border-card)] text-[var(--text-secondary)] hover:bg-[var(--bg-input)] hover:text-[var(--text-primary)] font-bold text-[11px] rounded-lg cursor-pointer disabled:opacity-50">
@@ -818,7 +816,6 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                     onWithdraw={(id) => loopWithdrawNow(i, id)}
                     onReject={(id) => loopRejectNow(i, id)}
                     onOpenLightbox={openLightbox}
-                    askKinds={["note"]}
                   />
                   {notAvailableOpen === i ? (
                     <div className="space-y-1.5 rounded-lg border border-dashed border-[var(--border-card)] p-2">
@@ -893,7 +890,6 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                     onWithdraw={(id) => loopWithdrawNow(i, id)}
                     onReject={(id) => loopRejectNow(i, id)}
                     onOpenLightbox={openLightbox}
-                    askKinds={["note"]}
                   />
                   <ItemRateForm
                     submitLabel="Add internal rate"
@@ -949,8 +945,8 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                   onWithdraw={(id) => loopWithdrawNow(i, id)}
                   onReject={(id) => loopRejectNow(i, id)}
                   onOpenLightbox={openLightbox}
-                  askKinds={["rates", "note"]}
-                  askLabels={{ rates: "Flag procurement", note: "Add note" }}
+                  askKinds={["rates"]}
+                  askLabels={{ rates: "Flag procurement" }}
                 />
                 {(it as any).expectedRate !== undefined && (it as any).expectedRate !== null && (
                   <p className="text-[11px] font-extrabold text-sky-400">

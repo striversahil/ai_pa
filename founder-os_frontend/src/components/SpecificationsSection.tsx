@@ -509,8 +509,8 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                             onAnswer={() => {}}
                             onWithdraw={(id) => saveItems((prev) => prev.map((x, j) => (j === idx ? { ...x, loopWithdraw: { id } } : x)))}
                             onOpenLightbox={onOpenLightbox}
-                            askKinds={editable ? ["query", "note"] : []}
-                            askLabels={{ query: "Request info / alternate", note: "Add note" }}
+                            askKinds={editable ? ["query"] : []}
+                            askLabels={{ query: "Request info / alternate" }}
                           />
                         </div>
                       )}

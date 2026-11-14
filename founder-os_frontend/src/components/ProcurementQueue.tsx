@@ -230,7 +230,7 @@ export default function ProcurementQueue() {
       i === itemIdx ? { ...it, rates: (it.rates ?? []).map((r, j) => (j === rateIdx ? rate : r)) } : it)), [patchItems]);
 
   // Loop intents (deterministic records — no thread). Procurement opens spec /
-  // not-available asks, answers records it holds, and adds notes. Answers
+  // not-available asks and answers records it holds. Answers
   // need no separate action: adding/editing a rate or attaching reference
   // media auto-answers server-side; the composer below is for text answers.
   const handleLoopOpen = useCallback((enquiryId: string, itemIdx: number, kind: LoopKind, text: string, media?: EnquiryItem["media"]) =>

@@ -97,10 +97,11 @@ export default function LoopCards({
   const records = allLoops(item);
   // Bypassed items run no quoting loop (rate available / not available /
   // internal handling) — new asks on them are pure noise no desk can clear
-  // by quoting, so only notes stay composable. Existing records keep their
-  // answer/withdraw actions; only the new-ask composer hides.
+  // by quoting. Existing records keep their answer/withdraw actions; only
+  // the new-ask composer hides. (The old notes-only exception died with the
+  // Note composer — notes are audit-only now, never user-composed.)
   const bypassed = !!item.rateAvailable || !!(item as any).notAvailable || !!item.internalRates;
-  const askable = bypassed ? askKinds.filter((k) => k === 'note') : askKinds;
+  const askable = bypassed ? [] : askKinds;
   const asksHidden = askKinds.length > askable.length;
   // A composer left open on a now-hidden kind never renders.
   const askShown = askKind && (askable as (LoopKind | null)[]).includes(askKind) ? askKind : null;
