@@ -3,7 +3,7 @@
 // Mirror: founder-os_backend/src/routes/digital-marketing.ts (Express alt runtime).
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { deps, requireAdminScope, adminScopeError, notifyLive, LiveEvent, MAX_ATTACHMENT_BYTES, type Bindings } from '../context';
+import { deps, adminGuard, notifyLive, LiveEvent, MAX_ATTACHMENT_BYTES, type Bindings } from '../context';
 import {
   listDigitalMarketingManagers, createDigitalMarketingManager, updateDigitalMarketingManager,
   listTemplates, createTemplate, updateTemplate, logTask, getDigitalMarketingExport,
@@ -13,7 +13,7 @@ import {
 } from '../../automations/digital-marketing/service';
 import { getDigitalMarketingAds, createAd, updateAd, deleteAd, createAdAttachment, getAdAttachment, deleteAdAttachment, toAdAttachmentJson } from '../../automations/digital-marketing/ads';
 import { getDigitalMarketingOpenTasks, getOpenTaskById, createOpenTask, updateOpenTask, deleteOpenTask, upsertOpenTaskEntry, ensureEntryForDate, createOpenTaskAttachment, getOpenTaskAttachment, deleteOpenTaskAttachment, toOpenTaskAttachmentJson } from '../../automations/digital-marketing/open-tasks';
-import { getViewerMe } from '../viewer';
+import { requireViewer, getViewerMe } from '../viewer';
 import { readBody } from '../http';
 
 async function actorName(c: any): Promise<string | null> {
@@ -27,7 +27,7 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
   // ── Roster (root-only, like /api/telecallers: reads and writes) ──────────
   // The dashboard gets the names it needs via data().roster (no emails).
   app.get('/api/digital-marketing/roster', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     const { prisma } = deps();
     void prisma;
     const rows = await listDigitalMarketingManagers(c.req.query('deleted') === '1');
@@ -35,7 +35,7 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
   });
 
   app.post('/api/digital-marketing/roster', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     const body = await readBody(c);
     try {
       const row = await createDigitalMarketingManager(body || {});
@@ -45,7 +45,7 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
   });
 
   app.put('/api/digital-marketing/roster/:id', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     const body = await readBody(c);
     try {
       const row = await updateDigitalMarketingManager(c.req.param('id'), body || {});
@@ -55,7 +55,7 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
   });
 
   app.delete('/api/digital-marketing/roster/:id', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     await updateDigitalMarketingManager(c.req.param('id'), { deleted: true });
     notifyLive(c, { type: LiveEvent.DigitalMarketing });
     return c.json({ ok: true });
@@ -63,13 +63,13 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
 
   // ── Templates (root-only reads/writes; dashboard reads via data()) ──────
   app.get('/api/digital-marketing/templates', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     const rows = await listTemplates(c.req.query('all') === '1');
     return c.json({ templates: rows });
   });
 
   app.post('/api/digital-marketing/templates', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     const body = await readBody(c);
     try {
       const row = await createTemplate(body || {});
@@ -79,7 +79,7 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
   });
 
   app.put('/api/digital-marketing/templates/:id', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     const body = await readBody(c);
     try {
       const row = await updateTemplate(c.req.param('id'), body || {});
@@ -89,7 +89,7 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
   });
 
   app.delete('/api/digital-marketing/templates/:id', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     await updateTemplate(c.req.param('id'), { active: false });
     notifyLive(c, { type: LiveEvent.DigitalMarketing });
     return c.json({ ok: true });
@@ -97,7 +97,7 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
 
   // ── Root export: past-N-days full ledger (pending/inprogress/done + remarks + file links) ──
   app.get('/api/digital-marketing/export', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     try {
       const origin = new URL(c.req.url).origin;
       return c.json(await getDigitalMarketingExport(c.req.query('days'), origin));
@@ -143,7 +143,7 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
   });
 
   app.delete('/api/digital-marketing/ads/:id', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     try {
       const row: any = await deleteAd(c.req.param('id'));
       try {
@@ -215,7 +215,7 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
     if (!row) return c.json({ error: 'Attachment not found' }, 404);
     const actor = await actorName(c);
     let isRoot = false;
-    try { await requireAdminScope(c); isRoot = true; } catch { /* fall through */ }
+    try { if ((await adminGuard(c)) === null) isRoot = true; } catch { /* fall through */ }
     if (!isRoot && actor && String(row.uploadedBy) !== String(actor)) {
       return c.json({ error: 'Only the uploader or root can remove this file' }, 403);
     }
@@ -258,7 +258,7 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
   app.delete('/api/digital-marketing/open-tasks/:id', async (c) => {
     const actor = await actorName(c);
     let isRoot = false;
-    try { await requireAdminScope(c); isRoot = true; } catch { /* fall through */ }
+    try { if ((await adminGuard(c)) === null) isRoot = true; } catch { /* fall through */ }
     try {
       const task: any = await getOpenTaskById(c.req.param('id')).catch(() => null);
       if (!task) return c.json({ error: 'Task not found' }, 404);
@@ -364,7 +364,7 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
     if (!row) return c.json({ error: 'Attachment not found' }, 404);
     const actor = await actorName(c);
     let isRoot = false;
-    try { await requireAdminScope(c); isRoot = true; } catch { /* fall through */ }
+    try { if ((await adminGuard(c)) === null) isRoot = true; } catch { /* fall through */ }
     if (!isRoot && actor && String(row.uploadedBy) !== String(actor)) {
       return c.json({ error: 'Only the uploader or root can remove this file' }, 403);
     }
@@ -382,7 +382,7 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
   app.patch('/api/digital-marketing/logs/:id', async (c) => {
     const body = await readBody(c);
     try {
-      const me = await getViewerMe(c).catch(() => null);
+      const me = await requireViewer(c).catch(() => null);
       const self = await resolveSelfDigitalMarketingManager(
         (body as any)?.as ?? c.req.query('as') ?? null, me as any,
       ).catch(() => null);
@@ -457,7 +457,7 @@ export function registerDigitalMarketingRoutes(app: Hono<{ Bindings: Bindings }>
     if (!row) return c.json({ error: 'Attachment not found' }, 404);
     const actor = await actorName(c);
     let isRoot = false;
-    try { await requireAdminScope(c); isRoot = true; } catch { /* fall through */ }
+    try { if ((await adminGuard(c)) === null) isRoot = true; } catch { /* fall through */ }
     if (!isRoot && actor && String(row.uploadedBy) !== String(actor)) {
       return c.json({ error: 'Only the uploader or root can remove this file' }, 403);
     }

@@ -19,6 +19,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import { deps, isApproved, requireAdminScope, adminScopeError, notifyLive, type Bindings } from '../context';
+import { ScopeKeys } from '../../modules/auth/types';
 import {
   CrmError,
   amendOrderItems,
@@ -70,12 +71,12 @@ async function viewer(c: any): Promise<Viewer | null> {
     const isAdmin = !!me.isAdmin || !!me.isRoot;
     const isManager =
       isAdmin ||
-      scopes.includes('sales-head') ||
+      scopes.includes(ScopeKeys.SalesHead) ||
       roles.includes('sales-head') ||
-      scopes.includes('crm') ||
-      scopes.includes('dispatch');
-    const canWriteFloor = isAdmin || scopes.includes('dispatch');
-    const canPromise = canWriteFloor || scopes.includes('telecalling') || scopes.includes('sales-head') || roles.includes('sales-head');
+      scopes.includes(ScopeKeys.Crm) ||
+      scopes.includes(ScopeKeys.Dispatch);
+    const canWriteFloor = isAdmin || scopes.includes(ScopeKeys.Dispatch);
+    const canPromise = canWriteFloor || scopes.includes(ScopeKeys.Telecalling) || scopes.includes(ScopeKeys.SalesHead) || roles.includes('sales-head');
 
     let staffId: string | null = null;
     let region = '';
@@ -120,7 +121,7 @@ async function requireRead(c: any): Promise<Viewer | Response> {
   } catch (e) {
     const v = await viewer(c);
     if (!v) return adminScopeError(c, e);
-    if (!v.isManager && !v.scopes.includes('telecalling')) {
+    if (!v.isManager && !v.scopes.includes(ScopeKeys.Telecalling)) {
       return denial(c, 'CRM read access required (crm, dispatch or telecalling scope).');
     }
     return v;

@@ -9,7 +9,8 @@
 // owned by regions, never individuals.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { deps, requireAdminScope, adminScopeError, notifyLive, LiveEvent, authStore, isApproved, type Bindings } from '../context';
+import { deps, adminGuard, notifyLive, LiveEvent, authStore, isApproved, type Bindings } from '../context';
+import { ScopeKeys } from '../../modules/auth/types';
 import {
   setEstimateCallTag,
   invalidateRiskCache,
@@ -24,20 +25,20 @@ import {
   setManualSegment,
   setTypeRule,
 } from '../../automations/telecalling/client-segments';
-import { getViewerMe } from '../viewer';
+import { requireViewer } from '../viewer';
 import { readBody } from '../http';
 
 /** Root/sales-head gate for the region-model management writes. Accepts
  * the scope or the role itself, so a sales-head role holder is authorized even
  * if the scope grant is missing from their session. */
 async function requireSalesManager(c: any): Promise<boolean> {
-  try { await requireAdminScope(c); return true; } catch { /* fall through */ }
-  const me: any = await getViewerMe(c);
+  if ((await adminGuard(c)) === null) return true;
+  const me: any = await requireViewer(c).catch(() => null);
   if (!me) return false;
   if (!isApproved(me)) return false;
   const scopes: string[] = me.scopes ?? [];
   const roles: string[] = me.roles ?? [];
-  return scopes.includes('sales-head') || roles.includes('sales-head') || !!me.isAdmin;
+  return scopes.includes(ScopeKeys.SalesHead) || roles.includes('sales-head') || !!me.isAdmin;
 }
 
 /** Roster-mapping gate (founder decision 2026-11-12: HR owns employment
@@ -45,11 +46,11 @@ async function requireSalesManager(c: any): Promise<boolean> {
  *  same Map/Link power so the register can become the single writer. */
 async function requireRosterManager(c: any): Promise<boolean> {
   if (await requireSalesManager(c)) return true;
-  const me: any = await getViewerMe(c);
+  const me: any = await requireViewer(c).catch(() => null);
   if (!me) return false;
   if (!isApproved(me)) return false;
   const scopes: string[] = me.scopes ?? [];
-  return scopes.includes('human-resources') || !!me.isAdmin;
+  return scopes.includes(ScopeKeys.HumanResources) || !!me.isAdmin;
 }
 
 
@@ -59,8 +60,8 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
   // (worker/routes/org.ts — PUT /api/org/people/:id); this module keeps the
   // read for the leaderboard, Export section and field-staff picker.
   app.get('/api/telecallers', async (c) => {
-    try { await requireAdminScope(c); }
-    catch (e) { if (!(await requireRosterManager(c))) return adminScopeError(c, e); }
+    const denied = await adminGuard(c);
+    if (denied && !(await requireRosterManager(c))) return denied;
     const { prisma } = deps();
     const showDeleted = c.req.query('deleted') === '1';
     const tcs = await prisma.telecaller.findMany({
@@ -239,7 +240,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     if (!(await requireSalesManager(c))) {
       return c.json({ error: 'sales-head or root only' }, 403);
     }
-    const me: any = await getViewerMe(c).catch(() => null);
+    const me: any = await requireViewer(c).catch(() => null);
     const body = await readBody(c);
     try {
       const { holiday, created } = await markSalesHoliday({
@@ -294,7 +295,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     if (!(await requireSalesManager(c))) {
       return c.json({ error: 'sales-head or root only' }, 403);
     }
-    const me: any = await getViewerMe(c).catch(() => null);
+    const me: any = await requireViewer(c).catch(() => null);
     const body = await readBody(c);
     try {
       const result = await setManualSegment(body?.clientKey ?? body?.key, body?.segment, {
@@ -314,7 +315,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     if (!(await requireSalesManager(c))) {
       return c.json({ error: 'sales-head or root only' }, 403);
     }
-    const me: any = await getViewerMe(c).catch(() => null);
+    const me: any = await requireViewer(c).catch(() => null);
     const body = await readBody(c);
     const rules = Array.isArray(body?.rules) ? body.rules : [{ typeBase: body?.typeBase, segment: body?.segment }];
     try {
@@ -338,7 +339,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
   // Delete this block + manual-calls.ts + the Call Log tab when NeoDove is
   // trusted again.
   app.get('/api/telecalling/manual-calls/mode', async (c) => {
-    const me: any = await getViewerMe(c).catch(() => null);
+    const me: any = await requireViewer(c).catch(() => null);
     if (!me) return c.json({ error: 'authentication required' }, 401);
     try {
       const { getCallSource } = await import('../../automations/telecalling/call-source');
@@ -362,7 +363,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
   });
 
   app.get('/api/telecalling/manual-calls', async (c) => {
-    const me: any = await getViewerMe(c).catch(() => null);
+    const me: any = await requireViewer(c).catch(() => null);
     if (!me) return c.json({ error: 'authentication required' }, 401);
     const { prisma } = deps();
     const dayQ = String(c.req.query('day') ?? '').trim();
@@ -401,7 +402,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     }
     // Managers may log any agent; a signed-in agent may log her OWN row.
     let isManager = false;
-    try { await requireAdminScope(c); isManager = true; } catch { isManager = await requireSalesManager(c); }
+    try { if ((await adminGuard(c)) === null) isManager = true; } catch { isManager = await requireSalesManager(c); }
     if (!isManager) {
       try {
         const { resolveSelfTelecaller } = require('./automations') as typeof import('./automations');
@@ -411,7 +412,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     }
     const tc: any = await prisma.telecaller.findUnique({ where: { id: telecallerId } }).catch(() => null);
     if (!tc || (tc as any).deleted) return c.json({ error: 'agent not found' }, 404);
-    const me: any = await getViewerMe(c).catch(() => null);
+    const me: any = await requireViewer(c).catch(() => null);
     const now = new Date();
     try {
       const row: any = await (prisma as any).manualCallLog.upsert({
@@ -478,7 +479,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     if (file.size > 20 * 1024 * 1024) return c.json({ error: 'File too large (max 20MB)' }, 413);
     if (file.size <= 0) return c.json({ error: 'Empty file' }, 400);
     let isManager = false;
-    try { await requireAdminScope(c); isManager = true; } catch { isManager = await requireSalesManager(c); }
+    try { if ((await adminGuard(c)) === null) isManager = true; } catch { isManager = await requireSalesManager(c); }
     if (!isManager) {
       try {
         const { resolveSelfTelecaller } = require('./automations') as typeof import('./automations');
@@ -487,7 +488,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
       } catch { return c.json({ error: 'only sales managers or the agent herself can attach proof' }, 403); }
     }
     const { prisma } = deps();
-    const me: any = await getViewerMe(c).catch(() => null);
+    const me: any = await requireViewer(c).catch(() => null);
     const ext = (file.name.split('.').pop() || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 8);
     const key = `manualcalls/${day}/${String(telecallerId).replace(/[^A-Za-z0-9_-]/g, '_')}/${crypto.randomUUID()}${ext ? '.' + ext : ''}`;
     try {
@@ -538,7 +539,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
   // Serve screenshot bytes (never exposes raw KV keys).
   app.get('/api/telecalling/manual-calls/file', async (c) => {
     if (!c.env.CHAT_FILES) return c.json({ error: 'File storage is not configured' }, 501);
-    const me: any = await getViewerMe(c).catch(() => null);
+    const me: any = await requireViewer(c).catch(() => null);
     if (!me) return c.json({ error: 'authentication required' }, 401);
     const { prisma } = deps();
     const telecallerId = String(c.req.query('telecallerId') ?? '').trim();
@@ -571,8 +572,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     let actorTelecallerId: string | null = null;
     let isManager = false;
     try {
-      await requireAdminScope(c);
-      isManager = true;
+      if ((await adminGuard(c)) === null) isManager = true;
     } catch {
       // Sales-head holds complete authority inside sales: same bypass as root.
       if (await requireSalesManager(c)) {
@@ -647,8 +647,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     let isManager = false;
     let actorTelecallerId: string | null = null;
     try {
-      await requireAdminScope(c);
-      isManager = true;
+      if ((await adminGuard(c)) === null) isManager = true;
     } catch {
       // Sales-head holds complete authority inside sales: same bypass as root.
       if (await requireSalesManager(c)) {

@@ -1105,8 +1105,10 @@ Ranked debt (proposed single home):
 
 Re-run the report after each cleanup and update these numbers; `dup-audit.mjs` stays the CI gate.
 
-### 18.5 Phase 0 baseline (2026-11-13, Phase 0+1 slice)
-- `dup-audit`: be.getme 2, be.autherror 5, be.json_body 4, be.files_over_400 36, fe.files_over_400 25 (ratchet red pre-existing on fe.files + d1-parity).
-- `tsc --noEmit`: 41 pre-existing errors (durable/* CF types, zoho-sent-analyzer null→number, linkedin KVNamespace, enquiries chat-types, field-visits client-segments).
-- `smoke-worker.mjs`: 63 PASS / 0 FAIL. `core-guard.mjs`: intact.
-- Guards: 2 pre-existing failures (d1-parity schema coverage, rewrite-ratchet fe.files 24→25).
+### 18.5 Phase 0 baseline (2026-11-13, Phase 0+1 slice) + final (2026-11-14)
+- Start: `dup-audit` be.getme 2, be.autherror 5, be.json_body 4, be.files_over_400 36.
+- Finish: be.autherror **5→1** (the 1 is `adminScopeError` itself, the canonical home); be.getme stays 2 (locked `work.ts` + device-call scopes — legitimate homes); json_body stays 4 (intentionally different fallbacks).
+- Helpers: `writeError` + `requireViewer` (`worker/http.ts`, `viewer.ts`), `adminGuard` (`worker/context.ts`), `ScopeKeys` (`modules/auth/types.ts`).
+- Rollout (handlers only, domain logic untouched): accounts, master-data, delegation, reporting-sheet, neodove-campaign, crm-attachments, sales-objections, estimates, product-line, field-staff, crm, digital-marketing, telecalling, human-resources, enquiries, debtors-tracker.
+- `tsc --noEmit`: 41 pre-existing errors, file-by-file diff empty. `smoke-worker.mjs`: 63 PASS / 0 FAIL. `core-guard.mjs`: intact.
+- Guards: d1-parity + fe.files 24→25 failures pre-date this work (frontend growth needs its own split — follow-up, not this slice).

@@ -4,7 +4,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import { notifyLive, LiveEvent, type Bindings } from '../context';
-import { HrError } from '../../automations/human-resources/errors';
+import { ScopeKeys } from '../../modules/auth/types';
 import {
   createExpense, createFundTxn, createTask, deleteExpense, deleteFundTxn, deleteTask,
   resolveSelfHumanResourcesMember, updateExpense, updateFundTxn, updateTask,
@@ -33,18 +33,18 @@ import {
 import {
   defaultDocTitle, isHiringDocKind, isPdfUpload, MAX_HIRING_DOC_BYTES,
 } from '../../automations/human-resources/hiring-positions-parse';
-import { getViewerMe } from '../viewer';
-import { readBody } from '../http';
+import { requireViewer } from '../viewer';
+import { readBody, writeError } from '../http';
 
 function actorLabel(me: any): string | null {
   return me?.user?.name ?? me?.user?.email ?? null;
 }
 
 async function access(c: any) {
-  const me = await getViewerMe(c);
+  const me = await requireViewer(c).catch(() => null);
   if (!me) return { me: null, canManage: false, error: c.json({ error: 'Authentication required' }, 401) };
   const scopes = (me.scopes ?? []) as string[];
-  if (!me.isAdmin && !scopes.includes('human-resources')) {
+  if (!me.isAdmin && !scopes.includes(ScopeKeys.HumanResources)) {
     return { me, canManage: false, error: c.json({ error: "Requires 'human-resources' permission" }, 403) };
   }
   return {
@@ -55,8 +55,7 @@ async function access(c: any) {
 }
 
 function errorResponse(c: any, e: unknown) {
-  if (e instanceof HrError) return c.json({ error: e.message }, e.status as any);
-  return c.json({ error: (e as any)?.message ?? 'request failed' }, 400);
+  return writeError(c, e, 'request failed');
 }
 
 export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>): void {

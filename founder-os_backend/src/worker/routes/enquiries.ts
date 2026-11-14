@@ -2,7 +2,7 @@
 // routes/enquiries.ts — live sales-pipeline enquiry tracker.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { enquiryMe, enquirySend, EnquiryRoutes, createEnquiryStore, authStore, deps, getEstimatesPayload, requireAdminScope, adminScopeError, type Bindings } from '../context';
+import { enquiryMe, enquirySend, EnquiryRoutes, createEnquiryStore, authStore, deps, getEstimatesPayload, adminGuard, type Bindings } from '../context';
 import { chatTurn, clearSalesChat, executeProposal } from '../../modules/enquiries/chat';
 import { cacheDel } from '../../shared/cache';
 import { getGateway } from '../../shared/ai-gateway';
@@ -607,7 +607,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.get('/api/debug/ai-health', async (c) => {
     // Root-gated: usage readout carries per-user emails, and key health is
     // owner-sensitive. Only users granted access via the admin panel pass.
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     try {
       const gw = getGateway(c.env as any);
       const { cacheGet, hasKvCache } = await import('../../shared/cache');
