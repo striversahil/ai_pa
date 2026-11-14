@@ -17,10 +17,15 @@
 // mirrorOrderTouch and every runner tick through syncOrders, and both call
 // invalidateCrmFloorCache() — so the TTL only bounds cross-isolate staleness
 // and expiry recomputes, exactly like invalidateRiskCache().
-import { cached, cacheDel, cacheDelPrefix } from '../../../shared/cache';
+import { cached, cacheDel, cacheDelPrefix, initCache } from '../../../shared/cache';
 
-/** Raw floor scan shared by the list + summary reads. */
-export const CRM_FLOOR_ROWS_KEY = 'crm:floor:rows';
+// Re-exported for tests/guards (bundled as one module, so this is the same
+// instance the wrappers below use).
+export { initCache };
+
+/** Raw floor scan shared by the list + summary reads. Bumped to v2: v1
+ *  cached a Map-shaped payload, which does not survive KV JSON (see below). */
+export const CRM_FLOOR_ROWS_KEY = 'crm:floor:rows:v2';
 /** Short: writes invalidate eagerly, so this only bounds cross-isolate lag. */
 export const CRM_FLOOR_TTL_MS = 60 * 1000;
 
@@ -30,7 +35,9 @@ export const CRM_SUMMARY_TTL_MS = 60 * 1000;
 /** Raw scan behind the cache — callers map/filter/slice in memory. */
 export interface FloorScan {
   rows: any[];
-  itemsBySo: Map<string, any[]>;
+  /** Plain Record, NOT a Map: the KV path stores JSON, and a Map round-trips
+   *  to `{}` (no `.get`) — which 500'd every cache hit. */
+  items: Record<string, any[]>;
 }
 
 export function cachedFloorRows(compute: () => Promise<FloorScan>): Promise<FloorScan> {

@@ -82,14 +82,18 @@ export async function listOrders(args: ListArgs): Promise<CrmOrderRow[]> {
   // Live views share ONE cached raw scan (see ./cache.ts): the D1 cost is
   // paid once per TTL across all views/regions/searches, and every request
   // filters the snapshot in memory. Superset of the old take-3000 query.
-  const { rows, itemsBySo } = await cachedFloorRows(async () => {
+  const { rows, items } = await cachedFloorRows(async () => {
     const all = (await prisma.crmSalesOrder.findMany({
       orderBy: { createdDate: 'desc' },
       take: 4000,
     })) as any[];
-    return { rows: all, itemsBySo: await itemsForOrders(all.map((r) => str(r.id))) };
+    const bySo = await itemsForOrders(all.map((r) => str(r.id)));
+    // Flatten the Map to a plain Record — KV-JSON-safe (see ./cache.ts).
+    const flat: Record<string, any[]> = {};
+    for (const [k, v] of bySo) flat[k] = v;
+    return { rows: all, items: flat };
   });
-  const orders = rows.map((r) => withFlags(toOrderView(r, itemsBySo.get(str(r.id)) || []), today));
+  const orders = rows.map((r) => withFlags(toOrderView(r, items[str(r.id)] || []), today));
 
   const q = str(args.q).trim().toLowerCase();
   const region = normalizeRegionFilter(args.region);
@@ -1794,9 +1798,13 @@ export async function dispatchSummary(
   // a summary hit costs zero D1 reads. Cached per region filter; every floor
   // write invalidates eagerly via mirrorOrderTouch/syncOrders.
   return cachedFloorSummary(region, async () => {
-  const { rows, itemsBySo } = await cachedFloorRows(async () => {
+  const { rows, items } = await cachedFloorRows(async () => {
     const all = (await prisma.crmSalesOrder.findMany({ take: 4000 })) as any[];
-    return { rows: all, itemsBySo: await itemsForOrders(all.map((r) => str(r.id))) };
+    const bySo = await itemsForOrders(all.map((r) => str(r.id)));
+    // Flatten the Map to a plain Record — KV-JSON-safe (see ./cache.ts).
+    const flat: Record<string, any[]> = {};
+    for (const [k, v] of bySo) flat[k] = v;
+    return { rows: all, items: flat };
   });
   const counts: Record<string, any> = {
     total: 0,
@@ -1831,8 +1839,8 @@ export async function dispatchSummary(
     return salesBucket(shape);
   };
   for (const r of rows) {
-    const items = itemsBySo.get(str(r.id)) || [];
-    const bucket = bucketOf(r, items);
+    const rowItems = items[str(r.id)] || [];
+    const bucket = bucketOf(r, rowItems);
     // Region facet counts are global (never narrowed by the viewer's filter).
     if (bucket) {
       const key = str(r.region) || '';
@@ -1855,10 +1863,10 @@ export async function dispatchSummary(
     else if (lifecycle === 'cancelled') counts.cancelled++;
     if (bucket) counts[bucket]++;
     if (lifecycle !== 'cancelled') {
-      if (items.some((it) => it.dispatchState === 'scheduled' && it.tentativeDispatchDate === today)) counts.floorToday++;
-      if (items.some((it) => isOverdueItem(it as ItemLike, today))) counts.overdue++;
+      if (rowItems.some((it) => it.dispatchState === 'scheduled' && it.tentativeDispatchDate === today)) counts.floorToday++;
+      if (rowItems.some((it) => isOverdueItem(it as ItemLike, today))) counts.overdue++;
     }
-    const shape = { lifecycle, sourceState: 'active', items } as unknown as ViewOrder;
+    const shape = { lifecycle, sourceState: 'active', items: rowItems } as unknown as ViewOrder;
     if (orderMatchesView(shape, 'unscheduled', today)) counts.tabUnscheduled++;
     if (orderMatchesView(shape, 'scheduled', today)) counts.tabScheduled++;
     if (orderMatchesView(shape, 'dispatched', today)) counts.tabDispatched++;
