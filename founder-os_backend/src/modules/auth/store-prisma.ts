@@ -97,6 +97,10 @@ export class PrismaAuthStore implements AuthStore {
       })),
     );
   }
+  async listLoginEmails() {
+    const users = await this.prisma.authUser.findMany({ select: { email: true } });
+    return users.map((u) => String((u as any).email ?? '').trim().toLowerCase()).filter(Boolean);
+  }
   async getAuthSnapshot(userId: string) {
     const user = this.mapUser(await this.prisma.authUser.findUnique({ where: { id: userId } }));
     const scopes = await this.getUserScopeKeys(userId);

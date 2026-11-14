@@ -24,6 +24,9 @@ export interface AuthStore {
   /** Manager-set identity overrides (display name + position). Null clears. */
   updateUserProfile(id: string, patch: { displayName?: string | null; positionOverride?: string | null }): Promise<void>;
   listUsers(): Promise<Array<AuthUser & { scopes: string[]; roles: string[] }>>;
+  /** Lower-cased login emails (Logins panel + delegation board). One light
+   *  query — cheaper than listUsers when only presence matters. */
+  listLoginEmails(): Promise<string[]>;
   listRoles(): Promise<AuthRole[]>;
   createRole(key: string, label: string, description: string | null, scopeKeys: string[]): Promise<AuthRole>;
   deleteRole(key: string): Promise<void>;

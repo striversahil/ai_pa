@@ -9,6 +9,7 @@ import { callViewer, requireCallManager } from '../../modules/device-calls/scope
 import {
   createPairCode,
   expireRecordings,
+  findActiveAgent,
   getCall,
   getDevice,
   listCalls,
@@ -84,8 +85,8 @@ export function registerCallLogRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const body = await readBody(c);
     const telecallerId = String(body?.telecallerId ?? '').trim();
     if (!telecallerId) return c.json({ error: 'telecallerId required' }, 400);
-    const tc: any = await c.env.DB.prepare('SELECT id, deleted FROM Telecaller WHERE id = ? LIMIT 1').bind(telecallerId).first();
-    if (!tc || tc.deleted) return c.json({ error: 'agent not found' }, 404);
+    const tc = await findActiveAgent(c.env.DB, telecallerId);
+    if (!tc) return c.json({ error: 'agent not found' }, 404);
     const viewer = await callViewer(c);
     const created = await createPairCode(c.env.DB, telecallerId, viewer?.name ?? '');
     return c.json({ ok: true, ...created }, 201);

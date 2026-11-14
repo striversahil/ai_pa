@@ -26,33 +26,25 @@ import {
   canEditMaster, canViewMaster, isMasterManager, isSalesHead, listEditors, setEditor,
 } from '../../modules/master-data/editors';
 import type { CustomerPatch, DuplicateReview } from '../../modules/master-data/types';
-import { getViewerMe } from '../viewer';
-import { readBody } from '../http';
-
-async function meFor(c: any) {
-  return getViewerMe(c);
-}
+import { requireViewer } from '../viewer';
+import { readBody, writeError } from '../http';
 
 function actorOf(me: any): Actor {
   return { id: String(me?.user?.id ?? ''), name: String(me?.user?.name ?? me?.user?.email ?? '') };
 }
 
 function fail(c: any, e: unknown) {
-  if (e instanceof MasterDataError) return c.json({ error: e.message }, e.status as any);
-  if (e instanceof AuthError) return c.json({ error: e.message }, ((e as any).status ?? 403) as any);
-  throw e;
+  return writeError(c, e, 'request failed', { rethrowUnknown: true });
 }
 
 async function requireView(c: any) {
-  const me = await meFor(c);
-  if (!me) throw new AuthError('UNAUTHENTICATED', 'Authentication required', 401);
+  const me = await requireViewer(c);
   if (!canViewMaster(me)) throw new AuthError('FORBIDDEN', "Requires 'master-data' permission", 403);
   return me;
 }
 
 async function requireEdit(c: any) {
-  const me = await meFor(c);
-  if (!me) throw new AuthError('UNAUTHENTICATED', 'Authentication required', 401);
+  const me = await requireViewer(c);
   if (!canEditMaster(me)) {
     throw new AuthError('FORBIDDEN', 'Only appointed customer-master editors can change records', 403);
   }
@@ -60,8 +52,7 @@ async function requireEdit(c: any) {
 }
 
 async function requireManager(c: any) {
-  const me = await meFor(c);
-  if (!me) throw new AuthError('UNAUTHENTICATED', 'Authentication required', 401);
+  const me = await requireViewer(c);
   if (!isMasterManager(me)) throw new AuthError('FORBIDDEN', 'sales-head or root only', 403);
   return me;
 }

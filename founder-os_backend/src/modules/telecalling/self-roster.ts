@@ -14,3 +14,17 @@ export async function resolveSelfTelecallerId(me: any): Promise<string | null> {
   const hit = resolveRosterMatch(tcs as any[], me as any);
   return hit ? String((hit as any).id) : null;
 }
+
+/**
+ * Active roster rows (not soft-deleted), region-match input for
+ * crm/enquiries/telecalling viewer gates. One home for the
+ * `telecaller.findMany({ where: { deleted: false } })` copies in
+ * worker/routes/*. Order + optional select pass straight through.
+ */
+export async function listActiveTelecallers(prisma: any, select?: Record<string, boolean>): Promise<any[]> {
+  return (prisma as any).telecaller.findMany({
+    where: { deleted: false },
+    orderBy: { order: 'asc' },
+    ...(select ? { select } : {}),
+  });
+}

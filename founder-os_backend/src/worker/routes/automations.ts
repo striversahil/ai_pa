@@ -10,9 +10,9 @@
 // routes/session.ts. Do not add business-data endpoints here.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { deps, getEntryOrReload, DASHBOARD_SLUGS, requireScope, type Bindings } from '../context';
+import { deps, DASHBOARD_SLUGS, type Bindings } from '../context';
 import { serveWorkspaceData } from '../workspace-data';
-import { AUTOMATION_SCOPES, accessScopesFor } from '../../modules/automation/registry-worker';
+import { AUTOMATION_SCOPES, accessScopesFor, listAutomationDefs } from '../../modules/automation/registry-worker';
 
 function parseJson(value: string | null | undefined): unknown {
   if (!value) return null;
@@ -33,7 +33,7 @@ export function registerAutomationRoutes(app: Hono<{ Bindings: Bindings }>): voi
     // users only get the minimal dashboard list needed for their sidebar nav.
     const me = await getViewerMe(c);
     const isAdmin = !!me?.isAdmin;
-    const rows = await prisma.automation.findMany({ orderBy: { createdAt: 'asc' } });
+    const rows = await listAutomationDefs(prisma);
     const withDashboard = DASHBOARD_SLUGS;
     const full = rows.map((r: any) => ({
       id: r.id, slug: r.slug, name: r.name, description: r.description, type: r.type,

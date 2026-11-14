@@ -82,6 +82,31 @@ export async function touchDevice(db: Db, id: string, appVersion?: string): Prom
     .bind(new Date().toISOString(), appVersion ?? null, id).run();
 }
 
+/** Display name of a roster agent (pairing response). Null when unknown. */
+export async function findAgentName(db: Db, telecallerId: string): Promise<string | null> {
+  const agent: any = await db.prepare('SELECT name FROM Telecaller WHERE id = ? LIMIT 1').bind(telecallerId).first();
+  return agent?.name ? String(agent.name) : null;
+}
+
+/** Live roster row for pairing gates. Null when missing or soft-deleted. */
+export async function findActiveAgent(db: Db, telecallerId: string): Promise<{ id: string } | null> {
+  const tc: any = await db.prepare('SELECT id, deleted FROM Telecaller WHERE id = ? LIMIT 1').bind(telecallerId).first();
+  if (!tc || tc.deleted) return null;
+  return { id: String(tc.id) };
+}
+
+/** Consent accept + audit row (best-effort callers swallow failures). */
+export async function recordConsent(db: Db, args: { deviceId: string; telecallerId: string; appVersion: string | null }): Promise<void> {
+  const now = new Date().toISOString();
+  await db.prepare('UPDATE DeviceRegistration SET consentAt=? WHERE id=?').bind(now, args.deviceId).run();
+  await db.prepare(
+    'INSERT INTO AuditLog(id, action, entityType, entityId, metadata, createdAt) VALUES(?,?,?,?,?,?)',
+  ).bind(
+    crypto.randomUUID(), 'device.consent', 'DeviceRegistration', args.deviceId,
+    JSON.stringify({ telecallerId: args.telecallerId, appVersion: args.appVersion }), now,
+  ).run();
+}
+
 export async function insertCalls(db: Db, calls: ParsedCall[], telecallerId: string): Promise<number> {
   if (calls.length === 0) return 0;
   const now = new Date().toISOString();

@@ -10,32 +10,29 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import { authStore, requireScope, notifyLive, LiveEvent, type Bindings } from '../context';
-import { AuthError } from '../../modules/auth/types';
+import { AuthError, ScopeKeys } from '../../modules/auth/types';
 import {
-  importCollections, importDebtors, getDebtorsTrackerData, DebtorsTrackerError,
+  importCollections, importDebtors, getDebtorsTrackerData,
   updateInvoiceFields, deleteInvoice, deleteCollection, resetDebtorsTracker,
   INVOICE_EDITABLE_FIELDS, FOLLOW_UP_FIELDS, updateCustomerSituation, runReminderDryRun, updateCustomerContact, getCustomerLedger,
   recordReceivablesExport, addCustomerRemark, deleteCustomerRemark, listCustomerRemarks, addTopPick, removeTopPick, setTopN,
   addInvoiceAttachment, deleteInvoiceAttachment, listInvoiceAttachments, planZipMatches,
 } from '../../automations/debtors-tracker/service';
 import { parseCollectionsTsv, parseDebtorsTsv } from '../../automations/debtors-tracker/parse';
-import { getViewerMe } from '../viewer';
-import { readBody } from '../http';
+import { requireViewer } from '../viewer';
+import { readBody, writeError } from '../http';
 
-const TRACKER_SCOPES = ['debtors-tracker', 'payment-tracker', 'accounts'];
+const TRACKER_SCOPES = [ScopeKeys.DebtorsTracker, ScopeKeys.PaymentTracker, ScopeKeys.Accounts];
 
 function heldScopes(me: any): Set<string> {
   return new Set(((me?.scopes ?? []) as string[]).map((s) => String(s).toLowerCase()));
 }
 
-async function meFor(c: any) {
-  return getViewerMe(c);
-}
+
 
 /** Any tracker viewer: sales (`debtors-tracker`) or accounts. */
 async function requireTrackerRead(c: any) {
-  const me = await meFor(c);
-  if (!me) throw new AuthError('UNAUTHENTICATED', 'Authentication required', 401);
+  const me = await requireViewer(c);
   if (me.isAdmin) return me;
   const held = heldScopes(me);
   if (!TRACKER_SCOPES.some((s) => held.has(s))) {
@@ -46,28 +43,26 @@ async function requireTrackerRead(c: any) {
 
 /** Accounts-only mutations (imports, deletes, contacts, reminder run). */
 async function requireAccountsScope(c: any) {
-  return requireScope(authStore(c), c.req.header('cookie') ?? null, 'accounts');
+  return requireScope(authStore(c), c.req.header('cookie') ?? null, ScopeKeys.Accounts);
 }
 
 function hasAccounts(me: any): boolean {
-  return !!me?.isAdmin || heldScopes(me).has('accounts');
+  return !!me?.isAdmin || heldScopes(me).has(ScopeKeys.Accounts);
 }
 
 function scopeError(c: any, e: unknown) {
-  if (e instanceof AuthError) return c.json({ error: e.message }, (e as any).status ?? 403);
-  throw e;
+  return writeError(c, e, 'request failed', { rethrowUnknown: true });
 }
 
 async function actorName(c: any): Promise<string> {
   try {
-    const me = await meFor(c);
+    const me = await requireViewer(c);
     return me?.user?.name ?? me?.user?.email ?? 'accounts';
   } catch { return 'accounts'; }
 }
 
 function errorResponse(c: any, e: unknown) {
-  if (e instanceof DebtorsTrackerError) return c.json({ error: e.message }, e.status as any);
-  return c.json({ error: (e as any)?.message ?? 'request failed' }, 400);
+  return writeError(c, e, 'request failed');
 }
 
 const ROUTE_PREFIXES = ['/api/debtors-tracker', '/api/payment-tracker'] as const;

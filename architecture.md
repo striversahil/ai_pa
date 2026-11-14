@@ -1104,3 +1104,13 @@ Ranked debt (proposed single home):
 5. `modules/core/*` repeated helpers (~160 lines) → core change request (locked).
 
 Re-run the report after each cleanup and update these numbers; `dup-audit.mjs` stays the CI gate.
+
+### 18.5 Phase 0 baseline (2026-11-13, Phase 0+1 slice) + final (2026-11-14)
+- Start: `dup-audit` be.getme 2, be.autherror 5, be.json_body 4, be.files_over_400 36.
+- Finish: be.autherror **5→1** (the 1 is `adminScopeError` itself, the canonical home); be.getme stays 2 (locked `work.ts` + device-call scopes — legitimate homes); json_body stays 4 (intentionally different fallbacks).
+- Helpers: `writeError` + `requireViewer` (`worker/http.ts`, `viewer.ts`), `adminGuard` (`worker/context.ts`), `ScopeKeys` (`modules/auth/types.ts`).
+- Rollout (handlers only, domain logic untouched): accounts, master-data, delegation, reporting-sheet, neodove-campaign, crm-attachments, sales-objections, estimates, product-line, field-staff, crm, digital-marketing, telecalling, human-resources, enquiries, debtors-tracker.
+- `tsc --noEmit`: 41 pre-existing errors, file-by-file diff empty. `smoke-worker.mjs`: 63 PASS / 0 FAIL. `core-guard.mjs`: intact.
+- Guards: d1-parity + fe.files 24→25 failures pre-date this work (frontend growth needs its own split — follow-up, not this slice).
+- Phase 2a remainder (same slice): persistence out of routes — auth `listLoginEmails` (Memory/D1/Prisma), device-calls `findAgentName`/`findActiveAgent`/`recordConsent`, telecalling `listActiveTelecallers` (crm/enquiries/telecalling/manual-calls), automation `listAutomationDefs` (automations+session), new `modules/crm/attachments.ts`, `modules/whatsapp/tokens.ts`, `modules/whatsapp-marketing/store.ts`. Dead imports removed (8: incl. pre-existing `isApproved`/`deps`/`authStore`/`procurementSubmittable`/`getEntryOrReload`/`requireScope`).
+- Explicitly not moved (route is the sole owner — needs domain design, not extraction): autopilot waTask/waAction/history CRUD, runner GH pipelines, estimates bulk-upsert/report payloads, system waba-debug SQL, `*-parts/io.ts` god halves, digital-marketing + zoho-sent-analyzer god services (prior exclusion: inference/`__dirname`).

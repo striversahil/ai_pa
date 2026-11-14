@@ -19,6 +19,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import { deps, isApproved, requireAdminScope, adminScopeError, notifyLive, type Bindings } from '../context';
+import { ScopeKeys } from '../../modules/auth/types';
 import {
   CrmError,
   amendOrderItems,
@@ -38,6 +39,7 @@ import {
 import { normalizeView } from '../../modules/crm/types';
 import { normalizeRegionFilter } from '../../modules/crm/region';
 import { resolveRosterMatch } from '../../modules/telecalling/self';
+import { listActiveTelecallers } from '../../modules/telecalling/self-roster';
 import { getViewerMe } from '../viewer';
 import { readBody } from '../http';
 
@@ -70,12 +72,12 @@ async function viewer(c: any): Promise<Viewer | null> {
     const isAdmin = !!me.isAdmin || !!me.isRoot;
     const isManager =
       isAdmin ||
-      scopes.includes('sales-head') ||
+      scopes.includes(ScopeKeys.SalesHead) ||
       roles.includes('sales-head') ||
-      scopes.includes('crm') ||
-      scopes.includes('dispatch');
-    const canWriteFloor = isAdmin || scopes.includes('dispatch');
-    const canPromise = canWriteFloor || scopes.includes('telecalling') || scopes.includes('sales-head') || roles.includes('sales-head');
+      scopes.includes(ScopeKeys.Crm) ||
+      scopes.includes(ScopeKeys.Dispatch);
+    const canWriteFloor = isAdmin || scopes.includes(ScopeKeys.Dispatch);
+    const canPromise = canWriteFloor || scopes.includes(ScopeKeys.Telecalling) || scopes.includes(ScopeKeys.SalesHead) || roles.includes('sales-head');
 
     let staffId: string | null = null;
     let region = '';
@@ -83,7 +85,7 @@ async function viewer(c: any): Promise<Viewer | null> {
       // Sales agent identity = the roster row matched to the session. The
       // region comes from the SERVER row, never from the request.
       const { prisma } = deps();
-      const tcs = (await prisma.telecaller.findMany({ where: { deleted: false } })) as any[];
+      const tcs = (await listActiveTelecallers(prisma)) as any[];
       const hit = resolveRosterMatch(tcs, me);
       if (hit) {
         staffId = String((hit as any).id ?? '') || null;
@@ -120,7 +122,7 @@ async function requireRead(c: any): Promise<Viewer | Response> {
   } catch (e) {
     const v = await viewer(c);
     if (!v) return adminScopeError(c, e);
-    if (!v.isManager && !v.scopes.includes('telecalling')) {
+    if (!v.isManager && !v.scopes.includes(ScopeKeys.Telecalling)) {
       return denial(c, 'CRM read access required (crm, dispatch or telecalling scope).');
     }
     return v;

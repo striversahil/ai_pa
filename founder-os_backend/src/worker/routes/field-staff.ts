@@ -14,7 +14,8 @@
 // city/address log, /ping answers 410, no GPS is persisted.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { deps, isApproved, notifyLive, requireAdminScope, type Bindings } from '../context';
+import { isApproved, notifyLive, adminGuard, type Bindings } from '../context';
+import { ScopeKeys } from '../../modules/auth/types';
 import { createEnquiryStore } from '../../modules/enquiries/store';
 import { enquiryCreate } from '../../modules/enquiries/routes';
 import {
@@ -33,7 +34,7 @@ import {
   setMillNewFlag,
 } from '../../modules/field-visits/store';
 import { getFieldStaffData, invalidateFieldStaffCache, suggestMillMatch } from '../../modules/field-visits/service';
-import { getViewerMe } from '../viewer';
+import { requireViewer } from '../viewer';
 import { readBody } from '../http';
 
 function istToday(): string {
@@ -41,11 +42,11 @@ function istToday(): string {
 }
 
 async function viewer(c: any): Promise<any | null> {
-  const me: any = await getViewerMe(c).catch(() => null);
+  const me: any = await requireViewer(c).catch(() => null);
   if (!me || !isApproved(me)) return null;
   if (me.isAdmin || me.isRoot) return me;
   const scopes: string[] = ((me.scopes ?? []) as string[]).map((s) => String(s).toLowerCase());
-  if (scopes.includes('sales-head') || scopes.includes('telecalling') || scopes.includes('sales')) return me;
+  if (scopes.includes(ScopeKeys.SalesHead) || scopes.includes(ScopeKeys.Telecalling) || scopes.includes(ScopeKeys.Sales)) return me;
   return null;
 }
 
@@ -58,13 +59,13 @@ function actorOf(me: any): { id: string; name: string } {
 
 /** Manager gate for deletes (sales-head / root). */
 async function requireSalesManager(c: any): Promise<boolean> {
-  try { await requireAdminScope(c); return true; } catch { /* fall through */ }
-  const me: any = await getViewerMe(c);
+  if ((await adminGuard(c)) === null) return true;
+  const me: any = await requireViewer(c).catch(() => null);
   if (!me) return false;
   if (!isApproved(me)) return false;
   const scopes: string[] = me.scopes ?? [];
   const roles: string[] = me.roles ?? [];
-  return scopes.includes('sales-head') || roles.includes('sales-head') || !!me.isAdmin;
+  return scopes.includes(ScopeKeys.SalesHead) || roles.includes('sales-head') || !!me.isAdmin;
 }
 
 export function registerFieldStaffRoutes(app: Hono<{ Bindings: Bindings }>): void {

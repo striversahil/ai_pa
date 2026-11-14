@@ -13,9 +13,11 @@ import { normalizePairCode, randomToken, hashToken } from '../../modules/device-
 import { parseBatch } from '../../modules/device-calls/parse';
 import {
   createDevice,
+  findAgentName,
   findPairCode,
   getCall,
   insertCalls,
+  recordConsent,
   setRecording,
   touchDevice,
 } from '../../modules/device-calls/store';
@@ -82,14 +84,13 @@ export function registerAndroidRoutes(app: Hono<{ Bindings: Bindings }>): void {
       pairedByName: me,
       pairCode: code,
     });
-    const agent: any = await c.env.DB.prepare('SELECT name FROM Telecaller WHERE id = ? LIMIT 1')
-      .bind(row.telecallerId).first();
+    const agentName = await findAgentName(c.env.DB, row.telecallerId);
     notifyLive(c, { type: LiveEvent.DeviceCalls, action: 'paired' });
     return c.json({
       ok: true,
       token,
       deviceId,
-      agent: String(agent?.name ?? ''),
+      agent: agentName ?? '',
       loggingOnly: false,
     }, 201);
   });
@@ -102,16 +103,12 @@ export function registerAndroidRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const appVersion = String(body?.appVersion ?? body?.deviceId ?? '').slice(0, 40);
     await touchDevice(c.env.DB, auth.device.id, appVersion || undefined).catch(() => null);
     if (body?.consent === true && !auth.device.consentAt) {
-      const now = new Date().toISOString();
-      await c.env.DB.prepare('UPDATE DeviceRegistration SET consentAt=? WHERE id=?')
-        .bind(now, auth.device.id).run().catch(() => null);
       // Audit-log the consent accept (best-effort; never fails the heartbeat).
-      await c.env.DB.prepare(
-        'INSERT INTO AuditLog(id, action, entityType, entityId, metadata, createdAt) VALUES(?,?,?,?,?,?)',
-      ).bind(
-        crypto.randomUUID(), 'device.consent', 'DeviceRegistration', auth.device.id,
-        JSON.stringify({ telecallerId: auth.telecallerId, appVersion: appVersion || null }), now,
-      ).run().catch(() => null);
+      await recordConsent(c.env.DB, {
+        deviceId: auth.device.id,
+        telecallerId: auth.telecallerId,
+        appVersion: appVersion || null,
+      }).catch(() => null);
     }
     const cfg = await config();
     return c.json({

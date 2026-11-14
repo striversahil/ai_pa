@@ -4,19 +4,18 @@
 // Mirror: founder-os_backend/src/routes/product-line.ts (Express alt runtime).
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { requireAdminScope, adminScopeError, notifyLive, LiveEvent, type Bindings } from '../context';
-import { AuthError } from '../../modules/auth/types';
-import { getViewerMe } from '../viewer';
+import { adminGuard, adminScopeError, notifyLive, LiveEvent, type Bindings } from '../context';
+import { AuthError, ScopeKeys } from '../../modules/auth/types';
+import { requireViewer } from '../viewer';
 import { readBody } from '../http';
 
 /** Quote writes: whoever holds the `product-line` scope (granted from the
  *  Admin panel). Products/guide/vendors stay root-only. */
 async function requireQuoteScope(c: any): Promise<void> {
-  const me = await getViewerMe(c);
-  if (!me) throw new AuthError('UNAUTHENTICATED', 'Authentication required', 401);
+  const me = await requireViewer(c);
   if (me.isAdmin) return;
   const scopes = (me as any).scopes ?? [];
-  if (!scopes.includes('product-line')) {
+  if (!scopes.includes(ScopeKeys.ProductLine)) {
     throw new AuthError('FORBIDDEN', "Requires 'product-line' permission", 403);
   }
 }
@@ -38,7 +37,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
   const PHOTO_PREFIX = 'product-photo/';
   const PHOTO_MAX_BYTES = 5 * 1024 * 1024;
   app.get('/api/product-line/photos', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     if (!c.env.CHAT_FILES) return c.json({ error: 'File storage is not configured' }, 501);
     try {
       const list = await (c.env.CHAT_FILES as any).list({ prefix: PHOTO_PREFIX, limit: 100 });
@@ -52,7 +51,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
     }
   });
   app.post('/api/product-line/photos', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     if (!c.env.CHAT_FILES) return c.json({ error: 'File storage is not configured' }, 501);
     let form: FormData;
     try {
@@ -82,7 +81,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
   });
   // ── Products ──
   app.post('/api/product-line/products', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     try {
       const { createProduct } = await import('../../automations/product-line/update');
       const row = await createProduct(await readBody(c));
@@ -91,7 +90,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
     } catch (e: any) { return writeError(c, e); }
   });
   app.patch('/api/product-line/products/:id', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     try {
       const { updateProduct } = await import('../../automations/product-line/update');
       const row = await updateProduct(c.req.param('id') ?? '', await readBody(c));
@@ -100,7 +99,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
     } catch (e: any) { return writeError(c, e); }
   });
   app.delete('/api/product-line/products/:id', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     try {
       const { deleteProduct } = await import('../../automations/product-line/update');
       const out = await deleteProduct(c.req.param('id') ?? '');
@@ -110,7 +109,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
   });
   // ── Guide ──
   app.post('/api/product-line/guide', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     try {
       const { createGuide } = await import('../../automations/product-line/update');
       const row = await createGuide(await readBody(c));
@@ -119,7 +118,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
     } catch (e: any) { return writeError(c, e); }
   });
   app.patch('/api/product-line/guide/:id', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     try {
       const { updateGuide } = await import('../../automations/product-line/update');
       const row = await updateGuide(c.req.param('id') ?? '', await readBody(c));
@@ -128,7 +127,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
     } catch (e: any) { return writeError(c, e); }
   });
   app.delete('/api/product-line/guide/:id', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     try {
       const { deleteGuide } = await import('../../automations/product-line/update');
       const out = await deleteGuide(c.req.param('id') ?? '');
@@ -138,7 +137,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
   });
   // ── Vendors ──
   app.post('/api/product-line/vendors', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     try {
       const { createVendor } = await import('../../automations/product-line/update');
       const row = await createVendor(await readBody(c));
@@ -147,7 +146,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
     } catch (e: any) { return writeError(c, e); }
   });
   app.patch('/api/product-line/vendors/:id', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     try {
       const { updateVendor } = await import('../../automations/product-line/update');
       const row = await updateVendor(c.req.param('id') ?? '', await readBody(c));
@@ -156,7 +155,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
     } catch (e: any) { return writeError(c, e); }
   });
   app.delete('/api/product-line/vendors/:id', async (c) => {
-    try { await requireAdminScope(c); } catch (e) { return adminScopeError(c, e); }
+    const denied = await adminGuard(c); if (denied) return denied;
     try {
       const { deleteVendor } = await import('../../automations/product-line/update');
       const out = await deleteVendor(c.req.param('id') ?? '');

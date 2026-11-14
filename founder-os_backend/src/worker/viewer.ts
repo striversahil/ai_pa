@@ -14,6 +14,7 @@ import { createAuthStore } from '../modules/auth/store';
 import { getMe } from '../modules/auth/service';
 import { readSessionCookie } from '../modules/auth/session';
 import type { MeResponse } from '../modules/auth/types';
+import { AuthError } from '../modules/auth/types';
 import { resolveSelfTelecallerId } from '../modules/telecalling/self-roster';
 
 export interface Viewer {
@@ -56,6 +57,18 @@ export function toViewer(me: MeResponse | null): Viewer {
 
 export async function getViewer(c: any): Promise<Viewer> {
   return toViewer(await getViewerMe(c));
+}
+
+/**
+ * Signed-in viewer or throw 401. Replaces the per-file
+ * `const me = await meFor(c); if (!me) throw new AuthError('UNAUTHENTICATED', ...)`
+ * copies in worker/routes/* (master-data, debtors-tracker, ...). Identical
+ * behavior: same error code/message/status.
+ */
+export async function requireViewer(c: any): Promise<NonNullable<Awaited<ReturnType<typeof getViewerMe>>>> {
+  const me = await getViewerMe(c);
+  if (!me) throw new AuthError('UNAUTHENTICATED', 'Authentication required', 401);
+  return me;
 }
 
 /**
