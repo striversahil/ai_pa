@@ -131,6 +131,18 @@ miss/score/mirror writes, and inserts `completeHistory` lines as fully
 dispatched; `pending_so.json` keys import open for the qty-aware pending split
 applied afterwards. Resumable — tracked orders with items are skipped.
 
+## Read cache (2026-11-14)
+
+`listOrders` + `dispatchSummary` serve from ONE cached raw floor scan
+(`modules/crm/store-parts/cache.ts`, KV-backed `cached()` with a 60s TTL):
+the D1 cost is paid once per TTL across all views/regions/searches, and each
+request filters the snapshot in memory. Every floor write funnels through
+`mirrorOrderTouch` and every runner tick through `syncOrders`, and both call
+`invalidateCrmFloorCache()` — so the TTL only bounds cross-isolate lag.
+The source-deleted view keeps its dedicated query (tombstoned rows live
+outside the cached window). The Phase 4a shadow compare runs once per sync
+tick, never per dashboard read.
+
 ## Points (DepartmentScoreEvent)
 
 Scored inside `syncOrders()` from **status moves since the last tick** — the

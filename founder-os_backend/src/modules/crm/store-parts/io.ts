@@ -12,6 +12,7 @@ import type { DispatchProof, ItemLike, ScheduleEntry, RescheduleEntry, DispatchE
 import { logger } from "../../../shared/logger";
 import { ITEM_BATCH, toItemView, str, toOrderView, num, iso, proofFile, CrmError, isPdfFile, isImageFile, assertWorkable, PROOF_DOC_SLOTS, PROOF_DOC_RULES, REGION_LOOKUP_BATCH, dayAdd, FLOOR_WINDOW_DAYS, SCORE_STAGES, STAGE_COMPLETION, isCompleteInZoho, orderStage, STAGE_DEPT, ORDER_COLS, sqlValue, ITEM_COLS, isChargeLine, lineKeyFor } from "./pure";
 import type { ListArgs, ProofFile, ActionResult, ProofDocSlot, SyncedOrder, SyncVerify, SyncResult, ScoreStage } from "./types";
+import { cachedFloorRows, cachedFloorSummary, invalidateCrmFloorCache } from "./cache";
 
 /** Phase 4a dual-write: project the touched order spine into core (never throws). */
 export async function mirrorOrderTouch(orderId: string): Promise<void> {
@@ -19,6 +20,12 @@ export async function mirrorOrderTouch(orderId: string): Promise<void> {
     const { mirrorOrders } = await import('../../core/orders');
     const id = String(orderId ?? '');
     if (id) await mirrorOrders([id]);
+  } catch { /* non-fatal */ }
+  // Write choke point: every floor mutation (schedule/reschedule/dispatch/
+  // amend/cancel/reopen/addresses/proofs/deletion-confirm) funnels through
+  // here, so one invalidation keeps every cached floor read fresh.
+  try {
+    await invalidateCrmFloorCache();
   } catch { /* non-fatal */ }
 }
 
@@ -45,9 +52,9 @@ export async function itemsForOrders(ids: string[]): Promise<Map<string, CrmItem
 }
 
 /**
- * List orders for a dashboard tab. Rows + items are read once and grouped in
- * memory — the floor is small (open orders only) and every view shares the
- * same row set, so a single pass is cheaper than per-view SQL.
+ * List orders for a dashboard tab. Reads come from ONE cached floor scan
+ * (see ./cache.ts) shared by every view/region/search — the D1 cost is paid
+ * once per TTL, and each request filters the snapshot in memory.
  */
 export async function listOrders(args: ListArgs): Promise<CrmOrderRow[]> {
   const today = args.today || istToday();
@@ -55,19 +62,40 @@ export async function listOrders(args: ListArgs): Promise<CrmOrderRow[]> {
   const limit = Math.min(Math.max(Number(args.limit) || 500, 1), 2000);
 
   const where: any = view === 'source-deleted' ? { sourceState: 'deleted_source' } : {};
-  const rows = (await prisma.crmSalesOrder.findMany({
-    where,
-    orderBy: { createdDate: 'desc' },
-    take: view === 'source-deleted' ? 1000 : 3000,
-  })) as any[];
 
-  const itemsBySo = await itemsForOrders(rows.map((r) => str(r.id)));
+  // The source-deleted view keeps its dedicated query: tombstoned rows live
+  // outside the newest-N window the live floor caches below.
+  if (view === 'source-deleted') {
+    const gone = (await prisma.crmSalesOrder.findMany({
+      where,
+      orderBy: { createdDate: 'desc' },
+      take: 1000,
+    })) as any[];
+    const goneItems = await itemsForOrders(gone.map((r) => str(r.id)));
+    return gone
+      .map((r) => withFlags(toOrderView(r, goneItems.get(str(r.id)) || []), today))
+      .filter((o) => orderMatchesView(o as ViewOrder, view, today))
+      .sort(sortNewestFirst)
+      .slice(0, limit);
+  }
+
+  // Live views share ONE cached raw scan (see ./cache.ts): the D1 cost is
+  // paid once per TTL across all views/regions/searches, and every request
+  // filters the snapshot in memory. Superset of the old take-3000 query.
+  const { rows, itemsBySo } = await cachedFloorRows(async () => {
+    const all = (await prisma.crmSalesOrder.findMany({
+      orderBy: { createdDate: 'desc' },
+      take: 4000,
+    })) as any[];
+    return { rows: all, itemsBySo: await itemsForOrders(all.map((r) => str(r.id))) };
+  });
   const orders = rows.map((r) => withFlags(toOrderView(r, itemsBySo.get(str(r.id)) || []), today));
 
   const q = str(args.q).trim().toLowerCase();
   const region = normalizeRegionFilter(args.region);
   const filtered = orders.filter((o) => {
-    if (o.sourceState === 'deleted_source' && view !== 'source-deleted') return false;
+    // Past the source-deleted early return above, deleted rows never render.
+    if (o.sourceState === 'deleted_source') return false;
     if (!regionMatches(o.region, region)) return false;
     if (!matchesView(o, view, today)) return false;
     if (!q) return true;
@@ -84,12 +112,6 @@ export async function listOrders(args: ListArgs): Promise<CrmOrderRow[]> {
   // the card and counted in the KPIs, so it no longer reorders the list — the
   // desk works one rolling, newest-first stack.
   filtered.sort(sortNewestFirst);
-  // Phase 4a floor shadow (floor-read-only, log-only): compare Crm* vs core
-  // order spine + log diffs. Served values never change.
-  try {
-    const { shadowCompareFloor } = await import('../../core/orders');
-    await shadowCompareFloor();
-  } catch { /* never block the floor */ }
   return filtered.slice(0, limit);
 }
 
@@ -1547,6 +1569,18 @@ export async function syncOrders(args: {
     } catch { /* non-fatal */ }
   }
 
+  // The floor changed — drop the cached reads so dashboards re-aggregate
+  // fresh on the next load (live events already tell clients to refetch).
+  // The Phase 4a shadow compare also moved here from the read path: once per
+  // tick instead of once per dashboard read, still log-only and never blocking.
+  try {
+    await invalidateCrmFloorCache();
+  } catch { /* non-fatal */ }
+  try {
+    const { shadowCompareFloor } = await import('../../core/orders');
+    await shadowCompareFloor();
+  } catch { /* never block the sync */ }
+
   return result;
 }
 
@@ -1745,7 +1779,8 @@ export async function recomputeLifecyclesById(ids: string[]): Promise<void> {
   }
 }
 
-/** Dashboard headline counters (cheap — the floor is open orders only).
+/** Dashboard headline counters — served from the shared cached floor scan
+ *  (see ./cache.ts), so a summary hit costs zero D1 reads.
  *
  *  `regionFilter` narrows the headline counters; `regions` always carries the
  *  per-region incomplete/completed split so the Sales → Dispatch chips can show
@@ -1754,9 +1789,15 @@ export async function dispatchSummary(
   today = istToday(),
   regionFilter: unknown = 'all',
 ): Promise<Record<string, any>> {
-  const rows = (await prisma.crmSalesOrder.findMany({ take: 4000 })) as any[];
-  const itemsBySo = await itemsForOrders(rows.map((r) => str(r.id)));
   const region = normalizeRegionFilter(regionFilter);
+  // Counter compute reuses the shared cached floor scan (see ./cache.ts) —
+  // a summary hit costs zero D1 reads. Cached per region filter; every floor
+  // write invalidates eagerly via mirrorOrderTouch/syncOrders.
+  return cachedFloorSummary(region, async () => {
+  const { rows, itemsBySo } = await cachedFloorRows(async () => {
+    const all = (await prisma.crmSalesOrder.findMany({ take: 4000 })) as any[];
+    return { rows: all, itemsBySo: await itemsForOrders(all.map((r) => str(r.id))) };
+  });
   const counts: Record<string, any> = {
     total: 0,
     unscheduled: 0,
@@ -1824,4 +1865,5 @@ export async function dispatchSummary(
   }
   counts.regions = regions;
   return counts;
+  });
 }

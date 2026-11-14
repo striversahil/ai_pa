@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import OrderPanel, { type PanelMode } from "@/crm/OrderPanel";
 import { istToday, useCrmOrders, useCrmSummary } from "@/crm/hooks";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { LIFECYCLE_META, type CrmOrder, type View } from "@/crm/types";
 import { earliestCommittedDate, orderFlags } from "@/crm/queue";
 import { isOverdueItem } from "@/crm/lifecycle";
@@ -65,7 +66,9 @@ export default function CrmDashboard() {
   const [q, setQ] = useState("");
   const [panel, setPanel] = useState<{ order: CrmOrder; mode: PanelMode } | null>(null);
 
-  const list = useCrmOrders(view, q);
+  // Server-side search — debounce so typing fires one scan, not one per keystroke.
+  const debouncedQ = useDebouncedValue(q);
+  const list = useCrmOrders(view, debouncedQ);
   const summary = useCrmSummary();
 
   const orders = list.data?.orders ?? [];
@@ -182,7 +185,7 @@ export default function CrmDashboard() {
 
       <div className="space-y-2.5">
         {orders.map((order) => (
-          <OrderCard key={order.id} order={order} today={today} view={view} onOpen={openPanel} />
+          <MemoOrderCard key={order.id} order={order} today={today} view={view} onOpen={openPanel} />
         ))}
       </div>
 
@@ -308,6 +311,10 @@ function OrderCard({
     </div>
   );
 }
+
+/** Cards are memoised: a live-event refetch re-renders the list, and only
+ *  cards whose order object actually changed should redo their item filters. */
+const MemoOrderCard = React.memo(OrderCard);
 
 /** One labelled fact on a card: muted label above the value. */
 function Fact({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
