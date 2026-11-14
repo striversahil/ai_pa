@@ -247,7 +247,7 @@ Shared kits: `@/components/ui` (Badge, Card, KpiCard, Skeleton, EmptyState/Error
 - `types.ts` — types: `SummaryOutput`
 
 ### `modules/auth/routes-parts/`
-- `io.ts` — functions/values: `authLogin`, `authCallback`, `authMe`, `authLogout`, `asRoot`, `asUserManager`, `authListUsers`, `authListScopes`, `authCreateScope`, `authDeleteScope`, `authSetUserScopes`, `authListRoles`, `authCreateRole`, `authDeleteRole`, `authSetUserRoles`, `authUserPositions`, `authSetUserProfile`, `authDeleteUser`
+- `io.ts` — functions/values: `authLogin`, `authCallback`, `authMe`, `authLogout`, `asRoot`, `asUserManager`, `authListUsers`, `authListScopes`, `authCreateScope`, `authDeleteScope`, `authSetUserScopes`, `authListRoles`, `authCreateRole`, `authDeleteRole`, `authSetUserRoles`, `authSetUserProfile`, `authDeleteUser`
 - `pure.ts` — functions/values: `json`, `redirect`, `isRoot`, `isTargetRoot`
 - `types.ts` — types: `AuthResult`
 

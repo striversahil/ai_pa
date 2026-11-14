@@ -152,10 +152,9 @@ export class PrismaAuthStore implements AuthStore {
       }),
     ]);
   }
-  async updateUserProfile(id: string, patch: { displayName?: string | null; positionOverride?: string | null }) {
+  async updateUserProfile(id: string, patch: { displayName?: string | null }) {
     const data: Record<string, string | null> = {};
     if (patch.displayName !== undefined) data.displayName = patch.displayName;
-    if (patch.positionOverride !== undefined) data.positionOverride = patch.positionOverride;
     if (Object.keys(data).length > 0) {
       await this.prisma.authUser.update({ where: { id }, data }).catch(() => {});
     }

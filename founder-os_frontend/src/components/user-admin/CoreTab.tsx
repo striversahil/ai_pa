@@ -2,10 +2,11 @@
 
 // Core tab — read-only unified people view. One entry per non-root login: the
 // ASSIGNED designation from locked core tables (GET /api/auth/core-assignments)
-// next to the roster-derived suggestion (GET /api/auth/directory). Assignment
-// writes arrive with core sign-off (proposal:
+// + roster links (GET /api/auth/directory). Position is HR-owned
+// (PUT /api/org/people/:id) and no longer shown here. Assignment writes arrive
+// with core sign-off (proposal:
 // docs/core-change-requests/2026-11-12-core-assignment-write.md) — until then
-// HR sees suggestions read-only. Managers keep the existing Manage drawer via
+// this tab is read-only. Managers keep the existing Manage drawer via
 // onManage; HR holders get no edit affordances (canManage false).
 import { useMemo, useState } from "react";
 import AdminTable from "../admin/AdminTable";
@@ -14,7 +15,6 @@ import {
 } from "@/auth/api";
 import type { DirectoryRow } from "@/auth/directory";
 import type { CoreAssignmentRow } from "@/auth/core";
-import { POSITION_META } from "@/auth/org-positions";
 import { useLiveDashboard } from "@/hooks/useLiveData";
 
 interface CoreTabProps {
@@ -43,13 +43,7 @@ export default function CoreTab({ canManage, onManage }: CoreTabProps) {
 
   const visible = useMemo(() => {
     if (!deptFilter) return rows;
-    return rows.filter((r) => {
-      const deptName = r.assigned?.department;
-      if (deptName) return deptName === deptFilter;
-      // Unassigned rows group under their roster-derived department.
-      const pos = POSITION_META[r.position as keyof typeof POSITION_META];
-      return pos?.label && deptFilter === pos.department;
-    });
+    return rows.filter((r) => (r.assigned?.department ?? "") === deptFilter);
   }, [rows, deptFilter]);
 
   return (
@@ -57,7 +51,7 @@ export default function CoreTab({ canManage, onManage }: CoreTabProps) {
       {dash.loading && !dash.data && <div className="py-12 text-center text-sm text-zinc-500 animate-pulse">Loading core people…</div>}
       {Boolean(dash.error) && <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 px-3 py-2 text-xs text-rose-500">Failed to load: {String(dash.error)}</div>}
       {dash.data?.coreUnavailable && (
-        <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-500">Assignment data unavailable — showing roster positions only.</div>
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-500">Assignment data unavailable — showing roster links only.</div>
       )}
       {dash.data && (
         <section className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4 sm:p-6">
@@ -69,7 +63,7 @@ export default function CoreTab({ canManage, onManage }: CoreTabProps) {
             rows={visible}
             rowKey={(r) => r.id}
             searchPlaceholder="Search name, email, designation…"
-            toSearchText={(r) => `${r.name} ${r.email} ${r.assigned?.designation ?? ""} ${POSITION_META[r.position as keyof typeof POSITION_META]?.label ?? r.position} ${r.sources.map((s) => s.label).join(" ")}`}
+            toSearchText={(r) => `${r.name} ${r.email} ${r.assigned?.designation ?? ""} ${r.sources.map((s) => s.label).join(" ")}`}
             emptyText={rows.length === 0 ? "No logins yet." : "No logins match."}
             {...(canManage ? { onRowClick: (r: CorePerson) => onManage(r.id) } : {})}
             toolbarExtra={
@@ -100,20 +94,11 @@ export default function CoreTab({ canManage, onManage }: CoreTabProps) {
               },
               {
                 key: "assigned", header: "Designation",
-                sortValue: (r) => r.assigned?.designation ?? `~${r.position}`,
+                sortValue: (r) => r.assigned?.designation ?? "",
                 render: (r) => (
                   r.assigned
                     ? <span className="inline-block rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap text-emerald-500 dark:text-emerald-400" title={`${r.assigned.department} · ${r.assigned.positionCode}`}>{r.assigned.designation}</span>
                     : <span className="text-[11px] text-zinc-500" title="No assigned designation yet">— unassigned</span>
-                ),
-              },
-              {
-                key: "suggested", header: "Suggested",
-                sortValue: (r) => POSITION_META[r.position as keyof typeof POSITION_META]?.label ?? r.position,
-                render: (r) => (
-                  <span title={r.via || undefined} className="inline-block rounded-full border border-zinc-500/30 bg-zinc-500/10 px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap text-zinc-600 dark:text-zinc-300">
-                    {POSITION_META[r.position as keyof typeof POSITION_META]?.label ?? r.position}
-                  </span>
                 ),
               },
               {

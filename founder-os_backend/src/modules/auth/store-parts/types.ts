@@ -22,7 +22,7 @@ export interface AuthStore {
   getUserScopeKeys(userId: string): Promise<string[]>;
   setUserScopes(userId: string, keys: string[]): Promise<void>;
   /** Manager-set identity overrides (display name + position). Null clears. */
-  updateUserProfile(id: string, patch: { displayName?: string | null; positionOverride?: string | null }): Promise<void>;
+  updateUserProfile(id: string, patch: { displayName?: string | null }): Promise<void>;
   listUsers(): Promise<Array<AuthUser & { scopes: string[]; roles: string[] }>>;
   /** Lower-cased login emails (Logins panel + delegation board). One light
    *  query — cheaper than listUsers when only presence matters. */

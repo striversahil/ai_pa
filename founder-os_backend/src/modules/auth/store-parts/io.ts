@@ -75,11 +75,10 @@ export class MemoryAuthStore implements AuthStore {
   async getUserScopeKeys(userId: string) {
     return [...(this.userScopes.get(userId) ?? [])];
   }
-  async updateUserProfile(id: string, patch: { displayName?: string | null; positionOverride?: string | null }) {
+  async updateUserProfile(id: string, patch: { displayName?: string | null }) {
     const u = this.users.get(id);
     if (!u) return;
     if (patch.displayName !== undefined) u.displayName = patch.displayName;
-    if (patch.positionOverride !== undefined) u.positionOverride = patch.positionOverride;
   }
   async setUserScopes(userId: string, keys: string[]) {
     this.userScopes.set(userId, new Set(keys));
@@ -202,12 +201,9 @@ export class D1AuthStore implements AuthStore {
       .run();
     return user;
   }
-  async updateUserProfile(id: string, patch: { displayName?: string | null; positionOverride?: string | null }) {
+  async updateUserProfile(id: string, patch: { displayName?: string | null }) {
     if (patch.displayName !== undefined) {
       await this.db.prepare("UPDATE auth_user SET displayName = ? WHERE id = ?").bind(patch.displayName, id).run();
-    }
-    if (patch.positionOverride !== undefined) {
-      await this.db.prepare("UPDATE auth_user SET positionOverride = ? WHERE id = ?").bind(patch.positionOverride, id).run();
     }
   }
   async getUserById(id: string) {

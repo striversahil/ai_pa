@@ -26,6 +26,7 @@ describe('unified directory contract (view-first)', () => {
     const io = read(join('modules', 'auth', 'routes-parts', 'io.ts'));
     assert.ok(io.includes('await asUserManager(store, cookieHeader)'), 'users keep the manager gate');
     assert.ok(!io.includes('human-resources'), 'io.ts gains no HR widening');
+    assert.ok(!io.includes('authUserPositions'), 'positions endpoint is retired (HR-owned now)');
   });
 
   it('directory gate: managers + HR scopes read, HR cannot manage', () => {
@@ -44,6 +45,7 @@ describe('unified directory contract (view-first)', () => {
     for (const p of ['/api/auth/directory', '/api/auth/core-assignments']) {
       assert.ok(worker.includes(`'${p}'`), `missing worker route ${p}`);
     }
+    assert.ok(!worker.includes("'/api/auth/positions'"), 'positions route is retired (HR-owned now)');
     assert.ok(routes.includes('authDirectory'), 'routes.ts must re-export authDirectory');
     assert.ok(!routes.includes('HiddenLogins'), 'routes.ts must not re-export hidden fns');
     assert.ok(routes.includes('authCoreAssignments'), 'routes.ts must re-export authCoreAssignments');

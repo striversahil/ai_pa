@@ -134,9 +134,10 @@ export function responsibilityLine(p: OrgPosition): string {
 }
 
 /**
- * Chart title → login/dashboard position keys (`src/auth/org-positions.ts`
- * taxonomy). Empty = the title carries no dashboard position: MIS is an org
- * label only (founder decision 2026-11-12, the `mis` scope/role is retired and
+ * Chart title → login/dashboard position keys (taxonomy lives in
+ * `founder-os_backend/src/modules/auth/positions.ts`, suggested scopes only).
+ * Empty = the title carries no dashboard position: MIS is an org label only
+ * (founder decision 2026-11-12, the `mis` scope/role is retired and
  * grants nothing).
  */
 export const LOGIN_POSITIONS_BY_TITLE: Record<string, string[]> = {

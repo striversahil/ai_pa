@@ -8,7 +8,7 @@ import { listDigitalMarketingManagers } from '../../automations/digital-marketin
 import { listEmployees } from '../../automations/human-resources/employees';
 import { readBody } from '../http';
 
-/** Shared roster snapshot loader (positions + directory reuse it — one home). */
+/** Shared roster snapshot loader (directory roster links reuse it — one home). */
 async function loadRosterSnapshot() {
   const { prisma } = deps();
   const [tcs, accts, mkts, hrs] = await Promise.all([
@@ -50,38 +50,8 @@ export function registerAuthRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const r = await AuthRoutes.authListUsers(authStore(c), c.req.header('cookie') ?? null);
     return c.json(r.body, r.status as any);
   });
-  app.get('/api/auth/positions', async (c) => {    // Worker-only (Express is frozen — no mirror). Roster reads run AFTER the
-    // manager gate inside authUserPositions, via this loader closure.
-    const r = await AuthRoutes.authUserPositions(authStore(c), c.req.header('cookie') ?? null, loadRosterSnapshot, async () => {
-      // Phase 1 shadow: core-backed snapshot for diff logging only. Any
-      // failure → null → endpoint serves pure roster values as before.
-      try {
-        const { prisma } = deps();
-        const p: any = prisma as any;
-        if (typeof p.coreEmployee?.findMany !== 'function') return null;
-        const [emps, links] = await Promise.all([
-          p.coreEmployee.findMany({}).catch(() => []),
-          p.coreEmpPosition.findMany({}).catch(() => []),
-        ]);
-        const primaryByEmp = new Map<string, string>();
-        for (const a of links as any[]) {
-          if (a?.employeeId && a?.positionId && !a?.validTo && !primaryByEmp.has(a.employeeId)) {
-            primaryByEmp.set(a.employeeId, a.positionId);
-          }
-        }
-        return {
-          employees: (emps as any[]).map((e) => ({
-            workEmail: e.workEmail ?? null,
-            positionCode: String(primaryByEmp.get(e.id) ?? '').replace(/^pos-/, '').replace(/-/g, '_'),
-            grade: e.grade ?? null,
-          })),
-        };
-      } catch { return null; }
-    });
-    return c.json(r.body, r.status as any);
-  });
   // ── Unified employee directory (view-first; Worker-only, no Express mirror) ─
-  // One entry per non-root login: position + roster source links.
+  // One entry per non-root login: identity + roster source links.
   // Managers + HR-scope holders read; HR cannot manage.
   app.get('/api/auth/directory', async (c) => {
     const r = await AuthRoutes.authDirectory(authStore(c), c.req.header('cookie') ?? null, loadRosterSnapshot);
@@ -149,8 +119,8 @@ export function registerAuthRoutes(app: Hono<{ Bindings: Bindings }>): void {
     return c.json(r.body, r.status as any);
   });
   app.put('/api/auth/users/:id/profile', async (c) => {
-    // Worker-only (Express is frozen — no mirror). Identity overrides:
-    // display name + position. Display/grouping only, never access.
+    // Worker-only (Express is frozen — no mirror). Display-name override:
+    // display only, never access. Position is HR-owned (PUT /api/org/people/:id).
     const body = await readBody(c);
     const r = await AuthRoutes.authSetUserProfile(authStore(c), c.req.header('cookie') ?? null, c.req.param('id') ?? null, body ?? {});
     return c.json(r.body, r.status as any);

@@ -186,7 +186,7 @@ Port `bui-crm-v2/scripts/schema-guard.mjs` → `founder-os_backend/scripts/core-
 ### Phase 1 — Identity unify (1–2 PRs)
 - Migration `0145_core_identity.sql`: all `core_employee/*` + role/perm tables; backfill employees from rosters (email-exact; duplicates flagged in `core_note`, not merged); link `AuthUser` via `core_user_link`; seed positions/roles/perms/access-configs/field-policies (mirror §7).
 - Dual-write: roster create/update writes both old + `core_employee` (old wins on conflict, logged). Read path unchanged.
-- New: `GET /api/auth/positions` reads core (keep response shape); Users portal shows same groups, now core-backed.
+- Retired 2026-11-14: `GET /api/auth/positions` is gone (position is HR-owned via `PUT /api/org/people/:id`); no core read replaces it, the Users portal is position-free.
 - Verify: roster counts match, positions endpoint unchanged, guard passes.
 
 ### Phase 2 — My Work queue (1 PR, first visible win)

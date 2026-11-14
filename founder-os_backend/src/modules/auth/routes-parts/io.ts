@@ -4,10 +4,6 @@ import { authEnabled, startLogin, completeLogin, ensureScopesSeeded, ensureRoles
 import { AuthStore } from "../store";
 import { sessionCookieHeader, readSessionCookie, clearSessionCookieHeader } from "../session";
 import { AuthError } from "../types";
-import { resolveOrgPosition, POSITION_SUGGESTED_SCOPES } from "../positions";
-import type { RosterSnapshot } from "../positions";
-import { resolveCoreAutoPosition, isCoreMismatch } from "../positions-shadow";
-import type { CoreSnapshot } from "../positions-shadow";
 import type { AuthResult } from "./types";
 import { json, redirect, isRoot, isTargetRoot } from "./pure";
 
@@ -258,78 +254,16 @@ export async function authSetUserRoles(
 }
 
 /**
- * Org-position map for the Users portal: one entry per (non-root) login,
- * resolved roster-first (Telecaller/Accounts/Digital-Marketing/HR emails) with
- * scope-derived fallbacks (sales-head, procurement). `loadRosters` runs
- * AFTER the manager gate passes, so unauthenticated callers never trigger
- * roster reads. Display + guidance only — access still flows via roles.
- */
-export async function authUserPositions(
-  store: AuthStore,
-  cookieHeader: string | null,
-  loadRosters: () => Promise<RosterSnapshot>,
-  loadCore?: () => Promise<CoreSnapshot | null>,
-): Promise<AuthResult> {
-  try {
-    await asUserManager(store, cookieHeader);
-    const rosters = await loadRosters();
-    // Phase 1 shadow: core-backed resolution for diff logging only. Served
-    // values stay roster-derived; mismatches gain an internal coreMismatch
-    // marker (never user-visible guidance). Null when core is unavailable
-    // (Express) or the read fails — shadow must never break the endpoint.
-    let core: CoreSnapshot | null = null;
-    try {
-      core = await loadCore?.() ?? null;
-    } catch { core = null; }
-    const users = (await listUsers(store)).filter((u: any) => !isTargetRoot(u));
-    const out: Record<string, {
-      position: string;
-      department: string;
-      via: string;
-      auto: string;
-      override: string | null;
-      suggestedScopes: string[];
-      coreMismatch?: { auto: string; via: string };
-    }> = {};
-    for (const u of users as any[]) {
-      const scopes: string[] = [...(u.scopes ?? [])];
-      // Effective scopes = direct ∪ role scopes (same union getMe uses).
-      try {
-        const snap = await store.getAuthSnapshot(u.id);
-        for (const rs of Object.values(snap.roleScopes ?? {})) {
-          for (const s of rs as string[]) if (!scopes.includes(s)) scopes.push(s);
-        }
-      } catch { /* snapshot best-effort — direct scopes still resolve */ }
-      const override = (u.positionOverride ?? null) as string | null;
-      const r = resolveOrgPosition({ email: u.email, scopes, override }, rosters);
-      const entry = { ...r, override, suggestedScopes: POSITION_SUGGESTED_SCOPES[r.position] ?? [] } as (typeof out)[string];
-      if (core) {
-        try {
-          const c = resolveCoreAutoPosition({ email: u.email, scopes, override }, core);
-          if (isCoreMismatch(r.auto, c)) {
-            entry.coreMismatch = { auto: c.position, via: c.via };
-          }
-        } catch { /* shadow compare never breaks the served value */ }
-      }
-      out[u.id] = entry;
-    }
-    return json(200, { positions: out });
-  } catch (e: any) {
-    const err = e instanceof AuthError ? e : new AuthError("FORBIDDEN", e?.message);
-    return json(err.status, { error: err.message });
-  }
-}
-
-/**
- * Manager-set identity overrides (Users portal): display name + position.
- * Display/grouping only — never access. Managers may edit any non-root login
- * (including their own name); the root user stays untouchable.
+ * Manager-set display-name override (Users portal): grouping/display only,
+ * never access. Position is HR-owned (PUT /api/org/people/:id). Managers may
+ * edit any non-root login (including their own name); the root user stays
+ * untouchable.
  */
 export async function authSetUserProfile(
   store: AuthStore,
   cookieHeader: string | null,
   userId: string,
-  body: { displayName?: unknown; positionOverride?: unknown },
+  body: { displayName?: unknown },
 ): Promise<AuthResult> {
   try {
     await asUserManager(store, cookieHeader);

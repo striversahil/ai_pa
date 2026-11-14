@@ -4,8 +4,6 @@
 import { requireUser, listUsers } from "../service";
 import { AuthStore } from "../store";
 import { AuthError } from "../types";
-import { resolveOrgPosition, POSITION_SUGGESTED_SCOPES } from "../positions";
-import type { RosterSnapshot } from "../positions";
 import {
   DIRECTORY_WIDE_SCOPES,
   directorySources, hasAnyScope,
@@ -16,20 +14,20 @@ import { json, isTargetRoot } from "./pure";
 
 /**
  * Unified employee directory (view-first): one entry per non-root login with
- * org position (roster-first, same resolver as the Users portal) + roster
- * source links (ids only). HR holders (`human-resources` scope) get read-only
- * width (`canManage: false`) — they cannot edit users/roles through any other
- * endpoint (unchanged gates).
+ * roster source links (ids only). Position is HR-owned (PUT /api/org/people/:id)
+ * and no longer resolved here. HR holders (`human-resources` scope) get
+ * read-only width (`canManage: false`) — they cannot edit users/roles through
+ * any other endpoint (unchanged gates).
  */
 export async function authDirectory(
   store: AuthStore,
   cookieHeader: string | null,
-  loadRosters: () => Promise<RosterSnapshot & DirectoryRosters>,
+  loadRosters: () => Promise<DirectoryRosters>,
 ): Promise<AuthResult> {
   try {
     const me = await requireUser(store, cookieHeader);
     const root = (me as any).isRoot === true;
-    // Effective scopes = direct ∪ role scopes (same union authUserPositions uses).
+    // Effective scopes = direct ∪ role scopes (same union getMe uses).
     const scopes: string[] = [...((me as any).scopes ?? [])];
     try {
       const snap = await store.getAuthSnapshot((me as any).user.id);
@@ -43,33 +41,15 @@ export async function authDirectory(
     const rosters = await loadRosters();
     const users = (await listUsers(store)).filter((u: any) => !isTargetRoot(u));
     const rows: Array<{
-      id: string; email: string; name: string; position: string; department: string;
-      via: string; auto: string; override: string | null; suggestedScopes: string[];
+      id: string; email: string; name: string;
       sources: Array<{ id: string; kind: "telecaller" | "accountant" | "marketer" | "hr-member"; label: string }>;
     }> = [];
     for (const u of users as any[]) {
       const email = String(u.email ?? "");
-      const entryScopes: string[] = [...(u.scopes ?? [])];
-      try {
-        const snap = await store.getAuthSnapshot(u.id);
-        for (const rs of Object.values(snap.roleScopes ?? {})) {
-          for (const s of rs as string[]) if (!entryScopes.includes(s)) entryScopes.push(s);
-        }
-      } catch { /* best-effort */ }
-      const r = resolveOrgPosition(
-        { email, scopes: entryScopes, override: (u.positionOverride ?? null) as string | null },
-        rosters,
-      );
       rows.push({
         id: u.id,
         email,
         name: u.displayName || u.name,
-        position: r.position,
-        department: r.department,
-        via: r.via,
-        auto: r.auto,
-        override: (u.positionOverride ?? null) as string | null,
-        suggestedScopes: POSITION_SUGGESTED_SCOPES[r.position] ?? [],
         sources: directorySources(email, rosters as DirectoryRosters),
       });
     }
