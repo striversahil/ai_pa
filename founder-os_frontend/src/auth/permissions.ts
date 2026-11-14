@@ -14,7 +14,6 @@ export const VIEW_SCOPE: Record<string, string> = {
   automations: "automations",
   admin: "admin",
   // Automation dashboard slugs whose scope differs from the slug:
-  "zoho-sent-analyzer": "zoho",
   "neodove-telecaller-report": "neodove",
   "dpp-prices-dashboard": "dpp",
   "wa-engine-monitor": "wa-engine",

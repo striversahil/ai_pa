@@ -69,6 +69,18 @@ export function taskSections(tasks: any[], today = istDateStr(), nowTime = '') {
   return { overdue, today: todayList, upcoming, done };
 }
 
+/** A completed task may only be reopened with a reason. The reason is written
+ *  into the status journal row (`remark`), so history explains the reopen. */
+export function reopenRequiresReason(
+  currentStatus: unknown,
+  patch: { status?: unknown; remark?: unknown },
+): boolean {
+  return String(currentStatus) === 'done'
+    && patch.status !== undefined
+    && String(patch.status) !== 'done'
+    && !String(patch.remark ?? '').trim();
+}
+
 /** The task still needs an update today: it is open, already due, and has no
  *  journal entry for today yet. Drives the "needs update" chip + HR nudges. */
 export function needsUpdateToday(

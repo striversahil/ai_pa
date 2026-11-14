@@ -12,7 +12,6 @@ import { applyOrder, dashKey, orderStorageKey, useSidebarOrder } from "@/hooks/u
 import { APP_THEMES, type AppThemeId } from "@/hooks/useTheme";
 import {
   LayoutGrid,
-  FileText,
   Tag,
   PhoneCall,
   Radio,
@@ -28,7 +27,6 @@ import {
 } from "lucide-react";
 
 const DASH_ICONS: Record<string, LucideIcon> = {
-  "zoho-sent-analyzer": FileText,
   "dpp-prices-dashboard": Tag,
   "neodove-telecaller-report": PhoneCall,
   "wa-engine-monitor": Radio,

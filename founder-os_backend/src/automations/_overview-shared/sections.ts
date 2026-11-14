@@ -192,7 +192,7 @@ export interface SectionDef {
 }
 
 export const SECTIONS: SectionDef[] = [
-  { key: 'zoho', title: 'Zoho Sent Analysis', slugs: ['zoho-sent-analyzer'], linkSlug: 'zoho-sent-analyzer', build: (r) => section('zoho-sent-analyzer', 'Zoho Sent Analysis', r['zoho-sent-analyzer']?.data, r['zoho-sent-analyzer']?.error, summarizeZoho) },
+  { key: 'zoho', title: 'Analyzer', slugs: ['zoho-sent-analyzer'], linkSlug: 'sales', build: (r) => section('sales', 'Analyzer', r['zoho-sent-analyzer']?.data, r['zoho-sent-analyzer']?.error, summarizeZoho) },
   { key: 'crm', title: 'CRM — Sales Orders', slugs: ['crm'], linkSlug: 'crm', build: (r) => section('crm', 'CRM — Sales Orders', r.crm?.data, r.crm?.error, summarizeCrm) },
   { key: 'telecalling', title: 'Sales Leaderboard', slugs: ['telecalling'], linkSlug: 'telecalling', build: (r) => section('telecalling', 'Sales Leaderboard', r.telecalling?.data, r.telecalling?.error, summarizeTelecalling) },
   {

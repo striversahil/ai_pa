@@ -243,7 +243,7 @@ redeploys; dedup keys in `AutomationRun` make double-firing impossible.
 | `wa-engine-monitor` | handler | `*` | WA Engine session/health monitor + dashboard |
 | `whatsapp-digest` | handler | event+scan | WhatsApp → AI digest (`process.ts`) |
 | `whatsapp-marketing` | handler | scheduled/recurring | Campaign send via WABA/AiSensy |
-| `zoho-sent-analyzer` | handler | `*/5` (GH) | Zoho sync + AI classification |
+| `zoho-sent-analyzer` | handler | `*/5` (GH) | Zoho sync + AI classification. Dashboard retired 2026-11-14 — renders as the Analyzer tab inside Sales (migration 0143 renames the automation to `Analyzer`) |
 | `email-brain-index` | handler | `*/30` (GH) | Email sync + brain index |
 | `morning-brief` | handler | daily IST (GH) | Morning briefing |
 | `_template` | — | — | Scaffold for new automations |
@@ -280,7 +280,7 @@ thin — heavy AI is performed by GH Actions runners that call `/api/runner/*`.
 - `/api/whatsapp/send`, `/api/whatsapp-proxy/send`, `/api/whatsapp/contacts*`,
   `/api/whatsapp/events`, `/api/whatsapp/summarize`
 - `/api/pending-items*`, `/api/automations*`, `/api/whatsapp-marketing*`
-- `/api/neodove/report`, `/api/estimates/classify`, `/api/estimates/bulk-upsert`
+- `/api/neodove/report`, `/api/estimates/classify`, `/api/estimates/bulk-upsert`, `/api/estimates/movement` (Analyzer range SO counts; login-gated)
  - `/api/audit*`, `/api/events` (WebSocket live hub; see §11)
 
 ### 3.2 Runner API (Bearer `SHARED_SECRET`) — consumed by `scripts/*-runner.js`

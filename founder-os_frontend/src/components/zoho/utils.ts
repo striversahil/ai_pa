@@ -5,6 +5,23 @@ export const getTodayDateString = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 
+/** Calendar date (YYYY-MM-DD) in IST — the range default + preset anchor. */
+export const istToday = (): string =>
+  new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+/** First day of the current IST month (YYYY-MM-DD). */
+export const istMonthStart = (): string => istToday().slice(0, 8) + "01";
+
+/** Day-string (YYYY-MM-DD…) inside an inclusive [from, to] window. */
+export const inDateRange = (day: unknown, from: string, to: string): boolean => {
+  const d = String(day ?? "").slice(0, 10);
+  return d >= from && d <= to;
+};
+
+/** Sum of `total` over rows (same window semantics as the backend movement aggregation). */
+export const sumTotals = (rows: Array<{ total?: unknown }>): number =>
+  (rows ?? []).reduce((s, r) => s + (Number((r as any)?.total) || 0), 0);
+
 export const getCommentCountForDate = (est: Estimate, dateStr: string): number => {
   if (!est.comments || !Array.isArray(est.comments)) return 0;
   return est.comments.filter((c: Comment | null | undefined) => c && c.date === dateStr).length;

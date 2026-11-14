@@ -53,13 +53,3 @@ export interface FilterRule {
   field: string;
   operator: "is" | "is_not";
 }
-
-export interface Movement {
-  accepted: Estimate[];
-  declined: Estimate[];
-  stillPending: Estimate[];
-  newCreated: Estimate[];
-  baselineCount: number;
-  baselineValue: number;
-  pending?: boolean;
-}

@@ -143,20 +143,20 @@ export async function agentTallies(batchId: string): Promise<AgentTally[]> {
   }
 }
 
-/** Every customer row for one region + state, optionally one client type. */
-export async function listCustomersByState(region: string, state: string, clientType = ''): Promise<any[]> {
+/** Every customer row for one region + state (+ optional district + type). */
+export async function listCustomersByState(region: string, state: string, clientType = '', district = ''): Promise<any[]> {
   const db = campaignDb();
   if (!db) return [];
   const type = String(clientType ?? '').trim();
-  const res = type
-    ? await db
-      .prepare(`SELECT ${CUSTOMER_COLUMNS} FROM core_customer WHERE region = ? AND state = ? AND customerTypeBase = ? AND ${LIVE_CUSTOMER_WHERE} ORDER BY id`)
-      .bind(region, state, type)
-      .all()
-    : await db
-      .prepare(`SELECT ${CUSTOMER_COLUMNS} FROM core_customer WHERE region = ? AND state = ? AND ${LIVE_CUSTOMER_WHERE} ORDER BY id`)
-      .bind(region, state)
-      .all();
+  const dist = String(district ?? '').trim();
+  const conds = ['region = ?', 'state = ?', LIVE_CUSTOMER_WHERE];
+  const binds: string[] = [region, state];
+  if (dist) { conds.push('district = ?'); binds.push(dist); }
+  if (type) { conds.push('customerTypeBase = ?'); binds.push(type); }
+  const res = await db
+    .prepare(`SELECT ${CUSTOMER_COLUMNS} FROM core_customer WHERE ${conds.join(' AND ')} ORDER BY id`)
+    .bind(...binds)
+    .all();
   return (res?.results ?? []) as any[];
 }
 
@@ -191,30 +191,53 @@ export async function listStateCounts(region: string, clientType = ''): Promise<
   }));
 }
 
-/** Client-type list for one region (+ optional state) with coverage counts. */
-export async function listTypeCounts(region: string, state = ''): Promise<Array<{ base: string; total: number; withPhone: number }>> {
+/** District list for one region + state (+ optional type) with phone coverage.
+ *  Only placed districts list — unplaced rows ('') are reachable through the
+ *  whole-state push, never as a district of their own. */
+export async function listDistrictCounts(region: string, state: string, clientType = ''): Promise<Array<{ district: string; total: number; withPhone: number }>> {
+  const db = campaignDb();
+  if (!db) return [];
+  const type = String(clientType ?? '').trim();
+  const conds = ['region = ?', 'state = ?', "district <> ''", LIVE_CUSTOMER_WHERE];
+  const binds: string[] = [region, state];
+  if (type) { conds.push('customerTypeBase = ?'); binds.push(type); }
+  const res = await db.prepare(
+    `SELECT district,
+            COUNT(*) AS total,
+            SUM(CASE WHEN phonesJson NOT IN ('[]', '') AND phonesJson IS NOT NULL THEN 1 ELSE 0 END) AS withPhone
+       FROM core_customer
+      WHERE ${conds.join(' AND ')}
+      GROUP BY district
+      ORDER BY total DESC, district ASC`,
+  ).bind(...binds).all().catch(() => null);
+  // Pre-0144 isolate without the district column — no districts to list.
+  if (!res) return [];
+  return ((res?.results ?? []) as any[]).map((r) => ({
+    district: String(r?.district ?? ''),
+    total: Number(r?.total ?? 0),
+    withPhone: Number(r?.withPhone ?? 0),
+  }));
+}
+
+/** Client-type list for one region (+ optional state + district) with coverage counts. */
+export async function listTypeCounts(region: string, state = '', district = ''): Promise<Array<{ base: string; total: number; withPhone: number }>> {
   const db = campaignDb();
   if (!db) return [];
   const st = String(state ?? '').trim();
-  const res = st
-    ? await db.prepare(
-      `SELECT customerTypeBase AS base,
-              COUNT(*) AS total,
-              SUM(CASE WHEN phonesJson NOT IN ('[]', '') AND phonesJson IS NOT NULL THEN 1 ELSE 0 END) AS withPhone
-         FROM core_customer
-        WHERE region = ? AND state = ? AND ${LIVE_CUSTOMER_WHERE}
-        GROUP BY customerTypeBase
-        ORDER BY total DESC, base ASC`,
-    ).bind(region, st).all()
-    : await db.prepare(
-      `SELECT customerTypeBase AS base,
-              COUNT(*) AS total,
-              SUM(CASE WHEN phonesJson NOT IN ('[]', '') AND phonesJson IS NOT NULL THEN 1 ELSE 0 END) AS withPhone
-         FROM core_customer
-        WHERE region = ? AND ${LIVE_CUSTOMER_WHERE}
-        GROUP BY customerTypeBase
-        ORDER BY total DESC, base ASC`,
-    ).bind(region).all();
+  const dist = String(district ?? '').trim();
+  const conds = ['region = ?', LIVE_CUSTOMER_WHERE];
+  const binds: string[] = [region];
+  if (st) { conds.push('state = ?'); binds.push(st); }
+  if (dist) { conds.push('district = ?'); binds.push(dist); }
+  const res = await db.prepare(
+    `SELECT customerTypeBase AS base,
+            COUNT(*) AS total,
+            SUM(CASE WHEN phonesJson NOT IN ('[]', '') AND phonesJson IS NOT NULL THEN 1 ELSE 0 END) AS withPhone
+       FROM core_customer
+      WHERE ${conds.join(' AND ')}
+      GROUP BY customerTypeBase
+      ORDER BY total DESC, base ASC`,
+  ).bind(...binds).all();
   return ((res?.results ?? []) as any[]).map((r) => ({
     base: String(r?.base ?? '').trim() || 'Unspecified',
     total: Number(r?.total ?? 0),
@@ -254,16 +277,44 @@ export async function lastLivePushes(region: string, clientType = ''): Promise<M
   return out;
 }
 
+/** Last completed LIVE push per district (+ optional type) — the per-district
+ *  "this will duplicate" warning. Pre-0145 ledgers have no district column. */
+export async function lastDistrictPushes(region: string, state: string, clientType = ''): Promise<Map<string, { at: string; count: number }>> {
+  const db = campaignDb();
+  const out = new Map<string, { at: string; count: number }>();
+  if (!db) return out;
+  const type = String(clientType ?? '').trim();
+  try {
+    const conds = ["region = ?", "state = ?", "mode = 'live'", "status = 'done'", "district <> ''"];
+    const binds: string[] = [region, state];
+    if (type) { conds.push('clientType = ?'); binds.push(type); }
+    const res = await db.prepare(
+      `SELECT district, MAX(finishedAt) AS at, SUM(sent) AS sent
+         FROM NeoDovePushBatch
+        WHERE ${conds.join(' AND ')}
+        GROUP BY district`,
+    ).bind(...binds).all();
+    for (const row of ((res?.results ?? []) as any[])) {
+      const district = String(row?.district ?? '');
+      if (!district) continue;
+      out.set(district, { at: String(row?.at ?? ''), count: Number(row?.sent ?? 0) });
+    }
+  } catch {
+    // Fresh DB without the ledger table — the UI simply shows no history.
+  }
+  return out;
+}
+
 export async function insertBatch(batch: PushBatch): Promise<void> {
   const db = campaignDb();
   if (!db) throw new Error('database unavailable');
   await db
     .prepare(
       `INSERT INTO NeoDovePushBatch (${BATCH_COLUMNS})
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
-      batch.id, batch.region, batch.state, batch.clientType || '', batch.mode, batch.status,
+      batch.id, batch.region, batch.state, batch.district || '', batch.clientType || '', batch.mode, batch.status,
       batch.total, batch.planned, batch.sent, batch.failed, batch.skipped, batch.pending,
       batch.distribution, batch.agentKey,
       batch.requestedBy, batch.requestedByName, batch.campaignHost, batch.detail1, batch.error,
@@ -279,10 +330,17 @@ export async function getBatch(id: string): Promise<PushBatch | null> {
     const row = await db.prepare(`SELECT ${BATCH_COLUMNS} FROM NeoDovePushBatch WHERE id = ?`).bind(id).first();
     return row ? toBatch(row) : null;
   } catch {
-    // Pre-0103 isolate without the clientType column.
-    const legacy = BATCH_COLUMNS.replace(', clientType', '');
-    const row: any = await db.prepare(`SELECT ${legacy} FROM NeoDovePushBatch WHERE id = ?`).bind(id).first().catch(() => null);
-    return row ? toBatch({ ...row, clientType: '' }) : null;
+    // Pre-0145 isolate without the district column.
+    const noDistrict = BATCH_COLUMNS.replace(', district', '');
+    try {
+      const row: any = await db.prepare(`SELECT ${noDistrict} FROM NeoDovePushBatch WHERE id = ?`).bind(id).first();
+      return row ? toBatch({ ...row, district: '' }) : null;
+    } catch {
+      // Pre-0103 isolate without the clientType column either.
+      const legacy = noDistrict.replace(', clientType', '');
+      const row: any = await db.prepare(`SELECT ${legacy} FROM NeoDovePushBatch WHERE id = ?`).bind(id).first().catch(() => null);
+      return row ? toBatch({ ...row, district: '', clientType: '' }) : null;
+    }
   }
 }
 
@@ -329,12 +387,19 @@ export async function listBatches(region: string, limit = 20): Promise<PushBatch
       : await db.prepare(`SELECT ${BATCH_COLUMNS} FROM NeoDovePushBatch ORDER BY createdAt DESC LIMIT ?`).bind(limit).all();
     return ((res?.results ?? []) as any[]).map(toBatch);
   } catch {
-    // Pre-0103 isolate without the clientType column.
-    const legacy = BATCH_COLUMNS.replace(', clientType', '');
+    // Pre-0145 isolate without the district column.
+    const noDistrict = BATCH_COLUMNS.replace(', district', '');
     const res = region
+      ? await db.prepare(`SELECT ${noDistrict} FROM NeoDovePushBatch WHERE region = ? ORDER BY createdAt DESC LIMIT ?`).bind(region, limit).all().catch(() => null)
+      : await db.prepare(`SELECT ${noDistrict} FROM NeoDovePushBatch ORDER BY createdAt DESC LIMIT ?`).bind(limit).all().catch(() => null);
+    const rows = (((res as any)?.results ?? []) as any[]).map((r: any) => toBatch({ ...r, district: '' }));
+    if (res) return rows;
+    // Pre-0103 isolate without the clientType column either.
+    const legacy = noDistrict.replace(', clientType', '');
+    const res2 = region
       ? await db.prepare(`SELECT ${legacy} FROM NeoDovePushBatch WHERE region = ? ORDER BY createdAt DESC LIMIT ?`).bind(region, limit).all().catch(() => null)
       : await db.prepare(`SELECT ${legacy} FROM NeoDovePushBatch ORDER BY createdAt DESC LIMIT ?`).bind(limit).all().catch(() => null);
-    return (((res as any)?.results ?? []) as any[]).map((r: any) => toBatch({ ...r, clientType: '' }));
+    return (((res2 as any)?.results ?? []) as any[]).map((r: any) => toBatch({ ...r, district: '', clientType: '' }));
   }
 }
 

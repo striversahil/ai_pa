@@ -1,10 +1,10 @@
 // Extracted verbatim from service.ts by scripts/refactor/split-module.mjs.
 // service.ts re-exports everything public here, so existing imports keep working.
-import { listAgents, listTeamLeads, getAgentRow, setAgentUrl, listStateCounts, lastLivePushes, listTypeCounts, listCustomersByState, listBatches, insertBatch, insertLeadRows, recountBatch, updateBatch, getBatch, agentTallies, recoverStuckClaims, claimPending, markOutcomes, listFailedLeads, batchesWithPending } from "../store";
-import type { CampaignAgent, StateCount, TypeCount, CampaignPreview, CampaignAgentPlan, PushBatch, Actor, AgentTally, PushProgress } from "../types";
+import { listAgents, listTeamLeads, getAgentRow, setAgentUrl, listStateCounts, lastLivePushes, listTypeCounts, listCustomersByState, listBatches, insertBatch, insertLeadRows, recountBatch, updateBatch, getBatch, agentTallies, recoverStuckClaims, claimPending, markOutcomes, listFailedLeads, batchesWithPending, listDistrictCounts, lastDistrictPushes } from "../store";
+import type { CampaignAgent, StateCount, TypeCount, DistrictCount, CampaignPreview, CampaignAgentPlan, PushBatch, Actor, AgentTally, PushProgress } from "../types";
 import { selectLeads, assignAgents, maskMobile } from "../selection";
 import type { ResolvedAgent, SendOutcome } from "./types";
-import { normalizeCampaignUrl, urlFromSecret, CampaignError, hostOf, validateAgentUrl, normalizeRegion, normalizeClientType, liveEnabled, normalizeState, normalizeDistribution, participantsFor, newId, FETCH_TIMEOUT_MS, DEFAULT_CHUNK, MAX_CHUNK, CONCURRENCY } from "./pure";
+import { normalizeCampaignUrl, urlFromSecret, CampaignError, hostOf, validateAgentUrl, normalizeRegion, normalizeClientType, liveEnabled, normalizeState, normalizeDistrict, normalizeDistribution, participantsFor, newId, FETCH_TIMEOUT_MS, DEFAULT_CHUNK, MAX_CHUNK, CONCURRENCY } from "./pure";
 
 /**
  * Registry rows joined with their URLs. The Controller-mapped DB value wins;
@@ -154,6 +154,38 @@ export async function getCampaignStates(env: any, region: unknown, clientType?: 
   };
 }
 
+/** District drill-down for one region + state (+ optional type): counts with
+ *  phone coverage and last live pushes. */
+export async function getCampaignDistricts(env: any, region: unknown, state: unknown, clientType?: unknown): Promise<{
+  region: string;
+  state: string;
+  clientType: string;
+  districts: DistrictCount[];
+}> {
+  void env;
+  const code = normalizeRegion(region);
+  const stateName = normalizeState(state);
+  const type = normalizeClientType(clientType);
+  const [counts, last] = await Promise.all([
+    listDistrictCounts(code, stateName, type), lastDistrictPushes(code, stateName, type),
+  ]);
+  return {
+    region: code,
+    state: stateName,
+    clientType: type,
+    districts: counts.map((row) => {
+      const prior = last.get(row.district);
+      return {
+        district: row.district,
+        total: row.total,
+        withPhone: row.withPhone,
+        lastPushedAt: prior?.at || null,
+        lastPushedCount: prior?.count ?? 0,
+      };
+    }),
+  };
+}
+
 /** Exact roster of what a push would send — no writes. */
 export async function getCampaignPreview(
   env: any,
@@ -162,19 +194,21 @@ export async function getCampaignPreview(
   distribution?: unknown,
   agentKey?: unknown,
   clientType?: unknown,
+  district?: unknown,
 ): Promise<CampaignPreview> {
   const code = normalizeRegion(region);
   const stateName = normalizeState(state);
   const dist = normalizeDistribution(distribution);
   const type = normalizeClientType(clientType);
+  const distName = normalizeDistrict(district);
 
   const active = (await resolveAgents(env, code)).filter((a) => a.active);
   if (active.length === 0) throw new CampaignError(`no NeoDove agents configured for ${code}`, 400);
   const tls = (await resolveTeamLeads(env)).filter((a) => a.active);
   const participants = participantsFor(active, tls, dist, agentKey);
 
-  const rows = await listCustomersByState(code, stateName, type);
-  if (rows.length === 0) throw new CampaignError('no customers in that region and state', 404);
+  const rows = await listCustomersByState(code, stateName, type, distName);
+  if (rows.length === 0) throw new CampaignError(distName ? `no customers in ${distName}, ${stateName}` : 'no customers in that region and state', 404);
   const { leads, skipped } = selectLeads(rows, code, stateName);
 
   // Same function the push uses — preview counts cannot drift from what sends.
@@ -195,6 +229,7 @@ export async function getCampaignPreview(
   return {
     region: code,
     state: stateName,
+    district: distName,
     clientType: type,
     total: rows.length,
     ready: leads.length,
@@ -208,7 +243,7 @@ export async function getCampaignPreview(
     distribution: dist,
     configured: agents.every((a) => a.configured),
     liveEnabled: liveEnabled(env),
-    detail1: stateName,
+    detail1: distName ? `${stateName} · ${distName}` : stateName,
     detail2: code,
   };
 }
@@ -218,16 +253,18 @@ export async function getCampaignBatches(region: unknown, limit = 20): Promise<P
   return listBatches(code, Math.min(Math.max(limit, 1), 50));
 }
 
-/** Client-type dropdown for one region (+ optional state): bases + coverage. */
-export async function getCampaignTypes(env: any, region: unknown, state?: unknown): Promise<{
+/** Client-type dropdown for one region (+ optional state + district): bases + coverage. */
+export async function getCampaignTypes(env: any, region: unknown, state?: unknown, district?: unknown): Promise<{
   region: string;
   state: string;
+  district: string;
   types: TypeCount[];
 }> {
   void env;
   const code = normalizeRegion(region);
   const st = String(state ?? '').trim();
-  return { region: code, state: st, types: await listTypeCounts(code, st) };
+  const distName = normalizeDistrict(district);
+  return { region: code, state: st, district: distName, types: await listTypeCounts(code, st, distName) };
 }
 
 // ── Writes ─────────────────────────────────────────────────────────────────
@@ -241,6 +278,7 @@ export async function createPush(
     distribution?: unknown;
     agentKey?: unknown;
     clientType?: unknown;
+    district?: unknown;
     actor: Actor;
   },
 ): Promise<PushBatch> {
@@ -248,6 +286,7 @@ export async function createPush(
   const stateName = normalizeState(input.state);
   const dist = normalizeDistribution(input.distribution);
   const type = normalizeClientType((input as any)?.clientType);
+  const distName = normalizeDistrict((input as any)?.district);
 
   const active = (await resolveAgents(env, code)).filter((a) => a.active);
   if (active.length === 0) throw new CampaignError(`no NeoDove agents configured for ${code}`, 400);
@@ -261,8 +300,8 @@ export async function createPush(
     throw new CampaignError(`no campaign URL configured for ${names}`, 400);
   }
 
-  const rows = await listCustomersByState(code, stateName, type);
-  if (rows.length === 0) throw new CampaignError('no customers in that region, state and type', 404);
+  const rows = await listCustomersByState(code, stateName, type, distName);
+  if (rows.length === 0) throw new CampaignError(distName ? `no customers in ${distName}, ${stateName}${type ? ' of this type' : ''}` : 'no customers in that region, state and type', 404);
   const { leads, skipped } = selectLeads(rows, code, stateName);
   if (leads.length === 0) throw new CampaignError('no pushable leads (every row is missing a valid phone)', 400);
 
@@ -275,6 +314,7 @@ export async function createPush(
     id: newId('ndp'),
     region: code,
     state: stateName,
+    district: distName,
     clientType: type,
     mode: live ? 'live' : 'dry-run',
     status: live ? 'queued' : 'done',
@@ -289,7 +329,7 @@ export async function createPush(
     requestedBy: String(input.actor?.id ?? ''),
     requestedByName: String(input.actor?.name ?? ''),
     campaignHost: hostOf(participants[0]?.url ?? ''),
-    detail1: stateName,
+    detail1: distName ? `${stateName} · ${distName}` : stateName,
     error: null,
     createdAt: now,
     updatedAt: now,

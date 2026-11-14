@@ -13,6 +13,8 @@ export interface MasterFilters {
   pipeline: string;
   typeBase: string;
   state: string;
+  /** '' = every district (options narrow to the selected state). */
+  district: string;
   subArea: string;
   owner: string;
   /**
@@ -33,6 +35,7 @@ export const EMPTY_FILTERS: MasterFilters = {
   pipeline: "",
   typeBase: "",
   state: "",
+  district: "",
   subArea: "",
   owner: "",
   duplicates: "",
@@ -45,14 +48,14 @@ export const EMPTY_FILTERS: MasterFilters = {
 export function hasActiveFilters(f: MasterFilters): boolean {
   return (
     !!f.q || !!f.region || !!f.status || !!f.pipeline || !!f.typeBase ||
-    !!f.state || !!f.subArea || !!f.owner || !!f.duplicates ||
+    !!f.state || !!f.district || !!f.subArea || !!f.owner || !!f.duplicates ||
     f.hasEmail || f.hasPhone || f.hasGstin || f.hasPincode
   );
 }
 
 function haystack(r: MasterCustomer): string {
   return [
-    r.name, r.company, r.contact, r.designation, r.city, r.state, r.subArea,
+    r.name, r.company, r.contact, r.designation, r.city, r.state, r.district, r.subArea,
     r.pincode, r.gstin, r.owner, r.customerType, r.typeBase, r.typeTag,
     r.duplicateGroup, r.duplicateAction, r.emails.join(" "), r.phones.join(" "),
     r.zohoCustomerId,
@@ -85,6 +88,7 @@ export function matchesFilters(r: MasterCustomer, f: MasterFilters): boolean {
   if (f.pipeline && r.pipeline !== f.pipeline) return false;
   if (f.typeBase && r.typeBase !== f.typeBase) return false;
   if (f.state && r.state !== f.state) return false;
+  if (f.district && r.district !== f.district) return false;
   if (f.subArea && r.subArea !== f.subArea) return false;
   if (f.owner && r.owner !== f.owner) return false;
   if (f.hasEmail && r.emails.length === 0) return false;
@@ -158,6 +162,7 @@ export function sortRows(rows: MasterCustomer[], sort: SortState): MasterCustome
 export interface FilterOptions {
   types: string[];
   states: string[];
+  districts: string[];
   subAreas: string[];
   owners: string[];
   pipelines: string[];
@@ -205,12 +210,19 @@ export function summarizeRows(rows: MasterCustomer[]): RowSummary {
   return out;
 }
 
-export function buildFilterOptions(rows: MasterCustomer[]): FilterOptions {
+export function buildFilterOptions(rows: MasterCustomer[], stateFilter = ""): FilterOptions {
   const pick = (fn: (r: MasterCustomer) => string) =>
     [...new Set(rows.map(fn).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  // District options narrow to the selected state — a state has tens of
+  // districts, the whole book has hundreds. No state → no district list
+  // (districts belong to a state; pick one first).
+  const districts = stateFilter
+    ? [...new Set(rows.filter((r) => r.state === stateFilter).map((r) => r.district).filter(Boolean))].sort((a, b) => a.localeCompare(b))
+    : [];
   return {
     types: pick((r) => r.typeBase),
     states: pick((r) => r.state),
+    districts,
     subAreas: pick((r) => r.subArea),
     owners: pick((r) => r.owner),
     pipelines: pick((r) => r.pipeline),
@@ -280,6 +292,7 @@ const CSV_COLUMNS: Array<[string, (r: MasterCustomer) => string | number]> = [
   ["Zone", (r) => r.zone],
   ["Sub-Area", (r) => r.subArea],
   ["State", (r) => r.state],
+  ["District", (r) => r.district],
   ["City", (r) => r.city],
   ["Pincode", (r) => r.pincode],
   ["Phones", (r) => r.phones.join(" / ")],

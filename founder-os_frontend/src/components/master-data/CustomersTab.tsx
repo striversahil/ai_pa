@@ -161,7 +161,7 @@ function CustomerCard({ row: r, onOpen }: { row: MasterCustomer; onOpen: (row: M
       ) : null}
 
       <div className="mt-2.5 grid grid-cols-2 gap-x-4 gap-y-2 border-t border-zinc-100 pt-2.5 sm:grid-cols-4 dark:border-zinc-800">
-        <Fact label="Location" value={[r.state, r.pincode].filter(Boolean).join(" · ") || "No state / pincode"} />
+        <Fact label="Location" value={[r.state, r.district, r.pincode].filter(Boolean).join(" · ") || "No state / district"} />
         <Fact
           label="Phone"
           value={r.phones[0] ? `${formatPhone(r.phones[0])}${r.phones.length > 1 ? ` +${r.phones.length - 1}` : ""}` : "No phone"}

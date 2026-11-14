@@ -2,7 +2,7 @@
 // Both write paths (HR dashboard edits and employee self-service updates) call
 // appendTaskLog so a task always has a single, consistent history.
 import { prisma } from '../../shared/prisma';
-import { istDateStr } from './parse';
+import { addDays, istDateStr } from './parse';
 import { taskLogJson } from './task-json';
 
 export interface TaskLogInput {
@@ -57,6 +57,57 @@ export async function listLogsForTasks(taskIds: string[], take = 400) {
     take,
   });
   return rows;
+}
+
+/** Latest `done` status change per task. The completion window ("Completed ·
+ *  last 30 days") must key on when the task was completed, never on dueDate —
+ *  a task can be due long ago and still be completed today. */
+export async function latestDoneDates(taskIds: string[]): Promise<Map<string, string>> {
+  const ids = [...new Set(taskIds.filter(Boolean))];
+  if (!ids.length) return new Map();
+  const rows: any[] = await (prisma as any).humanResourcesTaskLog.findMany({
+    where: { taskId: { in: ids.slice(0, 500) }, kind: 'status', status: 'done' },
+    orderBy: [{ createdAt: 'desc' }],
+    take: 5000,
+  });
+  const out = new Map<string, string>();
+  for (const row of rows) {
+    const key = String(row.taskId);
+    if (out.has(key) || !row.createdAt) continue;
+    // Normalise to ISO so callers can string-compare / sort completion dates.
+    const d = row.createdAt instanceof Date ? row.createdAt : new Date(String(row.createdAt));
+    out.set(key, Number.isNaN(d.getTime()) ? String(row.createdAt) : d.toISOString());
+  }
+  return out;
+}
+
+export interface CompletedWindowRow {
+  /** IST day the task was completed (YYYY-MM-DD). */
+  day: string;
+  /** Completion timestamp, ISO — sort key for "newest completion first". */
+  at: string;
+}
+
+/** Done tasks completed within `days` of `today`, keyed by task id — the
+ *  "Completed · last 30 days" window. Keys on the latest done journal row
+ *  (fallback `updatedAt`), never on `dueDate`, so a task due long ago but
+ *  completed today still shows. Non-done rows are ignored. */
+export async function completedInWindow<T extends { id: unknown; status: unknown; updatedAt?: unknown }>(
+  rows: T[],
+  today: string,
+  days = 30,
+): Promise<Map<string, CompletedWindowRow>> {
+  const done = rows.filter((row) => String(row.status) === 'done');
+  const dates = await latestDoneDates(done.map((row) => String(row.id)));
+  const cutoff = addDays(today, -days);
+  const out = new Map<string, CompletedWindowRow>();
+  for (const row of done) {
+    const d = new Date(String(dates.get(String(row.id)) ?? row.updatedAt ?? ''));
+    if (Number.isNaN(d.getTime())) continue;
+    const day = istDateStr(d);
+    if (day >= cutoff) out.set(String(row.id), { day, at: d.toISOString() });
+  }
+  return out;
 }
 
 /** Logs written on one IST day (HR activity feed). */

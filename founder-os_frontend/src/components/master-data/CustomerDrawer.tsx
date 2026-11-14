@@ -311,6 +311,7 @@ export default function CustomerDrawer({
               </Field>
               <Field label="Sub-area"><input className={inputClass} value={draft.subArea} disabled={!canManage} onChange={(e) => set("subArea", e.target.value)} /></Field>
               <Field label="State"><input className={inputClass} value={draft.state} disabled={!canManage} onChange={(e) => set("state", e.target.value)} /></Field>
+              <Field label="District" hint={canManage ? undefined : "Sales-head / root only"}><input className={inputClass} value={draft.district} disabled={!canManage} onChange={(e) => set("district", e.target.value)} /></Field>
               <Field label="Pincode"><input className={inputClass} value={draft.pincode} onChange={(e) => set("pincode", e.target.value)} /></Field>
               <Field label="City (verified)" hint={detail?.cityZoho ? `Zoho says: ${detail.cityZoho}` : undefined}>
                 <input className={inputClass} value={draft.cityVerified} onChange={(e) => set("cityVerified", e.target.value)} />
@@ -327,8 +328,8 @@ export default function CustomerDrawer({
                 <ReadOnlyValue>{[regionLabel(shown.region), shown.zone, shown.subArea].filter(Boolean).join(" · ")}</ReadOnlyValue>
               </div>
               <div>
-                <p className="text-[9px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">City / state / pincode</p>
-                <ReadOnlyValue>{[shown.city, shown.state, shown.pincode].filter(Boolean).join(" · ")}</ReadOnlyValue>
+                <p className="text-[9px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">City / district / state / pincode</p>
+                <ReadOnlyValue>{[shown.city, shown.district, shown.state, shown.pincode].filter(Boolean).join(" · ")}</ReadOnlyValue>
               </div>
               <div>
                 <p className="text-[9px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">GSTIN</p>

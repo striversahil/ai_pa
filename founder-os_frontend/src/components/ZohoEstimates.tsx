@@ -1,15 +1,16 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useLiveRefresh } from "@/hooks/useLiveEvents";
 import ZohoEstimatesHeader from "./zoho/ZohoEstimatesHeader";
 import KpiCards, { type KpiCardConfig } from "./zoho/KpiCards";
-import DailyMovementTracker from "./zoho/DailyMovementTracker";
+import DailyMovementTracker, { type MovementRow, type RangePreset } from "./zoho/DailyMovementTracker";
 import ActiveFilters from "./zoho/ActiveFilters";
 import CallingPriorityChecklist from "./zoho/CallingPriorityChecklist";
 import type { FilterRule } from "./zoho/types";
-import { getCommentAgeHours, getTodayDateString } from "./zoho/utils";
+import { getCommentAgeHours, getTodayDateString, istToday, istMonthStart, inDateRange, sumTotals } from "./zoho/utils";
 import { orgLabel, isMultiOrg } from "./zoho/orgs";
+import { REGIONS } from "@/telecalling/regions";
 import { KPI_FILTERS } from "./zoho-estimates/helpers";
 
 export default function ZohoEstimates() {
@@ -25,32 +26,62 @@ export default function ZohoEstimates() {
   const [showClosed, setShowClosed] = useState<boolean>(false);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [lastCompleteSyncAt, setLastCompleteSyncAt] = useState<string | null>(null);
-  // Live Zoho Books sales orders created today (from the zoho-sent-analyzer data endpoint).
-  const [salesOrdersToday, setSalesOrdersToday] = useState<number | null>(null);
-  const [salesOrdersTodayValue, setSalesOrdersTodayValue] = useState<number | null>(null);
-  const [salesOrdersTodayOrders, setSalesOrdersTodayOrders] = useState<any[] | null>(null);
+  // Live Zoho Books sales orders for the range ride on /api/estimates/movement.
   // Multi-org (BUI + DPG): org ids present in the payload + the active filter.
   const [organizations, setOrganizations] = useState<string[]>([]);
   const [orgFilter, setOrgFilter] = useState<string>("all");
+  // Region scope: every KPI + estimate list + movement tile filters to it.
+  // '' (Unmapped) estimates land in the UNMAPPED bucket.
+  const [regionFilter, setRegionFilter] = useState<string>("all");
+  // Consumer/reseller scope (same resolution as the leaderboard: rules +
+  // sales-head overrides + Customer-Master exact match).
+  const [segmentFilter, setSegmentFilter] = useState<string>("all");
+  const [segments, setSegments] = useState<Record<string, string> | null>(null);
+  // Custom movement range (default Today, matching the old "today" tiles).
+  const [rangeFrom, setRangeFrom] = useState<string>(() => istToday());
+  const [rangeTo, setRangeTo] = useState<string>(() => istToday());
+  const [rangePreset, setRangePreset] = useState<RangePreset>("today");
+  // Server-aggregated sales orders for the range (region/org scoped).
+  const [soMovement, setSoMovement] = useState<{ count: number; totalValue: number; rows: any[]; byRegion?: Record<string, { count: number; totalValue: number }> } | null>(null);
+  const [soLoading, setSoLoading] = useState<boolean>(false);
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [showClosed, filters, orgFilter]);
+  }, [showClosed, filters, orgFilter, regionFilter, segmentFilter, rangeFrom, rangeTo]);
+
+  // Latest scope for the movement fetch (avoids stale closures in the poll +
+  // live-refresh callbacks below).
+  const movementScope = useRef({ from: rangeFrom, to: rangeTo, region: regionFilter, org: orgFilter });
+  movementScope.current = { from: rangeFrom, to: rangeTo, region: regionFilter, org: orgFilter };
+
+  const fetchMovement = useCallback(async () => {
+    const p = movementScope.current;
+    setSoLoading(true);
+    try {
+      const res = await fetch(`/api/estimates/movement?from=${p.from}&to=${p.to}&region=${p.region}&org=${p.org}`);
+      const data = await res.json();
+      if (data?.salesOrders) setSoMovement({ ...data.salesOrders, byRegion: data.byRegion });
+    } catch {
+      // Movement tiles keep their last good values on a failed tick.
+    } finally {
+      setSoLoading(false);
+    }
+  }, []);
+
+  const fetchSegments = useCallback(async () => {
+    try {
+      const res = await fetch("/api/estimates/segments");
+      const data = await res.json();
+      if (data && typeof data === "object" && !Array.isArray(data)) setSegments(data);
+    } catch {
+      // Segment filter stays on 'all'-equivalent (everything unclassified) on failure.
+    }
+  }, []);
 
   const lastSyncTimeStr = useMemo(() => {
     if (!lastCompleteSyncAt) return null;
     return new Date(lastCompleteSyncAt).toLocaleString();
   }, [lastCompleteSyncAt]);
-
-  // Sales orders data now rides on /api/estimates (the automation data() route
-  // is not registered on the Worker — it 404s — so /api/estimates is the single
-  // reliable source for the "Sales Orders Today" KPI + feed).
-  const readSalesOrdersFrom = (data: any) => {
-    const so = data?.salesOrdersToday;
-    setSalesOrdersToday(typeof so?.count === 'number' ? so.count : 0);
-    setSalesOrdersTodayValue(typeof so?.totalValue === 'number' ? so.totalValue : 0);
-    setSalesOrdersTodayOrders(Array.isArray(so?.orders) ? so.orders : []);
-  };
 
   const fetchEstimates = async () => {
     setIsLoading(true);
@@ -60,7 +91,6 @@ export default function ZohoEstimates() {
       setEstimates(data.estimates ?? []);
       setLastCompleteSyncAt(data.lastCompleteSyncAt ?? null);
       setOrganizations(Array.isArray(data.organizations) ? data.organizations : []);
-      readSalesOrdersFrom(data);
     } catch (e) {
       console.error("Error loading Zoho estimates:", e);
     } finally {
@@ -71,14 +101,22 @@ export default function ZohoEstimates() {
   useEffect(() => {
     fetchEstimates();
     fetchBaseline();
+    fetchMovement();
+    fetchSegments();
     // Safety-net poll; primary freshness comes from useLiveEvents below.
-    const t = setInterval(() => { fetchEstimates(); fetchBaseline(); }, 15 * 60 * 1000);
+    const t = setInterval(() => { fetchEstimates(); fetchBaseline(); fetchMovement(); fetchSegments(); }, 15 * 60 * 1000);
     return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    fetchMovement();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rangeFrom, rangeTo, regionFilter, orgFilter]);
 
   useLiveRefresh(
     (event) => event.type === "estimates" || event.type === "baseline" || event.type === "automation",
-    () => { fetchEstimates(); fetchBaseline(); },
+    () => { fetchEstimates(); fetchBaseline(); fetchMovement(); fetchSegments(); },
   );
 
   const fetchBaseline = async () => {
@@ -329,18 +367,115 @@ export default function ZohoEstimates() {
     }));
   };
 
-  // Multi-org scope: one filtered list drives the checklist, KPI cards and
-  // counts together — 'all' keeps the merged BUI+DPG view.
+  // Scope: org × region. One filtered list drives the checklist, KPI cards,
+  // counts and movement tiles together — 'all' keeps the merged view.
+  const isLiveEstimate = (e: any): boolean => String(e?.status ?? "").toLowerCase() === "sent";
+  const bucketOfEstimate = (e: any): string => String(e?.region ?? "").trim().toUpperCase() || "UNMAPPED";
+  // Consumer/reseller bucket ('' = Unclassified until the segments fetch lands).
+  const segOfEstimate = (e: any): string => String(segments?.[(e as any)?.estimateId] ?? "") || "unset";
   const orgScopedEstimates = useMemo(() => (
     orgFilter === "all"
       ? estimates
       : estimates.filter(e => String(e.organizationId ?? "") === orgFilter)
   ), [estimates, orgFilter]);
+  const scopedEstimates = useMemo(() => {
+    const byRegion = regionFilter === "all"
+      ? orgScopedEstimates
+      : orgScopedEstimates.filter(e => bucketOfEstimate(e) === regionFilter);
+    if (segmentFilter === "all") return byRegion;
+    return byRegion.filter(e => segOfEstimate(e) === segmentFilter);
+  }, [orgScopedEstimates, regionFilter, segmentFilter, segments]);
+
+  // Range-scoped estimate movements (client-side: payload already carries
+  // date/declinedAt). New = created in range AND still sent.
+  const rangeMovements = useMemo(() => {
+    const declined = scopedEstimates.filter(e => inDateRange((e as any)?.declinedAt, rangeFrom, rangeTo));
+    const created = scopedEstimates.filter(e => String(e.status).toLowerCase() === "sent" && inDateRange((e as any)?.date, rangeFrom, rangeTo));
+    return { declined, created };
+  }, [scopedEstimates, rangeFrom, rangeTo]);
+
+  // Region pill counts (org scope, region NOT applied — stays stable while
+  // filtering). Live (sent) estimates only, matching the KPI cards.
+  const regionCounts = useMemo(() => {
+    const counts: Record<string, number> = { R1: 0, R2: 0, R3: 0, R4: 0, UNMAPPED: 0 };
+    for (const e of orgScopedEstimates) {
+      if (!isLiveEstimate(e)) continue;
+      counts[bucketOfEstimate(e)] = (counts[bucketOfEstimate(e)] ?? 0) + 1;
+    }
+    return counts;
+  }, [orgScopedEstimates]);
+
+  const liveOrgScopedCount = useMemo(() => orgScopedEstimates.filter(isLiveEstimate).length, [orgScopedEstimates]);
+
+  // Type pill counts (org × region scope, type NOT applied — stays stable while
+  // filtering). Live (sent) estimates only, matching the KPI cards.
+  const segmentCounts = useMemo(() => {
+    const counts: Record<string, number> = { consumer: 0, reseller: 0, unset: 0 };
+    const base = regionFilter === "all"
+      ? orgScopedEstimates
+      : orgScopedEstimates.filter(e => bucketOfEstimate(e) === regionFilter);
+    for (const e of base) {
+      if (!isLiveEstimate(e)) continue;
+      const s = segOfEstimate(e);
+      counts[s] = (counts[s] ?? 0) + 1;
+    }
+    return counts;
+  }, [orgScopedEstimates, regionFilter, segments]);
+
+  const liveBaseCount = useMemo(() => {
+    const base = regionFilter === "all"
+      ? orgScopedEstimates
+      : orgScopedEstimates.filter(e => bucketOfEstimate(e) === regionFilter);
+    return base.filter(isLiveEstimate).length;
+  }, [orgScopedEstimates, regionFilter]);
+
+  const applyPreset = (p: Exclude<RangePreset, "custom">) => {
+    const today = istToday();
+    if (p === "today") { setRangeFrom(today); setRangeTo(today); }
+    else if (p === "week") { const d = new Date(Date.now() - 6 * 86400000 + 5.5 * 3600 * 1000); setRangeFrom(d.toISOString().slice(0, 10)); setRangeTo(today); }
+    else if (p === "days30") { const d = new Date(Date.now() - 29 * 86400000 + 5.5 * 3600 * 1000); setRangeFrom(d.toISOString().slice(0, 10)); setRangeTo(today); }
+    else { setRangeFrom(istMonthStart()); setRangeTo(today); }
+    setRangePreset(p);
+    setCurrentPage(1);
+  };
+
+  const rangeTiles = useMemo(() => ({
+    salesOrders: { count: soMovement?.count ?? 0, totalValue: soMovement?.totalValue ?? 0 },
+    declined: { count: rangeMovements.declined.length, totalValue: sumTotals(rangeMovements.declined) },
+    newEstimates: { count: rangeMovements.created.length, totalValue: sumTotals(rangeMovements.created) },
+  }), [soMovement, rangeMovements]);
+
+  const movementRows = useMemo<MovementRow[]>(() => {
+    const rows: MovementRow[] = [];
+    for (const o of soMovement?.rows ?? []) {
+      rows.push({
+        kind: "so", key: `so-${o.so || o.customer}-${o.createdDate}`,
+        badge: "Sales Order", badgeCls: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+        primary: String(o.so || "SO"), customer: String(o.customer || ""),
+        total: Number(o.total) || 0, meta: String(o.ref ? `↳ ${o.ref}` : o.createdDate || ""),
+      });
+    }
+    const estRow = (est: any, kind: MovementRow["kind"], badge: string, badgeCls: string): MovementRow => {
+      const c = est.classification || {};
+      const lines: string[] = [];
+      if (c.summary) lines.push(`AI Summary: ${c.summary}`);
+      if (c.reasoning) lines.push(`LLM Analysis: ${c.reasoning}`);
+      return {
+        kind, key: `${kind}-${est.estimateId}`,
+        badge, badgeCls, primary: String(est.estimateNumber || ""),
+        customer: String(est.customerName || ""), total: Number(est.total) || 0,
+        meta: String(est.date || "").slice(0, 10), lines,
+      };
+    };
+    for (const est of rangeMovements.declined) rows.push(estRow(est, "declined", "Declined", "bg-rose-500/10 text-rose-400 border-rose-500/20"));
+    for (const est of rangeMovements.created) rows.push(estRow(est, "new", "New Created", "bg-indigo-500/10 text-indigo-400 border-indigo-500/20"));
+    return rows;
+  }, [soMovement, rangeMovements]);
 
   const priorityList = useMemo(() => {
     const filteredEstimates = showClosed
-      ? orgScopedEstimates
-      : orgScopedEstimates.filter(e => String(e.status).toLowerCase() === 'sent');
+      ? scopedEstimates
+      : scopedEstimates.filter(e => String(e.status).toLowerCase() === 'sent');
 
     let items = filteredEstimates.map((e) => {
       if (!e.classification) {
@@ -421,7 +556,7 @@ export default function ZohoEstimates() {
 
       return b.total - a.total;
     });
-  }, [orgScopedEstimates, filters, showClosed, orgFilter]);
+  }, [scopedEstimates, filters, showClosed]);
 
   const [customPrompt, setCustomPrompt] = useState<string>("");
   const [isPromptDirty, setIsPromptDirty] = useState<boolean>(false);
@@ -551,6 +686,13 @@ Action: (single clear objective — close order / clarify doubts / send revised 
     };
   }, [estimates, baseline, baselineStale]);
 
+  const isTodayRange = rangeFrom === istToday() && rangeTo === istToday();
+  const movementCaption = isTodayRange
+    ? (baselineStale
+      ? "⏳ New day started — waiting for the 01:00 AM IST baseline freeze. Counters reset to 0 then."
+      : `Baseline captured: ${baselineDate || "—"} (${movement?.baselineCount ?? 0} open, value: ₹${(movement?.baselineValue ?? 0).toLocaleString()}) — auto-frozen at 01:00 AM IST`)
+    : `Range: ${rangeFrom} → ${rangeTo} · declined stamps the lost day, new = still sent`;
+
   const filterOptionCounts = useMemo(() => {
     const counts: Record<string, number> = {
       satisfactory: 0,
@@ -565,7 +707,7 @@ Action: (single clear objective — close order / clarify doubts / send revised 
       last_comment_older_5h: 0
     };
 
-    orgScopedEstimates.filter(e => String(e.status).toLowerCase() === 'sent').forEach(est => {
+    scopedEstimates.filter(e => String(e.status).toLowerCase() === 'sent').forEach(est => {
       const c = est.classification || {};
 
       if (c.meaningfulUpdate === true) counts.satisfactory++;
@@ -584,13 +726,13 @@ Action: (single clear objective — close order / clarify doubts / send revised 
     });
 
     return counts;
-  }, [orgScopedEstimates]);
+  }, [scopedEstimates]);
 
   const stats = useMemo(() => {
     let totalValue = 0;
     let notAnsweringCount = 0;
 
-    orgScopedEstimates.filter(e => String(e.status).toLowerCase() === 'sent').forEach((e) => {
+    scopedEstimates.filter(e => String(e.status).toLowerCase() === 'sent').forEach((e) => {
       totalValue += e.total;
       const c = e.classification;
       if (c) {
@@ -599,11 +741,11 @@ Action: (single clear objective — close order / clarify doubts / send revised 
     });
 
     return {
-      totalCount: orgScopedEstimates.filter(e => String(e.status).toLowerCase() === 'sent').length,
+      totalCount: scopedEstimates.filter(e => String(e.status).toLowerCase() === 'sent').length,
       totalValue,
       notAnsweringCount
     };
-  }, [orgScopedEstimates]);
+  }, [scopedEstimates]);
 
   const applyKpiFilter = (field: string, inverted: boolean) => {
     const operator: "is" | "is_not" = inverted ? "is_not" : "is";
@@ -662,6 +804,97 @@ Action: (single clear objective — close order / clarify doubts / send revised 
         onClosePrompt={() => setIsPromptOpen(false)}
       />
 
+      {/* Scope bar: organization + region + type sit on top so no scroll is
+          needed to activate a filter. All three feed every KPI, list and
+          movement tile. */}
+      <div className="space-y-2">
+        {isMultiOrg(organizations) && (
+          <div className="flex items-center gap-2 text-xs">
+            <span className="font-bold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Organization</span>
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                onClick={() => setOrgFilter("all")}
+                className={`px-3 py-1.5 rounded-full border font-bold transition-colors cursor-pointer ${orgFilter === "all" ? "bg-indigo-500/15 text-indigo-500 dark:text-indigo-300 border-indigo-500/40" : "bg-zinc-100/60 dark:bg-zinc-800/60 text-zinc-600 dark:text-zinc-400 border-zinc-300/60 dark:border-zinc-700/60"}`}
+              >
+                All ({estimates.filter(isLiveEstimate).length})
+              </button>
+              {organizations.map((org) => {
+                const n = estimates.filter(e => String(e.organizationId ?? "") === org && isLiveEstimate(e)).length;
+                const active = orgFilter === org;
+                return (
+                  <button
+                    key={org}
+                    onClick={() => setOrgFilter(active ? "all" : org)}
+                    title={org}
+                    className={`px-3 py-1.5 rounded-full border font-bold transition-colors cursor-pointer ${active ? "bg-sky-500/15 text-sky-600 dark:text-sky-300 border-sky-500/40" : "bg-zinc-100/60 dark:bg-zinc-800/60 text-zinc-600 dark:text-zinc-400 border-zinc-300/60 dark:border-zinc-700/60"}`}
+                  >
+                    {orgLabel(org, organizations)} ({n})
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        <div className="flex items-center gap-2 text-xs">
+          <span className="font-bold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Region</span>
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              onClick={() => setRegionFilter("all")}
+              className={`px-3 py-1.5 rounded-full border font-bold transition-colors cursor-pointer ${regionFilter === "all" ? "bg-indigo-500/15 text-indigo-500 dark:text-indigo-300 border-indigo-500/40" : "bg-zinc-100/60 dark:bg-zinc-800/60 text-zinc-600 dark:text-zinc-400 border-zinc-300/60 dark:border-zinc-700/60"}`}
+            >
+              All regions ({liveOrgScopedCount})
+            </button>
+            {REGIONS.map((r) => {
+              const active = regionFilter === r.id;
+              return (
+                <button
+                  key={r.id}
+                  onClick={() => setRegionFilter(active ? "all" : r.id)}
+                  title={r.name}
+                  className={`px-3 py-1.5 rounded-full border font-bold transition-colors cursor-pointer ${active ? "bg-sky-500/15 text-sky-600 dark:text-sky-300 border-sky-500/40" : "bg-zinc-100/60 dark:bg-zinc-800/60 text-zinc-600 dark:text-zinc-400 border-zinc-300/60 dark:border-zinc-700/60"}`}
+                >
+                  {r.id} · {r.name.replace(" Region", "")} ({regionCounts[r.id] ?? 0})
+                </button>
+              );
+            })}
+            <button
+              onClick={() => setRegionFilter(regionFilter === "UNMAPPED" ? "all" : "UNMAPPED")}
+              title="Estimates with no mapped region"
+              className={`px-3 py-1.5 rounded-full border font-bold transition-colors cursor-pointer ${regionFilter === "UNMAPPED" ? "bg-sky-500/15 text-sky-600 dark:text-sky-300 border-sky-500/40" : "bg-zinc-100/60 dark:bg-zinc-800/60 text-zinc-600 dark:text-zinc-400 border-zinc-300/60 dark:border-zinc-700/60"}`}
+            >
+              Unmapped ({regionCounts.UNMAPPED ?? 0})
+            </button>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 text-xs">
+          <span className="font-bold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Type</span>
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              onClick={() => setSegmentFilter("all")}
+              className={`px-3 py-1.5 rounded-full border font-bold transition-colors cursor-pointer ${segmentFilter === "all" ? "bg-indigo-500/15 text-indigo-500 dark:text-indigo-300 border-indigo-500/40" : "bg-zinc-100/60 dark:bg-zinc-800/60 text-zinc-600 dark:text-zinc-400 border-zinc-300/60 dark:border-zinc-700/60"}`}
+            >
+              All ({liveBaseCount})
+            </button>
+            {([
+              { id: "consumer", label: "End consumer" },
+              { id: "reseller", label: "Reseller" },
+              { id: "unset", label: "Unclassified" },
+            ] as const).map((t) => {
+              const active = segmentFilter === t.id;
+              return (
+                <button
+                  key={t.id}
+                  onClick={() => setSegmentFilter(active ? "all" : t.id)}
+                  className={`px-3 py-1.5 rounded-full border font-bold transition-colors cursor-pointer ${active ? "bg-sky-500/15 text-sky-600 dark:text-sky-300 border-sky-500/40" : "bg-zinc-100/60 dark:bg-zinc-800/60 text-zinc-600 dark:text-zinc-400 border-zinc-300/60 dark:border-zinc-700/60"}`}
+                >
+                  {t.label} ({segmentCounts[t.id] ?? 0})
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
       <KpiCards
         totalCount={stats.totalCount}
         totalValue={stats.totalValue}
@@ -672,18 +905,19 @@ Action: (single clear objective — close order / clarify doubts / send revised 
         onCardClick={handleKpiClick}
       />
 
-      {(baseline.length > 0 || baselineStale) && movement && (
-        <DailyMovementTracker
-          baselineCount={movement.baselineCount}
-          baselineValue={movement.baselineValue}
-          baselineDate={baselineDate}
-          movement={movement}
-          pending={movement.pending}
-          salesOrdersToday={salesOrdersToday}
-          salesOrdersTodayValue={salesOrdersTodayValue}
-          salesOrdersTodayOrders={salesOrdersTodayOrders}
-        />
-      )}
+      <DailyMovementTracker
+        from={rangeFrom}
+        to={rangeTo}
+        preset={rangePreset}
+        onFromChange={(v) => { setRangeFrom(v); setRangePreset("custom"); setCurrentPage(1); }}
+        onToChange={(v) => { setRangeTo(v); setRangePreset("custom"); setCurrentPage(1); }}
+        onPreset={applyPreset}
+        tiles={rangeTiles}
+        rows={movementRows}
+        caption={movementCaption}
+        captionPending={isTodayRange && baselineStale}
+        loading={soLoading}
+      />
 
       <ActiveFilters
         filters={filters}
@@ -693,34 +927,6 @@ Action: (single clear objective — close order / clarify doubts / send revised 
         onRemove={(id) => setFilters(prev => prev.filter(f => f.id !== id))}
         onClear={() => setFilters([])}
       />
-
-      {isMultiOrg(organizations) && (
-        <div className="flex items-center gap-2 text-xs">
-          <span className="font-bold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Organization</span>
-          <div className="flex flex-wrap gap-1.5">
-            <button
-              onClick={() => setOrgFilter("all")}
-              className={`px-3 py-1.5 rounded-full border font-bold transition-colors cursor-pointer ${orgFilter === "all" ? "bg-indigo-500/15 text-indigo-500 dark:text-indigo-300 border-indigo-500/40" : "bg-zinc-100/60 dark:bg-zinc-800/60 text-zinc-600 dark:text-zinc-400 border-zinc-300/60 dark:border-zinc-700/60"}`}
-            >
-              All ({estimates.length})
-            </button>
-            {organizations.map((org) => {
-              const n = estimates.filter(e => String(e.organizationId ?? "") === org).length;
-              const active = orgFilter === org;
-              return (
-                <button
-                  key={org}
-                  onClick={() => setOrgFilter(active ? "all" : org)}
-                  title={org}
-                  className={`px-3 py-1.5 rounded-full border font-bold transition-colors cursor-pointer ${active ? "bg-sky-500/15 text-sky-600 dark:text-sky-300 border-sky-500/40" : "bg-zinc-100/60 dark:bg-zinc-800/60 text-zinc-600 dark:text-zinc-400 border-zinc-300/60 dark:border-zinc-700/60"}`}
-                >
-                  {orgLabel(org, organizations)} ({n})
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
 
       <CallingPriorityChecklist
         isLoading={isLoading}

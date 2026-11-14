@@ -11,6 +11,7 @@ export const ALIASES: Record<string, { to: string; kind: "data" | "nav" }> = {
   telecalling: { to: "sales", kind: "nav" },
   "enquiry-tracker": { to: "sales", kind: "nav" },
   "master-data": { to: "sales", kind: "nav" },
+  "zoho-sent-analyzer": { to: "sales", kind: "nav" },
 };
 
 /** The workspace a URL slug should show (legacy slugs land on their successor). */

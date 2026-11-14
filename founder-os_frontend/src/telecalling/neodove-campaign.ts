@@ -20,6 +20,15 @@ export interface CampaignStateCount {
   lastPushedCount: number;
 }
 
+/** One district inside a region + state — the drill-down's source. */
+export interface CampaignDistrictCount {
+  district: string;
+  total: number;
+  withPhone: number;
+  lastPushedAt: string | null;
+  lastPushedCount: number;
+}
+
 export interface CampaignTypeCount {
   base: string;
   total: number;
@@ -63,6 +72,8 @@ export interface CampaignSkip {
 export interface CampaignPreview {
   region: string;
   state: string;
+  /** '' = whole state; otherwise the single filtered district. */
+  district: string;
   clientType: string;
   total: number;
   ready: number;
@@ -80,6 +91,8 @@ export interface PushBatch {
   id: string;
   region: string;
   state: string;
+  /** '' = whole state; otherwise the single pushed district. */
+  district: string;
   clientType: string;
   mode: PushMode;
   status: PushStatus;

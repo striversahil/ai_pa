@@ -1,6 +1,6 @@
 {
   "id": "zoho-sent-analyzer",
-  "name": "Zoho Sent Analyzer",
+  "name": "Analyzer",
   "description": "Incremental Zoho estimate sync + analysis every 5 minutes.",
   "type": "handler",
   "trigger": {

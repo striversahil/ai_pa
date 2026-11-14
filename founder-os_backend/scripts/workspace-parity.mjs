@@ -14,7 +14,7 @@ import { join } from 'node:path';
 const [mode, a, b] = process.argv.slice(2);
 
 const SLUGS = [
-  'zoho-sent-analyzer', 'dpp-prices-dashboard', 'wa-engine-monitor', 'whatsapp-marketing',
+  'dpp-prices-dashboard', 'wa-engine-monitor', 'whatsapp-marketing',
   'neodove-telecaller-report', 'sales', 'accounts', 'digital-marketing', 'human-resources',
   'debtors-tracker', 'payment-tracker', 'whatsapp-autopilot', 'enquiry-procurement',
   'enquiry-management', 'reporting-sheet', 'crm', 'product-line', 'stock', 'samarth-overview',

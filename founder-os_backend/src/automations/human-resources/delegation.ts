@@ -14,10 +14,10 @@ import { prisma } from '../../shared/prisma';
 import { HrError } from './errors';
 import { cleanTaskCreate, cleanTaskPatch, istDateStr, istTimeStr } from './parse';
 import { taskJson } from './task-json';
-import { appendTaskLog, listLogsForDay, listLogsForTasks } from './task-logs';
+import { appendTaskLog, completedInWindow, listLogsForDay, listLogsForTasks } from './task-logs';
 import { invalidateHumanResourcesCache, resolveSelfHumanResourcesMember } from './service';
 import {
-  dayCounts, delegationDate, groupLogsByTask, isSelfEditable, needsUpdateToday,
+  dayCounts, delegationDate, groupLogsByTask, isSelfEditable, needsUpdateToday, reopenRequiresReason,
 } from './delegation-parse';
 import type { HrSelf } from './types';
 
@@ -114,7 +114,12 @@ export async function getDelegationBoard(opts: {
     orderBy: [{ dueDate: 'asc' }, { dueTime: 'asc' }],
     take: TASK_TAKE,
   })) as any[];
-  const tasks = taskRows.map((row) => taskJson(row, today, nowTime));
+  // "Completed · last 30 days" keys on the last done journal row, never dueDate.
+  const doneWindow = await completedInWindow(taskRows, today);
+  const visibleRows = taskRows.filter(
+    (row) => String(row.status) !== 'done' || doneWindow.has(String(row.id)),
+  );
+  const tasks = visibleRows.map((row) => taskJson(row, today, nowTime));
   const taskById = new Map(taskRows.map((row) => [String(row.id), row]));
 
   // Recent journal entries inlined on each card (last 5, newest first).
@@ -315,6 +320,9 @@ export async function updateDelegationTask(
   }
 
   const patch = cleanTaskPatch(input);
+  if (reopenRequiresReason(current.status, patch)) {
+    throw new HrError('A reason is required to reopen a completed task', 400);
+  }
   if (patch.assignedToId !== undefined && !isManager) delete patch.assignedToId;
 
   const row: any = await (prisma as any).humanResourcesTask.update({

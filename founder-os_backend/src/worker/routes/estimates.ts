@@ -15,6 +15,27 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
     return c.json(await getEstimatesPayload());
   });
 
+  // ── Analyzer segments (consumer/reseller per estimate; login-gated like /api/estimates)
+  app.get('/api/estimates/segments', async (c) => {
+    try {
+      const { getEstimateSegments } = await import('../../modules/estimates/segments');
+      return c.json(await getEstimateSegments());
+    } catch (e: any) {
+      return c.json({ error: e?.message || 'segments failed' }, 500);
+    }
+  });
+
+  // ── Analyzer movement (custom-range SO counts; login-gated like /api/estimates)
+  app.get('/api/estimates/movement', async (c) => {
+    try {
+      const { getSalesOrderMovement } = await import('../../modules/estimates/movement');
+      const q = c.req.query();
+      return c.json(await getSalesOrderMovement({ from: q.from, to: q.to, region: q.region, org: q.org }));
+    } catch (e: any) {
+      return c.json({ error: e?.message || 'movement failed' }, 500);
+    }
+  });
+
   // ── B2B EST-No. lookup (Check button): does the Zoho estimate exist and
   // who holds it? Read-only, same login gate as /api/estimates.
   app.get('/api/estimates/lookup', async (c) => {

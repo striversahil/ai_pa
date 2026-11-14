@@ -6,14 +6,16 @@
 // Writes always go through the delegation service (append-only journal):
 //   * manager mode → /api/human-resources/tasks/:id (HR authority)
 //   * self mode    → /api/delegation/tasks/:id (employee, scoped server-side)
-// The remark box is append-only: it starts empty and adds one journal entry per
-// save, so a task accumulates a day-by-day trail instead of overwriting history.
+// There is no Save button: status changes save immediately, remarks save on
+// blur/Enter, and the parent's shared optimistic driver paints + reconciles.
+// A done task can only go back to open with a reason; the reason is written as
+// the remark on the status journal row.
 import React, { useState } from "react";
+import Modal from "../Modal";
 import {
   PRIORITY_LABEL, STATUS_LABEL, TASK_STATUSES,
   type HrDelegationTask, type HrTask, type TaskStatus,
 } from "@/hr/types";
-import { jsonRequest, readError } from "@/hr/api";
 import { dateLabel, timeLabel, initials } from "@/hr/format";
 import { dayHeading, istClock } from "@/hr/delegation";
 
@@ -87,7 +89,8 @@ export interface TaskCardProps {
   today?: string;
   /** Roster member of the viewer (enables editing/deleting own tasks). */
   selfMemberId?: string | null;
-  onChanged: () => void;
+  /** Shared optimistic writer (useHrTaskSave) — paints instantly, reconciles. */
+  onSave: (task: HrTask, body: Record<string, unknown>) => Promise<unknown>;
   onEdit?: (task: HrTask | HrDelegationTask) => void;
   onDelete?: (task: HrTask | HrDelegationTask) => void;
   onOpenHistory?: (task: HrTask | HrDelegationTask) => void;
@@ -97,55 +100,76 @@ export interface TaskCardProps {
 }
 
 export default function TaskCard({
-  task, mode, today = "", selfMemberId = null, onChanged,
+  task, mode, today = "", selfMemberId = null, onSave,
   onEdit, onDelete, onOpenHistory,
   showAssignee = true, showHistory = true, compact = false,
 }: TaskCardProps) {
-  // The staged status is a local override; null = "show server truth" so a live
-  // refresh never needs a setState-in-effect to stay in sync.
-  const [statusOverride, setStatusOverride] = useState<TaskStatus | null>(null);
-  const status = statusOverride ?? task.status;
+  const status = task.status;
   const [remark, setRemark] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [busyCount, setBusyCount] = useState(0);
+  const busy = busyCount > 0;
   const [err, setErr] = useState<string | null>(null);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [editing, setEditing] = useState(false);
+  const [reopen, setReopen] = useState<{ status: TaskStatus; reason: string } | null>(null);
 
   const own = mode === "self"
     && task.origin === "self"
     && String(task.createdByMemberId ?? "") === String(selfMemberId ?? "");
   const canEdit = mode === "manager" || own;
   const canDelete = mode === "manager" || own;
-  const dirty = status !== task.status || remark.trim().length > 0;
   const logs = "recentLogs" in task ? task.recentLogs : [];
 
-  const save = async () => {
-    if (!dirty) return;
-    setBusy(true);
+  const save = async (body: Record<string, unknown>): Promise<boolean> => {
+    // Never drop a second action: the shared hook serializes writes per task id,
+    // so a status change queues behind an in-flight remark save (and vice versa).
+    setBusyCount((n) => n + 1);
     setErr(null);
-    // Only send what actually changed: a pure remark writes a remark row, a
-    // status change writes a status row (with the remark attached).
-    const body: Record<string, unknown> = {};
-    if (status !== task.status) body.status = status;
-    if (remark.trim()) body.remark = remark.trim();
+    setSaveState("saving");
     try {
-      const url = mode === "manager"
-        ? `/api/human-resources/tasks/${task.id}`
-        : `/api/delegation/tasks/${task.id}`;
-      const res = await jsonRequest(url, "PATCH", body);
-      if (!res.ok) throw new Error(await readError(res));
-      setRemark("");
-      setStatusOverride(null);
-      onChanged();
+      await onSave(task, body);
+      setSaveState("saved");
+      return true;
     } catch (e) {
+      setSaveState("error");
       setErr(e instanceof Error ? e.message : "Save failed");
+      return false;
     } finally {
-      setBusy(false);
+      setBusyCount((n) => Math.max(0, n - 1));
     }
+  };
+
+  const changeStatus = (next: TaskStatus) => {
+    if (next === task.status) return;
+    // Reopening completed work needs an explicit reason; the modal sends status
+    // and reason as one journal row.
+    if (task.status === "done" && next !== "done") {
+      setErr(null);
+      setReopen({ status: next, reason: "" });
+      return;
+    }
+    void save({ status: next });
+  };
+
+  const saveRemark = async () => {
+    const text = remark.trim();
+    if (!text) return;
+    const ok = await save({ remark: text });
+    // Clear only if untouched since the save started (don't wipe newer typing).
+    if (ok) setRemark((cur) => (cur.trim() === text ? "" : cur));
+  };
+
+  const confirmReopen = async () => {
+    if (!reopen || !reopen.reason.trim()) return;
+    const ok = await save({ status: reopen.status, remark: reopen.reason.trim() });
+    if (ok) setReopen(null);
   };
 
   const border = task.overdue ? "border-rose-500/40"
     : task.status === "done" ? "border-emerald-500/25"
     : "border-zinc-200 dark:border-zinc-800";
+
+  const field = "rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2 py-1.5 text-xs outline-none focus:border-indigo-500";
 
   return (
     <div className={`rounded-xl border ${border} bg-white dark:bg-zinc-950 ${compact ? "p-2.5" : "p-3"} space-y-2`}>
@@ -197,22 +221,68 @@ export default function TaskCard({
       {showHistory && logs.length > 0 && <LogList logs={logs} today={today} />}
 
       <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center">
-        <select value={status} onChange={(e) => setStatusOverride(e.target.value as TaskStatus)} className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2 py-1.5 text-xs outline-none focus:border-indigo-500">
+        <select
+          value={status}
+          onChange={(e) => changeStatus(e.target.value as TaskStatus)}
+          className={field}
+        >
           {TASK_STATUSES.map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
         </select>
         <input
           value={remark}
-          onChange={(e) => setRemark(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void save(); } }}
+          onChange={(e) => { setRemark(e.target.value); setSaveState("idle"); }}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void saveRemark(); } }}
+          onBlur={() => { void saveRemark(); }}
           onFocus={() => setEditing(true)}
           placeholder={editing ? "Add today's remark…" : "Add a remark (optional)"}
-          className="min-w-0 flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2 py-1.5 text-xs outline-none focus:border-indigo-500"
+          className={`min-w-0 flex-1 ${field}`}
         />
-        <button onClick={save} disabled={busy || !dirty} className="rounded-lg bg-zinc-900 dark:bg-zinc-100 px-3 py-1.5 text-xs font-bold text-white dark:text-zinc-900 disabled:opacity-30">
-          {busy ? "Saving…" : "Save"}
-        </button>
+        <span className="shrink-0 px-1 text-[11px] font-semibold text-zinc-400" title="Status saves immediately; remarks save on blur or Enter">
+          {saveState === "saving" ? "Saving…" : saveState === "saved" ? "✓ Saved" : saveState === "error" ? "⚠ Retry" : ""}
+        </span>
       </div>
-      {err && <div className="text-[11px] text-rose-500">{err}</div>}
+      {err && !reopen && <div className="text-[11px] text-rose-500">{err}</div>}
+
+      {reopen && (
+        <Modal
+          title="Reopen completed task"
+          subtitle={task.title}
+          onClose={() => { setReopen(null); setErr(null); }}
+        >
+          <div className="space-y-3">
+            <p className="text-xs text-zinc-500">
+              A reason is required. It is added to the task history so everyone can see why this was reopened.
+            </p>
+            <textarea
+              value={reopen.reason}
+              onChange={(e) => setReopen({ ...reopen, reason: e.target.value })}
+              rows={3}
+              placeholder="Why is this task being reopened?"
+              className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-3 py-2 text-sm outline-none focus:border-indigo-500"
+              autoFocus
+            />
+            {err && <div className="rounded-lg border border-rose-500/30 bg-rose-500/5 px-3 py-2 text-xs text-rose-500">{err}</div>}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => { setReopen(null); setErr(null); }}
+                disabled={busy}
+                className="rounded-lg bg-zinc-100 dark:bg-zinc-800 px-4 py-2 text-sm font-semibold text-zinc-700 dark:text-zinc-300 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmReopen}
+                disabled={busy || !reopen.reason.trim()}
+                className="rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-2 text-sm font-bold text-white disabled:opacity-40"
+              >
+                {busy ? "Reopening…" : "Reopen task"}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

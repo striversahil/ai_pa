@@ -20,7 +20,7 @@ import { isApproved, notifyLive, LiveEvent, type Bindings } from '../context';
 import { AuthError, ScopeKeys } from '../../modules/auth/types';
 import {
   CampaignError, createPush, getCampaignBatches, getCampaignPreview, getCampaignStates,
-  runBatchChunk, setAgentCampaignUrl, getCampaignTypes,
+  getCampaignDistricts, runBatchChunk, setAgentCampaignUrl, getCampaignTypes,
 } from '../../modules/neodove-campaign/service';
 import { requireViewer } from '../viewer';
 import { readBody, writeError } from '../http';
@@ -57,10 +57,20 @@ export function registerNeodoveCampaignRoutes(app: Hono<{ Bindings: Bindings }>)
     }
   });
 
+  app.get('/api/neodove/campaign/districts', async (c) => {
+    try {
+      await requireCampaignManager(c);
+      const payload = await getCampaignDistricts(c.env, c.req.query('region'), c.req.query('state'), c.req.query('clientType'));
+      return c.json(payload);
+    } catch (e) {
+      return fail(c, e);
+    }
+  });
+
   app.get('/api/neodove/campaign/types', async (c) => {
     try {
       await requireCampaignManager(c);
-      const payload = await getCampaignTypes(c.env, c.req.query('region'), c.req.query('state'));
+      const payload = await getCampaignTypes(c.env, c.req.query('region'), c.req.query('state'), c.req.query('district'));
       return c.json(payload);
     } catch (e) {
       return fail(c, e);
@@ -77,6 +87,7 @@ export function registerNeodoveCampaignRoutes(app: Hono<{ Bindings: Bindings }>)
         c.req.query('distribution'),
         c.req.query('agent'),
         c.req.query('clientType'),
+        c.req.query('district'),
       );
       return c.json({ preview });
     } catch (e) {
@@ -94,6 +105,7 @@ export function registerNeodoveCampaignRoutes(app: Hono<{ Bindings: Bindings }>)
         distribution: body?.distribution,
         agentKey: body?.agentKey ?? body?.agent,
         clientType: body?.clientType,
+        district: body?.district,
         actor: { id: String(me?.user?.id ?? ''), name: String(me?.user?.name ?? me?.user?.email ?? '') },
       });
       notifyLive(c, { type: LiveEvent.NeodoveCampaign, batchId: batch.id, status: batch.status });

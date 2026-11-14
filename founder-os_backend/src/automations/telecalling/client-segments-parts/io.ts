@@ -265,6 +265,7 @@ export async function setTypeRule(
     .bind(base, segment, String(by ?? ''), String(byName ?? ''), iso)
     .run();
   await cacheDelPrefix('telecalling:dashboard:');
+  await cacheDelPrefix('zoho:segments');
   return { base, segment: segment as ClientSegmentKind };
 }
 
@@ -280,6 +281,7 @@ export async function setManualSegment(
   if (!segment) {
     await db.prepare('DELETE FROM ClientSegment WHERE clientKey = ?').bind(key).run();
     await cacheDelPrefix('telecalling:dashboard:');
+  await cacheDelPrefix('zoho:segments');
     return { key, segment: '', cleared: true };
   }
   // Display/master names are looked up server-side — the client only sends the
@@ -314,5 +316,6 @@ export async function setManualSegment(
     .bind(key, displayName, segment, masterId, masterName, String(opts.decidedBy ?? ''), String(opts.decidedByName ?? ''), iso, iso)
     .run();
   await cacheDelPrefix('telecalling:dashboard:');
+  await cacheDelPrefix('zoho:segments');
   return { key, segment: segment as ClientSegmentKind, cleared: false };
 }

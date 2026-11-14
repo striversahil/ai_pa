@@ -13,9 +13,11 @@ import { BACKEND_DIR, FRONTEND_SRC, bundleToFile } from './_bundle.mjs';
 
 const cat = await import(bundleToFile(join(BACKEND_DIR, 'src', 'modules', 'workspaces', 'catalog.ts')));
 
-// Verbatim copy of modules/automation/dashboardSlugs.ts before 2026-11-12.
+// Verbatim copy of modules/automation/dashboardSlugs.ts before 2026-11-12,
+// minus zoho-sent-analyzer (retired as a standalone dashboard 2026-11-14 —
+// now the Analyzer tab inside Sales; see catalog.ts navAliases).
 const LEGACY_DASHBOARD_SLUGS = [
-  'zoho-sent-analyzer', 'dpp-prices-dashboard', 'wa-engine-monitor', 'whatsapp-marketing',
+  'dpp-prices-dashboard', 'wa-engine-monitor', 'whatsapp-marketing',
   'neodove-telecaller-report', 'sales', 'accounts', 'digital-marketing', 'human-resources',
   'debtors-tracker', 'payment-tracker', 'whatsapp-autopilot', 'enquiry-procurement',
   'enquiry-management', 'reporting-sheet', 'crm', 'product-line', 'stock',
@@ -40,6 +42,7 @@ describe('workspace catalog', () => {
     assert.equal(cat.canonicalNavSlug('telecalling'), 'sales');
     assert.equal(cat.canonicalNavSlug('enquiry-tracker'), 'sales');
     assert.equal(cat.canonicalNavSlug('master-data'), 'sales');
+    assert.equal(cat.canonicalNavSlug('zoho-sent-analyzer'), 'sales');
     assert.equal(cat.canonicalNavSlug('payment-tracker'), 'debtors-tracker');
     assert.equal(cat.canonicalNavSlug('stock'), 'stock');
   });

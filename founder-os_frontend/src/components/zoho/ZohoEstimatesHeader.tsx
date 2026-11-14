@@ -61,7 +61,7 @@ export default function ZohoEstimatesHeader({
         </div>
         <div>
           <h1 className="text-2xl font-extrabold tracking-tight text-[var(--text-primary)] flex items-center gap-2">
-            <span>Zoho Sent Estimates</span>
+            <span>Analyzer</span>
             <span className="text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
               AI Analytics
             </span>

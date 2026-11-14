@@ -2,7 +2,7 @@
 // service.ts re-exports everything public here, so existing imports keep working.
 import type { HrSelf, HrScope } from "../types";
 import { prisma } from "../../../shared/prisma";
-import { istTimeStr, taskSort, addDays, isValidDate, istDateStr, normalizeMonth, istMonthStr, cleanMemberCreate, cleanMemberPatch, cleanTaskCreate, cleanTaskPatch, cleanExpenseCreate, cleanExpensePatch, cleanFundTxnCreate, cleanFundTxnPatch } from "../parse";
+import { istTimeStr, taskSort, isValidDate, istDateStr, normalizeMonth, istMonthStr, cleanMemberCreate, cleanMemberPatch, cleanTaskCreate, cleanTaskPatch, cleanExpenseCreate, cleanExpensePatch, cleanFundTxnCreate, cleanFundTxnPatch } from "../parse";
 import { getInventorySnapshot } from "../inventory";
 import { taskJson } from "../task-json";
 import { cached } from "../../../shared/cache";
@@ -10,8 +10,9 @@ import { DATA_CACHE_PREFIX, DATA_TTL_MS, invalidateHumanResourcesCache } from ".
 import { createWithEmployeeCode } from "../employee-codes";
 import { mirrorRosterRow } from "../../../modules/core/sync";
 import { HrError } from "../errors";
-import { appendTaskLog } from "../task-logs";
-import { normId, emailTokens, expenseJson, fundTxnJson } from "./pure";
+import { appendTaskLog, completedInWindow } from "../task-logs";
+import { reopenRequiresReason } from "../delegation-parse";
+import { normId, emailTokens, expenseJson, fundTxnJson, splitTaskBuckets } from "./pure";
 
 export async function resolveSelfHumanResourcesMember(
   asId: unknown,
@@ -104,21 +105,14 @@ export async function computeDashboard(today: string, month: string, scope: HrSc
     .map((t) => taskJson(t, today, nowTime))
     .sort(taskSort);
 
-  const overdue: any[] = [];
-  const dueToday: any[] = [];
-  const upcoming: any[] = [];
-  const completed: any[] = [];
-  const cutoff = addDays(today, -30);
-  for (const t of visibleTasks) {
-    if (t.status === 'done') {
-      if (String(t.dueDate || '') >= cutoff) completed.push(t);
-      continue;
-    }
-    if (t.overdue) overdue.push(t);
-    else if (String(t.dueDate) === today) dueToday.push(t);
-    else upcoming.push(t);
-  }
-  completed.sort((a, b) => String(b.dueDate).localeCompare(String(a.dueDate)) || String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  // "Completed · last 30 days" keys on the completion day, never dueDate.
+  const doneWindow = await completedInWindow(visibleTasks, today);
+  const windowedTasks = visibleTasks.filter(
+    (t) => t.status !== 'done' || doneWindow.has(String(t.id)),
+  );
+  const { overdue, today: dueToday, upcoming, completed } = splitTaskBuckets(
+    windowedTasks, today, (id) => doneWindow.get(id)?.at ?? '',
+  );
 
   const fixed = expenseRaw.filter((e) => e.expenseType === 'fixed').map(expenseJson);
   const variable = expenseRaw.filter((e) => e.expenseType === 'variable').map(expenseJson);
@@ -271,6 +265,9 @@ export async function updateTask(
   }
 
   const patch = cleanTaskPatch(input);
+  if (reopenRequiresReason(current.status, patch)) {
+    throw new HrError('A reason is required to reopen a completed task', 400);
+  }
   if (patch.assignedToId !== undefined) {
     if (patch.assignedToId) await ensureAssignableMember(patch.assignedToId);
   }

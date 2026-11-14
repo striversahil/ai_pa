@@ -20,7 +20,7 @@ import { RefreshCw, Send, ShieldAlert, XCircle } from 'lucide-react';
 import {
   REGION_CODES, SKIP_LABELS, agentSplitLabel, batchDistributionLabel, batchOutcome, batchPct,
   distributionOptions, distributionSummary, formatStamp,
-  type CampaignPreview, type CampaignStatesPayload, type Distribution, type PushBatch,
+  type CampaignDistrictCount, type CampaignPreview, type CampaignStatesPayload, type Distribution, type PushBatch,
   type PushProgress,
 } from '@/telecalling/neodove-campaign';
 import type { Props } from "./neo-dove-campaign-section/types";
@@ -31,6 +31,10 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
   const [region, setRegion] = useState<string>('R1');
   const [states, setStates] = useState<CampaignStatesPayload | null>(null);
   const [stateName, setStateName] = useState<string>('');
+  // District drill-down inside the selected state ('' = whole state).
+  const [districtName, setDistrictName] = useState<string>('');
+  const [districts, setDistricts] = useState<CampaignDistrictCount[] | null>(null);
+  const [loadingDistricts, setLoadingDistricts] = useState(false);
   const [clientType, setClientType] = useState<string>('');
   const [distribution, setDistribution] = useState<Distribution>('split');
   const [agentKey, setAgentKey] = useState<string>('');
@@ -85,10 +89,36 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
     }
   }, []);
 
+  const loadDistricts = useCallback(async (code: string, state: string, type: string) => {
+    setLoadingDistricts(true);
+    try {
+      const params = new URLSearchParams({ region: code, state });
+      if (type) params.set('clientType', type);
+      const payload = await jsonFetch<{ districts: CampaignDistrictCount[] }>(
+        `/api/neodove/campaign/districts?${params.toString()}`,
+      );
+      if (cancelled.current) return;
+      setDistricts(payload.districts ?? []);
+      setDistrictName((prev) => ((payload.districts ?? []).some((d) => d.district === prev) ? prev : ''));
+    } catch {
+      if (!cancelled.current) setDistricts([]);
+    } finally {
+      if (!cancelled.current) setLoadingDistricts(false);
+    }
+  }, []);
+
   useEffect(() => {
     void loadStates(region, clientType);
     void loadHistory(region);
   }, [region, clientType, loadStates, loadHistory]);
+
+  // District drill-down follows the selected state (districts belong to a
+  // state — a state change always drops the district).
+  useEffect(() => {
+    setDistricts(null);
+    if (!stateName) { setDistrictName(''); return; }
+    void loadDistricts(region, stateName, clientType);
+  }, [region, stateName, clientType, loadDistricts]);
 
   const options = useMemo(
     () => distributionOptions(states?.agents ?? [], states?.teamLeads ?? [], stateName),
@@ -120,17 +150,25 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
     const params = new URLSearchParams({ region, state: stateName, distribution });
     if (distribution === 'single' && agentKey) params.set('agent', agentKey);
     if (clientType) params.set('clientType', clientType);
+    if (districtName) params.set('district', districtName);
     jsonFetch<{ preview: CampaignPreview }>(`/api/neodove/campaign/preview?${params.toString()}`)
       .then((r) => { if (alive) setPreview(r.preview); })
       .catch((e: any) => { if (alive) setError(e?.message ?? 'Failed to preview'); })
       .finally(() => { if (alive) setLoadingPreview(false); });
     return () => { alive = false; };
-  }, [region, stateName, distribution, agentKey, clientType]);
+  }, [region, stateName, districtName, distribution, agentKey, clientType]);
 
   const selectedState = useMemo(
     () => states?.states.find((s) => s.state === stateName) ?? null,
     [states, stateName],
   );
+
+  const selectedDistrict = useMemo(
+    () => (districts ?? []).find((d) => d.district === districtName) ?? null,
+    [districts, districtName],
+  );
+
+  const lastPushNote = selectedDistrict ?? selectedState;
 
   const selectedOption = useMemo(
     () => options.find((o) => o.distribution === distribution && o.agentKey === agentKey) ?? null,
@@ -171,7 +209,7 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
       const created = await jsonFetch<{ batch: PushBatch }>('/api/neodove/campaign/push', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ region, state: stateName, distribution, agentKey, clientType }),
+        body: JSON.stringify({ region, state: stateName, distribution, agentKey, clientType, district: districtName }),
       });
       setBatch(created.batch);
       if (created.batch.mode === 'dry-run') {
@@ -196,7 +234,7 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
     } finally {
       if (!cancelled.current) setPushing(false);
     }
-  }, [canManage, stateName, pushing, region, distribution, agentKey, clientType, runRemaining, loadHistory, loadStates]);
+  }, [canManage, stateName, districtName, pushing, region, distribution, agentKey, clientType, runRemaining, loadHistory, loadStates]);
 
   if (!canManage) return null;
 
@@ -214,7 +252,7 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
             NeoDove campaign
           </h3>
           <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-            Push a region&apos;s customers, state by state, into the live NeoDove calling campaign —
+            Push a region&apos;s customers, state by state or district by district, into the live NeoDove calling campaign —
             to one agent, split across the region&apos;s pair, or as a full copy to the Team Lead.
           </p>
         </div>
@@ -243,7 +281,7 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
           <button
             key={code}
             type="button"
-            onClick={() => { setRegion(code); setStateName(''); setClientType(''); setAgentKey(''); setDistribution('split'); }}
+            onClick={() => { setRegion(code); setStateName(''); setDistrictName(''); setDistricts(null); setClientType(''); setAgentKey(''); setDistribution('split'); }}
             className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-colors ${
               region === code
                 ? 'bg-indigo-600 text-white border-indigo-600'
@@ -318,7 +356,7 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
           <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">State</span>
           <select
             value={stateName}
-            onChange={(e) => { setStateName(e.target.value); setConfirming(false); }}
+            onChange={(e) => { setStateName(e.target.value); setDistrictName(''); setConfirming(false); }}
             disabled={loadingStates}
             className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2 text-sm"
           >
@@ -340,6 +378,39 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
           </p>
         )}
       </div>
+
+      {/* District picker — drill into the selected state, or push the whole state */}
+      {stateName && (
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="flex min-w-[220px] flex-col gap-1">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">District</span>
+            <select
+              value={districtName}
+              onChange={(e) => { setDistrictName(e.target.value); setConfirming(false); }}
+              disabled={loadingDistricts}
+              className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2 text-sm"
+            >
+              <option value="">{loadingDistricts ? 'Loading districts…' : `Whole ${stateName} (all districts)`}</option>
+              {(districts ?? []).map((d) => (
+                <option key={d.district} value={d.district}>
+                  {d.district} — {d.withPhone} with phone
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {lastPushNote && (
+            <p className="text-[11px] text-zinc-500 dark:text-zinc-400 pb-2">
+              {districtName
+                ? `${selectedDistrict?.total ?? 0} customers in ${districtName}`
+                : `${selectedState?.total ?? 0} customers in ${stateName}`}
+              {lastPushNote.lastPushedAt
+                ? ` · last live push ${formatStamp(lastPushNote.lastPushedAt)} (${lastPushNote.lastPushedCount} sent)`
+                : ' · never pushed'}
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Client type picker — one family per push, or all types */}
       <div className="flex flex-wrap items-end gap-3">
@@ -454,6 +525,12 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
                     <p className="text-sm font-semibold">{preview.clientType}</p>
                   </div>
                 ) : null}
+                {preview.district ? (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-zinc-500">District</p>
+                    <p className="text-sm font-semibold">{preview.district}</p>
+                  </div>
+                ) : null}
                 <div>
                   <p className="text-[10px] uppercase tracking-wide text-zinc-500">detail1 / detail2</p>
                   <p className="text-sm font-semibold">{preview.detail1} / {preview.detail2}</p>
@@ -512,10 +589,10 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
                   <p className="text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2">
                     <ShieldAlert className="w-4 h-4 mt-0.5 shrink-0" />
                     <span>
-                      This sends <b>{preview.ready} leads</b>{preview.clientType ? <> of type <b>{preview.clientType}</b></> : null} {distributionSummary(preview.distribution, preview.agents)}
+                      This sends <b>{preview.ready} leads</b>{preview.clientType ? <> of type <b>{preview.clientType}</b></> : null}{preview.district ? <> in <b>{preview.district}</b></> : null} {distributionSummary(preview.distribution, preview.agents)}
                       {' '}in the live {preview.region} campaign
-                      {selectedState?.lastPushedAt
-                        ? ` — ${selectedState.state} was already pushed on ${formatStamp(selectedState.lastPushedAt)} and will be duplicated.`
+                      {lastPushNote?.lastPushedAt
+                        ? ` — ${preview.district || preview.state} was already pushed on ${formatStamp(lastPushNote.lastPushedAt)} and will be duplicated.`
                         : '.'}
                     </span>
                   </p>
@@ -627,7 +704,7 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
                 {history.map((row) => (
                   <tr key={row.id} className="border-t border-zinc-100 dark:border-zinc-800">
                     <td className="px-2 py-1 text-zinc-500">{formatStamp(row.createdAt)}</td>
-                    <td className="px-2 py-1 font-semibold">{row.state}</td>
+                    <td className="px-2 py-1 font-semibold">{row.state}{row.district ? ` · ${row.district}` : ''}</td>
                     <td className="px-2 py-1 text-zinc-500">{row.clientType || 'All'}</td>
                     <td className="px-2 py-1">
                       <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${

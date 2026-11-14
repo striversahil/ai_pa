@@ -6,10 +6,10 @@ import type { Draft } from "./types";
 export const DRAFT_KEYS: Array<keyof Draft> = [
   "displayName", "companyName", "customerType", "typeTag", "contactPerson", "designation", "phones", "emails",
   "gstin", "pincode", "cityVerified", "billingAddress", "status", "notes", "region",
-  "subArea", "state",
+  "subArea", "state", "district",
 ];
 
-export const MANAGER_KEYS = new Set<keyof Draft>(["region", "subArea", "state"]);
+export const MANAGER_KEYS = new Set<keyof Draft>(["region", "subArea", "state", "district"]);
 
 export const REGIONS = ["R1", "R2", "R3", "R4"];
 
@@ -32,6 +32,7 @@ export function toDraft(c: MasterCustomerDetail): Draft {
     region: c.region,
     subArea: c.subArea,
     state: c.state,
+    district: c.district,
   };
 }
 

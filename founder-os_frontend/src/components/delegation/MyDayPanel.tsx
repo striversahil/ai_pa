@@ -1,33 +1,23 @@
 "use client";
 
-// Employee "my day" view: today's counts, a nudge for open tasks with no update
-// today, and the task sections (own tasks + HR-delegated ones).
+// Employee "my day" view: a nudge for open tasks with no update today, and the
+// shared task board (own tasks + HR-delegated ones) with its horizontal filters.
 import React from "react";
 import TaskBoard from "./TaskBoard";
-import { dayCounts } from "@/hr/delegation";
 import { dateLabel } from "@/hr/format";
-import type { HrDelegationBoard, HrDelegationTask } from "@/hr/types";
-
-function Chip({ label, value, tone }: { label: string; value: number; tone: string }) {
-  return (
-    <span className={`rounded-full border px-2.5 py-1 text-[11px] font-bold ${tone}`}>
-      {label} {value}
-    </span>
-  );
-}
+import type { HrDelegationBoard, HrDelegationTask, HrTask } from "@/hr/types";
 
 export default function MyDayPanel({
-  board, onChanged, onAddTask, onEdit, onDelete, onOpenHistory,
+  board, onSave, onAddTask, onEdit, onDelete, onOpenHistory,
 }: {
   board: HrDelegationBoard;
-  onChanged: () => void;
+  onSave: (task: HrTask, body: Record<string, unknown>) => Promise<unknown>;
   onAddTask: () => void;
   onEdit: (task: HrDelegationTask) => void;
   onDelete: (task: HrDelegationTask) => void;
   onOpenHistory: (task: HrDelegationTask) => void;
 }) {
   const { meta, tasks } = board;
-  const counts = dayCounts(tasks, meta.today, meta.date);
   const pending = tasks.filter((t) => t.needsUpdate);
 
   if (!meta.linked) {
@@ -45,12 +35,11 @@ export default function MyDayPanel({
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap gap-1.5">
-          <Chip label="Open" value={counts.open} tone="border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300" />
-          <Chip label="Overdue" value={counts.overdue} tone="border-rose-500/30 bg-rose-500/10 text-rose-500" />
-          <Chip label="Today" value={counts.today} tone="border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400" />
-          <Chip label="Upcoming" value={counts.upcoming} tone="border-indigo-500/30 bg-indigo-500/10 text-indigo-500 dark:text-indigo-400" />
-          <Chip label="Done" value={counts.doneToday} tone="border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" />
+        <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-zinc-500">
+          <span>{dateLabel(meta.date)}</span>
+          <span className="text-zinc-300 dark:text-zinc-700">·</span>
+          <span>{meta.self?.selfName}</span>
+          {meta.self?.designation && <span className="text-zinc-400">({meta.self.designation})</span>}
         </div>
         <button onClick={onAddTask} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-500">
           + Add my task
@@ -66,28 +55,21 @@ export default function MyDayPanel({
         </div>
       )}
 
-      <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-zinc-500">
-        <span>{dateLabel(meta.date)}</span>
-        <span className="text-zinc-300 dark:text-zinc-700">·</span>
-        <span>{meta.self?.selfName}</span>
-        {meta.self?.designation && <span className="text-zinc-400">({meta.self.designation})</span>}
-      </div>
-
       <TaskBoard
         tasks={tasks}
         mode="self"
         today={meta.today}
         selfMemberId={meta.self?.selfId ?? null}
-        onChanged={onChanged}
-        onEdit={onEdit}
-        onDelete={onDelete}
-        onOpenHistory={onOpenHistory}
+        onSave={onSave}
+        onEdit={(t) => onEdit(t as HrDelegationTask)}
+        onDelete={(t) => onDelete(t as HrDelegationTask)}
+        onOpenHistory={(t) => onOpenHistory(t as HrDelegationTask)}
         showAssignee={false}
-        doneTitle="Completed"
+        doneTitle="Completed · last 30 days"
         emptyOverdue="Nothing overdue — good."
         emptyToday="No tasks due today. Add one if you have work planned."
         emptyUpcoming="No upcoming tasks."
-        emptyDone="Nothing completed yet."
+        emptyDone="Nothing completed in the last 30 days."
       />
     </div>
   );

@@ -76,13 +76,18 @@ export default function MasterDataView({ onStats }: { onStats?: (total: number) 
     () => (filters.region ? rows.filter((r) => r.region === filters.region) : rows),
     [rows, filters.region],
   );
-  const options = useMemo(() => buildFilterOptions(regionBase), [regionBase]);
+  const options = useMemo(() => buildFilterOptions(regionBase, filters.state), [regionBase, filters.state]);
   const summary = useMemo(() => summarizeRows(regionBase), [regionBase]);
   const filtered = useMemo(() => applyFilters(rows, filters), [rows, filters]);
   const openGroups = summary.duplicateOpenGroups;
 
   const set = <K extends keyof MasterFilters>(key: K, value: MasterFilters[K]) =>
     setFilters((f) => ({ ...f, [key]: value }));
+
+  // Changing state re-scopes the district list — districts belong to a state,
+  // so a state change always drops the district instead of filtering to zero.
+  const setState = (state: string) =>
+    setFilters((f) => ({ ...f, state, district: "" }));
 
   const exportCsv = () => {
     const csv = toCsv(filtered);
@@ -105,6 +110,7 @@ export default function MasterDataView({ onStats }: { onStats?: (total: number) 
     if (filters.pipeline) n++;
     if (filters.typeBase) n++;
     if (filters.state) n++;
+    if (filters.district) n++;
     if (filters.subArea) n++;
     if (filters.owner) n++;
     if (filters.duplicates) n++;
@@ -308,7 +314,8 @@ export default function MasterDataView({ onStats }: { onStats?: (total: number) 
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
                 <FilterSelect label="Status" value={filters.status} onChange={(v) => set("status", v)} options={["Active", "Inactive"]} allLabel="Any status" />
                 <FilterSelect label="Type" value={filters.typeBase} onChange={(v) => set("typeBase", v)} options={options.types} allLabel="Any type" />
-                <FilterSelect label="State" value={filters.state} onChange={(v) => set("state", v)} options={options.states} allLabel="Any state" />
+                <FilterSelect label="State" value={filters.state} onChange={setState} options={options.states} allLabel="Any state" />
+                <FilterSelect label="District" value={filters.district} onChange={(v) => set("district", v)} options={options.districts} allLabel={filters.state ? "Any district" : "Pick a state first"} />
                 <FilterSelect label="Sub-area" value={filters.subArea} onChange={(v) => set("subArea", v)} options={options.subAreas} allLabel="Any sub-area" />
                 <FilterSelect label="Owner" value={filters.owner} onChange={(v) => set("owner", v)} options={options.owners} allLabel="Any owner" />
                 <FilterSelect label="Pipeline" value={filters.pipeline} onChange={(v) => set("pipeline", v)} options={options.pipelines} allLabel="Any stage" />

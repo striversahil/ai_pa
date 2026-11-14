@@ -24,7 +24,7 @@
 
 
 // Pieces split into ./service-parts/ (importable on their own); re-exported for compat.
-export { CampaignError, normalizeRegion, normalizeDistribution, normalizeClientType, extractUrlFromPaste, validateAgentUrl, liveEnabled } from "./service-parts/pure";
-export { setAgentCampaignUrl, getCampaignStates, getCampaignPreview, getCampaignBatches, getCampaignTypes, createPush, runBatchChunk, drainPendingPushes } from "./service-parts/io";
+export { CampaignError, normalizeRegion, normalizeDistribution, normalizeClientType, normalizeDistrict, normalizeState, extractUrlFromPaste, validateAgentUrl, liveEnabled } from "./service-parts/pure";
+export { setAgentCampaignUrl, getCampaignStates, getCampaignDistricts, getCampaignPreview, getCampaignBatches, getCampaignTypes, createPush, runBatchChunk, drainPendingPushes } from "./service-parts/io";
 
 

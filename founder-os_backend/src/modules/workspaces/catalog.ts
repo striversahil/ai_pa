@@ -31,7 +31,6 @@ export interface WorkspaceDef {
 }
 
 export const WORKSPACES: readonly WorkspaceDef[] = [
-  { slug: 'zoho-sent-analyzer' },
   { slug: 'dpp-prices-dashboard' },
   { slug: 'wa-engine-monitor' },
   { slug: 'whatsapp-marketing' },
@@ -39,7 +38,9 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
   // preview subdomains would otherwise 401 (founder decision, kept 2026-11-12).
   { slug: 'neodove-telecaller-report', publicData: true },
   // Unified Sales workspace absorbed these dashboards (migration 0100/0101).
-  { slug: 'sales', navAliases: ['telecalling', 'enquiry-tracker', 'master-data'] },
+  // zoho-sent-analyzer retired as a standalone dashboard 2026-11-14 — its
+  // component now renders as the Analyzer tab inside Sales.
+  { slug: 'sales', navAliases: ['telecalling', 'enquiry-tracker', 'master-data', 'zoho-sent-analyzer'] },
   { slug: 'accounts' },
   { slug: 'digital-marketing' },
   { slug: 'human-resources' },

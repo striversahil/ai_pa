@@ -3,16 +3,17 @@
 import React, { useState } from "react";
 import ConfirmDialog from "../ui/ConfirmDialog";
 import TaskFormModal from "./TaskFormModal";
-import TaskCard, { Section } from "./TaskCard";
+import TaskBoard from "../delegation/TaskBoard";
 import { type HrDashboardData, type HrTask } from "@/hr/types";
 import { jsonRequest, readError } from "@/hr/api";
 
 // Manager-side task board inside the HR dashboard. The employee-facing board
-// (/delegation) shares TaskCard/Section with this tab, so both stay identical —
+// (/delegation) shares TaskBoard/TaskCard with this tab, so both stay identical —
 // see components/delegation/DelegationView.tsx.
-export default function DelegationTab({ data, onRefresh, onManageEmployees, onOpenBoard }: {
+export default function DelegationTab({ data, onRefresh, onSaveTask, onManageEmployees, onOpenBoard }: {
   data: HrDashboardData;
   onRefresh: () => void;
+  onSaveTask: (task: HrTask, body: Record<string, unknown>) => Promise<unknown>;
   onManageEmployees: () => void;
   /** Navigate to the full Delegation board (employee day view + activity). */
   onOpenBoard?: () => void;
@@ -41,17 +42,21 @@ export default function DelegationTab({ data, onRefresh, onManageEmployees, onOp
     } finally { setBusy(false); }
   };
 
-  const counts = data.meta.counts;
+  // The backend buckets completed rows to the last 30 days; flatten them for
+  // the shared board, which re-derives its own filter sections.
+  const allTasks = [
+    ...data.tasks.overdue,
+    ...data.tasks.today,
+    ...data.tasks.upcoming,
+    ...data.tasks.completed,
+  ];
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap gap-1.5 text-[11px] font-bold">
-          <span className="rounded-full border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-rose-500">Overdue {counts.overdue}</span>
-          <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-amber-600 dark:text-amber-400">Today {counts.today}</span>
-          <span className="rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2.5 py-1 text-indigo-500 dark:text-indigo-400">Upcoming {counts.upcoming}</span>
-          <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-emerald-600 dark:text-emerald-400">Done {counts.completed}</span>
-        </div>
+        <p className="text-xs text-zinc-500">
+          Status changes save immediately. Reopening a completed task needs a reason.
+        </p>
         <div className="flex items-center gap-2">
           {onOpenBoard && (
             <button onClick={onOpenBoard} className="rounded-lg bg-indigo-500/10 px-3 py-1.5 text-xs font-bold text-indigo-500 hover:bg-indigo-500/20">Daily board</button>
@@ -72,37 +77,16 @@ export default function DelegationTab({ data, onRefresh, onManageEmployees, onOp
       )}
       {err && <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 px-3 py-2 text-xs text-rose-500">{err}</div>}
 
-      <Section title="Overdue" count={data.tasks.overdue.length} tone="rose" empty="Nothing overdue.">
-        {data.tasks.overdue.map((t) => (
-          <TaskCard key={t.id} task={t} mode="manager" onChanged={onRefresh}
-            onEdit={(task) => setTaskForm({ open: true, task: task as HrTask })}
-            onDelete={(task) => setDeleting(task as HrTask)} />
-        ))}
-      </Section>
-
-      <Section title="Today" count={data.tasks.today.length} tone="amber" empty="No tasks due today.">
-        {data.tasks.today.map((t) => (
-          <TaskCard key={t.id} task={t} mode="manager" onChanged={onRefresh}
-            onEdit={(task) => setTaskForm({ open: true, task: task as HrTask })}
-            onDelete={(task) => setDeleting(task as HrTask)} />
-        ))}
-      </Section>
-
-      <Section title="Upcoming" count={data.tasks.upcoming.length} tone="indigo" empty="No upcoming tasks.">
-        {data.tasks.upcoming.map((t) => (
-          <TaskCard key={t.id} task={t} mode="manager" onChanged={onRefresh}
-            onEdit={(task) => setTaskForm({ open: true, task: task as HrTask })}
-            onDelete={(task) => setDeleting(task as HrTask)} />
-        ))}
-      </Section>
-
-      <Section title="Completed · last 30 days" count={data.tasks.completed.length} tone="emerald" empty="No completed tasks in the last 30 days.">
-        {data.tasks.completed.map((t) => (
-          <TaskCard key={t.id} task={t} mode="manager" onChanged={onRefresh}
-            onEdit={(task) => setTaskForm({ open: true, task: task as HrTask })}
-            onDelete={(task) => setDeleting(task as HrTask)} />
-        ))}
-      </Section>
+      <TaskBoard
+        tasks={allTasks}
+        mode="manager"
+        today={data.meta.today}
+        onSave={onSaveTask}
+        onEdit={(task) => setTaskForm({ open: true, task: task as HrTask })}
+        onDelete={(task) => setDeleting(task as HrTask)}
+        doneTitle="Completed · last 30 days"
+        emptyDone="No completed tasks in the last 30 days."
+      />
 
       {taskForm.open && (
         <TaskFormModal

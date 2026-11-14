@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { useLiveDashboard } from "@/hooks/useLiveData";
+import { useHrTaskSave } from "@/hooks/useHrTaskSave";
 import { useAuth } from "@/auth/AuthContext";
 import DelegationTab from "./human-resources/DelegationTab";
 import EmployeesTab from "./human-resources/EmployeesTab";
@@ -56,6 +57,7 @@ export default function HumanResourcesDashboard({ onNavigate }: { onNavigate?: (
   }, { events: ["human-resources"], deps: [month], pollMs: 60000 });
 
   const data = dash.data;
+  const saveTask = useHrTaskSave(dash, "manager");
   const counts: Record<HrView, number | null> = {
     organization: null,
     employees: data ? data.employees.activeCount : null,
@@ -145,6 +147,7 @@ export default function HumanResourcesDashboard({ onNavigate }: { onNavigate?: (
             <DelegationTab
               data={data}
               onRefresh={() => dash.refresh()}
+              onSaveTask={saveTask}
               onManageEmployees={() => setView("employees")}
               onOpenBoard={onNavigate ? () => onNavigate("/delegation") : undefined}
             />

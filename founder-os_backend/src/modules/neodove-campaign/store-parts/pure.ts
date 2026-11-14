@@ -12,7 +12,7 @@ export const AGENT_COLUMNS = ['id', 'region', 'name', 'secretName', 'active', 'c
 export const LIVE_CUSTOMER_WHERE = `(status IS NULL OR status <> 'DELETED')`;
 
 export const CUSTOMER_COLUMNS = [
-  'id', 'zohoCustomerId', 'region', 'state',
+  'id', 'zohoCustomerId', 'region', 'state', 'district',
   'companyName', 'displayName', 'contactPerson', 'phonesJson', 'emailsJson',
   'customerTypeBase',
 ].join(', ');
@@ -20,7 +20,7 @@ export const CUSTOMER_COLUMNS = [
 // ── Batches ────────────────────────────────────────────────────────────────
 
 export const BATCH_COLUMNS = [
-  'id', 'region', 'state', 'clientType', 'mode', 'status', 'total', 'planned', 'sent', 'failed', 'skipped', 'pending',
+  'id', 'region', 'state', 'district', 'clientType', 'mode', 'status', 'total', 'planned', 'sent', 'failed', 'skipped', 'pending',
   'distribution', 'agentKey',
   'requestedBy', 'requestedByName', 'campaignHost', 'detail1', 'error',
   'createdAt', 'updatedAt', 'finishedAt',
@@ -31,6 +31,7 @@ export function toBatch(row: any): PushBatch {
     id: String(row?.id ?? ''),
     region: String(row?.region ?? ''),
     state: String(row?.state ?? ''),
+    district: String(row?.district ?? ''),
     clientType: String(row?.clientType ?? ''),
     mode: (String(row?.mode ?? 'dry-run') as PushMode),
     status: (String(row?.status ?? 'queued') as PushStatus),

@@ -2,7 +2,7 @@
 
 // SalesWorkspace — the ONE sales surface.
 //
-// Leaderboard, enquiry pipeline, customer book, region dispatch and the
+// Leaderboard, analyzer, enquiry pipeline, customer book, region dispatch and the
 // Root/sales-head Controller behind a single sticky horizontal tab bar.
 // Enquiries and Customer Master stay global (the whole book is visible to
 // sales); only Dispatch is region-owned (server-enforced from the roster row).
@@ -18,17 +18,15 @@ import { TabBar } from "@/components/ui";
 // Lazy panels: opening Sales must not parse the leaderboard + customer book +
 // dispatch bundle at once. Next dynamic() keeps each in its own chunk.
 const TelecallingDashboard = dynamic(() => import("./TelecallingDashboard"), { ssr: false });
+const Analyzer = dynamic(() => import("./ZohoEstimates"), { ssr: false });
 const EnquiryTracker = dynamic(() => import("./EnquiryTracker"), { ssr: false });
 const MasterDataView = dynamic(() => import("./master-data/MasterDataView"), { ssr: false });
 const SalesDispatchPanel = dynamic(() => import("./SalesDispatchPanel"), { ssr: false });
-const CallsPanel = dynamic(() => import("./CallsPanel"), { ssr: false });
 const FieldStaffPanel = dynamic(() => import("./FieldStaffPanel"), { ssr: false });
 const SalesObjectionsPanel = dynamic(() => import("./SalesObjectionsPanel"), { ssr: false });
-const MyWorkPanel = dynamic(() => import("./MyWorkPanel"), { ssr: false });
-const LeadsPanel = dynamic(() => import("./LeadsPanel"), { ssr: false });
 const SalesControllerPanel = dynamic(() => import("./SalesControllerPanel"), { ssr: false });
 
-type SalesTab = "mywork" | "leads" | "leaderboard" | "enquiries" | "master" | "dispatch" | "calls" | "field" | "objections" | "controller";
+type SalesTab = "leaderboard" | "analyzer" | "enquiries" | "master" | "dispatch" | "field" | "objections" | "controller";
 
 interface WorkspaceTab {
   key: SalesTab;
@@ -42,27 +40,20 @@ export default function SalesWorkspace() {
   const { me } = useAuth();
   const caps = masterCapabilities(me);
   const canManage = hasSalesManagerAccess(me);
-  const [storedTab, setStoredTab] = useLocalStorage<SalesTab>(SALES_TAB_STORAGE_KEY, "mywork");
+  const [storedTab, setStoredTab] = useLocalStorage<SalesTab>(SALES_TAB_STORAGE_KEY, "leaderboard");
 
   const tabs = useMemo<WorkspaceTab[]>(() => {
     const out: WorkspaceTab[] = [];
-    // My Work first: this login's queue (projected from open assignments).
-    // Same audience as the leaderboard — server scopes every row.
-    if (canView(me, "telecalling") || canManage) out.push({ key: "mywork", label: "My Work", icon: "📌" });
     // Leaderboard: everyone on the `sales` automation holds `telecalling`.
     if (canView(me, "telecalling")) out.push({ key: "leaderboard", label: "Leaderboard", icon: "🏆" });
+    // Analyzer: Zoho sent-estimate analysis, same audience as the leaderboard.
+    if (canView(me, "telecalling")) out.push({ key: "analyzer", label: "Analyzer", icon: "📊" });
     if (canView(me, "enquiry-tracker")) out.push({ key: "enquiries", label: "Enquiries", icon: "📋" });
     if (caps.canView) out.push({ key: "master", label: "Customer Master", icon: "👥" });
     // Dispatch reads are open to sales agents too (server-region-scoped); the
     // floor-only actions stay hidden inside the panel via the viewer flags.
     if (canView(me, "crm") || canView(me, "telecalling") || canView(me, "dispatch")) {
       out.push({ key: "dispatch", label: "Dispatch", icon: "🚚" });
-    }
-    // TEMPORARY Call Log (manual connected calls + screenshot proof): same
-    // audience as the leaderboard. Delete with ManualCallsPanel when NeoDove
-    // is trusted again.
-    if (canView(me, "telecalling") || canManage) {
-      out.push({ key: "calls", label: "Calls", icon: "📞" });
     }
     // Field Staff: daily visit tracking for the field force (mobile-web
     // check-in + mill rows + expenses + follow-ups). Same audience as the
@@ -74,11 +65,6 @@ export default function SalesWorkspace() {
     // leaderboard, every agent sees every objection. Controller stays last.
     if (canView(me, "telecalling") || canManage) {
       out.push({ key: "objections", label: "Objections", icon: "🛡️" });
-    }
-    // Leads: unqualified triage queue + lost-quote rates. Same audience as
-    // My Work (server scopes every row); qualify buttons are TL/head-only.
-    if (canView(me, "telecalling") || canManage) {
-      out.push({ key: "leads", label: "Leads", icon: "🎯" });
     }
     // Controller is root/sales-head only and sits LAST so agents' tabs never shift.
     if (canManage) out.push({ key: "controller", label: "Controller", icon: "🎛️" });
@@ -107,7 +93,7 @@ export default function SalesWorkspace() {
         <div>
           <h1 className="font-heading text-2xl font-bold tracking-tight text-[var(--text-primary)]">Sales</h1>
           <p className="mt-1 text-xs text-[var(--text-secondary)]">
-            Leaderboard, enquiry pipeline, customer book, region dispatch, field objections — one place.
+            Leaderboard, analyzer, enquiry pipeline, customer book, region dispatch, field objections — one place.
           </p>
         </div>
       </header>
@@ -125,15 +111,13 @@ export default function SalesWorkspace() {
       </div>
 
       <div>
-        {active === "mywork" && <MyWorkPanel />}
         {active === "leaderboard" && <TelecallingDashboard />}
+        {active === "analyzer" && <Analyzer />}
         {active === "enquiries" && <EnquiryTracker />}
         {active === "master" && <MasterDataView />}
         {active === "dispatch" && <SalesDispatchPanel />}
-        {active === "calls" && <CallsPanel />}
         {active === "field" && <FieldStaffPanel />}
         {active === "objections" && <SalesObjectionsPanel />}
-        {active === "leads" && <LeadsPanel />}
         {active === "controller" && <SalesControllerPanel />}
       </div>
     </div>

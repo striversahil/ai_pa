@@ -165,6 +165,7 @@ export function toCustomer(row: any): MasterCustomer {
     zone: cleanText(row?.zone, 40),
     subArea: cleanText(row?.subArea, 80),
     state: cleanText(row?.state, 80),
+    district: cleanText(row?.district, 80),
     city: cleanText(row?.cityVerified, 80) || cleanText(row?.cityZoho, 80),
     pincode: cleanText(row?.pincode, 12),
     phones: rowPhones(row),

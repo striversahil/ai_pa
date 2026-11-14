@@ -102,6 +102,7 @@ export async function invalidateDerivedEstimateCaches(): Promise<void> {
     cacheDelPrefix('telecalling:risk'),
     cacheDelPrefix('telecalling:dashboard'),
     cacheDelPrefix('telecalling:converters'),
+    cacheDelPrefix('zoho:movement'),
     cacheDel(KEY),
   ]);
 }

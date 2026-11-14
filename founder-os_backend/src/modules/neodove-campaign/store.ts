@@ -5,7 +5,7 @@
 
 
 // Pieces split into ./store-parts/ (importable on their own); re-exported for compat.
-export { campaignDb, listAgents, listTeamLeads, getAgentRow, setAgentUrl, agentTallies, listCustomersByState, listStateCounts, listTypeCounts, lastLivePushes, insertBatch, getBatch, updateBatch, recountBatch, listBatches, insertLeadRows, recoverStuckClaims, claimPending, markOutcomes, listFailedLeads, batchesWithPending } from "./store-parts/io";
+export { campaignDb, listAgents, listTeamLeads, getAgentRow, setAgentUrl, agentTallies, listCustomersByState, listStateCounts, listDistrictCounts, lastDistrictPushes, listTypeCounts, lastLivePushes, insertBatch, getBatch, updateBatch, recountBatch, listBatches, insertLeadRows, recoverStuckClaims, claimPending, markOutcomes, listFailedLeads, batchesWithPending } from "./store-parts/io";
 export type { LeadOutcome } from "./store-parts/types";
 
 

@@ -30,6 +30,10 @@ export default function TaskFormModal({ task, roster, mode = "manager", selfMemb
   const [dueTime, setDueTime] = useState(task?.dueTime ?? "");
   const [priority, setPriority] = useState<TaskPriority>(task?.priority ?? "normal");
   const [status, setStatus] = useState<TaskStatus>(task?.status ?? "pending");
+  // A done task may only be reopened with a reason (server-enforced). The reason
+  // is written as the remark on the status journal row.
+  const reopening = editing && task?.status === "done" && status !== "done";
+  const [reopenReason, setReopenReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -37,6 +41,7 @@ export default function TaskFormModal({ task, roster, mode = "manager", selfMemb
     e.preventDefault();
     if (!title.trim()) { setErr("Title is required"); return; }
     if (!self && !assignedToId) { setErr("Choose an assignee"); return; }
+    if (reopening && !reopenReason.trim()) { setErr("A reason is required to reopen a completed task"); return; }
     setBusy(true);
     setErr(null);
     try {
@@ -50,6 +55,7 @@ export default function TaskFormModal({ task, roster, mode = "manager", selfMemb
       // The delegation endpoint pins the assignee to the caller server-side.
       if (!self) body.assignedToId = assignedToId;
       if (editing) body.status = status;
+      if (reopening && reopenReason.trim()) body.remark = reopenReason.trim();
       const base = self ? "/api/delegation/tasks" : "/api/human-resources/tasks";
       const res = editing
         ? await jsonRequest(`${base}/${task!.id}`, "PATCH", body)
@@ -118,6 +124,20 @@ export default function TaskFormModal({ task, roster, mode = "manager", selfMemb
               <select value={status} onChange={(e) => setStatus(e.target.value as TaskStatus)} className={field}>
                 {TASK_STATUSES.map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
               </select>
+            </div>
+          )}
+          {reopening && (
+            <div className="sm:col-span-2">
+              <label className={label}>Reason for reopening</label>
+              <textarea
+                value={reopenReason}
+                onChange={(e) => setReopenReason(e.target.value)}
+                rows={2}
+                placeholder="Why is this completed task being reopened?"
+                className={field}
+                autoFocus
+              />
+              <p className="mt-1 text-[11px] text-zinc-500">Added to the task history so everyone can see why it was reopened.</p>
             </div>
           )}
         </div>

@@ -14,7 +14,6 @@ import { canonicalNavSlug } from "./aliases";
 import { useWorkspaceHost } from "./WorkspaceHost";
 
 // Lazy-load each dashboard so only the opened one is fetched & parsed.
-const ZohoEstimates = dynamic(() => import("@/components/ZohoEstimates"), { ssr: false });
 const DppPricesDashboard = dynamic(() => import("@/components/DppPricesDashboard"), { ssr: false });
 const SheetAnalysisDashboard = dynamic(() => import("@/components/SheetAnalysisDashboard"), { ssr: false });
 const WaEngineDashboard = dynamic(() => import("@/components/WaEngineDashboard"), { ssr: false });
@@ -44,7 +43,6 @@ function HumanResourcesWorkspace() {
 }
 
 const RENDERERS: Record<string, React.ComponentType> = {
-  "zoho-sent-analyzer": ZohoEstimates,
   "dpp-prices-dashboard": DppPricesDashboard,
   "wa-engine-monitor": WaEngineDashboard,
   "whatsapp-marketing": WhatsAppMarketingDashboard,

@@ -39,6 +39,12 @@ export function normalizeState(state: unknown): string {
   return value;
 }
 
+/** '' = whole state; otherwise the district name (max 80, like state). */
+export function normalizeDistrict(value: unknown): string {
+  const text = String(value ?? '').trim().slice(0, 80);
+  return text;
+}
+
 /** Default is split — the founder's stated preference when nothing is chosen. */
 export function normalizeDistribution(value: unknown): Distribution {
   const text = String(value ?? '').trim().toLowerCase();

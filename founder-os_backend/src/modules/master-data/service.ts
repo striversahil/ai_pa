@@ -198,6 +198,7 @@ function sanitizePatch(patch: CustomerPatch): { clean: Record<string, unknown>; 
   if ('region' in patch) put('region', cleanText(patch.region, 8).toUpperCase());
   if ('subArea' in patch) put('subArea', cleanText(patch.subArea, 80));
   if ('state' in patch) put('state', cleanText(patch.state, 80));
+  if ('district' in patch) put('district', cleanText(patch.district, 80));
   // Client type: base is constrained to the sales-head's allowed list
   // (validated in updateCustomer against getAllowedTypeBases); the tag is a
   // free qualifier. Both resolve into the customerType/base/tag triple there.

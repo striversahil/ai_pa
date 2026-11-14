@@ -45,17 +45,17 @@ export function isOverdue(task: HrTask, today: string): boolean {
 }
 
 export interface DelegationSections {
-  overdue: HrDelegationTask[];
-  today: HrDelegationTask[];
-  upcoming: HrDelegationTask[];
-  done: HrDelegationTask[];
+  overdue: HrTask[];
+  today: HrTask[];
+  upcoming: HrTask[];
+  done: HrTask[];
 }
 
-export function taskSections(tasks: HrDelegationTask[], today: string): DelegationSections {
-  const overdue: HrDelegationTask[] = [];
-  const todayList: HrDelegationTask[] = [];
-  const upcoming: HrDelegationTask[] = [];
-  const done: HrDelegationTask[] = [];
+export function taskSections(tasks: HrTask[], today: string): DelegationSections {
+  const overdue: HrTask[] = [];
+  const todayList: HrTask[] = [];
+  const upcoming: HrTask[] = [];
+  const done: HrTask[] = [];
   for (const task of tasks ?? []) {
     if (task.status === "done") { done.push(task); continue; }
     if (isOverdue(task, today)) overdue.push(task);
@@ -68,6 +68,31 @@ export function taskSections(tasks: HrDelegationTask[], today: string): Delegati
   done.sort((a, b) =>
     String(b.updatedAt ?? b.dueDate ?? "").localeCompare(String(a.updatedAt ?? a.dueDate ?? "")));
   return { overdue, today: todayList, upcoming, done };
+}
+
+/** Shallow-patch one task across the HR dashboard's four server buckets. The
+ *  TaskBoard re-derives its sections from the flattened list, so an optimistic
+ *  status change moves the card instantly even before the refresh reconciles. */
+export interface TaskBuckets {
+  overdue: HrTask[];
+  today: HrTask[];
+  upcoming: HrTask[];
+  completed: HrTask[];
+}
+
+export function patchTaskInBuckets<T extends { tasks: TaskBuckets }>(
+  prev: T | null,
+  taskId: string,
+  patch: Partial<HrTask>,
+): T | null {
+  if (!prev || !prev.tasks) return prev;
+  const tasks = { ...prev.tasks };
+  for (const key of ["overdue", "today", "upcoming", "completed"] as const) {
+    tasks[key] = (prev.tasks[key] ?? []).map((task) =>
+      String(task.id) === String(taskId) ? { ...task, ...patch } : task,
+    );
+  }
+  return { ...prev, tasks };
 }
 
 /** Counts for the day chips: what is overdue / due today / upcoming / done today. */

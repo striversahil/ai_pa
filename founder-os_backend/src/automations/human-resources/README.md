@@ -13,9 +13,10 @@ Files:
   `resolveSelfHumanResourcesMember` (login → roster matching).
 - `delegation.ts` — employee-facing board: scoped reads, self-created tasks, ownership
   guards, manager extras (team day cards, activity feed, logins).
-- `delegation-parse.ts` — pure section/day/"needs an update today" rules
+- `delegation-parse.ts` — pure section/day/"needs an update today"/reopen rules
   (mirrors `founder-os_frontend/src/hr/delegation.ts`).
-- `task-logs.ts` — append-only task journal writer + queries.
+- `task-logs.ts` — append-only task journal writer + queries (`latestDoneDates` powers the
+  completion-date window).
 - `task-json.ts` — shared HrTask / HrTaskLog JSON mappers (dashboard + board).
 - `inventory.ts` — daily-item catalog, stock movement ledger, derived stock levels and optional stock-in expenses.
 - `hiring-positions.ts` — hiring kit: positions with any number of JD / SOP documents (D1 metadata).
@@ -34,6 +35,13 @@ Files:
   dueDate YYYY-MM-DD, dueTime HH:mm, priority, status pending|in_progress|done, remark`).
   Overdue is derived at read time (`dueDate < today`, or same day after `dueTime`) and is
   never written into `status`.
+  **Completed · last 30 days** is keyed on the task's latest `status='done'` journal row
+  (fallback `updatedAt`), never on `dueDate` — a task due months ago but completed today
+  still appears. Both the HR dashboard bucket and the delegation board apply the same
+  window (`latestDoneDates` in `task-logs.ts`).
+  **Reopening** a done task (`done → pending|in_progress`) requires a non-empty `remark`;
+  `reopenRequiresReason` (`delegation-parse.ts`) rejects it with `400` on both PATCH paths,
+  and the reason is stored as the remark on the status journal row (visible in history).
 - **HumanResourcesExpense** — one ledger row (`title, expenseType fixed|variable|field_staff,
   category, amount, expenseDate, expenseMonth, paymentMode, notes`).
 - **HumanResourcesFundTxn** — one funding top-up HR receives (`title, amount, txnDate,

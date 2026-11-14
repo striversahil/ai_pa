@@ -50,6 +50,16 @@ export interface TypeCount {
   withPhone: number;
 }
 
+/** One district inside a region + state — the drill-down's source. */
+export interface DistrictCount {
+  district: string;
+  total: number;
+  withPhone: number;
+  /** Rows already pushed in the most recent live batch for this district. */
+  lastPushedAt: string | null;
+  lastPushedCount: number;
+}
+
 /**
  * single → every lead in the push goes to one agent.
  * split  → both agents, assigned by a stable hash of the mobile number.
@@ -86,6 +96,8 @@ export interface CampaignAgentPlan extends CampaignAgent {
 export interface CampaignPreview {
   region: string;
   state: string;
+  /** '' = whole state; otherwise the single filtered district. */
+  district: string;
   /** '' = all client types; otherwise the single filtered customerTypeBase. */
   clientType: string;
   total: number;
@@ -112,6 +124,8 @@ export interface PushBatch {
   id: string;
   region: string;
   state: string;
+  /** '' = whole state; otherwise the single pushed district. */
+  district: string;
   /** '' = all client types; otherwise the single filtered customerTypeBase. */
   clientType: string;
   mode: PushMode;

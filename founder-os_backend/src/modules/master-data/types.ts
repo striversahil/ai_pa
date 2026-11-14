@@ -35,6 +35,9 @@ export interface MasterCustomer {
   zone: string;
   subArea: string;
   state: string;
+  /** District within the state (India Post mapping, founder file 2026-11-14).
+   *  '' = unplaced. Manager-only edit, like state/subArea; imports never write it. */
+  district: string;
   city: string;
   pincode: string;
   phones: string[];
@@ -129,6 +132,8 @@ export interface CustomerPatch {
   region?: string;
   subArea?: string;
   state?: string;
+  /** Manager-only geography, like state/subArea. */
+  district?: string;
   customerType?: string;
   typeTag?: string;
 }

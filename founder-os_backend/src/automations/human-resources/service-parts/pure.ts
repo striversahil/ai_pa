@@ -46,3 +46,25 @@ export function fundTxnJson(row: any) {
     updatedAt: row.updatedAt ?? null,
   };
 }
+
+/** HR dashboard task buckets. Input keeps the server sort (due date, time,
+ *  priority). Done rows arrive already filtered to the completion window; they
+ *  are ordered newest-completion-first via `completedAt` (never dueDate). */
+export function splitTaskBuckets(
+  tasks: any[],
+  today: string,
+  completedAt: (id: string) => string,
+) {
+  const overdue: any[] = [];
+  const dueToday: any[] = [];
+  const upcoming: any[] = [];
+  const completed: any[] = [];
+  for (const t of tasks) {
+    if (t.status === 'done') completed.push(t);
+    else if (t.overdue) overdue.push(t);
+    else if (String(t.dueDate) === today) dueToday.push(t);
+    else upcoming.push(t);
+  }
+  completed.sort((a, b) => completedAt(String(b.id)).localeCompare(completedAt(String(a.id))));
+  return { overdue, today: dueToday, upcoming, completed };
+}

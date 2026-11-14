@@ -79,5 +79,25 @@ check('telecalling data stays public (founder decision)', r.status === 200);
 r = await call('/api/session/workspaces/neodove-telecaller-report/data');
 check('NeoDove report data stays public (founder decision)', r.status === 200 || r.status === 404, String(r.status));
 
+r = await call('/api/estimates/movement');
+check('movement needs a session (401)', r.status === 401);
+r = await call('/api/estimates/movement?from=2026-11-01&to=2026-11-14', 'nobody');
+check('movement signed-in → 200 + shape', r.status === 200 && r.body?.salesOrders && r.body?.byRegion && r.body?.from === '2026-11-01', String(r.status));
+r = await call('/api/estimates/segments');
+check('segments needs a session (401)', r.status === 401);
+r = await call('/api/estimates/segments', 'nobody');
+check('segments signed-in → 200 + map', r.status === 200 && r.body && typeof r.body === 'object', String(r.status));
+r = await call('/api/neodove/campaign/districts');
+check('districts needs a session (401)', r.status === 401);
+r = await call('/api/neodove/campaign/districts?region=R1&state=Uttar+Pradesh', 'root');
+check('districts signed-in → 200 + list', r.status === 200 && Array.isArray(r.body?.districts), String(r.status));
+// District round-trip: book row → master-data payload carries district.
+await db.prepare("INSERT INTO core_customer (id, zohoCustomerId, displayName, region, state, district, status) VALUES (?, ?, ?, ?, ?, ?, ?)")
+  .bind('e2e-1', 'e2e-1', 'E2E Traders', 'R1', 'Uttar Pradesh', 'Lucknow', 'Active').run();
+r = await call('/api/session/workspaces/master-data/data', 'root');
+check('master-data payload carries district', r.status === 200 && (r.body?.rows ?? []).some((x) => x?.district === 'Lucknow'), String(r.status));
+r = await call('/api/estimates/movement?from=junk&region=R9', 'nobody');
+check('movement clamps bad range/region', r.status === 200 && r.body?.from === r.body?.to && r.body?.region === 'all', JSON.stringify({ from: r.body?.from, to: r.body?.to, region: r.body?.region }));
+
 console.log(fail ? `\n${fail} FAILED` : '\nall session checks passed');
 process.exit(fail ? 1 : 0);

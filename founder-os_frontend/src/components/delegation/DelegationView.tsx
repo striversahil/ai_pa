@@ -11,6 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useMemo, useState } from "react";
 import { useLiveDashboard } from "@/hooks/useLiveData";
+import { useHrTaskSave } from "@/hooks/useHrTaskSave";
 import { fetchDelegationBoard, deleteDelegationTask } from "@/hr/api";
 import { dayCounts } from "@/hr/delegation";
 import { dateLabel, shiftDate, todayIST } from "@/hr/format";
@@ -45,6 +46,7 @@ export default function DelegationView() {
   const data = board.data;
   const isManager = !!data?.meta.isManager;
   const today = data?.meta.today ?? todayIST();
+  const saveTask = useHrTaskSave(board, isManager ? "manager" : "self");
 
   const counts = useMemo(
     () => (data ? dayCounts(data.tasks, today, data.meta.date) : null),
@@ -132,7 +134,7 @@ export default function DelegationView() {
       {!isManager ? (
         <MyDayPanel
           board={data}
-          onChanged={board.refresh}
+          onSave={saveTask}
           onAddTask={() => setForm({ open: true, task: null })}
           onEdit={(task) => setForm({ open: true, task })}
           onDelete={setDeleting}
@@ -194,10 +196,10 @@ export default function DelegationView() {
               tasks={visibleTasks}
               mode="manager"
               today={today}
-              onChanged={board.refresh}
-              onEdit={(task) => setForm({ open: true, task })}
-              onDelete={setDeleting}
-              onOpenHistory={openHistory}
+              onSave={saveTask}
+              onEdit={(task) => setForm({ open: true, task: task as HrDelegationTask })}
+              onDelete={(task) => setDeleting(task as HrDelegationTask)}
+              onOpenHistory={(task) => openHistory(task as HrDelegationTask)}
               showAssignee
             />
           </section>

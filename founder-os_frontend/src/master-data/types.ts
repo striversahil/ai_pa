@@ -28,6 +28,8 @@ export interface MasterCustomer {
   zone: string;
   subArea: string;
   state: string;
+  /** District within the state (founder file 2026-11-14). '' = unplaced. */
+  district: string;
   city: string;
   pincode: string;
   phones: string[];
@@ -104,6 +106,8 @@ export interface CustomerPatch {
   region?: string;
   subArea?: string;
   state?: string;
+  /** Manager-only geography, like state/subArea. */
+  district?: string;
   customerType?: string;
   typeTag?: string;
 }

@@ -20,4 +20,5 @@ export interface Draft {
   region: string;
   subArea: string;
   state: string;
+  district: string;
 }

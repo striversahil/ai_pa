@@ -14,7 +14,7 @@ export function masterDb(): any {
 }
 
 const LIST_COLUMNS = [
-  'id', 'zohoCustomerId', 'region', 'zone', 'subArea', 'state', 'pincode',
+  'id', 'zohoCustomerId', 'region', 'zone', 'subArea', 'state', 'district', 'pincode',
   'displayName', 'companyName', 'customerType', 'customerTypeBase', 'customerTypeTag',
   'status', 'contactPerson', 'designation', 'phonesJson', 'emailsJson', 'gstin', 'owner',
   'pipelineStage', 'estimateCount', 'lastEstimateDate', 'salesOrderCount', 'lastSalesOrderDate',
@@ -104,13 +104,14 @@ export const PATCH_COLUMNS: Record<string, string> = {
   region: 'region',
   subArea: 'subArea',
   state: 'state',
+  district: 'district',
   customerType: 'customerType',
   customerTypeBase: 'customerTypeBase',
   customerTypeTag: 'customerTypeTag',
 };
 
 /** Fields that reassign ownership / geography — sales-head only. */
-export const MANAGER_ONLY_FIELDS = new Set(['region', 'subArea', 'state']);
+export const MANAGER_ONLY_FIELDS = new Set(['region', 'subArea', 'state', 'district']);
 
 export function patchToColumns(patch: Record<string, unknown>): { columns: string[]; values: any[] } {
   const columns: string[] = [];
