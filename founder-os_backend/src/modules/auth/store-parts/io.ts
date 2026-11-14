@@ -91,6 +91,9 @@ export class MemoryAuthStore implements AuthStore {
     }
     return out;
   }
+  async listLoginEmails() {
+    return [...this.users.values()].map((u) => String(u.email ?? '').trim().toLowerCase()).filter(Boolean);
+  }
   async listRoles() {
     return [...this.roles.values()];
   }
@@ -272,6 +275,10 @@ export class D1AuthStore implements AuthStore {
         roles: await this.getUserRoleKeys(u.id),
       })),
     );
+  }
+  async listLoginEmails() {
+    const rows = await this.db.prepare("SELECT lower(email) AS email FROM auth_user").all();
+    return ((rows?.results ?? []) as any[]).map((r) => String(r.email ?? '').trim().toLowerCase()).filter(Boolean);
   }
   async listRoles() {
     if (!(await this.ensureRoleTables())) return [];

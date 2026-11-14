@@ -39,6 +39,7 @@ import {
 import { normalizeView } from '../../modules/crm/types';
 import { normalizeRegionFilter } from '../../modules/crm/region';
 import { resolveRosterMatch } from '../../modules/telecalling/self';
+import { listActiveTelecallers } from '../../modules/telecalling/self-roster';
 import { getViewerMe } from '../viewer';
 import { readBody } from '../http';
 
@@ -84,7 +85,7 @@ async function viewer(c: any): Promise<Viewer | null> {
       // Sales agent identity = the roster row matched to the session. The
       // region comes from the SERVER row, never from the request.
       const { prisma } = deps();
-      const tcs = (await prisma.telecaller.findMany({ where: { deleted: false } })) as any[];
+      const tcs = (await listActiveTelecallers(prisma)) as any[];
       const hit = resolveRosterMatch(tcs, me);
       if (hit) {
         staffId = String((hit as any).id ?? '') || null;

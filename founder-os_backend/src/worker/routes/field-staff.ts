@@ -14,7 +14,7 @@
 // city/address log, /ping answers 410, no GPS is persisted.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { deps, isApproved, notifyLive, adminGuard, type Bindings } from '../context';
+import { isApproved, notifyLive, adminGuard, type Bindings } from '../context';
 import { ScopeKeys } from '../../modules/auth/types';
 import { createEnquiryStore } from '../../modules/enquiries/store';
 import { enquiryCreate } from '../../modules/enquiries/routes';

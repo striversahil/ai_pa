@@ -17,7 +17,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import {
-  authStore, getMe, isApproved, requireAdminScope, requireScope, adminScopeError, adminGuard,
+  authStore, getMe, isApproved, requireAdminScope, requireScope, adminGuard,
   notifyLive, broadcastLive, LiveEvent, MAX_ATTACHMENT_BYTES, deps,
   type Bindings,
 } from '../context';
@@ -41,19 +41,13 @@ function isAllowedMime(mime: string): boolean {
   return mime === 'application/pdf' || mime.startsWith('image/');
 }
 
-function toJson(row: any) {
-  return {
-    id: String(row?.id ?? ''),
-    soNumber: String(row?.soNumber ?? ''),
-    kind: String(row?.kind ?? 'other'),
-    fileName: String(row?.fileName ?? ''),
-    mime: String(row?.mime ?? 'application/octet-stream'),
-    size: Number(row?.size ?? 0),
-    uploadedBy: String(row?.uploadedBy ?? ''),
-    createdAt: row?.createdAt instanceof Date ? row.createdAt.toISOString() : String(row?.createdAt ?? ''),
-    url: `/api/crm/files/${String(row?.id ?? '')}`,
-  };
-}
+import {
+  createSoAttachment,
+  deleteSoAttachment,
+  findSoAttachment,
+  listSoAttachments,
+  toSoAttachmentJson,
+} from '../../modules/crm/attachments';
 
 export function registerCrmAttachmentRoutes(app: Hono<{ Bindings: Bindings }>): void {
   // Upload: root (everything) or the dispatch floor (proof kinds only — invoice
@@ -110,21 +104,17 @@ export function registerCrmAttachmentRoutes(app: Hono<{ Bindings: Bindings }>): 
       metadata: { name: file.name, type: mime, so: soNumber },
     });
     const { prisma } = deps();
-    const row = await prisma.soAttachment.create({
-      data: {
-        id: crypto.randomUUID(),
-        soNumber,
-        kind,
-        fileName: file.name.slice(0, 200),
-        mime,
-        size: file.size,
-        kvKey: key,
-        uploadedBy: String(actor).slice(0, 200),
-        createdAt: new Date(),
-      },
+    const row = await createSoAttachment(prisma, {
+      soNumber,
+      kind,
+      fileName: file.name,
+      mime,
+      size: file.size,
+      kvKey: key,
+      uploadedBy: actor,
     });
     broadcastLive(c, LiveEvent.Crm, { soNumber, attachmentsChanged: true });
-    return c.json({ ok: true, attachment: toJson(row) }, 201);
+    return c.json({ ok: true, attachment: toSoAttachmentJson(row) }, 201);
   });
 
   // List attachments for one SO — any approved member.
@@ -135,11 +125,8 @@ export function registerCrmAttachmentRoutes(app: Hono<{ Bindings: Bindings }>): 
     const so = String(c.req.query('so') || '').trim();
     if (!so) return c.json({ error: 'so query required' }, 400);
     const { prisma } = deps();
-    const rows = await prisma.soAttachment.findMany({
-      where: { soNumber: so },
-      orderBy: { createdAt: 'desc' },
-    }).catch(() => []);
-    return c.json({ attachments: ((rows as any[]) ?? []).map(toJson) });
+    const rows = await listSoAttachments(prisma, so);
+    return c.json({ attachments: ((rows as any[]) ?? []).map(toSoAttachmentJson) });
   });
 
   // Serve file bytes by attachment id (never exposes raw KV keys).
@@ -150,7 +137,7 @@ export function registerCrmAttachmentRoutes(app: Hono<{ Bindings: Bindings }>): 
   app.get('/api/crm/files/:id', async (c) => {
     if (!c.env.CHAT_FILES) return c.json({ error: 'File storage is not configured' }, 501);
     const { prisma } = deps();
-    const row: any = await prisma.soAttachment.findUnique({ where: { id: c.req.param('id') ?? '' } }).catch(() => null);
+    const row: any = await findSoAttachment(prisma, c.req.param('id') ?? '');
     if (!row?.kvKey) return c.json({ error: 'Attachment not found' }, 404);
     const obj = await c.env.CHAT_FILES.getWithMetadata(String(row.kvKey), 'arrayBuffer');
     if (obj.value === null) return c.json({ error: 'File not found' }, 404);
@@ -172,12 +159,12 @@ export function registerCrmAttachmentRoutes(app: Hono<{ Bindings: Bindings }>): 
   app.delete('/api/crm/attachments/:id', async (c) => {
     const denied = await adminGuard(c); if (denied) return denied;
     const { prisma } = deps();
-    const row: any = await prisma.soAttachment.findUnique({ where: { id: c.req.param('id') ?? '' } }).catch(() => null);
+    const row: any = await findSoAttachment(prisma, c.req.param('id') ?? '');
     if (!row) return c.json({ error: 'Attachment not found' }, 404);
     try {
       if (c.env.CHAT_FILES && row.kvKey) await c.env.CHAT_FILES.delete(String(row.kvKey));
     } catch { /* bytes best-effort — row delete still proceeds */ }
-    await prisma.soAttachment.delete({ where: { id: String(row.id) } }).catch(() => {});
+    await deleteSoAttachment(prisma, String(row.id));
     notifyLive(c, { type: LiveEvent.Crm, soNumber: String(row.soNumber || ''), attachmentsChanged: true });
     return c.json({ ok: true });
   });

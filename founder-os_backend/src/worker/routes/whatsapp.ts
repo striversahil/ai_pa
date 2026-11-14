@@ -3,6 +3,7 @@
 // contacts, summarize, SSE events, pending-items.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
+import { saveDigest, saveToken, getToken, listTokenSources } from '../../modules/whatsapp/tokens';
 import { deps, requireSecret, validateChatId, broadcastLive, LiveEvent, type Bindings } from '../context';
 import { readBody } from '../http';
 
@@ -56,31 +57,24 @@ export function registerWhatsappRoutes(app: Hono<{ Bindings: Bindings }>): void 
     if (!source || token === undefined || token === null) return c.json({ error: 'source and token required' }, 400);
     // Limited key can only write the neodove token — nothing else.
     if (viaKey && !full && source !== 'neodove') return c.json({ error: 'forbidden for this source' }, 403);
-    const tokenStr = JSON.stringify(token);
-    await prisma.token.upsert({
-      where: { source },
-      update: { token: tokenStr, metadata, updatedAt: new Date() },
-      create: { source, token: tokenStr, metadata },
-    });
-    return c.json({ ok: true, source, updatedAt: new Date().toISOString() });
+    const updatedAt = await saveToken(prisma, { source, token, metadata });
+    return c.json({ ok: true, source, updatedAt });
   });
 
   app.get('/api/token/:source', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
     const { prisma } = deps();
     const source = c.req.param('source').trim().toLowerCase();
-    const row = await prisma.token.findUnique({ where: { source } });
+    const row = await getToken(prisma, source);
     if (!row) return c.json({ error: 'token not found' }, 404);
-    let parsedToken: any;
-    try { parsedToken = JSON.parse(row.token); } catch { parsedToken = row.token; }
-    return c.json({ source: row.source, token: parsedToken, metadata: row.metadata ? JSON.parse(row.metadata) : null, updatedAt: row.updatedAt });
+    return c.json(row);
   });
 
   app.get('/api/token', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);
     const { prisma } = deps();
-    const rows = await prisma.token.findMany({ select: { source: true, metadata: true, createdAt: true, updatedAt: true } });
-    return c.json(rows.map((r: any) => ({ source: r.source, metadata: r.metadata ? JSON.parse(r.metadata) : null, createdAt: r.createdAt, updatedAt: r.updatedAt })));
+    const rows = await listTokenSources(prisma);
+    return c.json(rows);
   });
 
   // ── WhatsApp send ───────────────────────────────────────────────────────────
@@ -207,20 +201,11 @@ export function registerWhatsappRoutes(app: Hono<{ Bindings: Bindings }>): void 
       .sort((a: any, b: any) => a.timestamp.getTime() - b.timestamp.getTime())
       .map((m: any) => ({ sender: m.sender === 'You' || m.sender === 'Founder' ? 'You' : m.sender, body: m.body, timestamp: m.timestamp }));
     const summaryResult = await AIService.summarizeConversation(contactName, messagesInput, founderNote?.content || '');
-    const digest = await prisma.digest.upsert({
-      where: { id: chatId },
-      update: {
-        chatId, chatName: contactName, summary: summaryResult.summary,
-        priority: (summaryResult.priority || 'medium') as any, category: summaryResult.category || 'General',
-        sentiment: summaryResult.sentiment || 'neutral', requiresFounder: !!summaryResult.requires_founder,
-        suggestedReply: summaryResult.suggested_reply || null, createdAt: new Date(),
-      },
-      create: {
-        id: chatId, chatId, chatName: contactName, summary: summaryResult.summary,
-        priority: (summaryResult.priority || 'medium') as any, category: summaryResult.category || 'General',
-        sentiment: summaryResult.sentiment || 'neutral', requiresFounder: !!summaryResult.requires_founder,
-        suggestedReply: summaryResult.suggested_reply || null, createdAt: new Date(),
-      },
+    const digest = await saveDigest(prisma, {
+      chatId, chatName: contactName, summary: summaryResult.summary,
+      priority: (summaryResult.priority || 'medium') as string, category: summaryResult.category || 'General',
+      sentiment: summaryResult.sentiment || 'neutral', requiresFounder: !!summaryResult.requires_founder,
+      suggestedReply: summaryResult.suggested_reply || null,
     });
     if (summaryResult.pending_from_founder && summaryResult.pending_from_founder.length > 0) {
       for (const item of summaryResult.pending_from_founder) {

@@ -26,6 +26,7 @@ import {
   setTypeRule,
 } from '../../automations/telecalling/client-segments';
 import { requireViewer } from '../viewer';
+import { listActiveTelecallers } from '../../modules/telecalling/self-roster';
 import { readBody } from '../http';
 
 /** Root/sales-head gate for the region-model management writes. Accepts
@@ -376,11 +377,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     try {
       const { getManualCallsMode, listManualCallRows } = await import('../../automations/telecalling/manual-calls');
       const mode = await getManualCallsMode();
-      const agents: any[] = await prisma.telecaller.findMany({
-        where: { deleted: false },
-        orderBy: { order: 'asc' },
-        select: { id: true, name: true, region: true, type: true },
-      });
+      const agents: any[] = await listActiveTelecallers(prisma, { id: true, name: true, region: true, type: true });
       const rows = await listManualCallRows(from, to);
       return c.json({ mode, day, from, to, agents, entries: rows });
     } catch (e: any) {

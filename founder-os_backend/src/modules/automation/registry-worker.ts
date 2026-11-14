@@ -198,6 +198,15 @@ export function accessScopesFor(slug: string, scope?: string | null): string[] {
   return AUTOMATION_ACCESS_SCOPES[slug] ?? [String(scope || slug)];
 }
 
+/**
+ * Registry rows for the admin console + workspace catalog. One home for the
+ * `automation.findMany({ orderBy: { createdAt: 'asc' } })` copies in
+ * worker/routes/automations.ts and worker/routes/session.ts.
+ */
+export async function listAutomationDefs(prisma: any): Promise<any[]> {
+  return (prisma as any).automation.findMany({ orderBy: { createdAt: 'asc' } });
+}
+
 export class AutomationRegistry {
   static async load(): Promise<void> {
     // Parallel: each loadOne is an independent D1 upsert; sequential awaits

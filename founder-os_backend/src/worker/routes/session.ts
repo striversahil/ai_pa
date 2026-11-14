@@ -15,7 +15,7 @@ import { deps, type Bindings } from '../context';
 import { getViewer } from '../viewer';
 import { serveWorkspaceData } from '../workspace-data';
 import { listWorkspaces, type WorkspaceRow } from '../../modules/workspaces/service';
-import { AUTOMATION_SCOPES, accessScopesFor } from '../../modules/automation/registry-worker';
+import { AUTOMATION_SCOPES, accessScopesFor, listAutomationDefs } from '../../modules/automation/registry-worker';
 
 function scopeFor(slug: string): { scope: string; scopes: string[] } {
   const scope = AUTOMATION_SCOPES[slug] ?? slug;
@@ -24,7 +24,7 @@ function scopeFor(slug: string): { scope: string; scopes: string[] } {
 
 async function workspacesFor(viewer: Awaited<ReturnType<typeof getViewer>>): Promise<WorkspaceRow[]> {
   const { prisma } = deps();
-  const rows = await prisma.automation.findMany({ orderBy: { createdAt: 'asc' } });
+  const rows = await listAutomationDefs(prisma);
   return listWorkspaces(rows.map((r: any) => ({ slug: r.slug, name: r.name })), viewer, scopeFor);
 }
 

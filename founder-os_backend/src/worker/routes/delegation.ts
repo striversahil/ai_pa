@@ -15,6 +15,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import { notifyLive, LiveEvent, type Bindings } from '../context';
+import { createAuthStore } from '../../modules/auth/store';
 import {
   createSelfTask, deleteDelegationTask, getDelegationBoard, getTaskHistory,
   isHrManager, updateDelegationTask,
@@ -32,16 +33,10 @@ function errorResponse(c: any, e: unknown) {
 }
 
 /** Every demo of the platform that can sign in — used only to flag which
- *  roster members already have a working login (Logins panel). Auth tables are
- *  lowercase and outside the Prisma shim, hence the raw query. */
+ *  roster members already have a working login (Logins panel). */
 async function knownLogins(c: any): Promise<Set<string>> {
   try {
-    const rows = await c.env.DB.prepare('SELECT lower(email) AS email FROM auth_user').all();
-    return new Set(
-      ((rows?.results ?? []) as any[])
-        .map((row) => String(row.email ?? '').trim().toLowerCase())
-        .filter(Boolean),
-    );
+    return new Set(await createAuthStore(c.env).listLoginEmails());
   } catch {
     return new Set();
   }

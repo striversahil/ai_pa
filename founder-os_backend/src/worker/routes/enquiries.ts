@@ -2,15 +2,16 @@
 // routes/enquiries.ts — live sales-pipeline enquiry tracker.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { enquiryMe, enquirySend, EnquiryRoutes, createEnquiryStore, authStore, deps, getEstimatesPayload, adminGuard, type Bindings } from '../context';
+import { enquiryMe, enquirySend, EnquiryRoutes, createEnquiryStore, deps, getEstimatesPayload, adminGuard, type Bindings } from '../context';
 import { chatTurn, clearSalesChat, executeProposal } from '../../modules/enquiries/chat';
 import { cacheDel } from '../../shared/cache';
 import { getGateway } from '../../shared/ai-gateway';
 import { runEnquiryExtraction } from '../../modules/enquiries/enrichment';
 import { runAgnesVisionIntake } from '../../modules/enquiries/vision-intake';
-import { isZohoClosedStatus, procurementSubmittable } from '../../modules/enquiries/queues';
+import { isZohoClosedStatus } from '../../modules/enquiries/queues';
 import { getManagementQueues, invalidateManagementQueues } from '../../modules/enquiries/queues-cache';
 import { canManageRates } from '../../modules/enquiries/scopes';
+import { listActiveTelecallers } from '../../modules/telecalling/self-roster';
 import { readBody } from '../http';
 
 // Fire-and-forget queue-cache bust (never blocks the response): the next
@@ -410,7 +411,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     // (not in the D1 where-clause) so a shim null-handling quirk can never
     // leak absent staff into the list.
     const { prisma } = deps();
-    const roster = await prisma.telecaller.findMany({ where: { deleted: false }, orderBy: { order: 'asc' } });
+    const roster = await listActiveTelecallers(prisma);
     const agents = (roster as any[])
       .filter((t) => t && !(t as any).absentSince)
       .map((t: any) => ({
