@@ -15,22 +15,20 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import { notifyLive, LiveEvent, type Bindings } from '../context';
-import { HrError } from '../../automations/human-resources/errors';
 import {
   createSelfTask, deleteDelegationTask, getDelegationBoard, getTaskHistory,
   isHrManager, updateDelegationTask,
 } from '../../automations/human-resources/delegation';
 import { createTask, updateMember } from '../../automations/human-resources/service';
-import { getViewerMe } from '../viewer';
-import { readBody } from '../http';
+import { requireViewer } from '../viewer';
+import { readBody, writeError } from '../http';
 
 function actorLabel(me: any): string | null {
   return me?.user?.name ?? me?.user?.email ?? null;
 }
 
 function errorResponse(c: any, e: unknown) {
-  if (e instanceof HrError) return c.json({ error: e.message }, e.status as any);
-  return c.json({ error: (e as any)?.message ?? 'request failed' }, 400);
+  return writeError(c, e, 'request failed');
 }
 
 /** Every demo of the platform that can sign in — used only to flag which
@@ -51,9 +49,11 @@ async function knownLogins(c: any): Promise<Set<string>> {
 
 export function registerDelegationRoutes(app: Hono<{ Bindings: Bindings }>): void {
   const viewer = async (c: any) => {
-    const me = await getViewerMe(c);
-    if (!me) return { me: null, error: c.json({ error: 'Authentication required' }, 401) };
-    return { me, error: null };
+    try {
+      return { me: await requireViewer(c), error: null };
+    } catch {
+      return { me: null, error: c.json({ error: 'Authentication required' }, 401) };
+    }
   };
 
   app.get('/api/delegation/board', async (c) => {

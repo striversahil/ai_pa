@@ -26,21 +26,15 @@ import {
 } from '../../modules/reporting/access';
 import { DEPARTMENTS, type ReportDepartment, type ReportSection } from '../../modules/reporting/types';
 import { currentWeekKey } from '../../modules/reporting/period';
-import { getViewerMe } from '../viewer';
-import { readBody } from '../http';
-
-async function meFor(c: any) {
-  return getViewerMe(c);
-}
+import { requireViewer } from '../viewer';
+import { readBody, writeError } from '../http';
 
 function actorOf(me: any): Actor {
   return { id: String(me?.user?.id ?? ''), name: String(me?.user?.name ?? me?.user?.email ?? '') };
 }
 
 function fail(c: any, e: unknown) {
-  if (e instanceof ReportingError) return c.json({ error: e.message }, e.status as any);
-  if (e instanceof AuthError) return c.json({ error: e.message }, ((e as any).status ?? 403) as any);
-  throw e;
+  return writeError(c, e, 'request failed', { rethrowUnknown: true });
 }
 
 function validPeriod(raw: unknown): string {
@@ -53,8 +47,7 @@ export function registerReportingSheetRoutes(app: Hono<{ Bindings: Bindings }>):
   // ── Auto-fill suggestion (edit permission required) ───────────────────────
   app.get('/api/reporting/autofill', async (c) => {
     try {
-      const me = await meFor(c);
-      if (!me) throw new AuthError('UNAUTHENTICATED', 'Authentication required', 401);
+      const me = await requireViewer(c);
       const dept = String(c.req.query('dept') ?? '') as ReportDepartment;
       const section = String(c.req.query('section') ?? '') as ReportSection;
       const period = validPeriod(c.req.query('period') ?? currentWeekKey());
@@ -71,8 +64,7 @@ export function registerReportingSheetRoutes(app: Hono<{ Bindings: Bindings }>):
   // ── Save one section ──────────────────────────────────────────────────────
   app.put('/api/reporting/week/:period/:dept/:section', async (c) => {
     try {
-      const me = await meFor(c);
-      if (!me) throw new AuthError('UNAUTHENTICATED', 'Authentication required', 401);
+      const me = await requireViewer(c);
       const period = validPeriod(c.req.param('period'));
       const dept = c.req.param('dept') as ReportDepartment;
       const section = c.req.param('section') as ReportSection;
@@ -94,8 +86,7 @@ export function registerReportingSheetRoutes(app: Hono<{ Bindings: Bindings }>):
   // ── Periods with data (picker dots) ───────────────────────────────────────
   app.get('/api/reporting/filled', async (c) => {
     try {
-      const me = await meFor(c);
-      if (!me) throw new AuthError('UNAUTHENTICATED', 'Authentication required', 401);
+      const me = await requireViewer(c);
       if (viewableDepartments(me).length === 0) {
         throw new AuthError('FORBIDDEN', `Requires '${REPORTING_SCOPE}' permission`, 403);
       }
@@ -108,8 +99,7 @@ export function registerReportingSheetRoutes(app: Hono<{ Bindings: Bindings }>):
   // ── Viewer capabilities (the UI hides what the server would reject) ───────
   app.get('/api/reporting/capabilities', async (c) => {
     try {
-      const me = await meFor(c);
-      if (!me) throw new AuthError('UNAUTHENTICATED', 'Authentication required', 401);
+      const me = await requireViewer(c);
       const viewable = viewableDepartments(me);
       if (viewable.length === 0) {
         throw new AuthError('FORBIDDEN', `Requires '${REPORTING_SCOPE}' permission`, 403);

@@ -17,35 +17,31 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import { isApproved, notifyLive, LiveEvent, type Bindings } from '../context';
-import { AuthError } from '../../modules/auth/types';
+import { AuthError, ScopeKeys } from '../../modules/auth/types';
 import {
   CampaignError, createPush, getCampaignBatches, getCampaignPreview, getCampaignStates,
   runBatchChunk, setAgentCampaignUrl, getCampaignTypes,
 } from '../../modules/neodove-campaign/service';
-import { getViewerMe } from '../viewer';
-import { readBody } from '../http';
-
-async function meFor(c: any) {
-  return getViewerMe(c);
-}
+import { requireViewer } from '../viewer';
+import { readBody, writeError } from '../http';
 
 /** Root / sales-head — scope OR role, mirroring the roster gate. */
 async function requireCampaignManager(c: any) {
-  const me: any = await meFor(c);
-  if (!me) throw new AuthError('UNAUTHENTICATED', 'Authentication required', 401);
+  const me: any = await requireViewer(c);
   if (!isApproved(me)) throw new AuthError('FORBIDDEN', 'Account not approved', 403);
   const scopes: string[] = me.scopes ?? [];
   const roles: string[] = me.roles ?? [];
   const allowed = !!me.isAdmin
-    
-    || scopes.includes('sales-head') || roles.includes('sales-head');
+
+    || scopes.includes(ScopeKeys.SalesHead) || roles.includes('sales-head');
   if (!allowed) throw new AuthError('FORBIDDEN', 'sales-head or root only', 403);
   return me;
 }
 
 function fail(c: any, e: unknown) {
-  if (e instanceof CampaignError) return c.json({ error: e.message }, e.status as any);
-  if (e instanceof AuthError) return c.json({ error: e.message }, ((e as any).status ?? 403) as any);
+  // Known domain/auth errors carry their own status; anything else is masked
+  // as a generic 500 so agent URLs/keys never leak into a response.
+  if (e instanceof CampaignError || e instanceof AuthError) return writeError(c, e, 'campaign push failed');
   console.error('[neodove-campaign]', (e as any)?.message);
   return c.json({ error: 'campaign push failed' }, 500);
 }
