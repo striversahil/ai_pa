@@ -58,6 +58,15 @@ describe('position workspace builder (phase 1, root-only)', () => {
     assert.ok(api.includes('worker/routes/work.ts'), 'personal api must name its backend mirror');
   });
 
+  it('sidebar: one Workspace (gallery), old grid row retired', () => {
+    const nav = fe('components/layout/nav.tsx');
+    assert.ok(!nav.includes('{ view: "session"'), 'old tile-grid sidebar row must be gone');
+    assert.ok(nav.includes('{ view: "workspace", label: "Workspace"'), 'gallery row must be named Workspace');
+    assert.ok(nav.includes('"session"'), 'session must stay routable (the Workspace home URL)');
+    const page = fe('app/page.tsx');
+    assert.ok(page.includes('canView("session")'), 'landing still prefers the Workspace home');
+  });
+
   it('builder is one gallery: peek into the live dashboard and take control', () => {
     const gallery = fe('views/workspace/WorkspaceView.tsx');
     assert.ok(gallery.includes('SalesHeadDashboard'), 'gallery must mount the REAL live dashboard (never a mock)');
