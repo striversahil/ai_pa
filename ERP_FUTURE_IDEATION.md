@@ -3,6 +3,7 @@
 > **Status:** PARTIALLY BUILT as of 2026-11-12 — foundation live, three ideas still deferred but now unblocked.
 > **Done:** core tables live in D1 (`core_employee` 33, `core_customer` 5106, `core_sale` 164, `core_enquiry` 602, `core_credit` 1572, `core_sales_order` 142, `core_receipt` 525, `core_promise` 43), 25 dual-write funnels, 6 shadow comparators + heartbeats, My Work tab (`/api/work/my|team`), notifications pull (`/api/notifications`), 2 desks (`sales_my_work`, `sales_team`) + dashboard API, plan Phase 7 `core_lead` DESIGNED (doc-only, `0135` not yet applied).
 > **Still needed for a successful transition:** quiet/matching-week flips (customer display, leaderboard/ledger, floor, dues calendar) + human confirmation; Zoho invoices + ledgers/journals (cut-over); more desks + WhatsApp channel (Meta approval); retirements post-flip; Dec 1 parallel run + CA sign-off; then build §1–§3 below on top (no rework).
+> **Delivery vehicle (2026-11-15, founder decision):** §1–§2 land inside per-position gamified Workspace dashboards (see §5) — one custom dashboard per org-chart position replaces the pile of individually-granted automation sheets. Sales Head is live first; every position follows the same pattern.
 > Source: discussions Nov 2026 (buddy mode, escalation flashing, lead-magnet + AI marketing).
 > Foundation: `ERP_TRANSITION_PLAN.md` (D1-native core `core_*` + helpers `hlp_*`, Zoho/NeoDove stay live).
 
@@ -113,3 +114,41 @@
 - [ ] Notifications GA: more desks (accounts/dispatch/store/founder), WhatsApp channel (Meta approval), retire legacy registries post-flip.
 - [ ] Phase 7 7a–7e: `core_lead` migration → funnels → qualification gate → rate intelligence → retire loss-tagging. Unblocks the lead-magnet (§3).
 - [ ] Monthly: `docs/core-change-requests/` review, lock re-sign, `core_access_log` + `core_row_change` actor coverage audit.
+
+---
+
+## 5. Position Workspaces — the delivery vehicle (founder decision 2026-11-15)
+
+**Ask:** each org-chart position gets ONE custom gamified dashboard instead of a pile of individually-granted automation sheets. The holder opens Workspace and sees their whole job — delays, targets, tasks, floor — with smoothing animations and a rewards system so they *want* to stay in it and finish things. Root opens the same dashboard live from a gallery and can take control (audited).
+
+**Verdict:** configuration + composition on the live backbone — no new system, no new tables. The automation sheets stay as data sources; the position dashboard is the only home the holder ever opens.
+
+### How it works
+
+1. **One dashboard per position, built from the sheets.** Each pack composes the REAL panels (same dynamic imports, never copies) as animated sections under a My Day hero (target + severity + tasks + streak). Sales Head is live first (all 8 Sales sections); shared pieces (`sales/tabs.ts`, `NotificationDock`, `ui/motion.tsx`, `personal/api.ts`) are built once and reused by every pack.
+2. **Gamified = notifications + motion + rewards.** Delays surface as 🔴 Critical / 🟠 High / 🟡 Medium / 🔵 Low / ⚪ Info with overdue flash (pure `severityFor`, mirrored + guarded); the bottom-right dock rides every view; tab/section transitions, shimmer skeletons and the streak ring use one shared kit (`prefers-reduced-motion` respected). Rewards v1 are local-first streaks; server-derived streaks come from `core_action_event` COMPLETED history (no new tables — core lock respected).
+3. **Single access, strict.** The holder's grant pile is replaced: landing prefers the Workspace home, old `/session/<slug>` deep links redirect there (data endpoints untouched), sidebar pile hidden. Rollback = flag off. Root keeps direct deep links as the admin escape hatch.
+4. **Root gallery = peek + take control.** Root-only `/workspace` lists every chart title as a card (seated counts from the HR master, Live/Soon) and mounts the position's REAL live dashboard preview-as. Every write stamps root as actor (`core_audit_event` + notify) — never silent, never as the holder.
+5. **Packs ship one position at a time.** A title joins `LIVE_DASHBOARD_TITLES` when its pack is approved; unbuilt cards show "soon". Other roles keep their current sheets byte-identical until their pack ships.
+
+### Guards
+
+- No panel is ever copied: tabs/panels render the same components the sheets use (guard `position-workspace.test.mjs` asserts the imports).
+- No fetch in presentational layers — all reads/writes go through domain api modules (ratchet `fe.raw_fetch_api` must not grow).
+- Severity mapping is pure and mirrored; rewards never invent server truth (local-first until the derived endpoint exists).
+- Every act-as write is audited (actor + reason); previews are read-only unless the write path stamps the actor.
+
+### Build order
+
+1. Sales Head (live): hero + shared tabs + dock + streak + gallery + redirect. ✅ SHIPPED
+2. Live target math (real numbers into the hero tile).
+3. Escalation sweeper log-only → real (§2 ladder goes live inside the dock + feed).
+4. Buddy cover section (§1 lands as `Buddy: covering for X` in the dashboard).
+5. Telecaller pack, then remaining positions one by one; sidebar piles retire per position.
+
+### Build trigger (later) — UPDATED 2026-11-15
+
+- **DONE:** `hr/position-dashboards.ts` registry (code-config) + `personal/api.ts` + `position-widgets/` + `ui/motion.tsx` + `sales/tabs.ts`; `SalesHeadDashboard` (hero + 8 real sections); `PersonWorkspace` fallback pile; `WorkspaceView` gallery; strict single-access redirect; guard `position-workspace.test.mjs` (8 cases); deployed + pushed.
+- **TODO:** target math → sweeper → buddy → Telecaller → rest. Server-derived streaks need a read endpoint (no migration — reads `core_action_event`).
+
+---
