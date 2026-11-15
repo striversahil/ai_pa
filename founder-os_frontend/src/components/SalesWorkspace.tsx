@@ -6,13 +6,12 @@
 // Root/sales-head Controller behind a single sticky horizontal tab bar.
 // Enquiries and Customer Master stay global (the whole book is visible to
 // sales); only Dispatch is region-owned (server-enforced from the roster row).
-import React, { useMemo } from "react";
+//
+// Tabs live in sales/tabs.ts (shared with the Sales Head dashboard) — this
+// file only maps tab keys to its lazy panels.
+import React from "react";
 import dynamic from "next/dynamic";
-import { useAuth } from "@/auth/AuthContext";
-import { canView } from "@/auth/permissions";
-import { useLocalStorage } from "../hooks/useLocalStorage";
-import { masterCapabilities } from "@/master-data/permissions";
-import { hasSalesManagerAccess } from "./SalesControllerPanel";
+import { useSalesTabs } from "@/sales/tabs";
 import { TabBar } from "@/components/ui";
 
 // Lazy panels: opening Sales must not parse the leaderboard + customer book +
@@ -26,55 +25,8 @@ const FieldStaffPanel = dynamic(() => import("./FieldStaffPanel"), { ssr: false 
 const SalesObjectionsPanel = dynamic(() => import("./SalesObjectionsPanel"), { ssr: false });
 const SalesControllerPanel = dynamic(() => import("./SalesControllerPanel"), { ssr: false });
 
-type SalesTab = "leaderboard" | "analyzer" | "enquiries" | "master" | "dispatch" | "field" | "objections" | "controller";
-
-interface WorkspaceTab {
-  key: SalesTab;
-  label: string;
-  icon: string;
-}
-
-const SALES_TAB_STORAGE_KEY = "sales_tab";
-
 export default function SalesWorkspace() {
-  const { me } = useAuth();
-  const caps = masterCapabilities(me);
-  const canManage = hasSalesManagerAccess(me);
-  const [storedTab, setStoredTab] = useLocalStorage<SalesTab>(SALES_TAB_STORAGE_KEY, "leaderboard");
-
-  const tabs = useMemo<WorkspaceTab[]>(() => {
-    const out: WorkspaceTab[] = [];
-    // Leaderboard: everyone on the `sales` automation holds `telecalling`.
-    if (canView(me, "telecalling")) out.push({ key: "leaderboard", label: "Leaderboard", icon: "🏆" });
-    // Analyzer: Zoho sent-estimate analysis, same audience as the leaderboard.
-    if (canView(me, "telecalling")) out.push({ key: "analyzer", label: "Analyzer", icon: "📊" });
-    if (canView(me, "enquiry-tracker")) out.push({ key: "enquiries", label: "Enquiries", icon: "📋" });
-    if (caps.canView) out.push({ key: "master", label: "Customer Master", icon: "👥" });
-    // Dispatch reads are open to sales agents too (server-region-scoped); the
-    // floor-only actions stay hidden inside the panel via the viewer flags.
-    if (canView(me, "crm") || canView(me, "telecalling") || canView(me, "dispatch")) {
-      out.push({ key: "dispatch", label: "Dispatch", icon: "🚚" });
-    }
-    // Field Staff: daily visit tracking for the field force (mobile-web
-    // check-in + mill rows + expenses + follow-ups). Same audience as the
-    // leaderboard — agents log visits for field staff like field enquiries.
-    if (canView(me, "telecalling") || canManage) {
-      out.push({ key: "field", label: "Field Staff", icon: "🧑‍🌾" });
-    }
-    // Objections: what the field is hearing — same audience as the
-    // leaderboard, every agent sees every objection. Controller stays last.
-    if (canView(me, "telecalling") || canManage) {
-      out.push({ key: "objections", label: "Objections", icon: "🛡️" });
-    }
-    // Controller is root/sales-head only and sits LAST so agents' tabs never shift.
-    if (canManage) out.push({ key: "controller", label: "Controller", icon: "🎛️" });
-    return out;
-  }, [me, caps.canView, canManage]);
-
-  // Never land on a tab this user cannot open (e.g. an agent without the
-  // customer-master grant still gets Leaderboard → Enquiries → Dispatch).
-  // The pick persists across reloads so the highlight always matches the view.
-  const active = tabs.find((t) => t.key === storedTab)?.key ?? tabs[0]?.key ?? "leaderboard";
+  const { tabs, active, setActive } = useSalesTabs();
 
   if (tabs.length === 0) {
     return (
@@ -105,7 +57,7 @@ export default function SalesWorkspace() {
           ariaLabel="Sales sections"
           items={tabs.map((t) => ({ key: t.key, label: t.label, icon: t.icon }))}
           active={active}
-          onChange={(k) => setStoredTab(k as SalesTab)}
+          onChange={(k) => setActive(k as typeof active)}
           className="[&_button[aria-current=page]]:shadow-lg [&_button[aria-current=page]]:ring-2 [&_button[aria-current=page]]:ring-white/70"
         />
       </div>

@@ -77,6 +77,20 @@ describe('position workspace builder (phase 1, root-only)', () => {
     assert.ok(perms.includes('if (viewOrSlug === "workspace") return me.isRoot'), 'gallery stays root-only');
   });
 
+  it('sales tabs live once, shared by both surfaces', () => {
+    const tabs = fe('sales/tabs.ts');
+    assert.ok(tabs.includes('useSalesTabs'), 'one hook owns the tab list');
+    assert.ok(tabs.includes('SALES_TAB_STORAGE_KEY'), 'both surfaces share the persisted pick');
+    assert.ok(!tabs.includes('fetch('), 'tab config is pure (gates only, no data)');
+    const sales = fe('components/SalesWorkspace.tsx');
+    assert.ok(sales.includes('useSalesTabs'), 'Sales keeps working through the shared hook');
+    const head = fe('views/workspace/SalesHeadDashboard.tsx');
+    assert.ok(head.includes('useSalesTabs'), 'custom dashboard reuses the same tabs (never a second list)');
+    assert.ok(head.includes('TabBar'), 'same tab component, same feel');
+    assert.ok(head.includes('My Day') || head.includes('Today'), 'hero stays pinned above the tabs');
+    assert.ok(!head.includes('LazySection'), 'one panel mounts at a time — no scroll-mount needed');
+  });
+
   it('person workspace replaces the sheet pile (sales-head first, tabbed)', () => {
     // Old tile grid is retired — the session page branches: single custom
     // dashboard for sales-head/root, tabbed pile for everyone else.
@@ -89,7 +103,6 @@ describe('position workspace builder (phase 1, root-only)', () => {
     for (const panel of ['TelecallingDashboard', 'ZohoEstimates', 'EnquiryTracker', 'MasterDataView', 'SalesDispatchPanel', 'FieldStaffPanel', 'SalesObjectionsPanel', 'SalesControllerPanel']) {
       assert.ok(head.includes(panel), `Sales Head page must compose the real ${panel} (never a copy)`);
     }
-    assert.ok(head.includes('LazySection'), 'below-fold sections must lazy-mount (paint stays fast)');
     assert.ok(head.includes('NotificationDock'), 'delay bell rides the custom dashboard');
     assert.ok(head.includes('completeAction'), 'act-as must reuse the audited complete path');
     assert.ok(!head.includes('fetch('), 'custom dashboard must go through domain api modules');
