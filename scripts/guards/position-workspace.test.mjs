@@ -70,4 +70,36 @@ describe('position workspace builder (phase 1, root-only)', () => {
     assert.ok(view.includes('completeAction'), 'act-as must reuse the audited complete path');
     assert.ok(!view.includes('fetch('), 'view must go through domain api modules (no inline fetch)');
   });
+
+  it('person workspace replaces the sheet pile (sales-head first, tabbed)', () => {
+    // Old tile grid is retired — the session page is the tabbed workspace.
+    const session = fe('views/session/SessionView.tsx');
+    assert.ok(!session.includes('WorkspaceGrid'), 'old tile grid must be retired');
+    assert.ok(session.includes('PersonWorkspace'), 'session page must render the person workspace');
+
+    const person = fe('views/workspace/PersonWorkspace.tsx');
+    assert.ok(person.includes('WorkspaceRenderer'), 'tabs must render the REAL sheet components (never copies)');
+    assert.ok(person.includes('useWorkspaces'), 'tabs come from the server-filtered list (grants unchanged)');
+    assert.ok(person.includes('NotificationDock'), 'delay bell rides every tab');
+    assert.ok(person.includes('MotionStyle'), 'shared animation kit must mount once');
+    assert.ok(!person.includes('fetch('), 'person workspace must go through domain api modules');
+
+    const dock = fe('position-widgets/NotificationDock.tsx');
+    assert.ok(!dock.includes('fetch('), 'dock is presentational (hook owns fetching)');
+
+    const hook = fe('hooks/useNotifications.ts');
+    assert.ok(hook.includes('/api/notifications') || hook.includes('fetchNotifications'), 'one hook owns the feed');
+
+    const motion = fe('components/ui/motion.tsx');
+    assert.ok(motion.includes('prefers-reduced-motion'), 'animation kit must respect reduced motion');
+
+    const perms = fe('auth/permissions.ts');
+    assert.ok(perms.includes('grantedScopes(me).has("sales-head")'), 'sales-head must reach the Workspace home');
+
+    const navHook = fe('hooks/useDashboardNav.ts');
+    assert.ok(navHook.includes('sales-head'), 'sales-head sidebar pile hides (sheets live in tabs)');
+
+    const page = fe('app/page.tsx');
+    assert.ok(page.includes('canView("session")'), 'landing prefers the Workspace home when visible');
+  });
 });

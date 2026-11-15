@@ -99,10 +99,10 @@ export interface AuthUserMe {
 
 export function canView(me: AuthUserMe | null, viewOrSlug: string): boolean {
   if (!me) return false;
-  // DEV-ONLY (2026-11-14): Workspace grid is root-only while under
-  // development. Placed before the isAdmin shortcut so even admins hide it.
-  // Sidebar dashboard rows + /session/<slug> stay scope-gated as before.
-  if (viewOrSlug === "session") return me.isRoot;
+  // Workspace home: root + sales-head (position workspaces). Other logins
+  // reach their sheets via deep links (/session/<slug>) until their position
+  // pack ships — then they join this gate instead of a new carve-out.
+  if (viewOrSlug === "session") return me.isRoot || grantedScopes(me).has("sales-head");
   // Position builder (phase 1): root-only creation surface. Staff keep their
   // automation sheets; even admins don't see drafts until the rollout phase.
   if (viewOrSlug === "workspace") return me.isRoot;

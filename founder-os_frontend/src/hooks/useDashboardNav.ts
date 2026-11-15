@@ -1,6 +1,6 @@
 "use client";
 import { useAuth } from "@/auth/AuthContext";
-import { VIEW_SCOPE } from "@/auth/permissions";
+import { VIEW_SCOPE, grantedScopes } from "@/auth/permissions";
 import { useWorkspaces } from "@/workspaces/useWorkspaces";
 
 export interface DashboardNavItem {
@@ -24,12 +24,13 @@ export function dashboardScopes(a: { slug: string; scope?: string | null; scopes
 
 /** Sidebar "Dashboards" section: the viewer's workspaces, already filtered by
  *  scope on the server (GET /api/session/workspaces). Root opens everything
- *  from the (root-only, DEV-ONLY) Workspace page, so only root skips the
- *  section — non-root admins need it while Workspace is hidden. */
+ *  from the Workspace page. Sales-head holders also skip the section — their
+ *  sheets live as tabs inside their Workspace, not as a sidebar pile. */
 export function useDashboardNav(): DashboardNavItem[] {
   const { me } = useAuth();
   const { workspaces } = useWorkspaces();
   if (!me || me.isRoot) return [];
+  if (grantedScopes(me).has("sales-head")) return [];
   return workspaces.map((w) => ({
     slug: w.slug, name: w.name,
     scope: dashboardScope(w), scopes: dashboardScopes(w),

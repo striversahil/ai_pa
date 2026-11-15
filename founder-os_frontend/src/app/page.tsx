@@ -90,11 +90,13 @@ function AppInner() {
     // it opens everything from the Workspace page).
     if (!me.isRoot && workspacesLoading) return;
     const first: NavTarget | null =
-      dashboards[0]
-        ? { type: "dashboard", slug: dashboards[0].slug }
-        : accessibleMain[0]
-          ? { type: "view", view: accessibleMain[0].view }
-          : null;
+      canView("session")
+        ? { type: "view", view: "session" }
+        : dashboards[0]
+          ? { type: "dashboard", slug: dashboards[0].slug }
+          : accessibleMain[0]
+            ? { type: "view", view: accessibleMain[0].view }
+            : null;
     if (first) navigate(navTargetPath(first));
   }, [viewDenied, loading, me, accessibleMain, dashboards, navigate, activeView, sub, workspacesLoading, route.view, route.sub]);
 
