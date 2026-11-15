@@ -103,6 +103,9 @@ export function canView(me: AuthUserMe | null, viewOrSlug: string): boolean {
   // development. Placed before the isAdmin shortcut so even admins hide it.
   // Sidebar dashboard rows + /session/<slug> stay scope-gated as before.
   if (viewOrSlug === "session") return me.isRoot;
+  // Position builder (phase 1): root-only creation surface. Staff keep their
+  // automation sheets; even admins don't see drafts until the rollout phase.
+  if (viewOrSlug === "workspace") return me.isRoot;
   // Founder email service: ROOT ONLY — not even admins. The backend
   // /api/email/* endpoints enforce the same check independently.
   if (viewOrSlug === "email") return me.isRoot;

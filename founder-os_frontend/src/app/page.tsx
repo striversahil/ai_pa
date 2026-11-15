@@ -22,6 +22,7 @@ const FounderAssistant = dynamic(() => import("../components/FounderAssistant"),
 const WhatsAppDashboard = dynamic(() => import("../components/WhatsAppDashboard"), { ssr: false });
 const AutomationsView = dynamic(() => import("../views/automations/AutomationsView"), { ssr: false });
 const SessionView = dynamic(() => import("../views/session/SessionView"), { ssr: false });
+const WorkspaceBuilderView = dynamic(() => import("../views/workspace/WorkspaceView"), { ssr: false });
 const ChatRoom = dynamic(() => import("../components/ChatRoom"), { ssr: false });
 const DelegationView = dynamic(() => import("../components/delegation/DelegationView"), { ssr: false });
 const EmailDashboard = dynamic(() => import("../components/EmailDashboard"), { ssr: false });
@@ -176,6 +177,7 @@ function AppInner() {
               <SessionView slug={sub} />
             </WorkspaceHostProvider>
           )}
+          {activeView === "workspace" && <WorkspaceBuilderView />}
           {activeView === "automations" && (
             <WorkspaceHostProvider basePath="/automations" navigate={navigate}>
               <AutomationsView />

@@ -3,6 +3,7 @@ import { Sparkles, MessageCircle, Workflow, ShieldCheck, MessagesSquare, Mail, S
 
 export type ViewType =
   | "session"
+  | "workspace"
   | "briefing"
   | "delegation"
   | "whatsapp"
@@ -25,6 +26,9 @@ export const NAV_ITEMS: NavItem[] = [
   // current view is denied lands here (page.tsx auto-routes to the first
   // accessible item).
   { view: "session", label: "Workspace", icon: LayoutGrid, mobile: true },
+  // Position builder (phase 1, root-only): previews the per-position
+  // dashboards while staff keep their automation sheets. Staff never see it.
+  { view: "workspace", label: "Positions", icon: LayoutGrid },
   // Automation REGISTRY console (admin only — canView gates it).
   { view: "automations", label: "Automations", icon: Workflow, mobile: true },
   // Employee delegation board — every approved login, HR or not.
@@ -55,6 +59,7 @@ export function navTargetPath(t: NavTarget): string {
   if (t.type === "dashboard") return `/session/${t.slug}`;
   const paths: Record<ViewType, string> = {
     session: "/session",
+    workspace: "/workspace",
     briefing: "/briefing",
     delegation: "/delegation",
     whatsapp: "/whatsapp",
