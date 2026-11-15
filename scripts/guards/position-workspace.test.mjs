@@ -15,11 +15,11 @@ const bundlePath = bundleToFile(join(FRONTEND_SRC, 'hr', 'position-dashboards.ts
 const reg = await import(pathToFileURL(bundlePath).href);
 
 describe('position workspace builder (phase 1, root-only)', () => {
-  it('registry titles are real chart positions; phase-1 packs are the answered two', () => {
+  it('registry titles are real chart positions; Sales Head pack is live first', () => {
     assert.ok(reg.positionDashboard('Sales Head'), 'Sales Head pack must exist');
     assert.ok(reg.positionDashboard('Telecaller'), 'Telecaller pack must exist');
-    assert.equal(reg.isPhaseOneTitle('Sales Head'), true);
-    assert.equal(reg.isPhaseOneTitle('Telecaller'), true);
+    assert.equal(reg.isLiveDashboardTitle('Sales Head'), true);
+    assert.equal(reg.isLiveDashboardTitle('Telecaller'), false);
     for (const t of ['Sales Head', 'Telecaller']) {
       const def = reg.positionDashboard(t);
       for (const w of def.widgets) {
@@ -58,17 +58,14 @@ describe('position workspace builder (phase 1, root-only)', () => {
     assert.ok(api.includes('worker/routes/work.ts'), 'personal api must name its backend mirror');
   });
 
-  it('builder is root-only and staff sheets are untouched', () => {
+  it('builder is one gallery: peek into the live dashboard and take control', () => {
+    const gallery = fe('views/workspace/WorkspaceView.tsx');
+    assert.ok(gallery.includes('SalesHeadDashboard'), 'gallery must mount the REAL live dashboard (never a mock)');
+    assert.ok(gallery.includes('ORG_POSITIONS'), 'gallery lists every chart position (live + soon)');
+    assert.ok(gallery.includes('isLiveDashboardTitle'), 'cards know which packs are live');
+    assert.ok(!gallery.includes('fetch('), 'gallery reads through the domain api module');
     const perms = fe('auth/permissions.ts');
-    assert.ok(perms.includes('if (viewOrSlug === "workspace") return me.isRoot'), 'workspace view must be root-only');
-    const nav = fe('components/layout/nav.tsx');
-    assert.ok(nav.includes('workspace'), 'nav must include the builder view');
-    const page = fe('app/page.tsx');
-    assert.ok(page.includes('WorkspaceBuilderView'), 'page must mount the builder');
-    const view = fe('views/workspace/WorkspaceView.tsx');
-    assert.ok(view.includes('staff still see their automation sheets'), 'preview banner must state staff are untouched');
-    assert.ok(view.includes('completeAction'), 'act-as must reuse the audited complete path');
-    assert.ok(!view.includes('fetch('), 'view must go through domain api modules (no inline fetch)');
+    assert.ok(perms.includes('if (viewOrSlug === "workspace") return me.isRoot'), 'gallery stays root-only');
   });
 
   it('person workspace replaces the sheet pile (sales-head first, tabbed)', () => {

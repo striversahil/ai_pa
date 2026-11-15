@@ -65,8 +65,12 @@ export function positionDashboard(title: string): PositionDashboardDef | null {
   };
 }
 
-export function isPhaseOneTitle(title: string): boolean {
-  return Object.prototype.hasOwnProperty.call(PHASE_ONE, String(title ?? "").trim());
+/** Titles with a built live custom dashboard (gallery mounts the real thing).
+ *  Sales Head first; a title joins this list when its pack ships. */
+export const LIVE_DASHBOARD_TITLES: readonly string[] = ["Sales Head"];
+
+export function isLiveDashboardTitle(title: string): boolean {
+  return LIVE_DASHBOARD_TITLES.includes(String(title ?? "").trim());
 }
 
 // ── Severity (gamified display over escalation state) ──
