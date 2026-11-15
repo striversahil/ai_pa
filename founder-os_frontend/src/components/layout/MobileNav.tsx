@@ -6,9 +6,10 @@ interface MobileNavProps {
   activeView: ViewType;
   onNavigate: (view: ViewType) => void;
   canView: (view: string) => boolean;
+  chatUnread?: number;
 }
 
-export default function MobileNav({ activeView, onNavigate, canView }: MobileNavProps) {
+export default function MobileNav({ activeView, onNavigate, canView, chatUnread = 0 }: MobileNavProps) {
   const visible = MOBILE_NAV_ITEMS.filter((i) => canView(i.view));
   return (
     <nav className="fixed inset-x-0 bottom-0 z-40 flex h-16 items-stretch border-t border-[var(--border-card)] bg-[var(--bg-card)] px-2 pb-[env(safe-area-inset-bottom)] md:hidden">
@@ -20,11 +21,16 @@ export default function MobileNav({ activeView, onNavigate, canView }: MobileNav
             key={item.view}
             type="button"
             onClick={() => onNavigate(item.view)}
-            className={`flex flex-1 flex-col items-center justify-center gap-1 text-[10px] font-semibold transition-colors ${
+            className={`relative flex flex-1 flex-col items-center justify-center gap-1 text-[10px] font-semibold transition-colors ${
               isActive ? "text-[var(--color-brand-indigo)]" : "text-[var(--text-tertiary)]"
             }`}
           >
             <Icon className="h-5 w-5 shrink-0" strokeWidth={isActive ? 2.4 : 2} />
+            {item.view === "chat" && chatUnread > 0 && (
+              <span className="absolute top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--color-danger)] px-1 text-[10px] font-bold leading-none text-white">
+                {chatUnread > 99 ? "99+" : chatUnread}
+              </span>
+            )}
             <span className="max-w-full truncate px-0.5">{item.label}</span>
           </button>
         );

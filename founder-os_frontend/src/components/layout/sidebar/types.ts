@@ -24,4 +24,5 @@ export interface SidebarProps {
   me: { email: string; name: string; picture: string | null } | null;
   onLogout: () => void;
   canView: (view: string) => boolean;
+  chatUnread?: number;
 }

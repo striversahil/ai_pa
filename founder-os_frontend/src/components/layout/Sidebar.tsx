@@ -34,7 +34,7 @@ export type { ViewType } from "./nav";
  * Everything past 44px is clipped by `overflow-hidden`, and the trailing
  * labels fade out via opacity so nothing reflows mid-animation.
  */
-export default function Sidebar({ activeView, activeSlug, onNavigate, theme, onSetTheme, accent, onSetAccent, me, onLogout, canView }: SidebarProps) {
+export default function Sidebar({ activeView, activeSlug, onNavigate, theme, onSetTheme, accent, onSetAccent, me, onLogout, canView, chatUnread = 0 }: SidebarProps) {
   const visible = NAV_ITEMS.filter((i) => canView(i.view));
   const dashboards = useDashboardNav();
   const { me: authMe } = useAuth();
@@ -252,7 +252,14 @@ export default function Sidebar({ activeView, activeSlug, onNavigate, theme, onS
                   aria-current={isActive ? "page" : undefined}
                 >
                   {activeBar(isActive)}
-                  <Icon className="h-5 w-5 shrink-0" strokeWidth={2} />
+                  <span className="relative shrink-0">
+                    <Icon className="h-5 w-5 shrink-0" strokeWidth={2} />
+                    {item.view === "chat" && chatUnread > 0 && (
+                      <span className="absolute -right-2 -top-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--color-danger)] px-1 text-[10px] font-bold leading-none text-white">
+                        {chatUnread > 99 ? "99+" : chatUnread}
+                      </span>
+                    )}
+                  </span>
                   <span className={`truncate whitespace-nowrap ${labelClass}`}>{item.label}</span>
                 </button>
               );
@@ -342,7 +349,14 @@ export default function Sidebar({ activeView, activeSlug, onNavigate, theme, onS
                   aria-current={isActive ? "page" : undefined}
                 >
                   {activeBar(isActive)}
-                  <Icon className="h-5 w-5 shrink-0" strokeWidth={2} />
+                  <span className="relative shrink-0">
+                    <Icon className="h-5 w-5 shrink-0" strokeWidth={2} />
+                    {item.view === "chat" && chatUnread > 0 && (
+                      <span className="absolute -right-2 -top-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--color-danger)] px-1 text-[10px] font-bold leading-none text-white">
+                        {chatUnread > 99 ? "99+" : chatUnread}
+                      </span>
+                    )}
+                  </span>
                   <span className={`truncate whitespace-nowrap ${labelClass}`}>{item.label}</span>
                 </button>
               );

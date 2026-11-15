@@ -51,6 +51,7 @@ interface MobileDrawerProps {
   me: { email: string; name: string; picture: string | null } | null;
   onLogout: () => void;
   canView: (view: string) => boolean;
+  chatUnread?: number;
 }
 
 export default function MobileDrawer({
@@ -64,6 +65,7 @@ export default function MobileDrawer({
   me,
   onLogout,
   canView,
+  chatUnread = 0,
 }: MobileDrawerProps) {
   const visible = NAV_ITEMS.filter((i) => canView(i.view));
   const dashboards = useDashboardNav();
@@ -143,7 +145,12 @@ export default function MobileDrawer({
                       <span className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-[var(--color-brand-indigo)]" />
                     )}
                     <Icon className="h-5 w-5" strokeWidth={2} />
-                    <span>{item.label}</span>
+                    <span className="truncate">{item.label}</span>
+                    {item.view === "chat" && chatUnread > 0 && (
+                      <span className="ml-auto shrink-0 rounded-full bg-[var(--color-danger)] px-1.5 py-0.5 text-[11px] font-bold text-white">
+                        {chatUnread > 99 ? "99+" : chatUnread}
+                      </span>
+                    )}
                   </button>
                 );
               })}
@@ -179,7 +186,12 @@ export default function MobileDrawer({
                       <span className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-[var(--color-brand-indigo)]" />
                     )}
                     <Icon className="h-5 w-5" strokeWidth={2} />
-                    <span>{item.label}</span>
+                    <span className="truncate">{item.label}</span>
+                    {item.view === "chat" && chatUnread > 0 && (
+                      <span className="ml-auto shrink-0 rounded-full bg-[var(--color-danger)] px-1.5 py-0.5 text-[11px] font-bold text-white">
+                        {chatUnread > 99 ? "99+" : chatUnread}
+                      </span>
+                    )}
                   </button>
                 );
               })}

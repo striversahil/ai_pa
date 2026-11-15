@@ -181,7 +181,7 @@ export default function MessageItem({
       className={`group relative ${compact ? "px-4 py-px" : grouped ? "px-4 py-0.5" : "px-4 pb-0.5 pt-3"} transition-colors ${
         editing || pickerOpen || highlight ? "" : "hover:bg-[var(--chat-hover)]"
       }`}
-      style={editing || pickerOpen || highlight ? { backgroundColor: "rgba(var(--chat-accent-rgb), 0.11)" } : undefined}
+      style={editing || pickerOpen || highlight ? { backgroundColor: "color-mix(in srgb, var(--chat-accent) 11%, transparent)" } : undefined}
       onContextMenu={(e) => { e.preventDefault(); onContext?.(e.clientX, e.clientY); }}
       onTouchStart={(e) => { touchStart.current = e.touches[0].clientX; }}
       onTouchMove={(e) => { touchMove.current = e.touches[0].clientX; }}
@@ -285,7 +285,7 @@ export default function MessageItem({
                     }`
                   : "break-words text-[var(--chat-text)]"
               }
-              style={settings.bubbles && own ? { backgroundColor: settings.accent } : { fontSize: fontPx(settings) }}
+              style={{ fontSize: fontPx(settings) }}
             >
               <Markdown text={m.body} />
               {m.editedAt && <span className="ml-1 align-baseline text-[10px] text-[var(--chat-muted)]">(edited)</span>}
@@ -303,7 +303,7 @@ export default function MessageItem({
                   title={`${r.users.join(", ")} reacted with ${r.emoji}`}
                   className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs transition ${
                     r.mine
-                      ? "border-[var(--chat-accent)] bg-[rgba(var(--chat-accent-rgb),0.15)]"
+                      ? "border-[var(--chat-accent)] bg-[color-mix(in_srgb,var(--chat-accent)_15%,transparent)]"
                       : "border-[var(--chat-border)] bg-[var(--chat-float)] hover:border-[var(--chat-accent)]"
                   }`}
                 >

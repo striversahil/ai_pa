@@ -5,33 +5,74 @@ import { useLiveQuery, useLiveEvent } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
 import {
   Hash, Plus, Send, MessagesSquare, Paperclip, FileText, X,
-  Users, Search, ChevronDown, Smile, Settings,
+  Users, Search, ChevronDown, Smile,
 } from "lucide-react";
 import Lightbox from "@/components/Lightbox";
 import MessageItem, { Avatar } from "./chat/MessageItem";
 import EmojiPopover from "./chat/EmojiPopover";
 import ContextMenu, { type ContextMenuItem } from "./chat/ContextMenu";
-import ThemeSettingsPanel from "./chat/ThemeSettingsPanel";
-import { chatStyle, fontPx, useChatSettings } from "./chat/theme";
+import { chatListChanged, fetchChannels, fetchChannelMessages as fetchChannelMessagesApi, notifyChannelsChanged } from "./chat/api";
+import { useTheme } from "@/hooks/useTheme";
 import {
   Channel, ChatAttachment, ChatMessage, ChatReaction, ChatUser, LiveChatEvent,
   isPpt, mergeFromServer, upsert, userColor,
 } from "./chat/types";
 
+/** Fixed display prefs — the global app theme owns all colour. */
+const DISPLAY_SETTINGS = {
+  density: "cozy" as const,
+  bubbles: false,
+  clock24h: false,
+  fontScale: 1,
+};
+
+/**
+ * Chat surfaces follow the global theme tokens so light/dark presets +
+ * custom accents apply with zero per-chat settings.
+ * `--chat-accent` points at the global brand token, so accent-coloured bits
+ * (badges, send button, typing dots) track Appearance automatically.
+ */
+const CHAT_VARS = {
+  "--chat-bg": "var(--bg-card)",
+  "--chat-side": "var(--bg-sidebar)",
+  "--chat-panel": "var(--bg-card)",
+  "--chat-float": "var(--surface-raised)",
+  "--chat-input": "var(--bg-input)",
+  "--chat-text": "var(--text-primary)",
+  "--chat-muted": "var(--text-tertiary)",
+  "--chat-border": "var(--border-card)",
+  "--chat-hover": "var(--surface-sunken)",
+  "--chat-active": "var(--surface-soft)",
+  "--chat-bubble": "var(--surface-soft)",
+  "--chat-divider": "var(--border-card)",
+  "--chat-accent": "var(--color-brand-indigo)",
+} as React.CSSProperties;
+
 export default function ChatRoom() {
   const { me, canView } = useAuth();
   const isAdmin = me?.isAdmin ?? false;
   const isApproved = canView("chat");
-  const { settings, update, reset } = useChatSettings();
+  const { isDark } = useTheme();
+  // Chat follows the global app theme — no per-chat theme picker.
+  // Display prefs are fixed: cozy, flat rows, 15px, 12h clock.
+  const settings = DISPLAY_SETTINGS;
+  const [showMembers, setShowMembers] = useState(true);
 
   const channels = useLiveQuery<Channel[]>(
-    async () => {
-      const res = await fetch("/api/chat/channels");
-      if (!res.ok) throw new Error("load channels failed");
-      return res.json();
+    fetchChannels,
+    {
+      // Only actions that can change the list/unreads — typing fires every
+      // ~2s and must never refetch. Poll backstops dead WS in production.
+      events: chatListChanged,
+      pollMs: 15000,
     },
-    { events: (e) => e.type === "chat" && e.action === "channel-created" },
   );
+
+  /** Refresh the channel list AND the global nav badge together. */
+  const refreshChannels = () => {
+    channels.refresh();
+    notifyChannelsChanged();
+  };
 
   const [channelId, setChannelId] = useState<string | null>(null);
   const selectedId = channelId ?? (channels.data ?? [])[0]?.id ?? null;
@@ -45,11 +86,7 @@ export default function ChatRoom() {
   const [firstUnreadId, setFirstUnreadId] = useState<number | null>(null);
 
   const fetchChannelMessages = async (id: string, opts: { silent?: boolean; before?: number } = {}) => {
-    const q = opts.before ? `?before=${opts.before}&limit=50` : "?limit=50";
-    const res = await fetch(`/api/chat/channels/${id}/messages${q}`);
-    if (!res.ok) throw new Error("load messages failed");
-    const data = await res.json();
-    const list = Array.isArray(data) ? data : [];
+    const list = await fetchChannelMessagesApi(id, opts.before);
     if (opts.before) {
       const cached = msgsCache.current.get(id) || [];
       const byId = new Map<number, ChatMessage>();
@@ -62,11 +99,33 @@ export default function ChatRoom() {
         setHasMore(list.length >= 50);
       }
     } else {
-      const sorted = [...list].sort((a, b) => a.id - b.id);
-      msgsCache.current.set(id, sorted);
+      // Merge, don't replace: edits/deletes write straight to D1, bypassing
+      // the ChatRoomDO fast path, so the server list can carry STALE bodies
+      // and resurrected rows. Local tombstones, newer local edits and pending
+      // temp sends always win; everything else comes from the server.
+      const cached = msgsCache.current.get(id) || [];
+      const localById = new Map(cached.map((m) => [m.id, m]));
+      const serverIds = new Set(list.map((m) => m.id));
+      const out: ChatMessage[] = list.map((s) => {
+        const l = localById.get(s.id);
+        if (!l) return s;
+        if (l.deletedAt && !s.deletedAt) return l; // keep tombstone
+        const le = l.editedAt ? Date.parse(l.editedAt) : 0;
+        const se = s.editedAt ? Date.parse(s.editedAt) : 0;
+        if (le > se) return { ...s, body: l.body, editedAt: l.editedAt };
+        return s;
+      });
+      for (const l of cached) {
+        // Pending temp sends (negative ids) + local tombstones the server
+        // no longer lists. Other local-only rows are dropped — the server
+        // is the source of truth for what exists.
+        if (!serverIds.has(l.id) && (l.id < 0 || l.deletedAt)) out.push(l);
+      }
+      out.sort((a, b) => a.id - b.id);
+      msgsCache.current.set(id, out);
       hasMoreCache.current.set(id, list.length >= 50);
       if (id === selectedId) {
-        setMsgs(sorted);
+        setMsgs(out);
         setHasMore(list.length >= 50);
       }
     }
@@ -84,15 +143,21 @@ export default function ChatRoom() {
     } catch { /* ignore */ }
   };
 
+  const lastReadSent = useRef<Map<string, number>>(new Map());
   const markChannelRead = (id: string) => {
     const all = msgsCache.current.get(id) || [];
     const maxId = all.reduce((m, x) => Math.max(m, x.id), 0);
-    if (maxId <= 0) return;
+    // Only POST when the watermark actually advanced — the 10s poll tick
+    // calls this every round and must not spam /read.
+    if (maxId <= 0 || lastReadSent.current.get(id) === maxId) return;
+    lastReadSent.current.set(id, maxId);
     fetch(`/api/chat/channels/${id}/read`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ lastReadId: maxId }),
-    }).catch(() => {});
+    }).catch(() => {
+      lastReadSent.current.delete(id); // allow retry next round
+    });
   };
 
   useEffect(() => {
@@ -115,11 +180,48 @@ export default function ChatRoom() {
     fetchChannelMessages(selectedId, { silent: true })
       .then(() => {
         markChannelRead(selectedId);
-        channels.refresh();
+        refreshChannels();
       })
       .catch(() => {})
       .finally(() => setMsgsLoading(false));
     fetchReactions(selectedId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
+
+  // Polling safety net for live updates: the Pages /api proxy can't forward
+  // the /api/events WebSocket upgrade, so WS live is dead in production.
+  // Refetch the open channel + channel list every 10s; WS still wins instantly
+  // where it connects (local dev). Refresh on focus/visible too so a
+  // background tab converges the moment it's opened.
+  useEffect(() => {
+    if (!selectedId) return;
+    let stopped = false;
+    const tick = () => {
+      if (stopped || document.hidden) return;
+      fetchChannelMessages(selectedId, { silent: true })
+        .then((list) => {
+          if (!stopped && list.length > 0) {
+            markChannelRead(selectedId);
+            refreshChannels();
+          }
+        })
+        .catch(() => {});
+    };
+    const id = setInterval(tick, 10000);
+    const onVis = () => {
+      if (!document.hidden) {
+        refreshChannels();
+        tick();
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("focus", onVis);
+    return () => {
+      stopped = true;
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("focus", onVis);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
 
@@ -154,10 +256,10 @@ export default function ChatRoom() {
         typingTimers.current[uid] = setTimeout(() => expireTyping(selectedId, uid), 3200);
       }
     } else if (ev.action === "channel-created") {
-      channels.refresh();
+      refreshChannels();
     }
     if (ev.action === "created" && ev.message && ev.channelId !== selectedId) {
-      channels.refresh();
+      refreshChannels();
     }
   });
 
@@ -205,7 +307,6 @@ export default function ChatRoom() {
   }, [me?.user.id, me?.user.email]);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editText, setEditText] = useState("");
-  const [showSettings, setShowSettings] = useState(false);
   const [atBottom, setAtBottomState] = useState(true);
 
   const [typingUsers, setTypingUsers] = useState<Record<string, Record<string, { name: string; until: number }>>>({});
@@ -321,7 +422,7 @@ export default function ChatRoom() {
         body: JSON.stringify({ lastReadId: 999999999 }),
       });
     } catch { /* ignore */ }
-    channels.refresh();
+    refreshChannels();
   };
 
   const copyText = async (text: string) => {
@@ -363,10 +464,8 @@ export default function ChatRoom() {
         const oldest = [...cached].sort((a, b) => a.id - b.id)[0];
         if (!oldest || oldest.id <= id) break;
         try {
-          const res = await fetch(`/api/chat/channels/${selectedId}/messages?before=${oldest.id}&limit=50`);
-          if (!res.ok) break;
-          const older = await res.json();
-          if (!Array.isArray(older) || older.length === 0) break;
+          const older = await fetchChannelMessagesApi(selectedId, oldest.id);
+          if (older.length === 0) break;
           const merged = mergeFromServer(msgsCache.current.get(selectedId) || [], older, selectedId);
           msgsCache.current.set(selectedId, merged);
           hasMoreCache.current.set(selectedId, older.length >= 50);
@@ -417,7 +516,7 @@ export default function ChatRoom() {
   }, [channels.data]);
 
   useEffect(() => {
-    if (!selectedId || !settings.showMembers) { setMemberPanel([]); return; }
+    if (!selectedId || !showMembers) { setMemberPanel([]); return; }
     if (active?.type === "dm") {
       setMemberPanel(active.otherUser ? [active.otherUser as ChatUser] : []);
       return;
@@ -427,7 +526,7 @@ export default function ChatRoom() {
       .then((list) => setMemberPanel(Array.isArray(list) ? list : []))
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId, settings.showMembers, active?.type, active?.otherUser?.id]);
+  }, [selectedId, showMembers, active?.type, active?.otherUser?.id]);
 
   const send = async () => {
     const body = composer.trim();
@@ -488,9 +587,7 @@ export default function ChatRoom() {
     if (!oldest || loadingOlder || !hasMoreCache.current.get(selectedId)) return;
     setLoadingOlder(true);
     try {
-      const res = await fetch(`/api/chat/channels/${selectedId}/messages?before=${oldest.id}&limit=50`);
-      if (!res.ok) throw new Error("load older failed");
-      const older = await res.json();
+      const older = await fetchChannelMessagesApi(selectedId, oldest.id);
       const merged = mergeFromServer(cached, older, selectedId);
       msgsCache.current.set(selectedId, merged);
       hasMoreCache.current.set(selectedId, (older?.length ?? 0) >= 50);
@@ -664,7 +761,7 @@ export default function ChatRoom() {
           <span className="truncate">{label}</span>
         )}
         {!!c.unread && (
-          <span className="ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[11px] font-bold text-white" style={{ backgroundColor: settings.accent }}>
+          <span className="ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[11px] font-bold text-white" style={{ backgroundColor: "var(--color-brand-indigo)" }}>
             {c.unread > 99 ? "99+" : c.unread}
           </span>
         )}
@@ -684,7 +781,7 @@ export default function ChatRoom() {
   return (
     <div
       className="relative flex h-[calc(100vh-8rem)] min-h-[480px] overflow-hidden rounded-xl border border-[var(--chat-border)] font-sans"
-      style={chatStyle(settings)}
+      style={CHAT_VARS}
       onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -697,7 +794,7 @@ export default function ChatRoom() {
           <button
             onClick={() => void openDmPicker()}
             className="flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-bold text-white shadow-md transition hover:opacity-90"
-            style={{ backgroundColor: settings.accent, boxShadow: `0 4px 14px rgba(var(--chat-accent-rgb), 0.4)` }}
+            style={{ backgroundColor: "var(--color-brand-indigo)", boxShadow: "0 4px 14px color-mix(in srgb, var(--color-brand-indigo) 40%, transparent)" }}
           >
             <Plus className="h-4 w-4" /> New chat
           </button>
@@ -754,7 +851,7 @@ export default function ChatRoom() {
                   </div>
                 </div>
                 <button onClick={createChannel} disabled={creating}
-                  className="w-full rounded-md px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-60" style={{ backgroundColor: settings.accent }}>
+                  className="w-full rounded-md px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-60" style={{ backgroundColor: "var(--color-brand-indigo)" }}>
                   Create
                 </button>
               </div>
@@ -797,10 +894,6 @@ export default function ChatRoom() {
             <p className="truncate text-xs font-bold text-[var(--chat-text)]">{me?.user.name}</p>
             <p className="truncate text-[10px] text-[var(--chat-muted)]">{isAdmin ? "Admin" : "Member"}</p>
           </div>
-          <button onClick={() => setShowSettings(true)} title="Chat appearance"
-            className="rounded p-1.5 text-[var(--chat-muted)] hover:bg-[var(--chat-active)] hover:text-[var(--chat-text)]">
-            <Settings className="h-4 w-4" />
-          </button>
           <button onClick={() => setRailOpen(false)} title="Close" className="rounded p-1.5 text-[var(--chat-muted)] hover:text-[var(--chat-text)] md:hidden">
             <X className="h-4 w-4" />
           </button>
@@ -828,7 +921,7 @@ export default function ChatRoom() {
             </>
           )}
           <div className="ml-auto flex items-center gap-1">
-            {settings.showMembers && memberPanel.length > 0 && (
+            {showMembers && memberPanel.length > 0 && (
               <div className="mr-1 hidden items-center xl:flex">
                 {memberPanel.slice(0, 4).map((u, i) => (
                   <div key={u.id} className={i > 0 ? "-ml-2" : ""}>
@@ -843,15 +936,11 @@ export default function ChatRoom() {
               </div>
             )}
             <button
-              onClick={() => update({ showMembers: !settings.showMembers })}
-              title={settings.showMembers ? "Hide member list" : "Show member list"}
-              className={`rounded p-1.5 transition hover:text-[var(--chat-text)] ${settings.showMembers ? "text-[var(--chat-text)]" : "text-[var(--chat-muted)]"}`}
+              onClick={() => setShowMembers((v) => !v)}
+              title={showMembers ? "Hide member list" : "Show member list"}
+              className={`rounded p-1.5 transition hover:text-[var(--chat-text)] ${showMembers ? "text-[var(--chat-text)]" : "text-[var(--chat-muted)]"}`}
             >
               <Users className="h-5 w-5" />
-            </button>
-            <button onClick={() => setShowSettings(true)} title="Chat appearance"
-              className="rounded p-1.5 text-[var(--chat-muted)] transition hover:text-[var(--chat-text)]">
-              <Settings className="h-5 w-5" />
             </button>
           </div>
         </header>
@@ -882,7 +971,7 @@ export default function ChatRoom() {
                 <p className="text-sm">This is the beginning of the conversation.</p>
               </div>
             )}
-            <div ref={contentRef} style={{ fontSize: fontPx(settings) }}>
+            <div ref={contentRef} style={{ fontSize: 15 }}>
               {msgs.map((m, i) => (
                 <React.Fragment key={m.id}>
                   {firstUnreadId != null && m.id === firstUnreadId && (
@@ -932,7 +1021,7 @@ export default function ChatRoom() {
             </button>
           )}
 
-          {settings.showMembers && memberPanel.length > 0 && (
+          {showMembers && memberPanel.length > 0 && (
             <aside className="hidden w-60 shrink-0 flex-col overflow-y-auto border-l border-[var(--chat-border)] bg-[var(--chat-side)] px-2 py-3 scrollbar-thin xl:flex">
               <p className="px-2 pb-2 text-[11px] font-bold uppercase tracking-wider text-[var(--chat-muted)]">
                 {active?.type === "dm" ? "In this DM" : "Members"} — {memberPanel.length}
@@ -954,9 +1043,9 @@ export default function ChatRoom() {
           {typerLabel && (
             <div className="mb-1 flex items-center gap-2 px-1 text-xs text-[var(--chat-muted)]">
               <span className="flex gap-0.5">
-                <span className="h-1.5 w-1.5 animate-bounce rounded-full" style={{ backgroundColor: settings.accent }} />
-                <span className="h-1.5 w-1.5 animate-bounce rounded-full [animation-delay:120ms]" style={{ backgroundColor: settings.accent }} />
-                <span className="h-1.5 w-1.5 animate-bounce rounded-full [animation-delay:240ms]" style={{ backgroundColor: settings.accent }} />
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full" style={{ backgroundColor: "var(--color-brand-indigo)" }} />
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full [animation-delay:120ms]" style={{ backgroundColor: "var(--color-brand-indigo)" }} />
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full [animation-delay:240ms]" style={{ backgroundColor: "var(--color-brand-indigo)" }} />
               </span>
               <span className="italic">{typerLabel}…</span>
             </div>
@@ -1022,7 +1111,7 @@ export default function ChatRoom() {
               placeholder={active ? (active.type === "dm" ? `Message @${active.otherUser?.name ?? ""}` : `Message #${active.name}`) : "Select a channel to chat"}
               disabled={!selectedId}
               className="max-h-[200px] flex-1 resize-none bg-transparent py-1 text-[var(--chat-text)] outline-none placeholder:text-[var(--chat-muted)] disabled:opacity-50"
-              style={{ fontSize: fontPx(settings) }}
+              style={{ fontSize: 15 }}
             />
             <div className="relative mb-0.5 flex items-center gap-1">
               <button
@@ -1037,7 +1126,7 @@ export default function ChatRoom() {
               </button>
               <button onClick={() => void send()} disabled={!selectedId || (!composer.trim() && files.length === 0) || sending}
                 className="rounded-full p-1 transition hover:opacity-80 disabled:opacity-40"
-                style={{ color: composer.trim() || files.length > 0 ? settings.accent : "var(--chat-muted)" }} title="Send">
+                style={{ color: composer.trim() || files.length > 0 ? "var(--color-brand-indigo)" : "var(--chat-muted)" }} title="Send">
                 <Send className={`h-5 w-5 ${composer.trim() || files.length > 0 ? "fill-current" : ""}`} />
               </button>
             </div>
@@ -1158,7 +1247,7 @@ export default function ChatRoom() {
                   className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-[var(--chat-hover)]">
                   <Avatar src={u.picture} name={u.name} size="h-6 w-6" color={userColor(u.id)} />
                   <span className="truncate font-medium text-[var(--chat-text)]">{u.name}</span>
-                  <Plus className="ml-auto h-3.5 w-3.5 shrink-0" style={{ color: settings.accent }} />
+                  <Plus className="ml-auto h-3.5 w-3.5 shrink-0" style={{ color: "var(--color-brand-indigo)" }} />
                 </button>
               ))}
               {dmUsers.filter((u) => !channelMembers.some((m) => m.id === u.id)).length === 0 && (
@@ -1170,10 +1259,10 @@ export default function ChatRoom() {
       )}
 
       {dragging && (
-        <div className="pointer-events-none fixed inset-0 z-[95] flex items-center justify-center bg-[rgba(var(--chat-accent-rgb),0.12)] backdrop-blur-[2px]">
+        <div className="pointer-events-none fixed inset-0 z-[95] flex items-center justify-center backdrop-blur-[2px]" style={{ backgroundColor: "color-mix(in srgb, var(--color-brand-indigo) 12%, transparent)" }}>
           <div className="rounded-2xl border-2 border-dashed px-10 py-8 text-center shadow-2xl"
-            style={{ borderColor: settings.accent, background: "var(--chat-panel)" }}>
-            <Paperclip className="mx-auto h-10 w-10" style={{ color: settings.accent }} />
+            style={{ borderColor: "var(--color-brand-indigo)", background: "var(--chat-panel)" }}>
+            <Paperclip className="mx-auto h-10 w-10" style={{ color: "var(--color-brand-indigo)" }} />
             <p className="mt-2 text-lg font-bold text-[var(--chat-text)]">Drop files to attach</p>
             <p className="text-sm text-[var(--chat-muted)]">Images, PDFs, videos, documents — anything</p>
           </div>
@@ -1183,8 +1272,8 @@ export default function ChatRoom() {
       {composerPicker && (
         <EmojiPopover
           rect={composerPicker}
-          dark={settings.theme !== "light"}
-          accent={settings.accent}
+          dark={isDark}
+          accent={"var(--color-brand-indigo)"}
           keepOpenOnPick
           onPick={(e) => { setComposer((p) => p + e); composerRef.current?.focus(); }}
           onClose={() => setComposerPicker(null)}
@@ -1194,8 +1283,8 @@ export default function ChatRoom() {
       {reactionPicker && (
         <EmojiPopover
           rect={reactionPicker.rect}
-          dark={settings.theme !== "light"}
-          accent={settings.accent}
+          dark={isDark}
+          accent={"var(--color-brand-indigo)"}
           onPick={(e) => { void toggleReaction(reactionPicker.messageId, e); setReactionPicker(null); }}
           onClose={() => setReactionPicker(null)}
         />
@@ -1217,10 +1306,6 @@ export default function ChatRoom() {
           items={channelMenuItems(channelMenu.channel)}
           onClose={() => setChannelMenu(null)}
         />
-      )}
-
-      {showSettings && (
-        <ThemeSettingsPanel settings={settings} update={update} reset={reset} onClose={() => setShowSettings(false)} />
       )}
     </div>
   );

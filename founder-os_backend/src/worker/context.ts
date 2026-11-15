@@ -555,6 +555,10 @@ export function createApp(): Hono<{ Bindings: Bindings }> {
     const path = new URL(c.req.url).pathname;
     if (!path.startsWith('/api/')) return;
     if (LIVE_NO_AUTO.some((p) => path.startsWith(p))) return;
+    // Per-user chat read state (POST /api/chat/channels/:id/read) — not dashboard
+    // data for anyone else. Prefix match can't express the :id segment, so skip
+    // by suffix here instead of growing LIVE_NO_AUTO.
+    if (path.startsWith('/api/chat/channels/') && path.endsWith('/read')) return;
     const { LiveEvent, broadcastLive } = require('../live') as typeof import('../live');
     broadcastLive(c, LiveEvent.DataChanged, { path, method });
   });

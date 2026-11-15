@@ -19,7 +19,7 @@ import { authStore, notifyLive, LiveEvent, type Bindings } from '../context';
 import { AuthError } from '../../modules/auth/types';
 import {
   getCustomerDetail, updateCustomer, deleteCustomer, setDuplicateReview, importMasterData,
-  getAllowedTypeBases, invalidateMasterDataCache,
+  getAllowedTypeBases,
   MasterDataError, type Actor,
 } from '../../modules/master-data/service';
 import {
