@@ -13,9 +13,11 @@ import { AuthProvider, useAuth } from "@/auth/AuthContext";
 import LoginScreen from "@/components/LoginScreen";
 import UserAdmin from "@/components/UserAdmin";
 import { NAV_ITEMS, VIEW_TYPES, navTargetPath, type NavTarget, type ViewType } from "@/components/layout/nav";
+import { grantedScopes } from "@/auth/permissions";
 import { WorkspaceHostProvider } from "@/workspaces/WorkspaceHost";
 import { useWorkspaces } from "@/workspaces/useWorkspaces";
 import { canonicalNavSlug } from "@/workspaces/aliases";
+import { useChatUnread } from "../hooks/useChatUnread";
 
 // Heavy views are lazy-loaded so only the active view's JS is fetched & parsed.
 const FounderAssistant = dynamic(() => import("../components/FounderAssistant"), { ssr: false });
@@ -48,6 +50,15 @@ function AppInner() {
   // /automations/<slug> bookmarks and absorbed slugs (payment-tracker,
   // telecalling, …) — are redirected in place (replace, no back-button trap).
   const sub = route.view === "session" ? route.sub : null;
+  // Strict single dashboard: sales-head holders live in their Workspace —
+  // old sheet deep links redirect home (data endpoints untouched). Root keeps
+  // direct deep links as the admin escape hatch.
+  const strictSingle = !!me && !me.isRoot && grantedScopes(me).has("sales-head");
+  useEffect(() => {
+    if (strictSingle && route.view === "session" && route.sub) {
+      navigate("/session", { replace: true });
+    }
+  }, [strictSingle, route.view, route.sub, navigate]);
   useEffect(() => {
     if (route.view === "automations" && route.sub) {
       navigate(`/session/${canonicalNavSlug(route.sub)}`, { replace: true });
@@ -63,6 +74,7 @@ function AppInner() {
   const accessibleMain = useMemo(() => NAV_ITEMS.filter((i) => canView(i.view)), [canView]);
   const dashboards = useDashboardNav();
   const { workspaces, loading: workspacesLoading } = useWorkspaces();
+  const { total: chatUnread } = useChatUnread(!!me && canView("chat"));
 
   const viewDenied =
     activeView !== "admin" &&
@@ -111,7 +123,7 @@ function AppInner() {
 
   return (
     <div className="flex min-h-screen font-sans antialiased text-[var(--text-primary)]">
-      <Sidebar activeView={activeView} activeSlug={sub} onNavigate={navigateTo} theme={theme} onSetTheme={setTheme} accent={accent} onSetAccent={setAccent} me={me ? me.user : null} onLogout={logout} canView={canView} />
+      <Sidebar activeView={activeView} activeSlug={sub} onNavigate={navigateTo} theme={theme} onSetTheme={setTheme} accent={accent} onSetAccent={setAccent} me={me ? me.user : null} onLogout={logout} canView={canView} chatUnread={chatUnread} />
 
       <div className="flex min-w-0 flex-1 flex-col">
       <header className="sticky top-0 z-30 flex items-center justify-between border-b border-[var(--border-card)] bg-[var(--bg-card)]/85 px-4 py-3 backdrop-blur md:hidden">
@@ -151,9 +163,10 @@ function AppInner() {
         me={me ? me.user : null}
         onLogout={logout}
         canView={canView}
+        chatUnread={chatUnread}
       />
 
-      <MobileNav activeView={activeView} onNavigate={(v) => navigateTo({ type: "view", view: v })} canView={canView} />
+      <MobileNav activeView={activeView} onNavigate={(v) => navigateTo({ type: "view", view: v })} canView={canView} chatUnread={chatUnread} />
 
       <main className="flex-1 p-4 md:p-6 lg:p-8 mb-16 md:mb-0">
         <ErrorBoundary>

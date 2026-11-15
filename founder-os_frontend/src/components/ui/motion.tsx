@@ -30,6 +30,39 @@ export function TabPanel({ tabKey, children }: { tabKey: string; children: React
   return <div key={tabKey} className="pw-tab-enter">{children}</div>;
 }
 
+/**
+ * LazySection — mount-on-scroll for heavy dashboard sections. Below-fold
+ * sections render a shimmer placeholder until ~200px from the viewport, so a
+ * one-page dashboard with every panel still paints fast. Above-fold sections
+ * pass `eager` to mount immediately.
+ */
+export function LazySection({ children, eager, minHeight = 240, label }: {
+  children: React.ReactNode;
+  eager?: boolean;
+  minHeight?: number;
+  label: string;
+}) {
+  const ref = React.useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = React.useState(!!eager);
+  React.useEffect(() => {
+    if (eager || visible) return;
+    const el = ref.current;
+    if (!el) return;
+    if (typeof IntersectionObserver === "undefined") { setVisible(true); return; }
+    const io = new IntersectionObserver(
+      (entries) => { if (entries.some((e) => e.isIntersecting)) { setVisible(true); io.disconnect(); } },
+      { rootMargin: "200px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [eager, visible]);
+  return (
+    <div ref={ref} style={visible ? undefined : { minHeight }} aria-label={label}>
+      {visible ? <div className="pw-tab-enter">{children}</div> : <Skeleton lines={3} />}
+    </div>
+  );
+}
+
 export function Skeleton({ lines = 3 }: { lines?: number }) {
   return (
     <div className="space-y-2 py-2" aria-label="Loading">

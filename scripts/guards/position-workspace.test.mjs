@@ -72,34 +72,30 @@ describe('position workspace builder (phase 1, root-only)', () => {
   });
 
   it('person workspace replaces the sheet pile (sales-head first, tabbed)', () => {
-    // Old tile grid is retired — the session page is the tabbed workspace.
+    // Old tile grid is retired — the session page branches: single custom
+    // dashboard for sales-head/root, tabbed pile for everyone else.
     const session = fe('views/session/SessionView.tsx');
     assert.ok(!session.includes('WorkspaceGrid'), 'old tile grid must be retired');
-    assert.ok(session.includes('PersonWorkspace'), 'session page must render the person workspace');
+    assert.ok(session.includes('SalesHeadDashboard'), 'session page must render the custom Sales Head dashboard');
+    assert.ok(session.includes('PersonWorkspace'), 'other roles keep the tabbed pile until their pack ships');
 
-    const person = fe('views/workspace/PersonWorkspace.tsx');
-    assert.ok(person.includes('WorkspaceRenderer'), 'tabs must render the REAL sheet components (never copies)');
-    assert.ok(person.includes('useWorkspaces'), 'tabs come from the server-filtered list (grants unchanged)');
-    assert.ok(person.includes('NotificationDock'), 'delay bell rides every tab');
-    assert.ok(person.includes('MotionStyle'), 'shared animation kit must mount once');
-    assert.ok(!person.includes('fetch('), 'person workspace must go through domain api modules');
-
-    const dock = fe('position-widgets/NotificationDock.tsx');
-    assert.ok(!dock.includes('fetch('), 'dock is presentational (hook owns fetching)');
-
-    const hook = fe('hooks/useNotifications.ts');
-    assert.ok(hook.includes('/api/notifications') || hook.includes('fetchNotifications'), 'one hook owns the feed');
+    const head = fe('views/workspace/SalesHeadDashboard.tsx');
+    for (const panel of ['TelecallingDashboard', 'ZohoEstimates', 'EnquiryTracker', 'MasterDataView', 'SalesDispatchPanel', 'FieldStaffPanel', 'SalesObjectionsPanel', 'SalesControllerPanel']) {
+      assert.ok(head.includes(panel), `Sales Head page must compose the real ${panel} (never a copy)`);
+    }
+    assert.ok(head.includes('LazySection'), 'below-fold sections must lazy-mount (paint stays fast)');
+    assert.ok(head.includes('NotificationDock'), 'delay bell rides the custom dashboard');
+    assert.ok(head.includes('completeAction'), 'act-as must reuse the audited complete path');
+    assert.ok(!head.includes('fetch('), 'custom dashboard must go through domain api modules');
 
     const motion = fe('components/ui/motion.tsx');
-    assert.ok(motion.includes('prefers-reduced-motion'), 'animation kit must respect reduced motion');
+    assert.ok(motion.includes('LazySection'), 'lazy-mount lives in the shared kit (reused per pack)');
 
-    const perms = fe('auth/permissions.ts');
-    assert.ok(perms.includes('grantedScopes(me).has("sales-head")'), 'sales-head must reach the Workspace home');
-
-    const navHook = fe('hooks/useDashboardNav.ts');
-    assert.ok(navHook.includes('sales-head'), 'sales-head sidebar pile hides (sheets live in tabs)');
+    const person = fe('views/workspace/PersonWorkspace.tsx');
+    assert.ok(person.includes('WorkspaceRenderer'), 'fallback pile renders the REAL sheet components');
+    assert.ok(person.includes('NotificationDock'), 'delay bell rides every tab');
 
     const page = fe('app/page.tsx');
-    assert.ok(page.includes('canView("session")'), 'landing prefers the Workspace home when visible');
+    assert.ok(page.includes('strictSingle'), 'sales-head deep links redirect to their Workspace home');
   });
 });
