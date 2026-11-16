@@ -6,7 +6,7 @@ import { BUCKET_LABELS, CUSTOMER_SITUATION_LABELS, buildTopSet, formatINR, short
 import { addTopPick, removeTopPick, saveTopN } from "@/debtors-tracker/api";
 import { debtorRegionLabel, debtorRegionOf, matchesDebtorRegion, type DebtorRegionFilter } from "@/debtors-tracker/regions";
 import { todayIST } from "@/debtors-tracker/promise";
-import { Chip, EmptyState, TD, TDR, TH, THR, TableShell } from "../ui";
+import { Chip, EmptyState, SearchInput, TD, TDR, TH, THR, TableShell } from "../ui";
 import type { SortKey, SortDir } from "./ageing-tab/types";
 import { defaultDir, SITUATION_ORDER, DUE_COLS } from "./ageing-tab/helpers";
 import { SituationBadge } from "./ageing-tab/SituationBadge";
@@ -34,6 +34,7 @@ export default function AgeingTab({
   const [groupBy, setGroupBy] = useState(false);
   // TEMPORARY Top focus (2026-11-13): Top-only bypasses the region filter.
   const [topOnly, setTopOnly] = useState(false);
+  const [q, setQ] = useState("");
   const [topErr, setTopErr] = useState<string | null>(null);
   const [topBusy, setTopBusy] = useState<string | null>(null);
   const [savingN, setSavingN] = useState(false);
@@ -112,10 +113,18 @@ export default function AgeingTab({
 
   const filtered = useMemo(() => {
     // Top-only ignores the region filter: a Top receivable is Top everywhere.
+    // Search ANDs with every active filter, like the Invoices tab.
+    const needle = q.trim().toLowerCase();
     const rows = customers
       .filter((r) => (topOnly ? true : matchesDebtorRegion(r, regionFilter)))
       .filter((r) => situationFilter === "ALL" || (r.situation || "") === situationFilter)
-      .filter((r) => (!topOnly ? true : topSet.has(String(r.customerKey || "").toLowerCase())));
+      .filter((r) => (!topOnly ? true : topSet.has(String(r.customerKey || "").toLowerCase())))
+      .filter((r) => !needle ||
+        r.customerName.toLowerCase().includes(needle) ||
+        (r.phone || "").toLowerCase().includes(needle) ||
+        (r.email || "").toLowerCase().includes(needle) ||
+        (r.region || "").toLowerCase().includes(needle) ||
+        (r.situationRemarks || "").toLowerCase().includes(needle));
     const dir = sortDir === "asc" ? 1 : -1;
     const nameTie = (a: CustomerAgeingRow, b: CustomerAgeingRow) => a.customerName.localeCompare(b.customerName);
     // Empty dates always sink to the bottom, whichever direction is active.
@@ -159,7 +168,7 @@ export default function AgeingTab({
       if (cmp !== 0) return cmp * dir;
       return nameTie(a, b);
     });
-  }, [customers, topOnly, topSet, regionFilter, situationFilter, sortKey, sortDir]);
+  }, [customers, topOnly, topSet, regionFilter, situationFilter, sortKey, sortDir, q]);
 
   const groups = useMemo(() => {
     if (!groupBy) return null;
@@ -319,6 +328,7 @@ export default function AgeingTab({
           </select>
         </label>
         <Chip active={groupBy} onClick={() => setGroupBy((v) => !v)}>Group by situation</Chip>
+        <SearchInput value={q} onChange={setQ} placeholder="Search customer, phone, contact, remarks…" />
         <Chip active={topOnly} onClick={() => setTopOnly((v) => !v)} title="Show only Top receivables — ignores the region filter">
           Top only{topOnly ? "" : ` (${topSet.size})`}
         </Chip>
@@ -348,9 +358,11 @@ export default function AgeingTab({
         <EmptyState
           title={customers.length ? "No customers match these filters" : "No customer ageing yet"}
           hint={customers.length
-            ? topOnly
-              ? "No Top receivables under the current situation filter — widen the situation or raise Top N."
-              : "Try a different region or situation filter — or set the situation from any customer row."
+            ? q.trim()
+              ? "No customers match the search under the current filters — clear the search or widen a filter."
+              : topOnly
+                ? "No Top receivables under the current situation filter — widen the situation or raise Top N."
+                : "Try a different region or situation filter — or set the situation from any customer row."
             : canAccounts
               ? "Import the debtors ageing sheet from the Accounts tab — the buckets are calculated automatically from each invoice's due date."
               : "The accounts team has not imported the debtors sheet yet. Ageing, dues and follow-up status will appear here once it is loaded."}
