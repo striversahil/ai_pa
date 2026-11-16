@@ -944,7 +944,9 @@ export async function getPaymentDues(dateStr: string): Promise<PaymentDueRow[]> 
       rows.push(toPaymentRow(t, l, dd, dateStr, filesByLog.get(String(l.id)) ?? []));
     }
     // Next upcoming cycle (no instance yet — projected, paid on demand).
-    const covered = new Set([...open].map((l) => String(l.dueDate).slice(0, 10)));
+    // Covered = EVERY instance date (open + done): a paid date must never
+    // re-project, or paying today's cycle recreates today's row forever.
+    const covered = new Set([...tlogs].map((l) => String(l.dueDate).slice(0, 10)));
     for (let i = 0; i <= 60; i++) {
       const d = addDays(dateStr, i);
       if (covered.has(d)) continue;
