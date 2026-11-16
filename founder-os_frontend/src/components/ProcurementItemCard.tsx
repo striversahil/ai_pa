@@ -2,6 +2,8 @@
 
 import React, { useState } from "react";
 import ItemRateForm from "@/components/ItemRateForm";
+import KnownRatesPicker from "@/components/KnownRatesPicker";
+import type { KnownRateRow as KnownPick } from "@/enquiry/api";
 import LoopCards from "@/components/LoopCards";
 import type { EnquiryItem, EnquiryItemRate } from "@/types";
 import { historyDateChip } from "@/types";
@@ -37,6 +39,7 @@ export default function ProcurementItemCard({
   lateQuote = false,
 }: ProcurementItemCardProps) {
   const [showAdd, setShowAdd] = useState(false);
+  const [showKnown, setShowKnown] = useState(false);
   const [editingRate, setEditingRate] = useState<number | null>(null);
   const [refError, setRefError] = useState<string | null>(null);
   const [refDropRi, setRefDropRi] = useState<number | null>(null);
@@ -55,6 +58,23 @@ export default function ProcurementItemCard({
   // Per-vendor reference attachments: each quote carries its own photos /
   // drawings / PDFs. The selected vendor's refs forward to sales with the
   // final rate; losing quotes' refs stay internal.
+  const pickKnownRate = (r: KnownPick, productName: string) => {
+    const specBits = Object.entries(r.specs ?? {}).map(([k, v]) => `${k}: ${String(v)}`.slice(0, 80));
+    const metaBits = [
+      r.unit ? `Unit: ${r.unit}` : "",
+      r.moq ? `MOQ: ${r.moq}` : "",
+      r.deliveryDays != null ? `Delivery: ${r.deliveryDays}d` : "",
+    ].filter(Boolean);
+    onAddRate({
+      vendor: r.vendorName,
+      rate: r.pricePerUnit,
+      size: r.unit || undefined,
+      discountPercent: r.discountPercent ?? undefined,
+      description: [...specBits, ...metaBits].join(" · ").slice(0, 500) || undefined,
+    });
+    onLoopOpen("note", `Quote imported from Product Line · ${productName || item.name || "item"} — ${r.vendorName} ₹${Number(r.pricePerUnit).toLocaleString("en-IN")}`);
+    setShowKnown(false);
+  };
   const attachRateRefs = async (ri: number, files: FileList | File[] | null) => {
     if (!files || files.length === 0) return;
     setRefError(null);
@@ -270,6 +290,26 @@ export default function ProcurementItemCard({
 
       {(!readOnly || lateQuote) && (
         <div className="flex flex-wrap items-center gap-2 pt-0.5">
+          {showKnown ? (
+            <div className="flex-1 min-w-[12rem]">
+              <KnownRatesPicker
+                itemName={item.name ?? ""}
+                itemSpec={item.spec}
+                itemQty={item.qty}
+                selectLabel="Add this quote"
+                onSelect={pickKnownRate}
+              />
+              <button type="button" onClick={() => setShowKnown(false)}
+                className="mt-1 px-2 py-1 font-bold text-[11px] rounded-lg cursor-pointer border-0 bg-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
+                Close
+              </button>
+            </div>
+          ) : (
+            <button type="button" onClick={() => { setShowKnown(true); setShowAdd(false); setEditingRate(null); }}
+              className="px-2.5 py-1.5 bg-indigo-500/10 text-indigo-500 hover:bg-indigo-500/20 font-bold text-[11px] rounded-lg cursor-pointer border-0">
+              📚 Known rates
+            </button>
+          )}
           {lateQuote && readOnly && (
             <p className="w-full text-[10px] font-semibold text-amber-600 dark:text-amber-400">Finalized row — a new quote reopens the decision for management.</p>
           )}

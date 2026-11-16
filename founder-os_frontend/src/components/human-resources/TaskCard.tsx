@@ -6,10 +6,10 @@
 // Writes always go through the delegation service (append-only journal):
 //   * manager mode → /api/human-resources/tasks/:id (HR authority)
 //   * self mode    → /api/delegation/tasks/:id (employee, scoped server-side)
-// There is no Save button: status changes save immediately, remarks save on
-// blur/Enter, and the parent's shared optimistic driver paints + reconciles.
-// A done task can only go back to open with a reason; the reason is written as
-// the remark on the status journal row.
+// Status changes save immediately; a progress remark is written only on Enter or
+// the explicit Save button (never on blur), so one save = one dated Progress row
+// in the task history. A done task can only go back to open with a reason; the
+// reason is written as the remark on the status journal row.
 import React, { useState } from "react";
 import Modal from "../Modal";
 import {
@@ -17,7 +17,7 @@ import {
   type HrDelegationTask, type HrTask, type TaskStatus,
 } from "@/hr/types";
 import { dateLabel, timeLabel, initials } from "@/hr/format";
-import { dayHeading, istClock } from "@/hr/delegation";
+import { completionTiming, dayHeading, istClock, istDay } from "@/hr/delegation";
 
 export function PriorityChip({ p }: { p: HrTask["priority"] }) {
   const cls = p === "urgent" ? "bg-rose-500/10 text-rose-500 border-rose-500/30"
@@ -25,6 +25,32 @@ export function PriorityChip({ p }: { p: HrTask["priority"] }) {
     : p === "low" ? "bg-zinc-500/10 text-zinc-500 border-zinc-500/30"
     : "bg-indigo-500/10 text-indigo-500 dark:text-indigo-400 border-indigo-500/30";
   return <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold ${cls}`}>{PRIORITY_LABEL[p]}</span>;
+}
+
+/** Done-card timing chip: Before time / On time / Late by 2d (when, not whether). */
+export function CompletionChip({ task }: { task: HrTask }) {
+  const timing = completionTiming(task);
+  if (!timing) return null;
+  const cls = timing.key === "late"
+    ? "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400"
+    : timing.key === "before"
+      ? "border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400"
+      : "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400";
+  return (
+    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold ${cls}`}>
+      {timing.label}
+    </span>
+  );
+}
+
+/** Journal row kind: a per-day remark is "Progress"; status rows speak for themselves. */
+export function LogKindTag({ kind }: { kind: "remark" | "status" }) {
+  if (kind === "status") return null;
+  return (
+    <span className="mr-1 rounded bg-emerald-500/10 px-1 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+      Progress
+    </span>
+  );
 }
 
 export function Section({ title, count, tone, empty, children }: {
@@ -72,6 +98,7 @@ export function LogList({ logs, today, limit = 4 }: {
                 → {STATUS_LABEL[log.status as TaskStatus]}
               </span>
             )}
+            <LogKindTag kind={log.kind} />
             {log.remark ?? ""}
           </span>
           {log.authorName && <span className="shrink-0 text-[10px] text-zinc-400">{log.authorName}</span>}
@@ -110,7 +137,6 @@ export default function TaskCard({
   const busy = busyCount > 0;
   const [err, setErr] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const [editing, setEditing] = useState(false);
   const [reopen, setReopen] = useState<{ status: TaskStatus; reason: string } | null>(null);
 
   const own = mode === "self"
@@ -120,7 +146,7 @@ export default function TaskCard({
   const canDelete = mode === "manager" || own;
   const logs = "recentLogs" in task ? task.recentLogs : [];
 
-  const save = async (body: Record<string, unknown>): Promise<boolean> => {
+  const save = async (body: Record<string, unknown>, clearNote = ""): Promise<boolean> => {
     // Never drop a second action: the shared hook serializes writes per task id,
     // so a status change queues behind an in-flight remark save (and vice versa).
     setBusyCount((n) => n + 1);
@@ -129,6 +155,8 @@ export default function TaskCard({
     try {
       await onSave(task, body);
       setSaveState("saved");
+      // Clear only if untouched since the save started (don't wipe newer typing).
+      if (clearNote) setRemark((cur) => (cur.trim() === clearNote ? "" : cur));
       return true;
     } catch (e) {
       setSaveState("error");
@@ -148,15 +176,15 @@ export default function TaskCard({
       setReopen({ status: next, reason: "" });
       return;
     }
-    void save({ status: next });
+    // Typed progress rides along with the status row instead of being lost.
+    const note = remark.trim();
+    void save(note ? { status: next, remark: note } : { status: next }, note);
   };
 
   const saveRemark = async () => {
     const text = remark.trim();
     if (!text) return;
-    const ok = await save({ remark: text });
-    // Clear only if untouched since the save started (don't wipe newer typing).
-    if (ok) setRemark((cur) => (cur.trim() === text ? "" : cur));
+    await save({ remark: text }, text);
   };
 
   const confirmReopen = async () => {
@@ -169,6 +197,9 @@ export default function TaskCard({
     : task.status === "done" ? "border-emerald-500/25"
     : "border-zinc-200 dark:border-zinc-800";
 
+  const doneDay = task.status === "done" ? istDay(task.completedAt ?? task.updatedAt) : "";
+  const doneClock = task.status === "done" ? istClock(task.completedAt ?? task.updatedAt) : "";
+
   const field = "rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2 py-1.5 text-xs outline-none focus:border-indigo-500";
 
   return (
@@ -178,6 +209,7 @@ export default function TaskCard({
           <div className="flex flex-wrap items-center gap-1.5">
             <h4 className={`text-sm font-bold ${task.status === "done" ? "line-through text-zinc-400" : "text-zinc-900 dark:text-zinc-100"}`}>{task.title}</h4>
             <PriorityChip p={task.priority} />
+            {task.status === "done" && <CompletionChip task={task} />}
             {mode === "self" && task.origin === "self" && (
               <span className="rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-[10px] font-bold text-violet-500">Self</span>
             )}
@@ -197,7 +229,9 @@ export default function TaskCard({
             <span>{dateLabel(task.dueDate)}{task.dueTime ? ` · ${timeLabel(task.dueTime)}` : ""}</span>
             {task.status !== "pending" && (
               <span className={task.status === "done" ? "font-bold text-emerald-600 dark:text-emerald-400" : "font-bold text-amber-600 dark:text-amber-400"}>
-                {STATUS_LABEL[task.status]}
+                {task.status === "done"
+                  ? (doneDay ? `Done ${dateLabel(doneDay)} · ${timeLabel(doneClock)}` : "Done")
+                  : STATUS_LABEL[task.status]}
               </span>
             )}
             {task.createdBy && <span>by {task.createdBy}</span>}
@@ -232,12 +266,21 @@ export default function TaskCard({
           value={remark}
           onChange={(e) => { setRemark(e.target.value); setSaveState("idle"); }}
           onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void saveRemark(); } }}
-          onBlur={() => { void saveRemark(); }}
-          onFocus={() => setEditing(true)}
-          placeholder={editing ? "Add today's remark…" : "Add a remark (optional)"}
+          placeholder="Add today's progress…"
           className={`min-w-0 flex-1 ${field}`}
         />
-        <span className="shrink-0 px-1 text-[11px] font-semibold text-zinc-400" title="Status saves immediately; remarks save on blur or Enter">
+        {remark.trim() !== "" && (
+          <button
+            type="button"
+            onClick={() => void saveRemark()}
+            disabled={busy}
+            title="Save this progress update to the task history"
+            className="shrink-0 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-500 disabled:opacity-40"
+          >
+            Save
+          </button>
+        )}
+        <span className="shrink-0 px-1 text-[11px] font-semibold text-zinc-400" title="Status saves immediately; progress is saved with the Save button or Enter">
           {saveState === "saving" ? "Saving…" : saveState === "saved" ? "✓ Saved" : saveState === "error" ? "⚠ Retry" : ""}
         </span>
       </div>

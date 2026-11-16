@@ -3,6 +3,7 @@
 // Full journal for one task — the day-by-day trail behind a task card.
 import React from "react";
 import Modal from "@/components/Modal";
+import { CompletionChip, LogKindTag } from "@/components/human-resources/TaskCard";
 import { useLiveQuery } from "@/hooks/useLiveData";
 import { fetchTaskHistory } from "@/hr/api";
 import { dayHeading, groupLogsByDay, istClock } from "@/hr/delegation";
@@ -29,12 +30,17 @@ export default function TaskHistoryModal({
       <div className="space-y-3 overflow-y-auto px-5 pb-5">
         {task && (
           <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 px-3 py-2 text-[11px] text-zinc-600 dark:text-zinc-300">
-            <b>{task.assignedToName ?? "Unassigned"}</b>
-            {" · "}
-            {dateLabel(task.dueDate)}
-            {task.dueTime ? ` · ${timeLabel(task.dueTime)}` : ""}
-            {" · "}
-            {STATUS_LABEL[task.status]}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <b>{task.assignedToName ?? "Unassigned"}</b>
+              <span>·</span>
+              <span>
+                {dateLabel(task.dueDate)}
+                {task.dueTime ? ` · ${timeLabel(task.dueTime)}` : ""}
+              </span>
+              <span>·</span>
+              <span>{STATUS_LABEL[task.status]}</span>
+              <CompletionChip task={task} />
+            </div>
             {task.description ? <div className="mt-1 whitespace-pre-wrap text-zinc-500">{task.description}</div> : null}
           </div>
         )}
@@ -59,6 +65,7 @@ export default function TaskHistoryModal({
                   {log.kind === "status" && log.status && (
                     <span className="mr-1 font-bold text-zinc-800 dark:text-zinc-100">→ {STATUS_LABEL[log.status as TaskStatus]}</span>
                   )}
+                  <LogKindTag kind={log.kind} />
                   <span className="whitespace-pre-wrap">{log.remark ?? ""}</span>
                 </div>
                 {log.authorName && <span className="shrink-0 text-[10px] text-zinc-400">{log.authorName}</span>}

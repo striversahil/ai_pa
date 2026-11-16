@@ -48,6 +48,12 @@ export const USER_ADMIN_SCOPE = "user-admin";
 // someone "sales access" shows them an empty sidebar with no way in.
 export const IMPLIED_SCOPES: Record<string, string[]> = {
   sales: ["enquiry-tracker"],
+  // Sales-head bundle: mirrors DEFAULT_ROLES['sales-head'].scopeKeys (and
+  // POSITION_SUGGESTED_SCOPES['sales-head']) minus itself. A login holding
+  // only `sales-head` still opens the Sales tabs — without this, the
+  // Leaderboard / Analyzer / Enquiries pills vanish for a direct-scope grant
+  // while role-holders keep them (role scopes merge in getMe).
+  "sales-head": ["telecalling", "enquiry-tracker", "zoho", "debtors-tracker"],
   // The dispatch floor IS the CRM dashboard: a `dispatch` holder schedules and
   // dispatches sales orders, so they must be able to open it. `crm` (read)
   // does not imply `dispatch` — the reverse is what's needed.

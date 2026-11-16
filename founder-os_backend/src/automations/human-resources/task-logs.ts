@@ -110,6 +110,16 @@ export async function completedInWindow<T extends { id: unknown; status: unknown
   return out;
 }
 
+/** Completion stamp for one task: latest done journal row, `updatedAt` fallback
+ *  while it is still done (a reopened task has no completion stamp). */
+export async function completedStamp(
+  task: { id: unknown; status: unknown; updatedAt?: unknown },
+): Promise<string | null> {
+  if (String(task.status) !== 'done') return null;
+  const dates = await latestDoneDates([String(task.id)]).catch(() => new Map<string, string>());
+  return dates.get(String(task.id)) ?? (task.updatedAt ? String(task.updatedAt) : null);
+}
+
 /** Logs written on one IST day (HR activity feed). */
 export async function listLogsForDay(logDate: string, take = 500) {
   const rows: any[] = await (prisma as any).humanResourcesTaskLog.findMany({

@@ -51,11 +51,13 @@ function AppInner() {
   // telecalling, …) — are redirected in place (replace, no back-button trap).
   const sub = route.view === "session" ? route.sub : null;
   // Strict single dashboard: sales-head holders live in their Workspace —
-  // old sheet deep links redirect home (data endpoints untouched). Root keeps
-  // direct deep links as the admin escape hatch.
+  // legacy Sales sheet deep links redirect home (their panels are tabs, not
+  // sheets). Deep links to admin-granted sheets beyond Sales (accounts,
+  // stock, …) are allowed through — SalesHeadDashboard selects them as tabs.
+  // Root keeps direct deep links as the admin escape hatch.
   const strictSingle = !!me && !me.isRoot && grantedScopes(me).has("sales-head");
   useEffect(() => {
-    if (strictSingle && route.view === "session" && route.sub) {
+    if (strictSingle && route.view === "session" && route.sub && canonicalNavSlug(route.sub) === "sales") {
       navigate("/session", { replace: true });
     }
   }, [strictSingle, route.view, route.sub, navigate]);

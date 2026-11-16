@@ -65,7 +65,8 @@ export function taskSections(tasks: any[], today = istDateStr(), nowTime = '') {
   todayList.sort(taskSort);
   upcoming.sort(taskSort);
   done.sort((a, b) =>
-    String(b.updatedAt ?? b.dueDate ?? '').localeCompare(String(a.updatedAt ?? a.dueDate ?? '')));
+    String(b.completedAt ?? b.updatedAt ?? b.dueDate ?? '')
+      .localeCompare(String(a.completedAt ?? a.updatedAt ?? a.dueDate ?? '')));
   return { overdue, today: todayList, upcoming, done };
 }
 

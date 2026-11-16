@@ -100,16 +100,17 @@ export async function computeDashboard(today: string, month: string, scope: HrSc
     getInventorySnapshot(month).catch(() => ({ month, items: [], summary: { itemCount: 0, lowStockCount: 0, outOfStockCount: 0, movementCount: 0, stockValue: 0 } })),
   ]);
 
-  const visibleTasks = taskRaw
-    .filter((t) => isAdmin || (!!self && String(t.assignedToId) === String(self.selfId)))
-    .map((t) => taskJson(t, today, nowTime))
-    .sort(taskSort);
+  const visibleRows = taskRaw
+    .filter((t) => isAdmin || (!!self && String(t.assignedToId) === String(self.selfId)));
 
-  // "Completed · last 30 days" keys on the completion day, never dueDate.
-  const doneWindow = await completedInWindow(visibleTasks, today);
-  const windowedTasks = visibleTasks.filter(
-    (t) => t.status !== 'done' || doneWindow.has(String(t.id)),
-  );
+  // "Completed · last 30 days" keys on the completion day, never dueDate. The
+  // journal is read BEFORE mapping so every done row carries its completion
+  // stamp (`completedAt`), which the card labels Before time / On time / Late.
+  const doneWindow = await completedInWindow(visibleRows, today);
+  const windowedTasks = visibleRows
+    .filter((t) => String(t.status) !== 'done' || doneWindow.has(String(t.id)))
+    .map((t) => taskJson(t, today, nowTime, doneWindow.get(String(t.id))?.at ?? null))
+    .sort(taskSort);
   const { overdue, today: dueToday, upcoming, completed } = splitTaskBuckets(
     windowedTasks, today, (id) => doneWindow.get(id)?.at ?? '',
   );

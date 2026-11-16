@@ -66,7 +66,8 @@ export function taskSections(tasks: HrTask[], today: string): DelegationSections
   todayList.sort(taskSort);
   upcoming.sort(taskSort);
   done.sort((a, b) =>
-    String(b.updatedAt ?? b.dueDate ?? "").localeCompare(String(a.updatedAt ?? a.dueDate ?? "")));
+    String(b.completedAt ?? b.updatedAt ?? b.dueDate ?? "")
+      .localeCompare(String(a.completedAt ?? a.updatedAt ?? a.dueDate ?? "")));
   return { overdue, today: todayList, upcoming, done };
 }
 
@@ -157,4 +158,67 @@ export function istClock(iso: string | null): string {
   return new Intl.DateTimeFormat("en-GB", {
     timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: false,
   }).format(d);
+}
+
+/** "2026-11-16" — the IST calendar day of an ISO timestamp. */
+export function istDay(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(d).slice(0, 10);
+}
+
+/** Whole-day gap `a - b` between two YYYY-MM-DD strings (wall-clock, no TZ). */
+function dayGap(a: string, b: string): number {
+  const [ay, am, ad] = a.split("-").map(Number);
+  const [by, bm, bd] = b.split("-").map(Number);
+  return Math.round((Date.UTC(ay, am - 1, ad) - Date.UTC(by, bm - 1, bd)) / 86400000);
+}
+
+/** IST wall-clock minutes since epoch — both sides shift by +05:30, so the
+ *  comparison is timezone-free. */
+function istWallMs(date: string, time: string): number {
+  const [y, m, d] = date.split("-").map(Number);
+  const [h, min] = time.split(":").map(Number);
+  return Date.UTC(y, (m || 1) - 1, d || 1, h || 0, min || 0);
+}
+
+export type CompletionTimingKey = "before" | "ontime" | "late";
+
+export interface CompletionTiming {
+  key: CompletionTimingKey;
+  /** Chip text: "Before time" · "On time" · "Late by 2d". */
+  label: string;
+}
+
+/** A timed task finished within this many minutes of the promised minute still
+ *  counts as On time — nobody lands on the exact minute. */
+export const ONTIME_GRACE_MIN = 30;
+
+/** How a completed task landed vs its due date/time. Date-only tasks are due by
+ *  the end of their day (completed the same day = on time, a later day = late
+ *  by whole days). Null for open tasks (nothing to judge yet). */
+export function completionTiming(task: HrTask): CompletionTiming | null {
+  if (task.status !== "done") return null;
+  const doneDay = istDay(task.completedAt ?? task.updatedAt ?? "");
+  const doneClock = istClock(task.completedAt ?? task.updatedAt ?? "");
+  const dueDate = String(task.dueDate ?? "").slice(0, 10);
+  if (!doneDay || !doneClock || !dueDate) return null;
+  const dueTime = String(task.dueTime ?? "").slice(0, 5);
+  if (!dueTime) {
+    const days = dayGap(doneDay, dueDate);
+    if (days === 0) return { key: "ontime", label: "On time" };
+    if (days < 0) return { key: "before", label: "Before time" };
+    return { key: "late", label: `Late by ${days}d` };
+  }
+  const lateMin = Math.round(
+    (istWallMs(doneDay, doneClock) - istWallMs(dueDate, dueTime)) / 60000,
+  );
+  if (lateMin < -ONTIME_GRACE_MIN) return { key: "before", label: "Before time" };
+  if (lateMin <= ONTIME_GRACE_MIN) return { key: "ontime", label: "On time" };
+  if (lateMin < 60) return { key: "late", label: `Late by ${lateMin}m` };
+  if (lateMin < 1440) return { key: "late", label: `Late by ${Math.floor(lateMin / 60)}h` };
+  return { key: "late", label: `Late by ${Math.floor(lateMin / 1440)}d` };
 }

@@ -10,7 +10,8 @@ import { runEnquiryExtraction } from '../../modules/enquiries/enrichment';
 import { runAgnesVisionIntake } from '../../modules/enquiries/vision-intake';
 import { isZohoClosedStatus } from '../../modules/enquiries/queues';
 import { getManagementQueues, invalidateManagementQueues } from '../../modules/enquiries/queues-cache';
-import { canManageRates } from '../../modules/enquiries/scopes';
+import { canManageRates, canSeeProcurementRequests } from '../../modules/enquiries/scopes';
+import { lookupKnownRates } from '../../modules/enquiries/product-rates';
 import { listActiveTelecallers } from '../../modules/telecalling/self-roster';
 import { readBody } from '../http';
 
@@ -458,6 +459,28 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     }
     const clients = [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name));
     return c.json(clients);
+  });
+  // Known Product Line vendor rates for one enquiry item (name-mapped).
+  // Privileged desks only — procurement scope or Management Review. Sales
+  // never reaches this (no picker on the sales surface, redaction intact).
+  app.get('/api/enquiries/product-rates', async (c) => {
+    try {
+      const me = await enquiryMe(c);
+      if (!me) return c.json({ error: 'Authentication required' }, 401);
+      if (!canSeeProcurementRequests(me as any)) {
+        return c.json({ error: 'Requires procurement or Management Review access' }, 403);
+      }
+      const result = await lookupKnownRates(c.env, {
+        name: c.req.query('name'),
+        spec: c.req.query('spec'),
+        dims: c.req.query('dims'),
+        qty: c.req.query('qty'),
+        productId: c.req.query('productId'),
+      });
+      return c.json(result);
+    } catch (e: any) {
+      return c.json({ error: e?.message ?? 'product rates failed' }, 500);
+    }
   });
   app.post('/api/enquiries', async (c) => {
     const me = await enquiryMe(c);

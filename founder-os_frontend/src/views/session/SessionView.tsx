@@ -21,6 +21,6 @@ export default function SessionView({ slug }: { slug: string | null }) {
   if (slug && me?.isRoot) {
     return <WorkspaceFrame slug={slug} backLabel="Workspace" />;
   }
-  if (single) return <SalesHeadDashboard />;
+  if (single) return <SalesHeadDashboard initialSlug={slug} />;
   return <PersonWorkspace initialSlug={slug} />;
 }

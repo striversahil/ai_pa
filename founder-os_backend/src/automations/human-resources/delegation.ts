@@ -14,7 +14,7 @@ import { prisma } from '../../shared/prisma';
 import { HrError } from './errors';
 import { cleanTaskCreate, cleanTaskPatch, istDateStr, istTimeStr } from './parse';
 import { taskJson } from './task-json';
-import { appendTaskLog, completedInWindow, listLogsForDay, listLogsForTasks } from './task-logs';
+import { appendTaskLog, completedInWindow, completedStamp, listLogsForDay, listLogsForTasks } from './task-logs';
 import { invalidateHumanResourcesCache, resolveSelfHumanResourcesMember } from './service';
 import {
   dayCounts, delegationDate, groupLogsByTask, isSelfEditable, needsUpdateToday, reopenRequiresReason,
@@ -119,7 +119,8 @@ export async function getDelegationBoard(opts: {
   const visibleRows = taskRows.filter(
     (row) => String(row.status) !== 'done' || doneWindow.has(String(row.id)),
   );
-  const tasks = visibleRows.map((row) => taskJson(row, today, nowTime));
+  const tasks = visibleRows.map((row) =>
+    taskJson(row, today, nowTime, doneWindow.get(String(row.id))?.at ?? null));
   const taskById = new Map(taskRows.map((row) => [String(row.id), row]));
 
   // Recent journal entries inlined on each card (last 5, newest first).
@@ -346,7 +347,7 @@ export async function updateDelegationTask(
   await invalidateHumanResourcesCache();
   // Re-read with the assignee relation: the D1 shim ignores `include` on update.
   const full = await taskRow(String(id)).catch(() => row);
-  return taskJson(full, istDateStr(), istTimeStr());
+  return taskJson(full, istDateStr(), istTimeStr(), await completedStamp(full));
 }
 
 /** Soft-deletes a task. Employees may only delete tasks they created (origin
@@ -384,7 +385,7 @@ export async function getTaskHistory(id: string, me: any, limit = 100) {
     take: Math.min(Math.max(Number(limit) || 100, 1), 300),
   });
   return {
-    task: taskJson(task, istDateStr(), istTimeStr()),
+    task: taskJson(task, istDateStr(), istTimeStr(), await completedStamp(task)),
     logs: rows.map((row) => ({
       id: String(row.id),
       logDate: String(row.logDate ?? ''),

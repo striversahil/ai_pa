@@ -186,12 +186,16 @@ export const AUTOMATION_SCOPES: Record<string, string> = {
 /** Dashboards with more than one granting scope (legacy aliases). Reads use
  *  any listed scope; mutations still enforce the narrower scope in the route. */
 export const AUTOMATION_ACCESS_SCOPES: Record<string, string[]> = {
-  'debtors-tracker': ['debtors-tracker', 'payment-tracker', 'accounts'],
+  'debtors-tracker': ['debtors-tracker', 'payment-tracker', 'accounts', 'sales-head'],
   // Legacy slug: dashboard bookmarks and old clients keep working.
-  'payment-tracker': ['debtors-tracker', 'payment-tracker', 'accounts'],
+  'payment-tracker': ['debtors-tracker', 'payment-tracker', 'accounts', 'sales-head'],
   // Dispatch floor opens the Accounts dashboard for the cash report tab only
   // (task lanes stay lane-scoped server-side; cash writes gate per route).
   'accounts': ['accounts', 'dispatch'],
+  // Unified Sales workspace carries the `telecalling` scope — a `sales-head`
+  // holder opens it without needing the agent scope granted separately
+  // (mirrors the frontend IMPLIED_SCOPES sales-head bundle + DEFAULT_ROLES).
+  'sales': ['telecalling', 'sales-head'],
 };
 
 export function accessScopesFor(slug: string, scope?: string | null): string[] {

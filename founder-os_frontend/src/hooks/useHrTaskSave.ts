@@ -28,12 +28,16 @@ export function useHrTaskSave<T extends TaskPayload>(
   return useCallback(
     (task: HrTask, body: Record<string, unknown>) => {
       // Optimistic row patch mirrors what the server writes: the status/remark
-      // plus the derived flags the card renders from.
+      // plus the derived flags the card renders from (done stamps completedAt,
+      // reopening clears it so the chip cannot linger on an open task).
       const patch: Record<string, unknown> = {
         ...body,
         updatedAt: new Date().toISOString(),
         needsUpdate: false,
-        ...(body.status === "done" ? { overdue: false } : {}),
+        ...(body.status === "done"
+          ? { overdue: false, completedAt: new Date().toISOString() }
+          : {}),
+        ...(body.status !== undefined && body.status !== "done" ? { completedAt: null } : {}),
       };
       return mutate(
         (prev) => {

@@ -6,6 +6,8 @@ import { parseMoneyInput, parseSignedMoneyInput, historyDateChip } from "@/types
 import { RATE_STATUS_LABEL, fmtINR, ceil5, finalRound, shareKey } from "@/enquiry/pricing";
 import { isOpenSpecFlag } from "@/enquiry/queue";
 import LoopCards from "@/components/LoopCards";
+import KnownRatesPicker from "@/components/KnownRatesPicker";
+import type { KnownRateRow as KnownPick } from "@/enquiry/api";
 import { openLoops } from "@/enquiry/loops";
 import ItemRateForm from "@/components/ItemRateForm";
 import Lightbox from "@/components/Lightbox";
@@ -19,7 +21,22 @@ export { RATE_STATUS_LABEL, fmtINR, ceil5 };
  *  Finalize PATCHes items + rateStatus='finalized'; the live event pushes the
  *  updated rates to Sales automatically (same useLiveQuery subscription). */
 export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRatesPanelProps) {
-  const items = Array.isArray(enquiry.items) ? enquiry.items : [];
+  const baseItems = Array.isArray(enquiry.items) ? enquiry.items : [];
+  // Staged Product Line imports: known rates appended locally per item until
+  // Save/Finalize commits them through buildItems — same gates, same stamps,
+  // never a second save path. Selection follows the appended row so one
+  // click both inserts and decides (margin stays editable).
+  const [stagedRates, setStagedRates] = useState<Record<number, EnquiryItemRate[]>>({});
+  const [showKnown, setShowKnown] = useState<Record<number, boolean>>({});
+  const items = baseItems.map((it, i) => {
+    const extra = stagedRates[i];
+    if (!extra?.length) return it;
+    return {
+      ...it,
+      rates: [...(it.rates ?? []), ...extra],
+      loopOpen: (it as any).loopOpen ?? { kind: "note", text: `Quote imported from Product Line · ${it.name || "item"}` },
+    } as EnquiryItem;
+  });
   // Selected vendor per item, keyed by RATE ROW INDEX (not vendor name):
   // procurement often adds two quotes from the same vendor (two makes /
   // models), and name-keyed selection always resolved to the first match,
@@ -116,6 +133,8 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
     setBulkError(null);
     setRevise({});
     setConfirming(false);
+    setStagedRates({});
+    setShowKnown({});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enquiry.id]);
 
@@ -356,6 +375,29 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
   // Explicit delete: the removed quote's identity travels in `removedRates`
   // (the ONLY path that deletes a stored quote — a filtered rates array
   // alone removes nothing, so a stale snapshot can never wipe quotes).
+  // Product Line import: stage a known vendor rate locally AND select it,
+  // so one click both inserts and decides — Save/Finalize below commits
+  // through buildItems (same gates, same stamps, trace note included).
+  const stageKnownRate = (i: number, r: KnownPick) => {
+    const specBits = Object.entries(r.specs ?? {}).map(([k, v]) => `${k}: ${String(v)}`.slice(0, 80));
+    const metaBits = [
+      r.unit ? `Unit: ${r.unit}` : "",
+      r.moq ? `MOQ: ${r.moq}` : "",
+      r.deliveryDays != null ? `Delivery: ${r.deliveryDays}d` : "",
+    ].filter(Boolean);
+    const mapped: EnquiryItemRate = {
+      vendor: r.vendorName,
+      rate: r.pricePerUnit,
+      size: r.unit || undefined,
+      discountPercent: r.discountPercent ?? undefined,
+      description: [...specBits, ...metaBits].join(" · ").slice(0, 500) || undefined,
+    };
+    const at = (baseItems[i]?.rates?.length ?? 0) + (stagedRates[i]?.length ?? 0);
+    setStagedRates((prev) => ({ ...prev, [i]: [...(prev[i] ?? []), mapped] }));
+    setSel((prev) => ({ ...prev, [i]: at }));
+    setShowKnown((prev) => ({ ...prev, [i]: false }));
+  };
+
   const dropRate = (i: number, ri: number) => {
     void onSave(
       items.map((it, j) => {
@@ -953,6 +995,28 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                     🎯 Client expects ₹{Number((it as any).expectedRate).toLocaleString("en-IN")}
                     {(it as any).expectedNote ? ` — ${String((it as any).expectedNote)}` : ""}
                   </p>
+                )}
+                {!isItemLocked && (
+                  showKnown[i] ? (
+                    <div>
+                      <KnownRatesPicker
+                        itemName={it.name ?? ""}
+                        itemSpec={it.spec}
+                        itemQty={it.qty}
+                        selectLabel="Use this rate"
+                        onSelect={(r) => stageKnownRate(i, r)}
+                      />
+                      <button type="button" onClick={() => setShowKnown((prev) => ({ ...prev, [i]: false }))}
+                        className="mt-1 px-2 py-1 font-bold text-[11px] rounded-lg cursor-pointer border-0 bg-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
+                        Close
+                      </button>
+                    </div>
+                  ) : (
+                    <button type="button" onClick={() => setShowKnown((prev) => ({ ...prev, [i]: true }))}
+                      className="px-2 py-1 bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 font-bold text-[11px] rounded-lg cursor-pointer border-0">
+                      📚 Known rates
+                    </button>
+                  )
                 )}
                 {rates.length === 0 ? (
                   <div className="space-y-2">

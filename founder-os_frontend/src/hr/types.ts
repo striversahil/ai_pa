@@ -320,6 +320,8 @@ export interface HrTask {
   createdBy: string | null;
   updatedBy: string | null;
   overdue: boolean;
+  /** When the task was last completed (latest done journal row, ISO). */
+  completedAt?: string | null;
   createdAt: string | null;
   updatedAt: string | null;
 }

@@ -42,6 +42,12 @@ Files:
   **Reopening** a done task (`done → pending|in_progress`) requires a non-empty `remark`;
   `reopenRequiresReason` (`delegation-parse.ts`) rejects it with `400` on both PATCH paths,
   and the reason is stored as the remark on the status journal row (visible in history).
+  **Completion stamp** — `taskJson` exposes `completedAt` (latest `status='done'` journal row,
+  `updatedAt` fallback) on every task. Cards + the history modal label it Before time /
+  On time / Late by … against `dueDate` (+`dueTime`; date-only is due end of day). Display-only:
+  the backend ships the timestamp, `completionTiming` (frontend `hr/delegation.ts`) classifies it.
+  **Progress remarks** are explicit saves — the card writes one `kind='remark'` journal row per
+  Save/Enter (never on blur), dated to the IST day, so a task's history is a per-day progress trail.
 - **HumanResourcesExpense** — one ledger row (`title, expenseType fixed|variable|field_staff,
   category, amount, expenseDate, expenseMonth, paymentMode, notes`).
 - **HumanResourcesFundTxn** — one funding top-up HR receives (`title, amount, txnDate,

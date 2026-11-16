@@ -87,7 +87,7 @@ describe('position workspace builder (phase 1, root-only)', () => {
     const head = fe('views/workspace/SalesHeadDashboard.tsx');
     assert.ok(head.includes('useSalesTabs'), 'custom dashboard reuses the same tabs (never a second list)');
     assert.ok(head.includes('TabBar'), 'same tab component, same feel');
-    assert.ok(head.includes('My Day') || head.includes('Today'), 'hero stays pinned above the tabs');
+    assert.ok(!head.includes('My Day') && !head.includes('TargetTileWidget') && !head.includes('MyTasksWidget') && !head.includes('SeverityFeed'), 'no My Day hero on the Sales Head dashboard (founder decision 2026-11-16 — header + tabs only)');
     assert.ok(!head.includes('LazySection'), 'one panel mounts at a time — no scroll-mount needed');
   });
 
@@ -104,7 +104,8 @@ describe('position workspace builder (phase 1, root-only)', () => {
       assert.ok(head.includes(panel), `Sales Head page must compose the real ${panel} (never a copy)`);
     }
     assert.ok(head.includes('NotificationDock'), 'delay bell rides the custom dashboard');
-    assert.ok(head.includes('completeAction'), 'act-as must reuse the audited complete path');
+    assert.ok(head.includes('useWorkspaces') && head.includes('WorkspaceRenderer'), 'admin-granted sheets beyond Sales render as extra tabs (same renderer other roles get)');
+    assert.ok(head.includes('IMPLIED_SCOPES'), 'root preview scopes extras to the sales-head bundle — never root omniscience');
     assert.ok(!head.includes('fetch('), 'custom dashboard must go through domain api modules');
 
     const motion = fe('components/ui/motion.tsx');

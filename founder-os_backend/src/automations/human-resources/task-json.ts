@@ -4,7 +4,7 @@
 // Mirrors founder-os_frontend/src/hr/types.ts (HrTask / HrTaskLog).
 import { isTaskOverdue } from './parse';
 
-export function taskJson(row: any, today: string, nowTime: string) {
+export function taskJson(row: any, today: string, nowTime: string, completedAt: string | null = null) {
   return {
     id: String(row.id),
     title: row.title ?? '',
@@ -22,6 +22,9 @@ export function taskJson(row: any, today: string, nowTime: string) {
     createdBy: row.createdBy ?? null,
     updatedBy: row.updatedBy ?? null,
     overdue: isTaskOverdue(row, today, nowTime),
+    /** When the task was last completed (latest done journal row, ISO). The
+     *  card classifies it as Before time / On time / Late by … vs dueDate. */
+    completedAt: completedAt ?? null,
     createdAt: row.createdAt ?? null,
     updatedAt: row.updatedAt ?? null,
   };
