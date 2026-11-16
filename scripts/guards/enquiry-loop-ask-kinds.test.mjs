@@ -41,4 +41,14 @@ describe('note composer stays retired', () => {
     const src = readFe('components/LoopCards.tsx');
     assert.ok(src.includes('note: "Note"'), 'KIND_LABEL must still render stored note records');
   });
+
+  it('sales Answer button is wired (no dead no-op handler)', () => {
+    // A procurement spec flag is held by sales, so LoopCards shows Answer on
+    // the sales surface — it must send a real loopAnswer intent, never a
+    // silent no-op (seen live: typed answers swallowed, flag stuck red).
+    const src = readFe('components/SpecificationsSection.tsx');
+    assert.ok(!src.includes('onAnswer={() => {}}'), 'sales onAnswer must not be a no-op');
+    assert.ok(src.includes('loopAnswer: { id, text, media }'), 'sales answer must ride the loopAnswer intent');
+    assert.ok(src.includes('Fix spec'), 'flagged banner must offer the one-click fix-spec path');
+  });
 });

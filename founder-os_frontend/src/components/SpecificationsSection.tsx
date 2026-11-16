@@ -487,6 +487,15 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                           <p className="font-extrabold text-red-500 uppercase tracking-wide text-[10px]">Spec flagged by Procurement — held from Management</p>
                           <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{openLoops(it, 'spec')[0]?.text ?? ""}</p>
                           <p className="mt-1 text-[var(--text-tertiary)]">Edit the spec below or attach the client-shared reference to resolve and release this item for rates.</p>
+                          {editable && (
+                            <button
+                              type="button"
+                              onClick={() => startEdit(idx)}
+                              className="mt-1 px-2.5 py-1.5 bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20 font-bold text-[11px] rounded-lg cursor-pointer border border-red-500/30"
+                            >
+                              ✎ Fix spec
+                            </button>
+                          )}
 
                         </div>
                       )}
@@ -506,7 +515,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                             item={it}
                             mode="sales"
                             onOpen={(kind, text, media) => saveItems((prev) => prev.map((x, j) => (j === idx ? { ...x, loopOpen: { kind, text, media } } : x)))}
-                            onAnswer={() => {}}
+                            onAnswer={(id, text, media) => saveItems((prev) => prev.map((x, j) => (j === idx ? { ...x, loopAnswer: { id, text, media } } : x)))}
                             onWithdraw={(id) => saveItems((prev) => prev.map((x, j) => (j === idx ? { ...x, loopWithdraw: { id } } : x)))}
                             onOpenLightbox={onOpenLightbox}
                             askKinds={editable ? ["query"] : []}
