@@ -9,6 +9,9 @@
 //             the unified Sales workspace) + root/sales-head.
 //   FLOOR   — schedule/reschedule/dispatch/addresses/confirm: `dispatch` scope
 //             only (root always). Dispatching is the floor's job.
+//   CANCEL  — anyone with CRM read (floor + sales agents + sales-head + root);
+//             agents are region-locked to their OWN region server-side, like
+//             promise dates. Reopen stays root-only.
 //   PROMISE — tentative dates + delay reasons: the floor AND sales agents, but
 //             an agent may only touch orders in their OWN region (server-enforced
 //             from the session, never from a client-supplied region).
@@ -421,14 +424,27 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
     }
   });
 
-  // ── Cancel the whole SO on the floor (client-confirmed — dispatch/root only)
+  // ── Cancel the whole SO (client-confirmed — anyone with CRM read; agents
+  // own-region only, enforced from the session like promise dates). Reopen
+  // stays root-only.
   app.post('/api/crm/orders/:id/cancel-local', async (c) => {
-    const v = await requireDispatchWrite(c);
+    const v = await requireRead(c);
     if (v instanceof Response) return v;
+    const idOrSo = c.req.param('id');
+    if (!v.isManager) {
+      if (!v.region) {
+        return denial(c, 'No sales region is mapped to your login — ask the sales-head to map you on the roster.');
+      }
+      const region = await orderRegion(idOrSo);
+      if (region === null) return c.json({ error: 'Sales order not found.' }, 404);
+      if (region !== v.region) {
+        return denial(c, 'This sales order belongs to another region.');
+      }
+    }
     const body = await readBody(c);
     try {
       const res = await cancelOrderLocal({
-        idOrSo: c.req.param('id'),
+        idOrSo,
         reason: body?.reason ? String(body.reason) : null,
         actor: v.name,
       });

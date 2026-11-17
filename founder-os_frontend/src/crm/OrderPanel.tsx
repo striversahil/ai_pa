@@ -55,8 +55,9 @@ export default function OrderPanel({
   order: CrmOrder;
   initialMode: PanelMode;
   canWrite: boolean;
-  /** Sales view: dates + delay reasons only. Dispatch/reschedule/address edits
-   *  stay with the dispatch floor (`canWrite` alone is not enough). */
+  /** Sales view: dates + delay reasons + SO cancellation. Dispatch/reschedule/
+      address edits stay with the dispatch floor (`canWrite` alone is not
+      enough for those). */
   promiseOnly?: boolean;
   onClose: () => void;
   onChanged: () => void;
@@ -765,23 +766,27 @@ export default function OrderPanel({
             </div>
           )}
 
-          {/* Amend + cancel — floor-only, view mode. The client confirms a
-              different count, drops a line, or calls the whole SO off; every
-              change is logged against the confirmation note. */}
-          {mode === "view" && floorWrite && !locallyCancelled && order.sourceState !== "deleted_source" && (
+          {/* Amend (floor-only) + cancel (anyone with CRM read — sales agents
+              cancel their OWN region's orders, enforced server-side; every
+              change is logged against the confirmation note). */}
+          {(mode === "view" && (floorWrite || canWrite) && !locallyCancelled && order.sourceState !== "deleted_source") && (
             <div className="mt-3 flex flex-wrap gap-2">
+              {floorWrite && (
               <button
                 onClick={() => (amendOpen ? setAmendOpen(false) : openAmend())}
                 className="rounded-lg border border-indigo-500/40 px-2.5 py-1.5 text-xs font-bold text-indigo-600 hover:bg-indigo-500/10 dark:text-indigo-400"
               >
                 {amendOpen ? "Close amendment" : "Amend items"}
               </button>
+              )}
+              {canWrite && (
               <button
                 onClick={() => { setCancelOpen(!cancelOpen); setCancelError(null); }}
                 className="rounded-lg border border-rose-500/40 px-2.5 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-500/10 dark:text-rose-400"
               >
                 {cancelOpen ? "Close cancel" : "Cancel SO"}
               </button>
+              )}
             </div>
           )}
 
@@ -900,7 +905,7 @@ export default function OrderPanel({
             </div>
           )}
 
-          {mode === "view" && cancelOpen && floorWrite && !locallyCancelled && (
+          {mode === "view" && cancelOpen && canWrite && !locallyCancelled && (
             <div className="mt-3 rounded-xl border border-rose-500/30 bg-rose-500/5 p-3">
               <h3 className="text-[10px] font-bold uppercase tracking-wider text-rose-600 dark:text-rose-400">
                 Cancel this sales order
