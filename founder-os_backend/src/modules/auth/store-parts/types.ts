@@ -28,7 +28,8 @@ export interface AuthStore {
    *  query — cheaper than listUsers when only presence matters. */
   listLoginEmails(): Promise<string[]>;
   listRoles(): Promise<AuthRole[]>;
-  createRole(key: string, label: string, description: string | null, scopeKeys: string[]): Promise<AuthRole>;
+  createRole(key: string, label: string, description: string | null, scopeKeys: string[], position?: string | null): Promise<AuthRole>;
+  updateRole?(key: string, patch: { label?: string; description?: string | null; scopeKeys?: string[]; position?: string | null }): Promise<AuthRole>;
   deleteRole(key: string): Promise<void>;
   getUserRoleKeys(userId: string): Promise<string[]>;
   setUserRoles(userId: string, keys: string[]): Promise<void>;

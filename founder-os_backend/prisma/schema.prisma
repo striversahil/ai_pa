@@ -683,6 +683,9 @@ model AuthRole {
   key         String          @id
   label       String
   description String?
+  // ONE chart position this role maps to (chart title, e.g. "Telecaller").
+  // Null = no mapping. Set in Users & Permissions; read by the org chart.
+  position    String?
   roleScopes  AuthRoleScope[]
   userRoles   AuthUserRole[]
 }

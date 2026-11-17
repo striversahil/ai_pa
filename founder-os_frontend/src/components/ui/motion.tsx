@@ -5,7 +5,7 @@
 // position feels the same. Respects prefers-reduced-motion.
 import React from "react";
 
-/** Mount once per app (PersonWorkspace includes it): keyframes + a11y guard. */
+/** Mount once per app (gallery + tile grid include it): keyframes + a11y guard. */
 export function MotionStyle() {
   return (
     <style>{`

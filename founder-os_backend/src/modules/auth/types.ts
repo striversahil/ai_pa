@@ -56,6 +56,10 @@ export interface AuthRole {
   /** Automation-dashboard scope keys granted by this role. Roles may ONLY
    *  contain dashboard scopes — never main-platform views. */
   scopeKeys: string[];
+  /** ONE chart position this role maps to (chart title, e.g. "Telecaller").
+   *  Null/empty = no position mapping. Set in Users & Permissions, read by
+   *  the org chart so logins appear under their position cleanly. */
+  position?: string | null;
 }
 
 export interface Session {

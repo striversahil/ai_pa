@@ -64,6 +64,12 @@ export function registerAuthRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const r = await AuthRoutes.authDeleteRole(authStore(c), c.req.header('cookie') ?? null, c.req.param('key') ?? null);
     return c.json(r.body, r.status as any);
   });
+  app.put('/api/auth/roles/:key', async (c) => {
+    // Worker-only (Express is frozen — no mirror). Root-only: rename/re-scope
+    // a role and set its ONE chart position (Users & Permissions mapping).
+    const r = await AuthRoutes.authUpdateRole(authStore(c), c.req.header('cookie') ?? null, c.req.param('key') ?? null, await readBody(c));
+    return c.json(r.body, r.status as any);
+  });
   app.put('/api/auth/users/:id/roles', async (c) => {
     const body = await readBody(c);
     const r = await AuthRoutes.authSetUserRoles(authStore(c), c.req.header('cookie') ?? null, c.req.param('id') ?? null, body.keys || []);

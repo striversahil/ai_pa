@@ -48,6 +48,7 @@ export const DEFAULT_ROLES: AuthRole[] = [
     label: "Sales Head",
     description: "Sales leaderboard manager — full Controller access (region links, roster, history reset)",
     scopeKeys: ["sales-head", "telecalling", "enquiry-tracker", "zoho", "debtors-tracker"],
+    position: "Sales Head",
   },
 ];
 
@@ -105,12 +106,14 @@ export async function ensureRolesSeeded(store: AuthStore): Promise<void> {
   for (const r of DEFAULT_ROLES) {
     const cur = have.get(r.key);
     if (!cur) {
-      await store.createRole(r.key, r.label, r.description, r.scopeKeys);
+      await store.createRole(r.key, r.label, r.description, r.scopeKeys, (r as any).position ?? null);
       continue;
     }
     const merged = [...new Set([...cur.scopeKeys, ...r.scopeKeys])];
-    if (merged.length !== cur.scopeKeys.length) {
-      await store.createRole(r.key, cur.label, cur.description, merged);
+    const wantPos = (r as any).position ?? null;
+    const needPos = wantPos && !((cur as any).position ?? null);
+    if (merged.length !== cur.scopeKeys.length || needPos) {
+      await store.createRole(r.key, cur.label, cur.description, merged, ((cur as any).position ?? wantPos ?? null));
     }
   }
 }
@@ -281,7 +284,12 @@ export async function listRoles(store: AuthStore) {
   return store.listRoles();
 }
 
-export async function createRole(store: AuthStore, key: string, label: string, description: string | null, scopeKeys: string[]) {
+export function cleanRolePosition(v: unknown): string | null {
+  const s = String(v ?? "").trim();
+  return s ? s.slice(0, 120) : null;
+}
+
+export async function createRole(store: AuthStore, key: string, label: string, description: string | null, scopeKeys: string[], position?: string | null) {
   if (!/^[a-z0-9-]+$/.test(key)) throw new AuthError("FORBIDDEN", "Role key must be a-z0-9-", 400);
   if (!Array.isArray(scopeKeys)) throw new AuthError("FORBIDDEN", "scopeKeys must be an array", 400);
   // Validate against the scopes that actually exist (any scope is grantable —
@@ -296,7 +304,29 @@ export async function createRole(store: AuthStore, key: string, label: string, d
       400,
     );
   }
-  const out = await store.createRole(key.toLowerCase(), label, description, [...new Set(scopeKeys)]);
+  const out = await store.createRole(key.toLowerCase(), label, description, [...new Set(scopeKeys)], cleanRolePosition(position));
+  invalidateAllSessionCaches();
+  return out;
+}
+
+export async function updateRole(store: AuthStore, key: string, patch: { label?: string; description?: string | null; scopeKeys?: string[]; position?: string | null }) {
+  if (!key) throw new AuthError("FORBIDDEN", "role key required", 400);
+  if (patch.scopeKeys !== undefined) {
+    if (!Array.isArray(patch.scopeKeys)) throw new AuthError("FORBIDDEN", "scopeKeys must be an array", 400);
+    const known = new Set((await store.listScopes()).map((s) => s.key));
+    const invalid = patch.scopeKeys.filter((s) => !known.has(s));
+    if (invalid.length > 0) {
+      throw new AuthError("FORBIDDEN", `Unknown scope(s) in role: ${invalid.join(", ")}`, 400);
+    }
+  }
+  const storeAny = store as any;
+  if (typeof storeAny.updateRole !== "function") throw new AuthError("FORBIDDEN", "role update not supported", 500);
+  const out = await storeAny.updateRole(key.toLowerCase(), {
+    ...(patch.label !== undefined ? { label: patch.label } : {}),
+    ...(patch.description !== undefined ? { description: patch.description } : {}),
+    ...(patch.scopeKeys !== undefined ? { scopeKeys: [...new Set(patch.scopeKeys)] } : {}),
+    ...(patch.position !== undefined ? { position: cleanRolePosition(patch.position) } : {}),
+  });
   invalidateAllSessionCaches();
   return out;
 }

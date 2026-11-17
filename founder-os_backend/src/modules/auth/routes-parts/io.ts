@@ -1,6 +1,6 @@
 // Extracted verbatim from routes.ts by scripts/refactor/split-module.mjs.
 // routes.ts re-exports everything public here, so existing imports keep working.
-import { authEnabled, startLogin, completeLogin, ensureScopesSeeded, ensureRolesSeeded, getMe, invalidateSessionCache, requireUser, requireManager, listUsers, listRoles, roleGrantBlocker, listScopes, createScope as svcCreateScope, deleteScope as svcDeleteScope, setUserScopes as svcSetUserScopes, invalidateAllSessionCaches, createRole as svcCreateRole, deleteRole as svcDeleteRole, setUserRoles as svcSetUserRoles, cleanProfilePatch, setUserProfile as svcSetUserProfile, deleteUser as svcDeleteUser } from "../service";
+import { authEnabled, startLogin, completeLogin, ensureScopesSeeded, ensureRolesSeeded, getMe, invalidateSessionCache, requireUser, requireManager, listUsers, listRoles, roleGrantBlocker, listScopes, createScope as svcCreateScope, deleteScope as svcDeleteScope, setUserScopes as svcSetUserScopes, invalidateAllSessionCaches, createRole as svcCreateRole, deleteRole as svcDeleteRole, updateRole as svcUpdateRole, setUserRoles as svcSetUserRoles, cleanProfilePatch, setUserProfile as svcSetUserProfile, deleteUser as svcDeleteUser } from "../service";
 import { AuthStore } from "../store";
 import { sessionCookieHeader, readSessionCookie, clearSessionCookieHeader } from "../session";
 import { AuthError } from "../types";
@@ -178,14 +178,31 @@ export async function authListRoles(store: AuthStore, cookieHeader: string | nul
 export async function authCreateRole(
   store: AuthStore,
   cookieHeader: string | null,
-  payload: { key?: string; label?: string; description?: string | null; scopeKeys?: string[] },
+  payload: { key?: string; label?: string; description?: string | null; scopeKeys?: string[]; position?: string | null },
 ): Promise<AuthResult> {
   try {
     await asRoot(store, cookieHeader);
     if (!payload.key || !payload.label) return json(400, { error: "key and label required" });
     const scopeKeys = payload.scopeKeys ?? [];
-    const role = await svcCreateRole(store, payload.key, payload.label, payload.description ?? null, scopeKeys);
+    const role = await svcCreateRole(store, payload.key, payload.label, payload.description ?? null, scopeKeys, payload.position ?? null);
     return json(201, role);
+  } catch (e: any) {
+    const err = e instanceof AuthError ? e : new AuthError("FORBIDDEN", e?.message);
+    return json(err.status, { error: err.message });
+  }
+}
+
+export async function authUpdateRole(
+  store: AuthStore,
+  cookieHeader: string | null,
+  key: string,
+  payload: { label?: string; description?: string | null; scopeKeys?: string[]; position?: string | null },
+): Promise<AuthResult> {
+  try {
+    await asRoot(store, cookieHeader);
+    if (!key) return json(400, { error: "role key required" });
+    const role = await svcUpdateRole(store, key, payload ?? {});
+    return json(200, role);
   } catch (e: any) {
     const err = e instanceof AuthError ? e : new AuthError("FORBIDDEN", e?.message);
     return json(err.status, { error: err.message });

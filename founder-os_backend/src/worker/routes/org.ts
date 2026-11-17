@@ -3,14 +3,17 @@
 //
 // GET  /api/org/people[?department=Sales] — employees + login + last login +
 //      roster row, joined email-exact. Viewer-scoped server-side (HR sees all,
-//      sales-head sees Sales, dept scopes see their own).
+//      user-admin sees all for the orphan queue, sales-head sees Sales, dept
+//      scopes see their own). Logins carry their roles' chart positions.
 // PUT  /api/org/people/:id — the single person save (position, region(s),
-//      tlLevel, WhatsApp, office phone, NeoDove mapping, access chips, active).
-//      Permission: canManagePerson (root/admin, HR, sales-head→Sales, dept
-//      managers→own dept). Reuses updateEmployee + telecaller writes +
-//      setUserScopes — never raw SQL.
+//      tlLevel, WhatsApp, office phone, NeoDove mapping, active). HR never
+//      touches access — scopes payloads are ignored (Users & Permissions owns
+//      access through roles). Permission: canManagePerson (root/admin, HR,
+//      sales-head→Sales, dept managers→own dept). Reuses updateEmployee +
+//      telecaller writes — never raw SQL.
 // POST /api/org/backfill — root-only, idempotent: create employee rows for
-//      roster rows that lack one, so no leaderboard row goes invisible.
+//      roster rows that lack one. Called from Users & Permissions (Orphans
+//      tab), never from HR.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import { authStore, deps, notifyLive, LiveEvent, type Bindings } from '../context';

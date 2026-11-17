@@ -2,10 +2,9 @@
 //
 // Writes employee + roster + login access through the existing services
 // (never raw SQL here). All rules live in ./access.ts (pure).
-import { setUserScopes } from "../auth/service";
 import type { AuthStore } from "../auth/store-parts/types";
 import { canManagePerson, rosterTypeFor, isChartTitle, retireRosterOnSave } from "./access";
-import { fail, normEmail, isPrivileged, heldScopes } from "./types";
+import { fail, normEmail } from "./types";
 import type { AssignInput } from "./types";
 import { isValidRegion, isValidTlLevel, tlPairError } from "../../automations/telecalling/service";
 import { normalizeAgentPhone } from "../../automations/telecalling/util";
@@ -44,32 +43,15 @@ export async function assignPerson(opts: {
     if (pairErr) fail(400, pairErr);
   }
 
-  // ── Scopes: reject-loud beyond power, force-keep beyond-power currents ──
-  // loginEmail wins for the login match (alias Gmail logins); roster matches either.
+  // ── Access lives ONLY in Users & Permissions (roles carry one chart
+  //  position each). The HR person save never touches scopes — any scopes
+  //  payload is ignored so old clients can't grant through this path.
   const users = await store.listUsers().catch(() => [] as any[]);
   const loginEmailFirst = [normEmail(current.loginEmail), normEmail(current.email)].filter(Boolean);
   const empEmails = [...new Set(loginEmailFirst)];
   const login = (users as any[]).find((u) =>
     !(u as any)?.isRoot && empEmails.includes(normEmail((u as any).email)),
   ) as any;
-  if (input.scopes !== undefined && login) {
-    if (!Array.isArray(input.scopes)) fail(400, "scopes must be an array");
-    const known = new Set((await store.listScopes().catch(() => [] as any[])).map((s: any) => String(s.key).toLowerCase()));
-    const wanted = [...new Set((input.scopes as string[]).map((s) => String(s)))].filter((s) => known.has(s.toLowerCase()));
-    const held = heldScopes(me);
-    if (!isPrivileged(me) && !held.has("admin")) {
-      for (const s of wanted) {
-        if (!held.has(s.toLowerCase())) fail(403, `grants '${s}' which you don't hold — ask root to grant it to you first`);
-      }
-    }
-    const direct = await store.getUserScopeKeys(login.id);
-    const locked = direct.filter((s) => !isPrivileged(me) && !held.has("admin") && !held.has(String(s).toLowerCase()));
-    await setUserScopes(store, login.id, [...new Set([...wanted, ...locked])]);
-    try {
-      const { invalidateAllSessionCaches } = await import("../auth/service");
-      invalidateAllSessionCaches();
-    } catch { /* best-effort */ }
-  }
 
   // ── Employee master (office phone lives here) ──
   const empPatch: Record<string, unknown> = {};

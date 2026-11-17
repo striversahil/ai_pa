@@ -7,6 +7,8 @@ export interface OrgLogin {
   name: string;
   scopes: string[];
   roles: string[];
+  /** Chart positions from the login's roles (one per role, deduped). */
+  positions?: string[];
   /** Last session createdAt (ISO) or null when the login never signed in. */
   lastLoginAt: string | null;
 }
@@ -73,6 +75,7 @@ export interface AssignPersonInput {
   officePhone?: string | null;
   neodoveUserId?: string | null;
   neodoveUserName?: string | null;
+  /** Deprecated: HR never grants access (Users & Permissions owns it). Ignored by the server. */
   scopes?: string[];
   active?: boolean;
 }

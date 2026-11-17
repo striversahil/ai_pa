@@ -27,6 +27,8 @@ export function heldScopes(me: any): Set<string> {
 export interface OrgLogin {
   id: string; email: string; name: string;
   scopes: string[]; roles: string[];
+  /** Chart positions from the login's roles (one per role, deduped). */
+  positions: string[];
   lastLoginAt: string | null;
 }
 
@@ -68,6 +70,7 @@ export interface AssignInput {
   officePhone?: string | null;
   neodoveUserId?: string | null;
   neodoveUserName?: string | null;
+  /** Deprecated: HR never grants access (Users & Permissions owns it). Ignored. */
   scopes?: string[];
   active?: boolean;
 }

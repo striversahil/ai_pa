@@ -15,7 +15,7 @@ function visibleDepartments(me: any): string[] | null {
   if (!me) return [];
   if (isPrivileged(me)) return null;
   const held = heldScopes(me);
-  if (held.has("admin") || held.has("human-resources")) return null;
+  if (held.has("admin") || held.has("human-resources") || held.has("user-admin")) return null;
   const out: string[] = [];
   if (held.has("sales-head")) out.push("Sales");
   if (held.has("accounts")) out.push("Accounts");
@@ -56,6 +56,13 @@ export async function getOrgPeople(opts: {
     prisma.telecaller.findMany({ where: { deleted: false } }).catch(() => []),
     loadLastLogins(opts.db),
   ]);
+
+  const allRoles = await store.listRoles().catch(() => [] as any[]);
+  const rolePos = new Map<string, string>();
+  for (const role of (allRoles as any[])) {
+    const pos = String((role as any)?.position ?? "").trim();
+    if (pos) rolePos.set(String((role as any).key), pos);
+  }
 
   const loginByEmail = new Map<string, any>();
   for (const u of (users as any[])) {
@@ -127,6 +134,7 @@ export async function getOrgPeople(opts: {
         name: String((login as any).displayName || (login as any).name || ""),
         scopes: loginScopes,
         roles: loginRoles,
+        positions: [...new Set(loginRoles.map((k) => rolePos.get(String(k))).filter(Boolean))] as string[],
         lastLoginAt: lastLogins[String((login as any).id)] ?? null,
       } : null,
       roster: roster ? {

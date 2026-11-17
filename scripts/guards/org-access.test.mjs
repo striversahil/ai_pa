@@ -67,15 +67,14 @@ describe('org person contract (one save, server-decided)', () => {
     }
   });
 
-  it('save reuses existing services (validation, phone, pair rule, mirror, scopes) — never rewritten', () => {
+  it('save reuses existing services (validation, phone, pair rule, mirror) — never rewritten; access NOT via HR', () => {
     assert.ok(io.includes('tlPairError'), 'TL1 pair rule reused');
     assert.ok(io.includes('isValidRegion'), 'region validation reused');
     assert.ok(io.includes('normalizeAgentPhone'), 'office-phone normalization reused');
     assert.ok(io.includes('updateEmployee'), 'employee master write reused');
-    assert.ok(io.includes('setUserScopes'), 'login access write reused');
     assert.ok(io.includes("mirrorRosterRow"), 'roster rows mirror into core');
     assert.ok(io.includes('invalidateRiskCache'), 'leaderboard cache busted on save');
-    assert.ok(io.includes('force-keep') || io.includes('locked'), 'beyond-power grants are force-kept, never stripped');
+    assert.ok(io.includes('Users & Permissions') && !io.includes('setUserScopes'), 'HR save never writes scopes (roles own access)');
   });
 
   it('region is required for sales staff, second region is Team-Lead-only', () => {
@@ -139,14 +138,30 @@ describe('org person contract (one save, server-decided)', () => {
     assert.ok(feAccess.includes('isHomeDepartment'), 'frontend mirror must carry the helper');
   });
 
-  it('login match prefers loginEmail and surfaces mismatch', () => {
+  it('login match prefers loginEmail; HR drawer never touches access', () => {
     assert.ok(io.includes('loginEmail wins') || io.includes('loginEmailFirst'), 'login lookup must prefer loginEmail');
-    assert.ok(io.includes('emailMismatch'), 'people read must surface mismatch');
-    const api = readFe(join('org', 'api.ts'));
-    assert.ok(api.includes('emailMismatch'), 'domain api type must carry mismatch');
     const drawer = readFe(join('org', 'OrgPersonDrawer.tsx'));
-    assert.ok(drawer.includes('emailMismatch') && drawer.includes('Email mismatch'), 'drawer must warn on mismatch');
-    assert.ok(drawer.includes('Suggested by position') || drawer.includes('suggested'), 'drawer must split suggested vs granted');
+    assert.ok(!drawer.includes('Dashboard access</h3>'), 'HR drawer must not render access chips');
+    assert.ok(!drawer.includes('toggleScope') && !drawer.includes('scopeOptions'), 'HR drawer must not edit scopes');
+    assert.ok(drawer.includes('Users & Permissions'), 'HR drawer must point to Users & Permissions for access');
+    const inspector = readFe(join('org', 'OrgInspector.tsx'));
+    assert.ok(inspector.includes('positions') && inspector.includes('via '), 'inspector shows role-derived positions cleanly');
+  });
+
+  it('roles carry ONE chart position (Users & Permissions mapping)', () => {
+    const types = read(join('modules', 'auth', 'types.ts'));
+    assert.ok(types.includes('position'), 'AuthRole must carry a position');
+    const svc = read(join('modules', 'auth', 'service.ts'));
+    assert.ok(svc.includes('cleanRolePosition'), 'position must normalize (trimmed or null)');
+    assert.ok(svc.includes('updateRole'), 'roles must be updatable (position + scopes)');
+    const drawer = readFe(join('components', 'admin', 'AdminDrawers.tsx'));
+    assert.ok(drawer.includes('POSITION (ONE CHART TITLE)'), 'RoleDrawer must map one chart position');
+    const admin = readFe(join('components', 'UserAdmin.tsx'));
+    assert.ok(admin.includes('Orphans'), 'orphan queues live in Users & Permissions');
+    assert.ok(admin.includes('/api/auth/roles/${encodeURIComponent(key)}') || admin.includes('/api/auth/roles/'), 'role edit must hit the update endpoint');
+    const orgTab = readFe(join('components', 'human-resources', 'OrganizationTab.tsx'));
+    assert.ok(!orgTab.includes('Roster rows without') && !orgTab.includes('Logins without'), 'orphan queues must be gone from HR');
+    assert.ok(!orgTab.includes('backfillOrgEmployees'), 'HR must not backfill (UserAdmin owns it)');
   });
 
   it('access writes invalidate caches + broadcast automation refresh', () => {

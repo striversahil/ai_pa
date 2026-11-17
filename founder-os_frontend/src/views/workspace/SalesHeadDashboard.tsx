@@ -1,7 +1,10 @@
 "use client";
 
-// views/workspace/SalesHeadDashboard — the Sales Head's ONE custom dashboard.
+// views/workspace/SalesHeadDashboard — the Sales Head live preview.
 //
+// Mounted ONLY by the root-only position gallery (/workspace) so root can
+// peek into the Sales Head dashboard + take control (audited). The tile grid
+// (/session) is dashboard-based — no forced single home.
 // The shared Sales tabs (same TabBar + same gates as SalesWorkspace, via
 // sales/tabs.ts) rendering the REAL panels — one at a time, animated in.
 // The NotificationDock rides along. Below: nothing — tabs replaced the scroll.
@@ -47,7 +50,7 @@ export default function SalesHeadDashboard({ initialSlug }: { initialSlug?: stri
   // Admin-granted sheets beyond Sales (accounts, stock, reporting-sheet, …).
   // The server list is already scope-filtered; 'sales' itself is the custom
   // dashboard above, never a duplicate tab. Other roles reach these through
-  // PersonWorkspace — sales-head used to drop them entirely.
+  // the tile grid — sales-head used to drop them entirely.
   // Root preview sees through HER eyes, not root omniscience: extras are
   // scoped to the sales-head bundle (same set useSalesTabs gates on), so the
   // peek shows her sheets instead of every dashboard.

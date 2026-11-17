@@ -118,15 +118,17 @@ export class PrismaAuthStore implements AuthStore {
       key: r.key,
       label: r.label,
       description: r.description,
+      position: (r as any).position ?? null,
       scopeKeys: r.roleScopes.map((rs) => rs.scopeKey),
     }));
   }
-  async createRole(key: string, label: string, description: string | null, scopeKeys: string[]) {
+  async createRole(key: string, label: string, description: string | null, scopeKeys: string[], position?: string | null) {
+    const pos = (typeof position === "string" ? position.trim() : "") || null;
     await this.prisma.$transaction([
       this.prisma.authRole.upsert({
         where: { key },
-        update: { label, description },
-        create: { key, label, description },
+        update: { label, description, position: pos },
+        create: { key, label, description, position: pos },
       }),
       this.prisma.authRoleScope.deleteMany({ where: { roleKey: key } }),
       this.prisma.authRoleScope.createMany({
@@ -134,7 +136,23 @@ export class PrismaAuthStore implements AuthStore {
         skipDuplicates: true,
       }),
     ]);
-    return { key, label, description, scopeKeys };
+    return { key, label, description, scopeKeys, position: pos };
+  }
+  async updateRole(key: string, patch: { label?: string; description?: string | null; scopeKeys?: string[]; position?: string | null }) {
+    const cur = await this.prisma.authRole.findUnique({ where: { key }, include: { roleScopes: true } });
+    if (!cur) throw new Error("role not found");
+    const label = patch.label ?? cur.label;
+    const description = patch.description ?? cur.description;
+    const pos = patch.position !== undefined ? ((typeof patch.position === "string" ? patch.position.trim() : "") || null) : ((cur as any).position ?? null);
+    await this.prisma.$transaction([
+      this.prisma.authRole.update({ where: { key }, data: { label, description, position: pos } }),
+      ...(patch.scopeKeys !== undefined ? [
+        this.prisma.authRoleScope.deleteMany({ where: { roleKey: key } }),
+        this.prisma.authRoleScope.createMany({ data: patch.scopeKeys.map((scopeKey) => ({ roleKey: key, scopeKey })), skipDuplicates: true }),
+      ] : []),
+    ]);
+    const scopeKeys = patch.scopeKeys ?? cur.roleScopes.map((rs) => rs.scopeKey);
+    return { key, label, description, scopeKeys, position: pos };
   }
   async deleteRole(key: string) {
     await this.prisma.authRole.delete({ where: { key } }).catch(() => {});

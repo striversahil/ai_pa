@@ -50,8 +50,11 @@ describe('position workspace builder (phase 1, root-only)', () => {
   });
 
   it('pure + presentational layers never fetch', () => {
-    for (const f of ['hr/position-dashboards.ts', 'position-widgets/SeverityFeed.tsx', 'position-widgets/MyTasksWidget.tsx', 'position-widgets/TargetTileWidget.tsx', 'position-widgets/PresenceDots.tsx']) {
+    for (const f of ['hr/position-dashboards.ts', 'components/ui/motion.tsx']) {
       assert.ok(!fe(f).includes('fetch('), `${f} must not fetch (domain api only)`);
+    }
+    for (const f of ['position-widgets/SeverityFeed.tsx', 'position-widgets/MyTasksWidget.tsx', 'position-widgets/TargetTileWidget.tsx', 'position-widgets/PresenceDots.tsx', 'views/workspace/PersonWorkspace.tsx']) {
+      assert.throws(() => fe(f), `dead code must stay deleted: ${f}`);
     }
     const api = fe('personal/api.ts');
     assert.ok(api.includes('/api/work/team') && api.includes('/api/notifications'), 'personal api must own work + notifications reads');

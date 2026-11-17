@@ -2,9 +2,11 @@
 
 // OrgInspector — the right rail for the selected chart position.
 //
-// Click a node to pin its people here: every active employee, their login
-// state (relative last login), granted dashboards, and sales fields.
-// Edit opens the person drawer (only when the server says canManage).
+// Click a node to pin its people here: every active employee and their login
+// state (relative last login). Position mapping lives in Users & Permissions
+// (one chart position per role) — the inspector shows each login's
+// role-derived positions so the chart reads cleanly. Edit opens the person
+// drawer (position, sales fields, active only — never access).
 import type { OrgPerson } from "@/org/api";
 import { orgPosition, responsibilityLine, wingOfTitle } from "@/hr/organization";
 import { relActive } from "@/lib/format";
@@ -107,13 +109,20 @@ export default function OrgInspector({ title, people, onEdit, onClose }: {
                 </button>
               )}
             </div>
-            {p.login && p.login.scopes.length > 0 && (
-              <div className="mt-1.5 flex flex-wrap gap-1">
-                {p.login.scopes.map((s) => (
-                  <span key={s} className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">{s}</span>
-                ))}
+            {p.login && (p.login.positions?.length || p.login.roles.length) ? (
+              <div className="mt-1.5 space-y-1">
+                {(p.login.positions?.length ?? 0) > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {p.login.positions!.map((pos) => (
+                      <span key={pos} className="rounded-full bg-indigo-500/10 px-2 py-0.5 text-[10px] font-bold text-indigo-600 dark:text-indigo-300">⌖ {pos}</span>
+                    ))}
+                  </div>
+                )}
+                {p.login.roles.length > 0 && (
+                  <div className="text-[10px] text-zinc-500">via {p.login.roles.join(", ")}</div>
+                )}
               </div>
-            )}
+            ) : null}
             <SalesLine p={p} />
           </div>
         ))}

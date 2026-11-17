@@ -1,16 +1,16 @@
 "use client";
 
-// OrgPersonDrawer — the single person editor (position, sales fields, access).
+// OrgPersonDrawer — the single person editor (position, sales fields, active).
 //
 // Reuses the chart OrgPositionPicker (never a second picker). Sales-only
 // fields appear by position: Region for Telecaller/Field Staff (+WhatsApp,
 // office phone, NeoDove mapping); Team Lead adds the second region + TL level.
-// Access chips are the position's suggested dashboards pre-checked, editable;
-// the server delta-keeps anything beyond the viewer's power.
-import { useEffect, useMemo, useState } from "react";
+// Access lives ONLY in Users & Permissions (roles carry one chart
+// position each) — this drawer never touches scopes.
+import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
 import OrgPositionPicker from "@/components/human-resources/OrgPositionPicker";
-import { fetchUnmappedNeodoveUsers, saveOrgPerson, type OrgPerson } from "@/org/api";
+import { saveOrgPerson, type OrgPerson } from "@/org/api";
 import { isSalesRosterTitle, regionRulesFor } from "@/org/access";
 import { REGIONS } from "@/telecalling/regions";
 import { isOrgTitle } from "@/hr/organization";
@@ -36,9 +36,6 @@ export default function OrgPersonDrawer({ person, onClose, onSaved }: {
     person.roster?.neodoveUserName ? neoKeyOf(person.roster.neodoveUserId, person.roster.neodoveUserName) : "",
   );
   const [neoUsers, setNeoUsers] = useState<Array<{ userId: string; userName: string }>>([]);
-  const [scopes, setScopes] = useState<string[]>(() => [
-    ...new Set([...(person.suggestedScopes ?? []), ...(person.login?.scopes ?? [])]),
-  ]);
   const [active, setActive] = useState(person.employee.active);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -49,13 +46,13 @@ export default function OrgPersonDrawer({ person, onClose, onSaved }: {
   useEffect(() => {
     if (!showSales) return;
     let alive = true;
-    fetchUnmappedNeodoveUsers()
-      .then((rows) => { if (alive) setNeoUsers(rows); })
-      .catch(() => { /* picker stays manual-entry-free; link can wait */ });
+    import("@/org/api").then((m) =>
+      m.fetchUnmappedNeodoveUsers()
+        .then((rows) => { if (alive) setNeoUsers(rows); })
+        .catch(() => { /* picker stays manual-entry-free; link can wait */ }),
+    );
     return () => { alive = false; };
   }, [showSales]);
-
-  const toggleScope = (s: string) => setScopes((prev) => (prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]));
 
   const submit = async () => {
     setErr(null);
@@ -77,7 +74,6 @@ export default function OrgPersonDrawer({ person, onClose, onSaved }: {
         officePhone: showSales ? (officePhone.trim() || null) : undefined,
         neodoveUserId: rules.neodove ? (neoParts.length === 2 && (neoParts[0] || neoParts[1]) ? neoParts[0] : null) : undefined,
         neodoveUserName: rules.neodove ? (neoParts.length === 2 && (neoParts[0] || neoParts[1]) ? neoParts[1] : null) : undefined,
-        scopes,
         active,
       });
       onSaved();
@@ -88,16 +84,6 @@ export default function OrgPersonDrawer({ person, onClose, onSaved }: {
       setBusy(false);
     }
   };
-
-  const scopeOptions = useMemo(
-    () => [...new Set([...(person.suggestedScopes ?? []), ...(person.login?.scopes ?? [])])],
-    [person],
-  );
-  const grantedSet = useMemo(() => new Set(person.login?.scopes ?? []), [person]);
-  const suggestedSet = useMemo(() => new Set(person.suggestedScopes ?? []), [person]);
-  const emailMismatch = !!(person.emailMismatch
-    || (person.employee.email && person.employee.loginEmail
-      && String(person.employee.email).trim().toLowerCase() !== String(person.employee.loginEmail).trim().toLowerCase()));
 
   return (
     <Modal title={`Edit · ${person.employee.name}`} subtitle={person.employee.designation ?? ""} onClose={onClose} wide>
@@ -171,46 +157,6 @@ export default function OrgPersonDrawer({ person, onClose, onSaved }: {
             </p>
           </section>
         )}
-
-        <section className="space-y-2 rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
-          <h3 className="text-[11px] font-extrabold uppercase tracking-wider text-zinc-500">Dashboard access</h3>
-          {emailMismatch && (
-            <p className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-2.5 py-1.5 text-[11px] font-semibold text-amber-700 dark:text-amber-300">
-              ⚠️ Email mismatch — employee email ({person.employee.email}) differs from login email ({person.employee.loginEmail}). Login matched on loginEmail.
-            </p>
-          )}
-          {!person.login ? (
-            <p className="text-[11px] text-zinc-500">
-              No platform login linked — link one via loginEmail in the employee master, then set access here.
-            </p>
-          ) : scopeOptions.length === 0 ? (
-            <p className="text-[11px] text-zinc-500">This position suggests no dashboards.</p>
-          ) : (
-            <div className="space-y-2">
-              <p className="text-[11px] text-zinc-500">✓ = already granted · + = suggested by position (tick to grant).</p>
-              <div className="flex flex-wrap gap-1.5">
-                {scopeOptions.map((s) => {
-                  const on = scopes.includes(s);
-                  const granted = grantedSet.has(s);
-                  const suggestedOnly = suggestedSet.has(s) && !granted;
-                  return (
-                    <button
-                      key={s}
-                      type="button"
-                      onClick={() => toggleScope(s)}
-                      title={granted ? "Already granted to this login" : suggestedOnly ? "Suggested by position — tick to grant" : "Extra grant"}
-                      className={`rounded-full px-2.5 py-1 text-[11px] font-bold transition-colors ${
-                        on ? "bg-indigo-600 text-white" : "bg-zinc-100 text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400"
-                      }`}
-                    >
-                      {on ? "✓ " : suggestedOnly ? "+ " : ""}{s}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </section>
 
         <label className="flex items-center gap-2 text-sm font-semibold">
           <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />

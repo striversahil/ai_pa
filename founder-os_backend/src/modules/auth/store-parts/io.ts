@@ -1,7 +1,9 @@
 // Extracted verbatim from store.ts by scripts/refactor/split-module.mjs.
 // store.ts re-exports everything public here, so existing imports keep working.
 import { AuthUser, AuthScope, AuthRole, ROOT_EMAIL } from "../types";
+
 import type { AuthStore } from "./types";
+import { cleanPosition } from "./pure";
 import { newId } from "./pure";
 
 // ── In-memory (dev / fallback) ────────────────────────────────────────────────
@@ -96,10 +98,23 @@ export class MemoryAuthStore implements AuthStore {
   async listRoles() {
     return [...this.roles.values()];
   }
-  async createRole(key: string, label: string, description: string | null, scopeKeys: string[]) {
-    const role: AuthRole = { key, label, description, scopeKeys };
+  async createRole(key: string, label: string, description: string | null, scopeKeys: string[], position?: string | null) {
+    const role: AuthRole = { key, label, description, scopeKeys, position: cleanPosition(position) };
     this.roles.set(key, role);
     return role;
+  }
+  async updateRole(key: string, patch: { label?: string; description?: string | null; scopeKeys?: string[]; position?: string | null }) {
+    const cur = this.roles.get(key);
+    if (!cur) throw new Error("role not found");
+    const next: AuthRole = {
+      ...cur,
+      label: patch.label ?? cur.label,
+      description: patch.description ?? cur.description,
+      scopeKeys: patch.scopeKeys ?? cur.scopeKeys,
+      position: patch.position !== undefined ? cleanPosition(patch.position) : (cur as any).position ?? null,
+    };
+    this.roles.set(key, next);
+    return next;
   }
   async deleteRole(key: string) {
     this.roles.delete(key);
@@ -139,10 +154,16 @@ export class D1AuthStore implements AuthStore {
     const row = await this.db
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'auth_role'")
       .first();
-    if (row) return true;
+    if (row) {
+      // Migrate pre-0146 tables that lack the position column.
+      try {
+        await this.db.prepare("ALTER TABLE auth_role ADD COLUMN position TEXT").run();
+      } catch { /* column already exists */ }
+      return true;
+    }
     try {
       await this.db.batch([
-        this.db.prepare("CREATE TABLE IF NOT EXISTS auth_role (key TEXT PRIMARY KEY, label TEXT NOT NULL, description TEXT)"),
+        this.db.prepare("CREATE TABLE IF NOT EXISTS auth_role (key TEXT PRIMARY KEY, label TEXT NOT NULL, description TEXT, position TEXT)"),
         this.db.prepare(
           "CREATE TABLE IF NOT EXISTS auth_role_scope (roleKey TEXT NOT NULL, scopeKey TEXT NOT NULL, PRIMARY KEY (roleKey, scopeKey), FOREIGN KEY (roleKey) REFERENCES auth_role(key) ON DELETE CASCADE, FOREIGN KEY (scopeKey) REFERENCES auth_scope(key) ON DELETE CASCADE)",
         ),
@@ -279,26 +300,48 @@ export class D1AuthStore implements AuthStore {
   async listRoles() {
     if (!(await this.ensureRoleTables())) return [];
     const rows = await this.db.prepare("SELECT * FROM auth_role ORDER BY key").all();
-    const roles = (rows.results || []) as Array<{ key: string; label: string; description: string | null }>;
+    const roles = (rows.results || []) as Array<{ key: string; label: string; description: string | null; position?: string | null }>;
     return Promise.all(
       roles.map(async (r) => {
         const sc = await this.db.prepare("SELECT scopeKey FROM auth_role_scope WHERE roleKey = ?").bind(r.key).all();
-        return { ...r, scopeKeys: (sc.results || []).map((x: any) => x.scopeKey) };
+        return { ...r, position: (r as any).position ?? null, scopeKeys: (sc.results || []).map((x: any) => x.scopeKey) };
       }),
     );
   }
-  async createRole(key: string, label: string, description: string | null, scopeKeys: string[]) {
-    if (!(await this.ensureRoleTables())) return { key, label, description, scopeKeys };
+  async createRole(key: string, label: string, description: string | null, scopeKeys: string[], position?: string | null) {
+    if (!(await this.ensureRoleTables())) return { key, label, description, scopeKeys, position: position ?? null };
     // Upsert WITHOUT delete: INSERT OR REPLACE would DELETE the row first and
     // fire ON DELETE CASCADE on auth_user_role — silently unassigning this
     // role from every user whenever its scopes are edited. ON CONFLICT DO
     // UPDATE edits the row in place, so user assignments survive role saves.
-    await this.db.prepare("INSERT INTO auth_role (key, label, description) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET label = excluded.label, description = excluded.description").bind(key, label, description).run();
+    const pos = (typeof position === "string" ? position.trim() : "") || null;
+    await this.db.prepare("INSERT INTO auth_role (key, label, description, position) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET label = excluded.label, description = excluded.description, position = excluded.position").bind(key, label, description, pos).run();
     await this.db.prepare("DELETE FROM auth_role_scope WHERE roleKey = ?").bind(key).run();
     for (const s of scopeKeys) {
       await this.db.prepare("INSERT OR IGNORE INTO auth_role_scope (roleKey, scopeKey) VALUES (?, ?)").bind(key, s).run();
     }
-    return { key, label, description, scopeKeys };
+    return { key, label, description, scopeKeys, position: pos };
+  }
+  async updateRole(key: string, patch: { label?: string; description?: string | null; scopeKeys?: string[]; position?: string | null }) {
+    if (!(await this.ensureRoleTables())) throw new Error("role not found");
+    const cur = (await this.db.prepare("SELECT * FROM auth_role WHERE key = ?").bind(key).first()) as any;
+    if (!cur) throw new Error("role not found");
+    const label = patch.label ?? cur.label;
+    const description = patch.description ?? cur.description;
+    const pos = patch.position !== undefined ? ((typeof patch.position === "string" ? patch.position.trim() : "") || null) : (cur.position ?? null);
+    await this.db.prepare("UPDATE auth_role SET label = ?, description = ?, position = ? WHERE key = ?").bind(label, description, pos, key).run();
+    let scopeKeys: string[];
+    if (patch.scopeKeys !== undefined) {
+      await this.db.prepare("DELETE FROM auth_role_scope WHERE roleKey = ?").bind(key).run();
+      for (const s of patch.scopeKeys) {
+        await this.db.prepare("INSERT OR IGNORE INTO auth_role_scope (roleKey, scopeKey) VALUES (?, ?)").bind(key, s).run();
+      }
+      scopeKeys = patch.scopeKeys;
+    } else {
+      const sc = await this.db.prepare("SELECT scopeKey FROM auth_role_scope WHERE roleKey = ?").bind(key).all();
+      scopeKeys = (sc.results || []).map((x: any) => x.scopeKey);
+    }
+    return { key, label, description, scopeKeys, position: pos };
   }
   async deleteRole(key: string) {
     if (!(await this.ensureRoleTables())) return;

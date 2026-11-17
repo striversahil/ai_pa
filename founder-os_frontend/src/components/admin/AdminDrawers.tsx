@@ -8,7 +8,7 @@ export function displayNameOf(user: { name: string; displayName?: string | null 
 }
 
 export interface ScopeRow { key: string; label: string; description: string | null; }
-export interface RoleRow { key: string; label: string; description: string | null; scopeKeys: string[]; }
+export interface RoleRow { key: string; label: string; description: string | null; scopeKeys: string[]; /** ONE chart title (or null = unmapped). */ position?: string | null; }
 export interface UserRow { id: string; email: string; name: string; displayName?: string | null; picture: string | null; isRoot: boolean; createdAt: string; scopes: string[]; roles: string[]; hiddenRoles?: number; }
 export interface DashboardRow { slug: string; name: string; scope: string | null; }
 
@@ -197,10 +197,12 @@ export function UserDrawer({ user, roles, scopeGroups, scopeLabel, draft, onTogg
 }
 
 /** Create/edit drawer for a role (root only). */
-export function RoleDrawer({ initial, scopeGroups, onSave, onDelete, busy, isNew }: {
+export function RoleDrawer({ initial, scopeGroups, positions, onSave, onDelete, busy, isNew }: {
   initial: RoleRow | null;
   scopeGroups: [string, DashboardRow[]][];
-  onSave: (input: { key: string; label: string; description: string | null; scopeKeys: string[] }) => void;
+  /** Chart titles for the position picker (from the org chart). */
+  positions: string[];
+  onSave: (input: { key: string; label: string; description: string | null; scopeKeys: string[]; position: string | null }) => void;
   onDelete?: (key: string) => void;
   busy: boolean;
   isNew: boolean;
@@ -209,6 +211,7 @@ export function RoleDrawer({ initial, scopeGroups, onSave, onDelete, busy, isNew
   const [label, setLabel] = useState(initial?.label ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [checked, setChecked] = useState<string[]>(initial?.scopeKeys ?? []);
+  const [position, setPosition] = useState<string>(initial?.position ?? "");
   const toggle = (s: string) => setChecked((p) => (p.includes(s) ? p.filter((k) => k !== s) : [...p, s]));
   const valid = key.trim() !== "" && label.trim() !== "";
 
@@ -238,7 +241,17 @@ export function RoleDrawer({ initial, scopeGroups, onSave, onDelete, busy, isNew
       </h4>
       <ScopeCheckGrid scopeGroups={scopeGroups} checked={checked} onToggle={toggle} />
 
-      <button onClick={() => onSave({ key: key.trim(), label: label.trim(), description: description.trim() || null, scopeKeys: checked })}
+      <label className="mt-5 block">
+        <span className="mb-1 block text-xs font-bold text-zinc-500">POSITION (ONE CHART TITLE)</span>
+        <select value={position} onChange={(e) => setPosition(e.target.value)}
+          className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-3 py-2 text-sm outline-none focus:border-indigo-500">
+          <option value="">— no position mapped —</option>
+          {positions.map((pos) => <option key={pos} value={pos}>{pos}</option>)}
+        </select>
+        <span className="mt-1 block text-[11px] text-zinc-500">One role maps to one position. The org chart shows this role&apos;s logins under that position.</span>
+      </label>
+
+      <button onClick={() => onSave({ key: key.trim(), label: label.trim(), description: description.trim() || null, scopeKeys: checked, position: position.trim() || null })}
         disabled={busy || !valid}
         className="mt-6 w-full rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold px-4 py-2.5 disabled:opacity-40 cursor-pointer border-0">
         {busy ? "Saving…" : isNew ? "Create role" : "Save role"}
