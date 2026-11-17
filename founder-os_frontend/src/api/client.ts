@@ -1,7 +1,13 @@
 const API_BASE = '/api';
 
+/** Tolerate a leading "/api" so a caller passing a full path can't double
+ *  the prefix (/api/api/... once 404'd every role save). */
+function joinPath(path: string): string {
+  return `${API_BASE}${path.startsWith('/api/') ? path.slice(4) : path}`;
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetch(joinPath(path), {
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     ...options,
   });

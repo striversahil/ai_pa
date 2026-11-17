@@ -13,10 +13,12 @@ export interface RoleSaveInput {
 
 /** Root-only: create a role (key + label + scopes + ONE chart position). */
 export function createRole(input: RoleSaveInput): Promise<unknown> {
-  return api.post("/api/auth/roles", input);
+  // NOTE: paths are relative to API_BASE ('/api' lives in ./client) —
+  // passing "/api/..." here doubles the prefix (/api/api/...) and 404s.
+  return api.post("/auth/roles", input);
 }
 
 /** Root-only: update a role's label/description/scopes/position. */
 export function updateRole(key: string, patch: Omit<RoleSaveInput, "key">): Promise<unknown> {
-  return api.put(`/api/auth/roles/${encodeURIComponent(key)}`, patch);
+  return api.put(`/auth/roles/${encodeURIComponent(key)}`, patch);
 }
