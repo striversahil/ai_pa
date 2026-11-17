@@ -22,10 +22,12 @@ export interface NavItem {
 }
 
 export const NAV_ITEMS: NavItem[] = [
-  // Single Workspace: the position gallery (root) / custom position dashboard.
-  // The old tile-grid home is retired — landing is driven by canView + the
-  // auto-route effect in page.tsx, not by a sidebar row.
-  { view: "workspace", label: "Workspace", icon: LayoutGrid, mobile: true },
+  // Dashboard tile grid (/session): the dashboards YOU may open. First, so a
+  // login whose current view is denied lands here (page.tsx auto-routes to the
+  // first accessible item).
+  { view: "session", label: "Workspace", icon: LayoutGrid, mobile: true },
+  // Position gallery (root-only): jump into anyone's dashboard + take control.
+  { view: "workspace", label: "Positions", icon: LayoutGrid, mobile: false },
   // Automation REGISTRY console (admin only — canView gates it).
   { view: "automations", label: "Automations", icon: Workflow, mobile: true },
   // Employee delegation board — every approved login, HR or not.
@@ -42,10 +44,8 @@ export const NAV_ITEMS: NavItem[] = [
 
 export const MOBILE_NAV_ITEMS = NAV_ITEMS.filter((i) => i.mobile);
 
-/** Every routable top-level view. "session" has no sidebar row (the old grid
- *  is retired) but stays routable: it IS the Workspace home (/session renders
- *  the custom position dashboard; the gallery lives at /workspace). */
-export const VIEW_TYPES: ViewType[] = [...NAV_ITEMS.map((i) => i.view), "session"];
+/** Every routable top-level view (derived — add a view in NAV_ITEMS only). */
+export const VIEW_TYPES: ViewType[] = NAV_ITEMS.map((i) => i.view);
 
 // Navigation targets: a main view or a workspace (dashboard) slug.
 export type NavTarget =

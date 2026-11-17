@@ -110,10 +110,11 @@ export interface AuthUserMe {
 
 export function canView(me: AuthUserMe | null, viewOrSlug: string): boolean {
   if (!me) return false;
-  // Workspace home: root + sales-head (position workspaces). Other logins
-  // reach their sheets via deep links (/session/<slug>) until their position
-  // pack ships — then they join this gate instead of a new carve-out.
-  if (viewOrSlug === "session") return me.isRoot || grantedScopes(me).has("sales-head");
+  if (viewOrSlug === "session") {
+    // Dashboard tile grid (/session): every approved member. The grid lists
+    // only the workspaces the server grants (GET /api/session/workspaces).
+    return me.scopes.length > 0 || me.roles.length > 0;
+  }
   // Position builder (phase 1): root-only creation surface. Staff keep their
   // automation sheets; even admins don't see drafts until the rollout phase.
   if (viewOrSlug === "workspace") return me.isRoot;

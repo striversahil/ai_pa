@@ -13,7 +13,6 @@ import { AuthProvider, useAuth } from "@/auth/AuthContext";
 import LoginScreen from "@/components/LoginScreen";
 import UserAdmin from "@/components/UserAdmin";
 import { NAV_ITEMS, VIEW_TYPES, navTargetPath, type NavTarget, type ViewType } from "@/components/layout/nav";
-import { grantedScopes } from "@/auth/permissions";
 import { WorkspaceHostProvider } from "@/workspaces/WorkspaceHost";
 import { useWorkspaces } from "@/workspaces/useWorkspaces";
 import { canonicalNavSlug } from "@/workspaces/aliases";
@@ -46,18 +45,10 @@ function AppInner() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const { route, navigate } = useHashRoute();
-  // Workspaces (dashboards) live at /session/<slug>. Legacy URLs —
-  // /automations/<slug> bookmarks and absorbed slugs (payment-tracker,
-  // telecalling, …) — are redirected in place (replace, no back-button trap).
+  // Dashboards live at /session/<slug>. Legacy URLs — /automations/<slug>
+  // bookmarks and absorbed slugs (payment-tracker, telecalling, …) — are
+  // redirected in place (replace, no back-button trap). One replace only.
   const sub = route.view === "session" ? route.sub : null;
-  // Strict single dashboard: sales-head holders live in their Workspace —
-  // legacy Sales sheet deep links redirect home (their panels are tabs, not
-  // sheets). Deep links to admin-granted sheets beyond Sales (accounts,
-  // stock, …) are allowed through — SalesHeadDashboard selects them as tabs.
-  // Root keeps direct deep links as the admin escape hatch.
-  // Order matters: canonicalize aliases FIRST (telecalling → sales), then the
-  // strict-single bounce runs on the canonical slug — one replace, no double bounce.
-  const strictSingle = !!me && !me.isRoot && grantedScopes(me).has("sales-head");
   useEffect(() => {
     if (route.view === "automations" && route.sub) {
       navigate(`/session/${canonicalNavSlug(route.sub)}`, { replace: true });
@@ -65,11 +56,6 @@ function AppInner() {
       navigate(`/session/${canonicalNavSlug(route.sub)}`, { replace: true });
     }
   }, [route.view, route.sub, navigate]);
-  useEffect(() => {
-    if (strictSingle && route.view === "session" && route.sub && canonicalNavSlug(route.sub) === "sales") {
-      navigate("/session", { replace: true });
-    }
-  }, [strictSingle, route.view, route.sub, navigate]);
   // Unknown paths fall back to /automations; a viewer without registry access
   // is then auto-routed to their first accessible view (Workspace) below.
   const activeView: ViewType = VIEW_TYPES.includes(route.view as ViewType) ? (route.view as ViewType) : "automations";
@@ -102,17 +88,15 @@ function AppInner() {
     if (activeView === "session" && sub && workspacesLoading) return;
     // Dashboards arrive async (useWorkspaces); routing before they load sends
     // normal users to Delegation even though a dashboard exists. Wait for the
-    // list for everyone except root (root has no dashboard rows by design —
-    // it opens everything from the Workspace page).
-    if (!me.isRoot && workspacesLoading) return;
+    // list for everyone except root/admin (admins have no dashboard rows —
+    // they open everything from the registry / gallery).
+    if (!me.isAdmin && workspacesLoading) return;
     const first: NavTarget | null =
-      canView("session")
-        ? { type: "view", view: "session" }
+      accessibleMain[0]
+        ? { type: "view", view: accessibleMain[0].view }
         : dashboards[0]
           ? { type: "dashboard", slug: dashboards[0].slug }
-          : accessibleMain[0]
-            ? { type: "view", view: accessibleMain[0].view }
-            : null;
+          : null;
     if (first) navigate(navTargetPath(first));
   }, [viewDenied, loading, me, accessibleMain, dashboards, navigate, activeView, sub, workspacesLoading, route.view, route.sub]);
 

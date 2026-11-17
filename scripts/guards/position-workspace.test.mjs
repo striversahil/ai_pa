@@ -58,13 +58,14 @@ describe('position workspace builder (phase 1, root-only)', () => {
     assert.ok(api.includes('worker/routes/work.ts'), 'personal api must name its backend mirror');
   });
 
-  it('sidebar: one Workspace (gallery), old grid row retired', () => {
+  it('sidebar: dashboard tile grid + root-only gallery', () => {
     const nav = fe('components/layout/nav.tsx');
-    assert.ok(!nav.includes('{ view: "session"'), 'old tile-grid sidebar row must be gone');
-    assert.ok(nav.includes('{ view: "workspace", label: "Workspace"'), 'gallery row must be named Workspace');
-    assert.ok(nav.includes('"session"'), 'session must stay routable (the Workspace home URL)');
+    assert.ok(nav.includes('{ view: "session"'), 'tile-grid sidebar row must exist (/session)');
+    assert.ok(nav.includes('{ view: "workspace"'), 'gallery row must exist (/workspace, root-only)');
+    assert.ok(nav.includes('"session"'), 'session stays routable (the dashboard grid URL)');
     const page = fe('app/page.tsx');
-    assert.ok(page.includes('canView("session")'), 'landing still prefers the Workspace home');
+    assert.ok(!page.includes('strictSingle'), 'no forced single-dashboard bounce (dashboard-based)');
+    assert.ok(page.includes('canonicalNavSlug'), 'legacy aliases still canonicalize to one replace');
   });
 
   it('builder is one gallery: peek into the live dashboard and take control', () => {
@@ -91,13 +92,15 @@ describe('position workspace builder (phase 1, root-only)', () => {
     assert.ok(!head.includes('LazySection'), 'one panel mounts at a time — no scroll-mount needed');
   });
 
-  it('person workspace replaces the sheet pile (sales-head first, tabbed)', () => {
-    // Old tile grid is retired — the session page branches: single custom
-    // dashboard for sales-head/root, tabbed pile for everyone else.
+  it('dashboard-based home: tile grid lists granted sheets, gallery previews anyone', () => {
+    // Dashboard-based (founder decision 2026-11-17): /session is the tile grid
+    // (pinned + all), /workspace is the root-only gallery that mounts the REAL
+    // live dashboard for preview + audited take-control.
     const session = fe('views/session/SessionView.tsx');
-    assert.ok(!session.includes('WorkspaceGrid'), 'old tile grid must be retired');
-    assert.ok(session.includes('SalesHeadDashboard'), 'session page must render the custom Sales Head dashboard');
-    assert.ok(session.includes('PersonWorkspace'), 'other roles keep the tabbed pile until their pack ships');
+    assert.ok(session.includes('WorkspaceGrid'), 'session page must be the tile grid');
+    assert.ok(session.includes('WorkspaceFrame'), 'open tile renders the REAL sheet via WorkspaceFrame');
+    assert.ok(!session.includes('SalesHeadDashboard'), 'session home must not force a single custom dashboard');
+    assert.ok(!session.includes('PersonWorkspace'), 'tabbed pile retired with the single-dashboard home');
 
     const head = fe('views/workspace/SalesHeadDashboard.tsx');
     for (const panel of ['TelecallingDashboard', 'ZohoEstimates', 'EnquiryTracker', 'MasterDataView', 'SalesDispatchPanel', 'FieldStaffPanel', 'SalesObjectionsPanel', 'SalesControllerPanel']) {
@@ -111,11 +114,10 @@ describe('position workspace builder (phase 1, root-only)', () => {
     const motion = fe('components/ui/motion.tsx');
     assert.ok(motion.includes('LazySection'), 'lazy-mount lives in the shared kit (reused per pack)');
 
-    const person = fe('views/workspace/PersonWorkspace.tsx');
-    assert.ok(person.includes('WorkspaceRenderer'), 'fallback pile renders the REAL sheet components');
-    assert.ok(person.includes('NotificationDock'), 'delay bell rides every tab');
+    const navHook = fe('hooks/useDashboardNav.ts');
+    assert.ok(!navHook.includes('sales-head'), 'sidebar pile shows every granted sheet (no role hides it)');
 
     const page = fe('app/page.tsx');
-    assert.ok(page.includes('strictSingle'), 'sales-head deep links redirect to their Workspace home');
+    assert.ok(!page.includes('strictSingle'), 'no forced single-dashboard bounce');
   });
 });
