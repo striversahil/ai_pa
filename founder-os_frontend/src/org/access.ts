@@ -26,3 +26,18 @@ export function regionRulesFor(title: string): { region: boolean; region2: boole
   if (!t) return { region: false, region2: false, whatsapp: false, neodove: false };
   return { region: true, region2: t === "team_lead", whatsapp: true, neodove: true };
 }
+
+/**
+ * Mirror of backend isHomeDepartment: a person row in "Operations & Support"
+ * is home for procurement holders (chart groups Procurement + HR there).
+ * Display-only — the server enforces the real rule.
+ */
+export function isHomeDepartment(viewerScope: string, personDept: string | null): boolean {
+  const dept = String(personDept ?? "");
+  const scope = String(viewerScope ?? "").trim().toLowerCase();
+  if (scope === "sales-head" && dept === "Sales") return true;
+  if (scope === "accounts" && dept === "Accounts") return true;
+  if (scope === "digital-marketing" && dept === "Digital Marketing") return true;
+  if (scope === "procurement" && (dept === "Procurement" || dept === "Operations & Support")) return true;
+  return false;
+}

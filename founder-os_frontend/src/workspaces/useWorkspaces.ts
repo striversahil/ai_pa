@@ -10,7 +10,7 @@ export function useWorkspaces(): { workspaces: WorkspaceSummary[]; loading: bool
   const { me } = useAuth();
   const q = useLiveQuery<WorkspaceSummary[]>(
     async () => (me ? fetchWorkspaces() : []),
-    { events: ["automation", "automations"], deps: [me?.user?.id ?? ""] },
+    { events: ["automation", "automations", "human-resources", "telecalling"], deps: [me?.user?.id ?? ""] },
   );
   return { workspaces: q.data ?? [], loading: q.loading };
 }

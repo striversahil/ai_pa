@@ -16,14 +16,15 @@ import { readSessionCookie } from '../modules/auth/session';
 import type { MeResponse } from '../modules/auth/types';
 import { AuthError } from '../modules/auth/types';
 import { resolveSelfTelecallerId } from '../modules/telecalling/self-roster';
+import { expandScopes } from '../modules/auth/implied';
 
 export interface Viewer {
   me: MeResponse | null;
   isAdmin: boolean;
   isRoot: boolean;
-  /** Lower-cased resolved scopes (direct + role). */
+  /** Lower-cased resolved scopes (direct + role + implied bundle). */
   scopes: ReadonlySet<string>;
-  /** Scope check on the lower-cased set. Does NOT short-circuit for admins —
+  /** Scope check on the lower-cased expanded set. Does NOT short-circuit for admins —
    *  call sites keep their own admin semantics. */
   has(scope: string): boolean;
 }
@@ -45,7 +46,10 @@ export function getViewerMe(c: any): Promise<MeResponse | null> {
 }
 
 export function toViewer(me: MeResponse | null): Viewer {
-  const scopes = new Set(((me?.scopes ?? []) as string[]).map((s) => String(s).toLowerCase()));
+  // Backend owns the implied bundle (auth/implied.ts) — a `sales` login opens
+  // `enquiry-tracker`, `sales-head` opens its 4Dashboard bundle, etc. without
+  // needing every implied scope granted separately.
+  const scopes = expandScopes((me?.scopes ?? []) as string[]);
   return {
     me,
     isAdmin: !!me?.isAdmin,

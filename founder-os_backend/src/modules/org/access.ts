@@ -122,6 +122,24 @@ export function departmentOfLoginPosition(position: string): string {
 const norm = (v: unknown): string => String(v ?? "").trim().toLowerCase();
 
 /**
+ * Home departments for a chart person row. The chart groups Procurement + HR
+ * under "Operations & Support" while permission scopes are per-function
+ * ("procurement", "human-resources"), so an exact string compare locks
+ * procurement managers out of their own people. Map in code (no migration):
+ * a person row in Operations & Support is home for procurement holders.
+ * HR holders short-circuit to everyone via canManagePerson anyway.
+ */
+export function isHomeDepartment(viewerScope: string, personDept: string | null): boolean {
+  const dept = String(personDept ?? "");
+  const scope = norm(viewerScope);
+  if (scope === "sales-head" && dept === "Sales") return true;
+  if (scope === "accounts" && dept === "Accounts") return true;
+  if (scope === "digital-marketing" && dept === "Digital Marketing") return true;
+  if (scope === "procurement" && (dept === "Procurement" || dept === "Operations & Support")) return true;
+  return false;
+}
+
+/**
  * May this viewer edit this person (position, region, WhatsApp, NeoDove,
  * access, active)? One home for the whole org surface — HR graph and the
  * Sales Team & Access mount share it.
@@ -139,10 +157,10 @@ export function canManagePerson(me: ViewerIdentity, person: PersonIdentity): boo
   if (scopes.has("admin")) return true;
   if (scopes.has("human-resources")) return true;
   const dept = String(person.department ?? "");
-  if (scopes.has("sales-head") && dept === "Sales") return true;
-  if (scopes.has("accounts") && dept === "Accounts") return true;
-  if (scopes.has("digital-marketing") && dept === "Digital Marketing") return true;
-  if (scopes.has("procurement") && dept === "Procurement") return true;
+  if (scopes.has("sales-head") && isHomeDepartment("sales-head", dept)) return true;
+  if (scopes.has("accounts") && isHomeDepartment("accounts", dept)) return true;
+  if (scopes.has("digital-marketing") && isHomeDepartment("digital-marketing", dept)) return true;
+  if (scopes.has("procurement") && isHomeDepartment("procurement", dept)) return true;
   return false;
 }
 

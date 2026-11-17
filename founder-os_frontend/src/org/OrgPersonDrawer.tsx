@@ -93,6 +93,11 @@ export default function OrgPersonDrawer({ person, onClose, onSaved }: {
     () => [...new Set([...(person.suggestedScopes ?? []), ...(person.login?.scopes ?? [])])],
     [person],
   );
+  const grantedSet = useMemo(() => new Set(person.login?.scopes ?? []), [person]);
+  const suggestedSet = useMemo(() => new Set(person.suggestedScopes ?? []), [person]);
+  const emailMismatch = !!(person.emailMismatch
+    || (person.employee.email && person.employee.loginEmail
+      && String(person.employee.email).trim().toLowerCase() !== String(person.employee.loginEmail).trim().toLowerCase()));
 
   return (
     <Modal title={`Edit · ${person.employee.name}`} subtitle={person.employee.designation ?? ""} onClose={onClose} wide>
@@ -169,6 +174,11 @@ export default function OrgPersonDrawer({ person, onClose, onSaved }: {
 
         <section className="space-y-2 rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
           <h3 className="text-[11px] font-extrabold uppercase tracking-wider text-zinc-500">Dashboard access</h3>
+          {emailMismatch && (
+            <p className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-2.5 py-1.5 text-[11px] font-semibold text-amber-700 dark:text-amber-300">
+              ⚠️ Email mismatch — employee email ({person.employee.email}) differs from login email ({person.employee.loginEmail}). Login matched on loginEmail.
+            </p>
+          )}
           {!person.login ? (
             <p className="text-[11px] text-zinc-500">
               No platform login linked — link one via loginEmail in the employee master, then set access here.
@@ -176,22 +186,28 @@ export default function OrgPersonDrawer({ person, onClose, onSaved }: {
           ) : scopeOptions.length === 0 ? (
             <p className="text-[11px] text-zinc-500">This position suggests no dashboards.</p>
           ) : (
-            <div className="flex flex-wrap gap-1.5">
-              {scopeOptions.map((s) => {
-                const on = scopes.includes(s);
-                return (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => toggleScope(s)}
-                    className={`rounded-full px-2.5 py-1 text-[11px] font-bold transition-colors ${
-                      on ? "bg-indigo-600 text-white" : "bg-zinc-100 text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400"
-                    }`}
-                  >
-                    {on ? "✓ " : ""}{s}
-                  </button>
-                );
-              })}
+            <div className="space-y-2">
+              <p className="text-[11px] text-zinc-500">✓ = already granted · + = suggested by position (tick to grant).</p>
+              <div className="flex flex-wrap gap-1.5">
+                {scopeOptions.map((s) => {
+                  const on = scopes.includes(s);
+                  const granted = grantedSet.has(s);
+                  const suggestedOnly = suggestedSet.has(s) && !granted;
+                  return (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => toggleScope(s)}
+                      title={granted ? "Already granted to this login" : suggestedOnly ? "Suggested by position — tick to grant" : "Extra grant"}
+                      className={`rounded-full px-2.5 py-1 text-[11px] font-bold transition-colors ${
+                        on ? "bg-indigo-600 text-white" : "bg-zinc-100 text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400"
+                      }`}
+                    >
+                      {on ? "✓ " : suggestedOnly ? "+ " : ""}{s}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
         </section>

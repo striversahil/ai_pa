@@ -55,12 +55,9 @@ function AppInner() {
   // sheets). Deep links to admin-granted sheets beyond Sales (accounts,
   // stock, …) are allowed through — SalesHeadDashboard selects them as tabs.
   // Root keeps direct deep links as the admin escape hatch.
+  // Order matters: canonicalize aliases FIRST (telecalling → sales), then the
+  // strict-single bounce runs on the canonical slug — one replace, no double bounce.
   const strictSingle = !!me && !me.isRoot && grantedScopes(me).has("sales-head");
-  useEffect(() => {
-    if (strictSingle && route.view === "session" && route.sub && canonicalNavSlug(route.sub) === "sales") {
-      navigate("/session", { replace: true });
-    }
-  }, [strictSingle, route.view, route.sub, navigate]);
   useEffect(() => {
     if (route.view === "automations" && route.sub) {
       navigate(`/session/${canonicalNavSlug(route.sub)}`, { replace: true });
@@ -68,6 +65,11 @@ function AppInner() {
       navigate(`/session/${canonicalNavSlug(route.sub)}`, { replace: true });
     }
   }, [route.view, route.sub, navigate]);
+  useEffect(() => {
+    if (strictSingle && route.view === "session" && route.sub && canonicalNavSlug(route.sub) === "sales") {
+      navigate("/session", { replace: true });
+    }
+  }, [strictSingle, route.view, route.sub, navigate]);
   // Unknown paths fall back to /automations; a viewer without registry access
   // is then auto-routed to their first accessible view (Workspace) below.
   const activeView: ViewType = VIEW_TYPES.includes(route.view as ViewType) ? (route.view as ViewType) : "automations";

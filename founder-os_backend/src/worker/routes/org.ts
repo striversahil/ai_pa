@@ -50,6 +50,9 @@ export function registerOrgRoutes(app: Hono<{ Bindings: Bindings }>): void {
       });
       try { notifyLive(c, { type: LiveEvent.Telecalling }); } catch { /* non-fatal */ }
       try { notifyLive(c, { type: LiveEvent.HumanResources }); } catch { /* non-fatal */ }
+      // Access may have changed — refresh sidebar/workspace lists that listen
+      // for automation events (useWorkspaces), not just HR/telecalling.
+      try { notifyLive(c, { type: LiveEvent.Automation }); } catch { /* non-fatal */ }
       return c.json({ ok: true });
     } catch (e: any) {
       return c.json({ error: (e as any)?.message ?? 'save failed' }, (e as any)?.status ?? 400);

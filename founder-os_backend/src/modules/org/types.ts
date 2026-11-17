@@ -46,6 +46,9 @@ export interface OrgPerson {
   roster: OrgRoster | null;
   suggestedScopes: string[];
   canManage: boolean;
+  /** True when employee.email + loginEmail are both set but differ — the card
+   *  shows a mismatch badge so alias-Gmail links stay visible. */
+  emailMismatch: boolean;
 }
 
 export interface OrgPeople {

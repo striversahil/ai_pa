@@ -111,4 +111,52 @@ describe('org person contract (one save, server-decided)', () => {
       assert.ok(feAccess.includes(t), `mirror must list ${t}`);
     }
   });
+
+  it('implied bundle is backend-owned, frontend is display-only mirror', () => {
+    const implied = read(join('modules', 'auth', 'implied.ts'));
+    assert.ok(implied.includes('sales-head') && implied.includes('telecalling'), 'canonical bundle must exist backend-side');
+    assert.ok(implied.includes('expandScopes'), 'backend must expand scopes (transitive)');
+    const viewer = read(join('worker', 'viewer.ts'));
+    assert.ok(viewer.includes('expandScopes'), 'viewer must expand implied scopes (backend owns)');
+    const perms = readFe(join('auth', 'permissions.ts'));
+    assert.ok(perms.includes('modules/auth/implied.ts'), 'frontend mirror comment must name the backend source');
+    // Parity: every backend implied entry must appear frontend-side.
+    for (const s of ['sales-head', 'dispatch', 'accounts']) {
+      assert.ok(implied.includes(s), `backend bundle must contain ${s}`);
+      assert.ok(perms.includes(s), `frontend mirror must contain ${s}`);
+    }
+    for (const pair of [['sales-head', 'telecalling'], ['dispatch', 'crm'], ['accounts', 'debtors-tracker']]) {
+      assert.ok(implied.includes(pair[1]), `backend bundle must imply ${pair[1]} for ${pair[0]}`);
+      assert.ok(perms.includes(pair[1]), `frontend mirror must imply ${pair[1]} for ${pair[0]}`);
+    }
+  });
+
+  it('Operations & Support is home for procurement (no migration)', () => {
+    assert.ok(access.includes('isHomeDepartment'), 'home-dept helper must exist');
+    assert.ok(access.includes('Operations & Support'), 'procurement must map to the chart dept');
+    assert.ok(io.includes('Operations & Support'), 'read visibleDepartments must include the chart dept');
+    const feAccess = readFe(join('org', 'access.ts'));
+    assert.ok(feAccess.includes('isHomeDepartment'), 'frontend mirror must carry the helper');
+  });
+
+  it('login match prefers loginEmail and surfaces mismatch', () => {
+    assert.ok(io.includes('loginEmail wins') || io.includes('loginEmailFirst'), 'login lookup must prefer loginEmail');
+    assert.ok(io.includes('emailMismatch'), 'people read must surface mismatch');
+    const api = readFe(join('org', 'api.ts'));
+    assert.ok(api.includes('emailMismatch'), 'domain api type must carry mismatch');
+    const drawer = readFe(join('org', 'OrgPersonDrawer.tsx'));
+    assert.ok(drawer.includes('emailMismatch') && drawer.includes('Email mismatch'), 'drawer must warn on mismatch');
+    assert.ok(drawer.includes('Suggested by position') || drawer.includes('suggested'), 'drawer must split suggested vs granted');
+  });
+
+  it('access writes invalidate caches + broadcast automation refresh', () => {
+    const svc = read(join('modules', 'auth', 'service.ts'));
+    assert.ok(svc.includes('invalidateAllSessionCaches'), 'cache invalidation must exist');
+    // Every access-mutating write must invalidate (not just the org save path).
+    const invalidations = (svc.match(/invalidateAllSessionCaches\(\)/g) ?? []).length;
+    assert.ok(invalidations >= 4, `all access writes must invalidate (found ${invalidations})`);
+    assert.ok(route.includes('LiveEvent.Automation'), 'org save must broadcast automation refresh');
+    const ws = readFe(join('workspaces', 'useWorkspaces.ts'));
+    assert.ok(ws.includes('human-resources') && ws.includes('telecalling'), 'workspace list must refresh on org writes');
+  });
 });

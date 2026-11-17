@@ -34,6 +34,8 @@ export interface OrgPerson {
   /** Dashboard scopes this position suggests (pre-checked in the editor). */
   suggestedScopes: string[];
   canManage: boolean;
+  /** True when employee.email + loginEmail are both set but differ. */
+  emailMismatch?: boolean;
 }
 
 export interface OrgPeopleResponse {

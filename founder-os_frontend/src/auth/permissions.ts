@@ -46,6 +46,11 @@ export const USER_ADMIN_SCOPE = "user-admin";
 // gated on `enquiry-tracker`, but a `sales`-scope holder is entitled to it
 // (the dashboard's own guard already admits sales) — without this, granting
 // someone "sales access" shows them an empty sidebar with no way in.
+//
+// Mirror: founder-os_backend/src/modules/auth/implied.ts#IMPLIED_SCOPES — the
+// backend OWNS the bundle (viewer expansion + workspace filtering); this is a
+// display-only copy for instant gating until the server list arrives.
+// Guard scripts/guards/org-access.test.mjs asserts the two stay in sync.
 export const IMPLIED_SCOPES: Record<string, string[]> = {
   sales: ["enquiry-tracker"],
   // Sales-head bundle: mirrors DEFAULT_ROLES['sales-head'].scopeKeys (and

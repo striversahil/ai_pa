@@ -8,7 +8,9 @@ import { canManagePerson, positionScopes, chartTitleToPosition } from "./access"
 import { fail, normEmail, isPrivileged, heldScopes } from "./types";
 import type { OrgPerson, OrgPeople } from "./types";
 
-/** Departments this viewer may READ people in (null = all). */
+/** Departments this viewer may READ people in (null = all). Procurement maps
+ *  to the chart's "Operations & Support" (no data migration) — same rule as
+ *  access.ts#isHomeDepartment. */
 function visibleDepartments(me: any): string[] | null {
   if (!me) return [];
   if (isPrivileged(me)) return null;
@@ -18,7 +20,7 @@ function visibleDepartments(me: any): string[] | null {
   if (held.has("sales-head")) out.push("Sales");
   if (held.has("accounts")) out.push("Accounts");
   if (held.has("digital-marketing")) out.push("Digital Marketing");
-  if (held.has("procurement")) out.push("Procurement");
+  if (held.has("procurement")) out.push("Procurement", "Operations & Support");
   return out;
 }
 
@@ -73,7 +75,11 @@ export async function getOrgPeople(opts: {
     const dept = (emp as any).department ?? null;
     if (depts !== null && dept && !depts.includes(dept)) continue;
     if (deptFilter && dept !== deptFilter) continue;
-    const emails = [normEmail((emp as any).email), normEmail((emp as any).loginEmail)].filter(Boolean);
+    // loginEmail wins for the login match (alias Gmail logins), either email
+    // matches the roster. A divergence surfaces as emailMismatch downstream.
+    const loginEmail = normEmail((emp as any).loginEmail);
+    const empEmail = normEmail((emp as any).email);
+    const emails = [loginEmail, empEmail].filter(Boolean);
     let login: any = null;
     for (const e of emails) {
       const hit = loginByEmail.get(e);
@@ -139,6 +145,7 @@ export async function getOrgPeople(opts: {
         { isRoot: me?.isRoot, isAdmin: me?.isAdmin, scopes: me?.scopes, roles: me?.roles },
         { title, department: dept },
       ),
+      emailMismatch: !!(loginEmail && empEmail && loginEmail !== empEmail),
     });
   }
 

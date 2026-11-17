@@ -45,8 +45,10 @@ export async function assignPerson(opts: {
   }
 
   // ── Scopes: reject-loud beyond power, force-keep beyond-power currents ──
+  // loginEmail wins for the login match (alias Gmail logins); roster matches either.
   const users = await store.listUsers().catch(() => [] as any[]);
-  const empEmails = [normEmail(current.email), normEmail(current.loginEmail)].filter(Boolean);
+  const loginEmailFirst = [normEmail(current.loginEmail), normEmail(current.email)].filter(Boolean);
+  const empEmails = [...new Set(loginEmailFirst)];
   const login = (users as any[]).find((u) =>
     !(u as any)?.isRoot && empEmails.includes(normEmail((u as any).email)),
   ) as any;
@@ -79,7 +81,7 @@ export async function assignPerson(opts: {
     await updateEmployee(employeeId, empPatch);
   }
 
-  // ── Sales fields (roster row mirrors the employee by email) ──
+  // ── Sales fields (roster row mirrors the employee by email, loginEmail first) ──
   const rosterEmail = empEmails[0] || null;
   const existing = rosterEmail
     ? await prisma.telecaller.findMany({}).then((rows: any[]) =>

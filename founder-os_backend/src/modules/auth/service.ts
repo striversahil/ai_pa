@@ -271,6 +271,7 @@ export async function deleteScope(store: AuthStore, key: string) {
 }
 export async function setUserScopes(store: AuthStore, userId: string, keys: string[]) {
   await store.setUserScopes(userId, keys);
+  invalidateAllSessionCaches();
 }
 
 // ── Role management ───────────────────────────────────────────────────────────
@@ -295,15 +296,19 @@ export async function createRole(store: AuthStore, key: string, label: string, d
       400,
     );
   }
-  return store.createRole(key.toLowerCase(), label, description, [...new Set(scopeKeys)]);
+  const out = await store.createRole(key.toLowerCase(), label, description, [...new Set(scopeKeys)]);
+  invalidateAllSessionCaches();
+  return out;
 }
 
 export async function deleteRole(store: AuthStore, key: string) {
   await store.deleteRole(key);
+  invalidateAllSessionCaches();
 }
 
 export async function setUserRoles(store: AuthStore, userId: string, keys: string[]) {
   await store.setUserRoles(userId, keys);
+  invalidateAllSessionCaches();
 }
 
 /** Hard-remove a login (user row + scopes + roles + all sessions). Roster
