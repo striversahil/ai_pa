@@ -12,6 +12,7 @@
  * Net receivable = invoice balances − advance/unmatched receipts.
  */
 import { prisma } from '../../shared/prisma';
+import { loadPrimaryPdfByInvoice } from './attachments';
 import { customerKeyOf } from './customers';
 import { DebtorsTrackerError } from './errors';
 import { buildLiveInvoices } from './ledger';
@@ -31,10 +32,11 @@ export async function getCustomerLedger(customerKey: string): Promise<CustomerLe
   const key = String(customerKey || '').trim().toLowerCase();
   if (!key) throw new DebtorsTrackerError('Customer key is required', 400);
 
-  const [contact, invoiceRows, collectionRows] = await Promise.all([
+  const [contact, invoiceRows, collectionRows, pdfByInvoice] = await Promise.all([
     prisma.paymentCustomer.findFirst({ where: { customerKey: key } }),
     prisma.debtorInvoice.findMany({ where: { deleted: false } }),
     prisma.paymentCollection.findMany({ where: { deleted: false } }),
+    loadPrimaryPdfByInvoice().catch(() => new Map()),
   ]);
 
   const invoices = (invoiceRows as any[]).filter((row) => customerKeyOf(row.customerName) === key);
@@ -53,6 +55,14 @@ export async function getCustomerLedger(customerKey: string): Promise<CustomerLe
   const lines: LedgerLine[] = [];
   for (const invoice of liveInvoices) {
     const date = dateOnly(invoice.invoiceDate);
+    const pdf = (pdfByInvoice as Map<string, any>).get(String((invoice as any).id));
+    const invoicePdf = pdf
+      ? {
+          id: String(pdf.id), fileName: String(pdf.fileName), url: String(pdf.url),
+          source: String(pdf.source), uploadedBy: String(pdf.uploadedBy || ''),
+          contentKey: String((pdf as any).contentKey || ''),
+        }
+      : null;
     lines.push({
       id: `invoice:${invoice.id}`,
       date,
@@ -64,6 +74,7 @@ export async function getCustomerLedger(customerKey: string): Promise<CustomerLe
       credit: 0,
       balance: 0,
       status: invoice.bucket,
+      invoicePdf,
       sortDate: date || '9999-12-31',
       sortOrder: 0,
     });
@@ -83,6 +94,7 @@ export async function getCustomerLedger(customerKey: string): Promise<CustomerLe
         credit: sheetCredit,
         balance: 0,
         status: 'sheet',
+        invoicePdf,
         sortDate: date || dateOnly(invoice.lastImportAt) || '9999-12-31',
         sortOrder: 1,
       });
@@ -118,6 +130,7 @@ export async function getCustomerLedger(customerKey: string): Promise<CustomerLe
       credit: amount,
       balance: 0,
       status,
+      invoicePdf: null,
       sortDate: date || '9999-12-31',
       sortOrder: 2,
     });

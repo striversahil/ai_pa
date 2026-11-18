@@ -285,6 +285,19 @@ export interface CustomerLedgerEntry {
   balance: number;
   /** Bucket for invoices; match status (invoice/customer/advance/none) for receipts. */
   status: string;
+  /** Primary invoice PDF for invoice/sheet lines; null when none attached.
+   *  Always null on receipt lines.
+   *  MIRROR: frontend `src/debtors-tracker/types.ts` `CustomerLedgerEntry` —
+   *  keep the shape identical (`LiveInvoice.invoicePdf` shape). */
+  invoicePdf: {
+    id: string;
+    fileName: string;
+    url: string;
+    source: string;
+    uploadedBy: string;
+    /** Invoice number read from INSIDE the PDF (`FY/serial`); '' = not audited. */
+    contentKey: string;
+  } | null;
 }
 
 export interface CustomerLedgerTotals {

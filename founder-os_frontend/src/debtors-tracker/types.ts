@@ -145,6 +145,19 @@ export interface CustomerLedgerEntry {
   credit: number;
   balance: number;
   status: string;
+  /** Primary invoice PDF for invoice/sheet lines; null when none attached.
+   *  Always null on receipt lines.
+   *  MIRROR: founder-os_backend/src/automations/debtors-tracker/types-parts/types.ts
+   *  `CustomerLedgerEntry` — keep the shape identical (`LiveInvoice.invoicePdf` shape). */
+  invoicePdf: {
+    id: string;
+    fileName: string;
+    url: string;
+    source: string;
+    uploadedBy: string;
+    /** Invoice number read from INSIDE the PDF (`FY/serial`); '' = not audited. */
+    contentKey: string;
+  } | null;
 }
 
 export interface CustomerLedgerTotals {

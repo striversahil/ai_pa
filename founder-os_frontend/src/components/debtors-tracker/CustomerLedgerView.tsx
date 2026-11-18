@@ -140,6 +140,7 @@ export default function CustomerLedgerView({
                   <th className={THC}>Type</th>
                   <th className={THC}>Reference</th>
                   <th className={THC}>Invoice No.</th>
+                  <th className={THC}>PDF</th>
                   <th className={THC}>Description</th>
                   <th className={THCR}>Debit</th>
                   <th className={THCR}>Credit</th>
@@ -159,6 +160,30 @@ export default function CustomerLedgerView({
                     </td>
                     <td className={`${TDC} max-w-[170px] truncate font-mono`} title={entry.reference}>{entry.reference}</td>
                     <td className={`${TDC} max-w-[140px] truncate font-mono`} title={entry.invoiceNo}>{entry.invoiceNo || "—"}</td>
+                    <td className={`${TDC} whitespace-nowrap text-center`}>
+                      {entry.invoicePdf ? (
+                        <span className="inline-flex items-center gap-2">
+                          <a
+                            href={entry.invoicePdf.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            title={`View ${entry.invoicePdf.fileName} — opens the PDF`}
+                            className="text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
+                          >
+                            👁 View
+                          </a>
+                          <a
+                            href={`${entry.invoicePdf.url}?download=1`}
+                            title={`Download ${entry.invoicePdf.fileName}`}
+                            className="text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200"
+                          >
+                            ⬇
+                          </a>
+                        </span>
+                      ) : (
+                        <span className="text-zinc-300 dark:text-zinc-600" title={entry.type === "receipt" ? "Receipts have no invoice PDF" : "No PDF attached yet"}>—</span>
+                      )}
+                    </td>
                     <td className={`${TDC} max-w-[240px] truncate`} title={entry.description}>{entry.description}</td>
                     <td className={TDCR}>{entry.debit ? formatINR(entry.debit, false) : ""}</td>
                     <td className={`${TDCR} text-emerald-700 dark:text-emerald-400`}>{entry.credit ? formatINR(entry.credit, false) : ""}</td>
@@ -169,12 +194,12 @@ export default function CustomerLedgerView({
                   </tr>
                 ))}
                 {ledger.entries.length === 0 && (
-                  <tr><td colSpan={9} className="px-3 py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">No ledger entries for this customer.</td></tr>
+                  <tr><td colSpan={10} className="px-3 py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">No ledger entries for this customer.</td></tr>
                 )}
               </tbody>
               <tfoot>
                 <tr className="border-t-2 border-zinc-200 bg-zinc-50 font-medium text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-100">
-                  <td className="px-2 py-1" colSpan={5}>Net receivable</td>
+                  <td className="px-2 py-1" colSpan={6}>Net receivable</td>
                   <td className="px-2 py-1 text-right tabular-nums">{formatINR(ledger.totals.totalInvoiced, false)}</td>
                   <td className="px-2 py-1 text-right tabular-nums">{formatINR(ledger.totals.totalReceived, false)}</td>
                   <td className="px-2 py-1 text-right tabular-nums">{formatINR(ledger.totals.netReceivable, false)}</td>

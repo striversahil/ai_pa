@@ -47,12 +47,13 @@ export function ledgerCsv(ledger: CustomerLedger): string {
     ["Email", ledger.email || ""],
     ["As of", ledger.asOfIST],
     [],
-    ["Date", "Type", "Reference", "Invoice No.", "Description", "Debit", "Credit", "Balance", "Status"],
+    ["Date", "Type", "Reference", "Invoice No.", "Invoice PDF", "Description", "Debit", "Credit", "Balance", "Status"],
     ...ledger.entries.map((entry) => [
       entry.date ?? "",
       typeLabel(entry),
       entry.reference,
       entry.invoiceNo,
+      entry.invoicePdf?.url ?? "",
       entry.description,
       entry.debit ? money(entry.debit) : "",
       entry.credit ? money(entry.credit) : "",
@@ -60,13 +61,13 @@ export function ledgerCsv(ledger: CustomerLedger): string {
       statusLabel(entry),
     ]),
     [],
-    ["Total invoiced", "", "", "", "", money(ledger.totals.totalInvoiced), "", "", ""],
-    ["Itemized receipts", "", "", "", "", "", money(ledger.totals.itemizedReceived), "", ""],
-    ["Received per sheet", "", "", "", "", "", money(ledger.totals.sheetReceived), "", ""],
-    ["Total received", "", "", "", "", "", money(ledger.totals.totalReceived), "", ""],
-    ["Invoice balance", "", "", "", "", "", "", money(ledger.totals.invoiceBalance), ""],
-    ["Unapplied receipts", "", "", "", "", "", "", money(ledger.totals.unappliedReceived), ""],
-    ["Net receivable", "", "", "", "", "", "", money(ledger.totals.netReceivable), ""],
+    ["Total invoiced", "", "", "", "", "", money(ledger.totals.totalInvoiced), "", "", ""],
+    ["Itemized receipts", "", "", "", "", "", "", money(ledger.totals.itemizedReceived), "", ""],
+    ["Received per sheet", "", "", "", "", "", "", money(ledger.totals.sheetReceived), "", ""],
+    ["Total received", "", "", "", "", "", "", money(ledger.totals.totalReceived), "", ""],
+    ["Invoice balance", "", "", "", "", "", "", "", money(ledger.totals.invoiceBalance), ""],
+    ["Unapplied receipts", "", "", "", "", "", "", "", money(ledger.totals.unappliedReceived), ""],
+    ["Net receivable", "", "", "", "", "", "", "", money(ledger.totals.netReceivable), ""],
   ];
   return `\uFEFF${rows.map((row) => row.map(csvCell).join(",")).join("\r\n")}\r\n`;
 }
@@ -98,6 +99,7 @@ export function printLedger(ledger: CustomerLedger): void {
       <td>${esc(typeLabel(entry))}</td>
       <td>${esc(entry.reference)}</td>
       <td>${esc(entry.invoiceNo)}</td>
+      <td>${entry.invoicePdf ? `<a href="${esc(entry.invoicePdf.url)}">View PDF</a>` : ""}</td>
       <td>${esc(entry.description)}</td>
       <td class="num">${entry.debit ? esc(money(entry.debit)) : ""}</td>
       <td class="num">${entry.credit ? esc(money(entry.credit)) : ""}</td>
@@ -132,9 +134,9 @@ export function printLedger(ledger: CustomerLedger): void {
     <div><span>Net receivable</span><strong>₹ ${esc(money(ledger.totals.netReceivable))}</strong></div>
   </div>
   <table>
-    <thead><tr><th>Date</th><th>Type</th><th>Reference</th><th>Invoice No.</th><th>Description</th><th class="num">Debit</th><th class="num">Credit</th><th class="num">Balance</th><th>Status</th></tr></thead>
+    <thead><tr><th>Date</th><th>Type</th><th>Reference</th><th>Invoice No.</th><th>Invoice PDF</th><th>Description</th><th class="num">Debit</th><th class="num">Credit</th><th class="num">Balance</th><th>Status</th></tr></thead>
     <tbody>${rows}</tbody>
-    <tfoot><tr><td colspan="5">Net receivable</td><td class="num">${esc(money(ledger.totals.totalInvoiced))}</td><td class="num">${esc(money(ledger.totals.totalReceived))}</td><td class="num">${esc(money(ledger.totals.netReceivable))}</td><td></td></tr></tfoot>
+    <tfoot><tr><td colspan="6">Net receivable</td><td class="num">${esc(money(ledger.totals.totalInvoiced))}</td><td class="num">${esc(money(ledger.totals.totalReceived))}</td><td class="num">${esc(money(ledger.totals.netReceivable))}</td><td></td></tr></tfoot>
   </table>
 </body></html>`;
   const win = window.open("", "_blank", "width=1100,height=800");
