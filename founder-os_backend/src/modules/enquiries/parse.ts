@@ -307,6 +307,15 @@ export function pickEnquiryFields(data: any): Partial<Enquiry> | null {
         removedRates: Array.isArray((r as any)?.removedRates)
           ? (r as any).removedRates.map((k: any) => String(k ?? '').slice(0, 300)).filter((k: string) => k.length > 0)
           : undefined,
+        // Explicit media-removal marker (every attachment × button sends it).
+        // The ONLY path that deletes the LAST attachment — an empty incoming
+        // media array alone restores stored media (stale-empty guard in
+        // normalizeItemWrites), so without this the photo keeps coming back.
+        // Cap mirrors parseItemMedia (locker URLs are short; legacy embedded
+        // data-URIs can be megabytes, so no 300-char squeeze like rates).
+        removedMedia: Array.isArray((r as any)?.removedMedia)
+          ? (r as any).removedMedia.map((k: any) => String(k ?? '').slice(0, MAX_ITEM_MEDIA_URL_CHARS + 10)).filter((k: string) => k.length > 0).slice(0, 20)
+          : undefined,
       }))
       .filter((r: any) => String(r.name ?? '').trim() || String(r.qty ?? '').trim() || String(r.spec ?? '').trim() || r.media.length > 0 || (r.rates ?? []).length > 0)
       .slice(0, 100);

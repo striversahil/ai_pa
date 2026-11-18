@@ -1,0 +1,98 @@
+{
+  "organization": {
+    "name": "Company",
+    "top_position": "MD",
+    "departments": [
+      {
+        "name": "Sales",
+        "head": "Sales Head",
+        "positions": [
+          {
+            "title": "Sales Head",
+            "count": 16,
+            "reports_to": "MD",
+            "leads": ["Team Lead", "Telecaller", "Field Staff"]
+          },
+          {
+            "title": "Team Lead",
+            "count": 0,
+            "reports_to": "Sales Head",
+            "leads": ["Telecaller", "Field Staff"]
+          },
+          {
+            "title": "Telecaller",
+            "count": 1,
+            "reports_to": "Team Lead",
+            "leads": []
+          },
+          {
+            "title": "Field Staff",
+            "count": 0,
+            "reports_to": "Team Lead",
+            "leads": []
+          }
+        ]
+      },
+      {
+        "name": "Digital Marketing",
+        "head": "Digital Marketing - Senior",
+        "positions": [
+          {
+            "title": "Digital Marketing - Senior",
+            "count": 0,
+            "reports_to": "MD",
+            "leads": ["Digital Marketing - Junior"]
+          },
+          {
+            "title": "Digital Marketing - Junior",
+            "count": 0,
+            "reports_to": "Digital Marketing - Senior",
+            "leads": []
+          }
+        ]
+      },
+      {
+        "name": "Accounts",
+        "head": null,
+        "positions": [
+          {
+            "title": "Senior Accountant",
+            "count": 0,
+            "reports_to": "MD",
+            "leads": []
+          },
+          {
+            "title": "Junior Accountant",
+            "count": 0,
+            "reports_to": "MD",
+            "leads": []
+          }
+        ]
+      },
+      {
+        "name": "Operations & Support",
+        "head": null,
+        "positions": [
+          {
+            "title": "MIS",
+            "count": 1,
+            "reports_to": "MD",
+            "leads": []
+          },
+          {
+            "title": "Procurement",
+            "count": 1,
+            "reports_to": "MD",
+            "leads": []
+          },
+          {
+            "title": "HR",
+            "count": 0,
+            "reports_to": "MD",
+            "leads": []
+          }
+        ]
+      }
+    ]
+  }
+}

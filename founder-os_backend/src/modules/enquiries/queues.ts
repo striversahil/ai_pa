@@ -63,21 +63,31 @@ export function hasFreshUnquotedWork(e: Pick<Enquiry, "items">): boolean {
     && ((it?.rates ?? []).length === 0) && (it?.finalRate === undefined || it?.finalRate === null));
 }
 
+/** Bypassed items run no quoting loop (rateAvailable / notAvailable /
+ *  internalRates) — asks on them strand (seen live: an open query sitting
+ *  with management on a rate-available item, Enquiry No 18 - 13 NOV TL).
+ *  New asks are already refused in applyLoopOps; queues must also ignore
+ *  the stranded opens so toggle-off restores them (same pattern as the
+ *  spec-hold finalize gate). Mirror: frontend `src/enquiry/queue.ts`. */
+function isQueryBypassed(it: any): boolean {
+  return !!it?.rateAvailable || !!(it as any)?.notAvailable || !!(it as any)?.internalRates;
+}
+
 /** Pending sales query held by PROCUREMENT (forwarded by management) —
  *  reopens the procurement Active queue even on concluded rows. Fresh asks
  *  land with management first and do NOT reopen procurement until forwarded. */
 export function hasPendingVariationWork(e: Pick<Enquiry, "items">): boolean {
-  return ((e as any).items ?? []).some((it: any) => openItemLoops(it, 'query', 'procurement').length > 0);
+  return ((e as any).items ?? []).some((it: any) => !isQueryBypassed(it) && openItemLoops(it, 'query', 'procurement').length > 0);
 }
 
 /** Any open sales query (needs action — with management or procurement). */
 export function hasOpenQuery(e: Pick<Enquiry, "items">): boolean {
-  return ((e as any).items ?? []).some((it: any) => openItemLoops(it, 'query').length > 0);
+  return ((e as any).items ?? []).some((it: any) => !isQueryBypassed(it) && openItemLoops(it, 'query').length > 0);
 }
 
 /** Open query currently held by one desk (Query tab state chips). */
 export function hasRoutedQuery(e: Pick<Enquiry, "items">, withDesk: 'management' | 'procurement'): boolean {
-  return ((e as any).items ?? []).some((it: any) => openItemLoops(it, 'query', withDesk).length > 0);
+  return ((e as any).items ?? []).some((it: any) => !isQueryBypassed(it) && openItemLoops(it, 'query', withDesk).length > 0);
 }
 
 /** Resolved-query window for the Query tab's Resolved filter (days). */

@@ -56,22 +56,28 @@ export function isFreshQuotableItem(it: ItemDecisionShape): boolean {
 /** Open records on an item (shared with the backend loops engine). */
 export { openLoops };
 
+/** Bypassed items run no quoting loop — mirror of backend `queues.ts#isQueryBypassed`.
+ *  Change both together (guard `queue-mirror` + `enquiry-query-bypass`). */
+function isQueryBypassed(it: any): boolean {
+  return !!it?.rateAvailable || !!(it as any)?.notAvailable || !!(it as any)?.internalRates;
+}
+
 /** Pending sales query held by PROCUREMENT (forwarded by management).
  *  Reopens the procurement Active queue even on concluded rows. Fresh asks
  *  land with management first and do NOT reopen procurement until forwarded.
  *  Mirror: `backend/.../queues.ts` — change both together. */
 export function hasPendingVariationWork(e: Pick<Enquiry, "items">): boolean {
-  return (e.items ?? []).some((it) => openLoops(it, 'query', 'procurement').length > 0);
+  return (e.items ?? []).some((it) => !isQueryBypassed(it) && openLoops(it, 'query', 'procurement').length > 0);
 }
 
 /** Any open sales query (needs action — with management or procurement). */
 export function hasOpenQuery(e: Pick<Enquiry, "items">): boolean {
-  return (e.items ?? []).some((it: any) => openLoops(it, 'query').length > 0);
+  return (e.items ?? []).some((it: any) => !isQueryBypassed(it) && openLoops(it, 'query').length > 0);
 }
 
 /** Open query currently held by one desk (Query tab state chips). */
 export function hasRoutedQuery(e: Pick<Enquiry, "items">, withDesk: 'management' | 'procurement'): boolean {
-  return (e.items ?? []).some((it: any) => openLoops(it, 'query', withDesk).length > 0);
+  return (e.items ?? []).some((it: any) => !isQueryBypassed(it) && openLoops(it, 'query', withDesk).length > 0);
 }
 
 /** Resolved-query window for the Query tab's Resolved filter (days). */
