@@ -3,7 +3,14 @@
 // Extracted from store.ts (no behavior change). Single home for the row
 // shape, line-item shape, comment shape, thread shape, and the daily-number
 // / label helpers shared by Sales → Procurement → Management.
-export const ENQUIRY_SOURCES = ["TL", "AI", "Incoming", "B2B", "Field Staff"] as const;
+// Stored enquiry sources (single home — frontend `src/types/index.ts`
+// mirrors this list verbatim; guard `enquiry-sources` locks parity).
+// Removed `AI` (founder decision — never offered on new enquiries); legacy
+// `AI` rows in D1 keep rendering, new writes normalize to `TL`.
+// `Marketing` is picker-only in EnquiryModal and never stored — the saved
+// source is the channel itself (`Email` / `WhatsApp` / `Meta`) so the label
+// reads `Enquiry No 3 - 19 NOV Meta`. Correct spelling: `WhatsApp`.
+export const ENQUIRY_SOURCES = ["TL", "Incoming", "B2B", "Field Staff", "Email", "WhatsApp", "Meta"] as const;
 
 export function normalizeEnquirySource(v: unknown): string {
   const s = String(v ?? "TL").trim();

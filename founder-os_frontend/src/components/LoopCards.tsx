@@ -94,7 +94,7 @@ export default function LoopCards({
   const [askMedia, setAskMedia] = useState<EnquiryMedia[]>([]);
   const [busy, setBusy] = useState(false);
 
-  const records = allLoops(item);
+  const records = allLoops(item).filter((l) => !(mode === "sales" && l.kind === "spec" && l.status === "open"));
   // Bypassed items run no quoting loop (rate available / not available /
   // internal handling) — new asks on them are pure noise no desk can clear
   // by quoting. Existing records keep their answer/withdraw actions; only
@@ -144,6 +144,36 @@ export default function LoopCards({
         const open = l.status === "open";
         const mine = open && l.holder === mode;
         const canWithdraw = open && l.openedBy === mode && !!onWithdraw && !readOnly;
+        if (!open) {
+          // Closed loops are audit-only: one compact log line, no answer box.
+          // Shared by sales / procurement / management (LoopCards is the only
+          // loop UI) — no per-surface copy. Red dot = when flagged, green
+          // tick = when cleared, both timestamps on the right.
+          const ans = (l as any)?.answer;
+          const done = l.status === "answered";
+          const how = done ? `Answered by ${ans?.by ?? ""}` : STATUS_LABEL[l.status];
+          const what = ans?.text ? ` · ${String(ans.text)}` : "";
+          const shut = (l as any)?.closedAt ?? ans?.at;
+          const full = `${l.text} → ${how}${what} (flagged ${fmtWhen(l.openedAt)} → ${fmtWhen(shut)})`;
+          const files = [...((l as any)?.media ?? []), ...((ans as any)?.media ?? [])];
+          const urls = files.map((m: any) => m?.url).filter(Boolean);
+          return (
+            <div key={l.id} title={full} className={`flex min-w-0 items-center gap-1.5 rounded-md border border-[var(--border-card)] bg-[var(--bg-input)]/40 px-2 py-1 text-[10px] leading-snug text-[var(--text-tertiary)] ${l.internal ? "opacity-70" : ""}`}>
+              <span className="font-extrabold uppercase tracking-wider whitespace-nowrap">{KIND_LABEL[l.kind]}</span>
+              <span className="whitespace-nowrap text-red-500" title={`Flagged ${fmtWhen(l.openedAt)}`}>●</span>
+              <span className={`whitespace-nowrap font-extrabold ${done ? "text-emerald-600 dark:text-emerald-400" : ""}`} title={how}>{done ? "✓" : "○"}</span>
+              <span className="min-w-0 flex-1 truncate">{`${l.text} → ${how}${what}`}</span>
+              {urls.length > 0 && (
+                <button type="button" title={`${urls.length} attachment${urls.length === 1 ? "" : "s"}`}
+                  onClick={() => onOpenLightbox?.(urls[0], urls, 0)}
+                  className="whitespace-nowrap font-bold text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer bg-transparent border-0 p-0">
+                  📎{urls.length > 1 ? urls.length : ""}
+                </button>
+              )}
+              <span className="whitespace-nowrap">{fmtWhen(l.openedAt)} → {fmtWhen(shut)}</span>
+            </div>
+          );
+        }
         return (
           <div key={l.id} className={`rounded-lg border p-2.5 text-[11px] leading-relaxed ${KIND_TONE[l.kind]} ${l.internal ? "opacity-70" : ""}`}>
             <div className="flex flex-wrap items-center gap-2">

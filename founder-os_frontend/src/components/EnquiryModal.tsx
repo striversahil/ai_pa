@@ -1,6 +1,7 @@
 import React, { useState } from "react";
-import { Agent, Enquiry, EnquiryItem, ENQUIRY_SOURCES } from "../types";
+import { Agent, Enquiry, EnquiryItem } from "../types";
 import ItemBoxList from "./ItemBoxList";
+import SourcePicker, { isMarketingChannel } from "./enquiry-modal/source-picker";
 
 interface EnquiryModalProps {
   isOpen: boolean;
@@ -51,7 +52,18 @@ export default function EnquiryModal({
   // Description has no input in the modal (item-driven enquiries) — the value
   // is preserved on edit and empty on create, submitted through untouched.
   const [formDescription, setFormDescription] = useState(() => editingEnquiry?.description || "");
-  const [formSource, setFormSource] = useState<string>(() => editingEnquiry?.source || "TL");
+  // `Marketing` is a picker group only (see SourcePicker) — the saved source
+  // is always the channel, so the label reads `Enquiry No 3 - 19 NOV Meta`.
+  // Legacy `AI` rows open as TL (new writes normalize AI → TL server-side).
+  const [formSource, setFormSource] = useState<string>(() => {
+    const s = editingEnquiry?.source || "TL";
+    return s === "AI" ? "TL" : s;
+  });
+  const [formChannel, setFormChannel] = useState<string>(() => {
+    const s = editingEnquiry?.source || "";
+    return isMarketingChannel(s) ? String(s) : "";
+  });
+  const sourceGroup = isMarketingChannel(formSource) || formSource === "Marketing" ? "Marketing" : formSource;
   const [formFieldStaffId, setFormFieldStaffId] = useState<string>(() => editingEnquiry?.fieldStaffId || "");
   const [attribError, setAttribError] = useState<string | null>(null);
   // Active field staff from the sales roster (the agents list is already
@@ -119,6 +131,12 @@ export default function EnquiryModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    // Marketing is a group — a channel is required, otherwise the backend
+    // would silently normalize the `Marketing` marker to TL.
+    if (sourceGroup === "Marketing" && !isMarketingChannel(formSource)) {
+      setAttribError("Select Email / WhatsApp / Meta.");
+      return;
+    }
     // Field Staff referrals must name the staff member — the enquiry, its
     // region and the 20% generator credit belong to them.
     if (formSource === "Field Staff" && !formFieldStaffId) {
@@ -283,22 +301,21 @@ export default function EnquiryModal({
             </div>
             )}
 
-            <div className="space-y-1">
-              <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Source</label>
-                <select
-                  value={formSource}
-                  onChange={(e) => {
-                    setFormSource(e.target.value);
-                    setAttribError(null);
-                    if (e.target.value !== "Field Staff") setFormFieldStaffId("");
-                  }}
-                  className="w-full px-3.5 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl outline-none focus:border-brand-indigo text-sm font-semibold cursor-pointer text-[var(--text-primary)]"
-                >
-                  {ENQUIRY_SOURCES.map((s) => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
-              </div>
+            <SourcePicker
+              group={sourceGroup}
+              channel={formChannel}
+              error={sourceGroup === "Marketing" ? attribError : null}
+              onGroup={(v) => {
+                setAttribError(null);
+                if (v === "Marketing") {
+                  setFormSource(formChannel || "Marketing");
+                } else {
+                  setFormSource(v);
+                }
+                if (v !== "Field Staff") setFormFieldStaffId("");
+              }}
+              onChannel={(v) => { setFormChannel(v); setFormSource(v); setAttribError(null); }}
+            />
 
             {formSource === "Field Staff" && (
               <div className="space-y-1">

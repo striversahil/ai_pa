@@ -484,7 +484,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                       )}
                        {isOpenSpecFlag(it) && !redacted && !it.rateAvailable && !(it as any).notAvailable && (
                         <div className="mt-1.5 rounded-lg border border-red-500/30 bg-red-500/5 p-2 text-[11px] leading-relaxed">
-                          <p className="font-extrabold text-red-500 uppercase tracking-wide text-[10px]">Spec flagged by Procurement — held from Management</p>
+                          <p className="font-extrabold text-red-500 uppercase tracking-wide text-[10px]">Spec Flagged</p>
                           <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{openLoops(it, 'spec')[0]?.text ?? ""}</p>
                           <p className="mt-1 text-[var(--text-tertiary)]">Edit the spec below or attach the client-shared reference to resolve and release this item for rates.</p>
                           {editable && (
@@ -518,7 +518,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                             onAnswer={(id, text, media) => saveItems((prev) => prev.map((x, j) => (j === idx ? { ...x, loopAnswer: { id, text, media } } : x)))}
                             onWithdraw={(id) => saveItems((prev) => prev.map((x, j) => (j === idx ? { ...x, loopWithdraw: { id } } : x)))}
                             onOpenLightbox={onOpenLightbox}
-                            askKinds={editable ? ["query"] : []}
+                            askKinds={editable && it.finalRate !== undefined && it.finalRate !== null ? ["query"] : []}
                             askLabels={{ query: "Request info / alternate" }}
                           />
                         </div>

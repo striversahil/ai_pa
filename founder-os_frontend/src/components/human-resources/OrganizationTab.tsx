@@ -94,7 +94,7 @@ export default function OrganizationTab({ department }: { department?: string } 
       {legacy.length > 0 && (
         <section className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
           <h3 className="mb-1 text-sm font-bold text-amber-700 dark:text-amber-400">Not on the chart ({legacy.length})</h3>
-          <p className="mb-1.5 text-[11px] text-amber-700/80 dark:text-amber-400/80">Open the person and pick a chart position.</p>
+          <p className="mb-1.5 text-[11px] text-amber-700/80 dark:text-amber-400/80">Open the person and pick a chart position to seat them.</p>
           <div className="flex flex-wrap gap-1.5">
             {legacy.map((p) => (
               <button

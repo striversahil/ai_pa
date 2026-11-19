@@ -2,10 +2,11 @@
 
 // OrgPositionPicker — the organization chart as a selectable tree.
 //
-// Founder decision 2026-11-13: this REPLACES the free-text Designation +
-// Department inputs in the employee add/edit form. HR matches a person to a
-// chart position (so seats, tree and reporting never drift), and sees what the
-// position is responsible for while choosing.
+// Seating shortcut for the employee add/edit form: clicking a node writes the
+// chart title + department, so the person becomes a seat in the tree (seats,
+// tree and reporting stay exact). Founder decision 2026-11-19: designation is
+// free text again, so this picker is optional — the org-chart person save still
+// requires a real chart title.
 //
 // Presentational only: no fetch, no state beyond expand/collapse.
 import { useMemo, useState } from "react";
@@ -127,8 +128,8 @@ export default function OrgPositionPicker({ designation, department, onChange }:
           {known
             ? <>Position: <span className="font-bold text-zinc-700 dark:text-zinc-200">{designation}</span>{department ? ` · ${department}` : ""}</>
             : designation
-              ? <>Legacy free text <span className="font-bold text-amber-600 dark:text-amber-400">“{designation}”</span> — pick a chart position to normalize</>
-              : "Pick the position this person occupies in the chart"}
+              ? <>Free text <span className="font-bold text-amber-600 dark:text-amber-400">“{designation}”</span> — not seated on the chart; pick a position to seat them</>
+              : "Optional: pick the chart position this person occupies"}
         </div>
         <span className="text-[10px] font-bold uppercase tracking-wide text-zinc-400">chart position</span>
       </div>

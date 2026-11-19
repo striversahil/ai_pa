@@ -10,7 +10,6 @@ import { applySalaryPlan, jsonRequest, listSalaryTemplates, readError, reapplySa
 import { fileToDataUrl, uploadMediaFile } from "@/lib/imageFiles";
 import { resolveSalary } from "@/hr/salary";
 import { initials, todayIST } from "@/hr/format";
-import { isOrgTitle } from "@/hr/organization";
 
 const field = "w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-3 py-2 text-sm outline-none focus:border-indigo-500";
 const label = "block text-[11px] font-bold uppercase tracking-wide text-zinc-500 mb-1";
@@ -118,9 +117,10 @@ export default function EmployeeFormModal({ employee, onClose, onSaved }: {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.name.trim()) { setErr("Employee name is required"); return; }
-    // Founder decision 2026-11-13: every employee occupies a chart position —
-    // free-text designations are no longer accepted from this form.
-    if (!isOrgTitle(form.designation)) { setErr("Pick the organization position from the chart"); return; }
+    // Founder decision 2026-11-19: designation is free text again (the
+    // 2026-11-13 chart-only rule is retired for the HR employee form). Picking
+    // a chart position below is the optional shortcut that also seats them on
+    // the org chart; typed text simply doesn't count as a seat.
     if (templateId && (!editing || planDirty)) {
       const amount = Number(planAmount);
       if (!(amount > 0)) { setErr("Enter the monthly salary amount for the selected template"); return; }
@@ -215,6 +215,18 @@ export default function EmployeeFormModal({ employee, onClose, onSaved }: {
                 <span className="text-[10px] font-bold uppercase tracking-wide text-zinc-400">{editing ? "Locked" : "BUI-###"}</span>
               </div>
             </div>
+            {/* Free text (founder decision 2026-11-19). The org picker below
+                stays the shortcut that also seats the person on the chart. */}
+            <div>
+              <label className={label}>Designation</label>
+              <input
+                value={form.designation}
+                onChange={(e) => set("designation", e.target.value)}
+                placeholder="Free text, e.g. Sr. Sales Executive"
+                title="Free text. Pick a chart position below to seat them on the org chart."
+                className={field}
+              />
+            </div>
             <div><label className={label}>Office phone</label><input value={form.phone} onChange={(e) => set("phone", e.target.value)} className={field} /></div>
             <div><label className={label}>Office email</label><input value={form.email} onChange={(e) => set("email", e.target.value)} className={field} /></div>
             <div>
@@ -226,9 +238,9 @@ export default function EmployeeFormModal({ employee, onClose, onSaved }: {
           </div>
         </Section>
 
-        {/* Organization chart position — replaces the free-text Designation and
-            Department inputs (founder decision 2026-11-13). Picking a node is
-            the only way to set both, so seats/tree/reporting never drift. */}
+        {/* Organization chart position — the optional seating shortcut: picking
+            a node overwrites the free-text designation + department above, so
+            the person becomes a seat in the tree (founder decision 2026-11-19). */}
         <Section title="Organization role">
           <OrgPositionPicker
             designation={form.designation}

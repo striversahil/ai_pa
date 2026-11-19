@@ -226,7 +226,11 @@ export function canOpen(kind: LoopKind, w: LoopWriter): boolean {
   if (kind === 'query') return !w.restricted && (w.desk === 'sales' || !w.privileged);
   // Rate asks are the management→procurement signal: privileged only.
   if (kind === 'rates') return w.privileged;
-  // Spec / not-available asks ride the procurement desk, whoever covers it.
+  // Spec flags ride the procurement desk, whoever covers it — plus
+  // privileged management so Management Review can flag incorrect spec the
+  // same way (holder stays sales, so the sales Fix-spec path clears both).
+  if (kind === 'spec') return w.desk === 'procurement' || (w.privileged && w.desk === 'management');
+  // Not-available asks stay procurement-only.
   return w.desk === 'procurement';
 }
 

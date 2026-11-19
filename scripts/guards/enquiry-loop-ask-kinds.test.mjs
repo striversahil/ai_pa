@@ -13,7 +13,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { FRONTEND_SRC } from './_bundle.mjs';
+import { FRONTEND_SRC, BACKEND_DIR } from './_bundle.mjs';
 
 const readFe = (p) => readFileSync(join(FRONTEND_SRC, p), 'utf8');
 
@@ -42,13 +42,43 @@ describe('note composer stays retired', () => {
     assert.ok(src.includes('note: "Note"'), 'KIND_LABEL must still render stored note records');
   });
 
-  it('sales Answer button is wired (no dead no-op handler)', () => {
-    // A procurement spec flag is held by sales, so LoopCards shows Answer on
-    // the sales surface — it must send a real loopAnswer intent, never a
-    // silent no-op (seen live: typed answers swallowed, flag stuck red).
+  it('sales flag is Fix-spec only (no Answer on spec)', () => {
+    // A procurement spec flag is held by sales, but sales clears it by
+    // fixing the spec / attaching a reference (auto-answer on specChanged /
+    // mediaAdded) — never by typing an Answer. So the sales surface hides
+    // the open spec card entirely (no "With you — answer below", no Answer
+    // button); the banner's single Fix-spec button is the only action.
+    // Query asks keep the normal Answer path.
+    const loop = readFe('components/LoopCards.tsx');
+    assert.ok(loop.includes('mode === "sales"') && loop.includes('l.kind === "spec"') && loop.includes('l.status === "open"'), 'sales must hide open spec cards in LoopCards');
     const src = readFe('components/SpecificationsSection.tsx');
     assert.ok(!src.includes('onAnswer={() => {}}'), 'sales onAnswer must not be a no-op');
-    assert.ok(src.includes('loopAnswer: { id, text, media }'), 'sales answer must ride the loopAnswer intent');
+    assert.ok(src.includes('loopAnswer: { id, text, media }'), 'sales query answer must still ride the loopAnswer intent');
     assert.ok(src.includes('Fix spec'), 'flagged banner must offer the one-click fix-spec path');
+    assert.ok(src.includes('Spec Flagged'), 'flagged banner must read simply Spec Flagged');
+    assert.ok(!src.includes('Spec flagged by Procurement'), 'old flagged-by-Procurement label must not come back');
+  });
+
+  it('sales query ask waits for the management rate (no pre-rate alternate)', () => {
+    // "Request info / alternate" is a post-rate ask: sales sees Rate
+    // Received only after management sets finalRate, so the composer must
+    // stay hidden until then. Existing query cards still render as history.
+    const src = readFe('components/SpecificationsSection.tsx');
+    const m = src.match(/askKinds=\{([^}]*)\}/);
+    assert.ok(m, 'sales LoopCards askKinds missing');
+    assert.ok(m[1].includes('finalRate'), 'sales query composer must gate on finalRate');
+    assert.ok(!/\beditable\s*\?\s*\[\s*"query"\s*\]/.test(src), 'ungated editable ? ["query"] must not come back');
+  });
+
+  it('management can flag incorrect spec like procurement', () => {
+    // Management Review needs the same incorrect-spec flag as procurement:
+    // privileged management opens `spec`, holder stays sales so the single
+    // sales Fix-spec path clears both identically.
+    const be = readFileSync(join(BACKEND_DIR, 'src', 'modules', 'enquiries', 'loops-parts', 'pure.ts'), 'utf8');
+    assert.ok(be.includes("kind === 'spec'") && be.includes("w.privileged && w.desk === 'management'"), 'backend canOpen must allow privileged management spec');
+    const mgmt = readFe('components/ManagementRatesPanel.tsx');
+    assert.ok(mgmt.includes('"spec"') && mgmt.includes('Flag incorrect spec'), 'management composer must offer spec');
+    assert.ok(mgmt.includes('Spec Flagged'), 'management banner must read generic Spec Flagged');
+    assert.ok(!mgmt.includes('Procurement flagged incorrect spec'), 'opener-specific management banner must not come back');
   });
 });

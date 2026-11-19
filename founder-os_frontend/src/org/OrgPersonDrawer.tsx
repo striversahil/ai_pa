@@ -56,7 +56,7 @@ export default function OrgPersonDrawer({ person, onClose, onSaved }: {
 
   const submit = async () => {
     setErr(null);
-    if (!isOrgTitle(title)) { setErr("Pick the organization position from the chart"); return; }
+    if (!isOrgTitle(title)) { setErr("Seating needs a chart title — free-text designations are edited in HR → Employees"); return; }
     if (rules.region && !region) { setErr("Region required for sales staff (R1–R4)"); return; }
     if (title === "Team Lead" && tlLevel === "TL1" && region && region2 && region === region2) {
       setErr("A TL1 needs two DIFFERENT regions");

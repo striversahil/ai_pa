@@ -898,7 +898,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
             const openSpec = openLoops(it, 'spec')[0];
             const flaggedBanner = openSpec && !sent ? (
               <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-2.5 text-[11px] leading-relaxed">
-                <p className="font-extrabold text-red-400 uppercase tracking-wide text-[10px]">Procurement flagged incorrect spec — intimating only</p>
+                <p className="font-extrabold text-red-400 uppercase tracking-wide text-[10px]">Spec Flagged — intimating only</p>
                 <p className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{openSpec.text}</p>
                 <p className="mt-1 text-[var(--text-tertiary)]">Flagged {historyDateChip(openSpec.openedAt) || "recently"} · shown read-only banner, rates remain actionable.</p>
               </div>
@@ -987,8 +987,8 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                   onWithdraw={(id) => loopWithdrawNow(i, id)}
                   onReject={(id) => loopRejectNow(i, id)}
                   onOpenLightbox={openLightbox}
-                  askKinds={["rates"]}
-                  askLabels={{ rates: "Flag procurement" }}
+                  askKinds={["spec", "rates"]}
+                  askLabels={{ spec: "Flag incorrect spec", rates: "Flag procurement" }}
                 />
                 {(it as any).expectedRate !== undefined && (it as any).expectedRate !== null && (
                   <p className="text-[11px] font-extrabold text-sky-400">

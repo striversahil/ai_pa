@@ -167,7 +167,8 @@ export interface Enquiry {
   /** Daily sequence: Enquiry No {dailyNo} - {DD} {MON} {source}. Auto-assigned,
    *  counter resets every IST day. */
   dailyNo?: number | null;
-  /** Enquiry source: TL | AI | Incoming | B2B | Field Staff (default TL). */
+  /** Enquiry source (default TL). Stored values only — `Marketing` is a
+   *  picker group in EnquiryModal, never stored; the channel is saved. */
   source?: string;
   enquiryNumber?: string;
   sourceLead?: string;
@@ -231,7 +232,11 @@ export interface StoredData {
   agents: Agent[];
 }
 
-export const ENQUIRY_SOURCES = ["TL", "AI", "Incoming", "B2B", "Field Staff"] as const;
+// Stored enquiry sources — mirrors backend
+// `founder-os_backend/src/modules/enquiries/types.ts` verbatim (guard
+// `enquiry-sources` locks parity). `Marketing` is picker-only in
+// EnquiryModal, never stored. Correct spelling: `WhatsApp`.
+export const ENQUIRY_SOURCES = ["TL", "Incoming", "B2B", "Field Staff", "Email", "WhatsApp", "Meta"] as const;
 
 const MON = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
 
