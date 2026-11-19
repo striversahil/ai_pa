@@ -23,6 +23,7 @@ import {
   isDueTodayItem,
   isOverdueItem,
   validateAmend,
+  validateCancelItems,
   validateDispatch,
   validateLocalCancel,
   validateReschedule,
@@ -134,6 +135,12 @@ export default function OrderPanel({
   const [cancelReason, setCancelReason] = useState("");
   const [cancelBusy, setCancelBusy] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
+  // ── Partial cancel (pending lines unavailable) ─────────────────────────
+  const [cancelItemsOpen, setCancelItemsOpen] = useState(false);
+  const [cancelPicked, setCancelPicked] = useState<Set<string>>(new Set());
+  const [cancelItemsReason, setCancelItemsReason] = useState("");
+  const [cancelItemsBusy, setCancelItemsBusy] = useState(false);
+  const [cancelItemsError, setCancelItemsError] = useState<string | null>(null);
 
   const locallyCancelled = !!(full as any).localCancelledAt;
 
@@ -351,6 +358,36 @@ export default function OrderPanel({
       setCancelError(String(e?.message || e));
     } finally {
       setCancelBusy(false);
+    }
+  };
+
+  const cancelItemsCheck = useMemo(() => {
+    if (!cancelItemsOpen) return { ok: true as const };
+    return validateCancelItems({
+      items: items as any,
+      itemIds: [...cancelPicked],
+      reason: cancelItemsReason,
+    });
+  }, [cancelItemsOpen, cancelPicked, cancelItemsReason, items]);
+
+  const saveCancelItems = async () => {
+    if (!cancelItemsCheck.ok) {
+      setCancelItemsError((cancelItemsCheck as any).message);
+      return;
+    }
+    setCancelItemsBusy(true);
+    setCancelItemsError(null);
+    try {
+      await crmApi.cancelItems(order.id, [...cancelPicked], cancelItemsReason.trim());
+      setCancelItemsOpen(false);
+      setCancelPicked(new Set());
+      setCancelItemsReason("");
+      loadDetail();
+      onChanged();
+    } catch (e: any) {
+      setCancelItemsError(String(e?.message || e));
+    } finally {
+      setCancelItemsBusy(false);
     }
   };
 
@@ -766,9 +803,10 @@ export default function OrderPanel({
             </div>
           )}
 
-          {/* Amend (floor-only) + cancel (anyone with CRM read — sales agents
-              cancel their OWN region's orders, enforced server-side; every
-              change is logged against the confirmation note). */}
+          {/* Amend (floor-only) + line-cancel / whole-cancel (anyone with CRM
+              read — sales agents cancel their OWN region's orders, enforced
+              server-side; every change is logged against the confirmation
+              note). */}
           {(mode === "view" && (floorWrite || canWrite) && !locallyCancelled && order.sourceState !== "deleted_source") && (
             <div className="mt-3 flex flex-wrap gap-2">
               {floorWrite && (
@@ -777,6 +815,14 @@ export default function OrderPanel({
                 className="rounded-lg border border-indigo-500/40 px-2.5 py-1.5 text-xs font-bold text-indigo-600 hover:bg-indigo-500/10 dark:text-indigo-400"
               >
                 {amendOpen ? "Close amendment" : "Amend items"}
+              </button>
+              )}
+              {canWrite && (
+              <button
+                onClick={() => { setCancelItemsOpen(!cancelItemsOpen); setCancelItemsError(null); }}
+                className="rounded-lg border border-amber-500/40 px-2.5 py-1.5 text-xs font-bold text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
+              >
+                {cancelItemsOpen ? "Close line cancel" : "Cancel items"}
               </button>
               )}
               {canWrite && (
@@ -900,6 +946,76 @@ export default function OrderPanel({
                   className="rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-zinc-300 dark:disabled:bg-zinc-800"
                 >
                   {amendBusy ? "Saving…" : "Save amendment"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {mode === "view" && cancelItemsOpen && canWrite && !locallyCancelled && (
+            <div className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
+              <h3 className="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">
+                Cancel pending items — unavailable stock
+              </h3>
+              <p className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-300">
+                Tick the lines the client called off (3 dispatched, 1 unavailable → tick the 1).
+                Dispatched lines are locked — the goods already left. Cancelling every pending line
+                is refused here; use Cancel SO for the whole order.
+              </p>
+              <div className="mt-2 space-y-1.5">
+                {items.filter((it) => !(it as any).removedAt).map((it) => {
+                  const dispatched = Number(it.dispatchedQty) || 0;
+                  const locked = it.dispatchState === "dispatched" || dispatched > 1e-6;
+                  return (
+                    <label
+                      key={it.id}
+                      className={`flex cursor-pointer items-center gap-2 rounded-lg bg-white/70 px-2 py-1.5 text-xs dark:bg-zinc-900/60 ${locked ? "cursor-not-allowed opacity-50" : ""}`}
+                      title={locked ? "Already dispatched — cannot cancel" : "Cancel this line as unavailable"}
+                    >
+                      <input
+                        type="checkbox"
+                        disabled={locked}
+                        checked={cancelPicked.has(it.id)}
+                        onChange={() =>
+                          setCancelPicked((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(it.id)) next.delete(it.id);
+                            else next.add(it.id);
+                            return next;
+                          })
+                        }
+                        className="h-3.5 w-3.5 rounded border-zinc-300 accent-amber-600 disabled:opacity-30"
+                      />
+                      <span className="min-w-0 flex-1 font-medium text-zinc-800 dark:text-zinc-100">
+                        {it.name || it.description || it.sku || "—"}
+                        <span className="ml-1 text-[10px] text-zinc-400">
+                          {it.dispatchState === "dispatched" ? "dispatched" : it.dispatchState === "scheduled" ? `dated ${it.tentativeDispatchDate || ""}`.trim() : "undated"}
+                          {it.unit ? ` · ${effectiveQty(it as any)} ${it.unit}` : ""}
+                        </span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+              <div className="mt-2">
+                <ReasonBox label="Cancellation reason" value={cancelItemsReason} onChange={setCancelItemsReason} />
+              </div>
+              {!cancelItemsCheck.ok && (
+                <p className="mt-2 text-[11px] font-bold text-amber-600 dark:text-amber-400">{(cancelItemsCheck as any).message}</p>
+              )}
+              {cancelItemsError && <p className="mt-2 text-[11px] font-bold text-rose-500">{cancelItemsError}</p>}
+              <div className="mt-2 flex justify-end gap-2">
+                <button
+                  onClick={() => setCancelItemsOpen(false)}
+                  className="rounded-lg border border-zinc-300 px-3 py-1.5 text-xs font-semibold text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300"
+                >
+                  Keep lines
+                </button>
+                <button
+                  onClick={() => { void saveCancelItems(); }}
+                  disabled={!cancelItemsCheck.ok || cancelItemsBusy}
+                  className="rounded-lg bg-amber-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-amber-500 disabled:cursor-not-allowed disabled:bg-zinc-300 dark:disabled:bg-zinc-800"
+                >
+                  {cancelItemsBusy ? "Cancelling…" : "Cancel selected lines"}
                 </button>
               </div>
             </div>

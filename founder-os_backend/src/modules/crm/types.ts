@@ -42,6 +42,7 @@ export const EVENT_KINDS = [
   'item_added',
   'order_cancelled_local',
   'order_reopened_local',
+  'item_cancelled',
 ] as const;
 export type EventKind = (typeof EVENT_KINDS)[number];
 
@@ -162,6 +163,7 @@ export const VIEWS = [
   'unscheduled',
   'scheduled',
   'dispatched',
+  'cancelled',
   'source-deleted',
   'all',
   // Unified Sales → Dispatch buckets (region-owned view).

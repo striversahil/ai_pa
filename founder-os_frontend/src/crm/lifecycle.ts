@@ -323,6 +323,43 @@ export function validateAmend(args: {
   return ok;
 }
 
+export function validateCancelItems(args: {
+  items?: readonly ItemLike[] | null;
+  itemIds?: Array<string | { itemId: string }> | null;
+  reason?: string | null;
+}): Validation {
+  // Mirror of backend modules/crm/scheduling-parts/pure.ts — same names,
+  // same semantics (guard: scripts/guards/crm-lifecycle.test.mjs).
+  const reasonCheck = validateReason(args?.reason, "Cancellation reason");
+  if (!reasonCheck.ok) return reasonCheck;
+  const ids = (args.itemIds || [])
+    .map((e) => String((e as any)?.itemId ?? e ?? "").trim())
+    .filter(Boolean);
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) {
+    return fail("no_items", "Select at least one pending item to cancel.");
+  }
+  if (unique.length !== ids.length) {
+    return fail("duplicate_item", "An item can only be cancelled once per action.");
+  }
+  const byId = new Map((args.items || []).map((it) => [it.id, it]));
+  const open = (args.items || []).filter((it) => !isRemovedItem(it));
+  for (const id of unique) {
+    const item = byId.get(id);
+    if (!item) return fail("unknown_item", "That item is not on this sales order.", id);
+    if (isRemovedItem(item)) {
+      return fail("removed_item", "That item was already removed from this sales order.", id);
+    }
+    if (item.dispatchState === "dispatched" || Number(item.dispatchedQty ?? 0) > 1e-6) {
+      return fail("already_dispatched", "Dispatched quantities cannot be cancelled — the goods already left.", id);
+    }
+  }
+  if (unique.length >= open.length) {
+    return fail("last_line", "That is every pending item — use Cancel SO for the whole order instead.");
+  }
+  return ok;
+}
+
 export function validateLocalCancel(args: {
   reason?: string | null;
   order?: OrderLike | null;

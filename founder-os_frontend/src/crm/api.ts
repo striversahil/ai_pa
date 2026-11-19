@@ -125,6 +125,13 @@ export const crmApi = {
       { reason },
     ),
 
+  /** Cancel pending lines (partial SO cancel — unavailable stock). */
+  cancelItems: (id: string, itemIds: string[], reason: string) =>
+    api.post<{ ok: true; lifecycle: string; order: CrmOrder }>(
+      `/crm/orders/${encodeURIComponent(id)}/cancel-items`,
+      { itemIds, reason },
+    ),
+
   /** Reverse a floor cancel (root only). */
   reopen: (id: string) =>
     api.post<{ ok: true; lifecycle: string; order: CrmOrder }>(

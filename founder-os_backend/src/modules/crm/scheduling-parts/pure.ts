@@ -290,6 +290,47 @@ export function validateAmend(args: AmendArgs): Validation {
 }
 
 /**
+ * Validate a partial (line-level) floor cancel: needs a client-confirmation
+ * reason, at least one cancellable line, and never the last live line (that
+ * is a full SO cancel). Dispatched lines are never cancellable — the goods
+ * already left; amend the remainder instead.
+ */
+export function validateCancelItems(args: {
+  items?: ItemLike[] | null;
+  itemIds?: Array<string | { itemId: string }> | null;
+  reason?: string | null;
+}): Validation {
+  const reasonCheck = validateReason(args?.reason, 'Cancellation reason');
+  if (!reasonCheck.ok) return reasonCheck;
+  const ids = (args.itemIds || [])
+    .map((e) => String((e as any)?.itemId ?? e ?? '').trim())
+    .filter(Boolean);
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) {
+    return fail('no_items', 'Select at least one pending item to cancel.');
+  }
+  if (unique.length !== ids.length) {
+    return fail('duplicate_item', 'An item can only be cancelled once per action.');
+  }
+  const byId = new Map((args.items || []).map((it) => [it.id, it]));
+  const open = (args.items || []).filter((it) => !isRemovedItem(it));
+  for (const id of unique) {
+    const item = byId.get(id);
+    if (!item) return fail('unknown_item', 'That item is not on this sales order.', id);
+    if (isRemovedItem(item)) {
+      return fail('removed_item', 'That item was already removed from this sales order.', id);
+    }
+    if (item.dispatchState === 'dispatched' || Number(item.dispatchedQty ?? 0) > 1e-6) {
+      return fail('already_dispatched', 'Dispatched quantities cannot be cancelled — the goods already left.', id);
+    }
+  }
+  if (unique.length >= open.length) {
+    return fail('last_line', 'That is every pending item — use Cancel SO for the whole order instead.');
+  }
+  return ok;
+}
+
+/**
  * Validate a full-SO floor cancel: needs a client-confirmation reason and the
  * order must not already be out (floor-cancelled or Zoho cancelled/void).
  */

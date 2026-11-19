@@ -2036,7 +2036,7 @@ model CrmScheduleEvent {
   soId      String
   soNumber  String   @default("")
   itemId    String?
-  kind      String // schedule | reschedule | delay | dispatch | partial_dispatch | source_deleted | confirmed_removal | address_updated | item_amended | item_removed | item_added | order_cancelled_local | order_reopened_local
+  kind      String // schedule | reschedule | delay | dispatch | partial_dispatch | source_deleted | confirmed_removal | address_updated | item_amended | item_removed | item_cancelled | item_added | order_cancelled_local | order_reopened_local
   fromDate  String?
   toDate    String?
   reason    String?

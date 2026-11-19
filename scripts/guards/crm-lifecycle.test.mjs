@@ -56,7 +56,7 @@ const ORDERS = [
   { status: 'open', orderStatus: 'closed' },
 ];
 
-const VIEWS = ['dispatch-floor', 'unscheduled', 'scheduled', 'dispatched', 'source-deleted', 'all', 'incomplete', 'completed'];
+const VIEWS = ['dispatch-floor', 'unscheduled', 'scheduled', 'dispatched', 'cancelled', 'source-deleted', 'all', 'incomplete', 'completed'];
 const SOURCES = ['active', 'deleted_source'];
 
 const parse = (fn) => {
@@ -153,12 +153,27 @@ describe('crm lifecycle mirror', () => {
       assert.equal(q.orderMatchesView(bare, 'scheduled', TODAY), false, 'bare scheduled');
       assert.equal(q.orderMatchesView(bare, 'dispatched', TODAY), false, 'bare dispatched');
     }
-    // Cancelled is out of every working tab.
+    // Cancelled is out of every working tab but IN the Cancelled tab — both
+    // for a full floor cancel and for a partial line-cancel (one removed line
+    // next to live work: still rendered by the open queues AND the Cancelled tab).
     const cancelled = { lifecycle: 'cancelled', sourceState: 'active', items: [item({ id: 'a' })] };
     for (const q of [beQ, feQ]) {
       for (const v of ['unscheduled', 'scheduled', 'dispatched', 'dispatch-floor']) {
         assert.equal(q.orderMatchesView(cancelled, v, TODAY), false, `cancelled/${v}`);
       }
+      assert.equal(q.orderMatchesView(cancelled, 'cancelled', TODAY), true, 'cancelled/cancelled');
+      assert.equal(q.isPartiallyCancelled(cancelled), false, 'full cancel is not partial');
+    }
+    const partialCancel = {
+      lifecycle: 'unscheduled',
+      sourceState: 'active',
+      items: [item({ id: 'a' }), item({ id: 'b', removedAt: '2026-11-02T00:00:00.000Z' })],
+    };
+    for (const q of [beQ, feQ]) {
+      assert.equal(q.isPartiallyCancelled(partialCancel), true, 'partial flag');
+      assert.equal(q.orderMatchesView(partialCancel, 'cancelled', TODAY), true, 'partial/cancelled');
+      assert.equal(q.orderMatchesView(partialCancel, 'unscheduled', TODAY), true, 'partial/unscheduled');
+      assert.equal(q.orderMatchesView(partialCancel, 'all', TODAY), true, 'partial/all');
     }
   });
 
@@ -427,5 +442,32 @@ describe('crm lifecycle mirror', () => {
     for (const c of cancelCases) {
       assert.deepEqual(fe.validateLocalCancel(c), be.validateLocalCancel(c), `validateLocalCancel ${JSON.stringify(c)}`);
     }
+    const cancelItemsCases = [
+      {},
+      { items: open, itemIds: [], reason: 'client cancelled these lines as unavailable' },
+      { items: open, itemIds: ['a'], reason: 'short' },
+      { items: open, itemIds: ['a'], reason: 'client cancelled these lines as unavailable' },
+      // Dispatched line is never cancellable.
+      { items: open, itemIds: ['c'], reason: 'client cancelled these lines as unavailable' },
+      // Partially-dispatched line (dispatchedQty > 0) is never cancellable.
+      { items: open, itemIds: ['b'], reason: 'client cancelled these lines as unavailable' },
+      // Cancelling every open line must go through the whole-SO cancel.
+      { items: [{ id: 'a', dispatchState: 'unscheduled', tentativeDispatchDate: null, qty: 10, dispatchedQty: 0 }], itemIds: ['a'], reason: 'client cancelled these lines as unavailable' },
+      // Unknown + duplicate ids.
+      { items: open, itemIds: ['zzz'], reason: 'client cancelled these lines as unavailable' },
+      { items: open, itemIds: ['a', 'a'], reason: 'client cancelled these lines as unavailable' },
+    ];
+    for (const c of cancelItemsCases) {
+      assert.deepEqual(fe.validateCancelItems(c), be.validateCancelItems(c), `validateCancelItems ${JSON.stringify(c)}`);
+    }
+    // One happy path must actually pass on both sides.
+    assert.equal(
+      be.validateCancelItems({ items: open, itemIds: ['a'], reason: 'client cancelled these lines as unavailable' }).ok,
+      true,
+    );
+    assert.equal(
+      fe.validateCancelItems({ items: open, itemIds: ['a'], reason: 'client cancelled these lines as unavailable' }).ok,
+      true,
+    );
   });
 });

@@ -20,6 +20,7 @@ export const VIEWS = [
   "unscheduled",
   "scheduled",
   "dispatched",
+  "cancelled",
   "source-deleted",
   "all",
   // Unified Sales → Dispatch buckets (region-owned view).
@@ -170,6 +171,11 @@ export interface CrmOrder {
   events?: CrmEvent[];
   /** Consumed dispatch proofs, newest first (each dispatch burns one triple). */
   proofs?: CrmDispatchProof[];
+  /** Dispatch-paperwork checklist (list views only): true = attached on at
+   *  least one proof of this order. Absent when the list row predates the
+   *  split — cards must hide chips, never show all-pending. Mirror: the
+   *  backend computes it in `store-parts/io.ts#proofDocsForOrders`. */
+  proofDocs?: { before: boolean; after: boolean; transport: boolean; courier: boolean; packingList: boolean };
 }
 
 export interface CrmSummary {
@@ -187,6 +193,8 @@ export interface CrmSummary {
   tabUnscheduled: number;
   tabScheduled: number;
   tabDispatched: number;
+  /** Fully floor-cancelled + partially line-cancelled orders. */
+  tabCancelled: number;
   /** Unified Sales → Dispatch buckets (after the viewer's region filter). */
   incomplete?: number;
   completed?: number;
@@ -210,10 +218,11 @@ export interface CrmViewerMeta {
 }
 
 export const VIEW_LABELS: Record<View, string> = {
-  "dispatch-floor": "Dispatch Floor",
+  "dispatch-floor": "Today's Dispatches",
   unscheduled: "To Schedule",
   scheduled: "Scheduled",
   dispatched: "Dispatched",
+  cancelled: "Cancelled",
   "source-deleted": "Source Deleted",
   all: "All SOs",
   incomplete: "Incomplete",

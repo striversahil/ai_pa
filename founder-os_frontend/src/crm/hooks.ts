@@ -129,7 +129,12 @@ export function useCrmAction(onDone?: (order: CrmOrder) => void) {
     [run],
   );
 
+  const cancelItems = useCallback(
+    (id: string, itemIds: string[], reason: string) => run(() => crmApi.cancelItems(id, itemIds, reason)),
+    [run],
+  );
+
   const reopen = useCallback((id: string) => run(() => crmApi.reopen(id)), [run]);
 
-  return { ...state, schedule, promise, reschedule, dispatch, confirmRemoval, updateAddresses, amendItems, cancelLocal, reopen };
+  return { ...state, schedule, promise, reschedule, dispatch, confirmRemoval, updateAddresses, amendItems, cancelItems, cancelLocal, reopen };
 }

@@ -39,6 +39,14 @@ export function salesBucket(order: ViewOrder): "incomplete" | "completed" | null
   return isPaymentComplete(order) ? "completed" : "incomplete";
 }
 
+/** Partially cancelled: some lines cancelled as unavailable, live work remains.
+ *  MIRROR of backend `src/modules/crm/queues.ts` — change both together. */
+export function isPartiallyCancelled(order: Pick<ViewOrder, "lifecycle" | "items">): boolean {
+  if (order.lifecycle === "cancelled") return false;
+  const items = order.items || [];
+  return items.some((it) => !!(it as any)?.removedAt) && items.some((it) => !(it as any)?.removedAt);
+}
+
 export function orderMatchesView(order: ViewOrder, view: View, today: string): boolean {
   const items = order.items || [];
   // Membership is per ITEM, not per lifecycle bucket: an order with one
@@ -64,6 +72,10 @@ export function orderMatchesView(order: ViewOrder, view: View, today: string): b
       return live && someItem("scheduled");
     case "dispatched":
       return live && someItem("dispatched");
+    case "cancelled":
+      // Fully floor-cancelled OR partially line-cancelled (some lines
+      // removed as unavailable, live work remains).
+      return order.sourceState === "active" && (order.lifecycle === "cancelled" || isPartiallyCancelled(order));
     case "all":
       return order.sourceState === "active";
     // Unified Sales → Dispatch buckets. Incomplete keeps the whole pipeline

@@ -21,7 +21,7 @@ Files:
 |---|---|
 | `CrmSalesOrder` | one row per `org + soNumber`: Zoho fields, client **billing/shipping address** (floor-editable — an edit sets a marker and the sync leaves that address alone), **payment terms** (extracted Payment line from Zoho's free-text `terms`), the **EST no.** (`referenceNumber`), derived `lifecycle`, `sourceState` (`active` / `deleted_source`), per-order delay reason, miss counter |
 | `CrmSoItem` | one row per line item — **the unit of scheduling**: tentative dispatch date, dispatch state, delay reason, dispatched qty, plus the amendment overlay (`amendedQty`, `removedAt/By`, `isLocalAdded` for floor-added lines) |
-| `CrmScheduleEvent` | append-only audit: `schedule`, `delay`, `reschedule`, `dispatch`, `partial_dispatch`, `source_deleted`, `confirmed_removal`, `address_updated`, `item_amended`, `item_removed`, `item_added`, `order_cancelled_local`, `order_reopened_local` |
+| `CrmScheduleEvent` | append-only audit: `schedule`, `delay`, `reschedule`, `dispatch`, `partial_dispatch`, `source_deleted`, `confirmed_removal`, `address_updated`, `item_amended`, `item_removed`, `item_cancelled`, `item_added`, `order_cancelled_local`, `order_reopened_local` |
 | `CrmDispatchProof` (migration 0105; photos 0106; batch items 0107; receipts + packing list 0108) | one row per dispatch action: the fresh invoice PDF ID + optional before/after packing photo IDs + transport receipt / courier receipt / packing list IDs + batch items JSON. UNIQUE per file so a repeat partial must upload a new invoice |
 
 ## Amendments + full-SO cancel (migration 0114, floor overlay)
@@ -35,15 +35,18 @@ write-back:
 | qty change | `CrmSoItem.amendedQty` (NULL = follow Zoho) | floor works against the amended qty (dispatch caps, remaining) |
 | line removal | `removedAt/By` (row stays, struck-through in the panel) | out of every queue, lifecycle, overdue and dispatch validation |
 | added line | `isLocalAdded` row (`local:*` key) | behaves like a normal undated line |
-| full-SO cancel | `localCancelledAt/By/Reason` + lifecycle parked at `cancelled` | out of every working queue; all floor actions locked; MIS reverses with `POST …/reopen` |
+| full-SO cancel | `localCancelledAt/By/Reason` + lifecycle parked at `cancelled` | out of every working queue; all floor actions locked; root reverses with `POST …/reopen` |
+| partial (line) cancel | `removedAt/By` + `item_cancelled` audit row (unavailable stock) | line struck-through, out of every queue; dispatched lines rejected; cancelling the last live line is refused (use Cancel SO) |
 
 `PUT /api/crm/orders/:id/items` (qtyChanges + removals + additions, one
 client-confirmation note for the batch, every line audit-logged as
 `item_amended` / `item_removed` / `item_added`),
+`POST /api/crm/orders/:id/cancel-items` (pending-line cancel, audit
+`item_cancelled`),
 `POST /api/crm/orders/:id/cancel-local` (`order_cancelled_local`) and
-`POST /api/crm/orders/:id/reopen` (MIS-only, `order_reopened_local`) — all
-three behind the same `dispatch`-scope floor gate as the other writes
-(reopen additionally requires MIS).
+`POST /api/crm/orders/:id/reopen` (root-only, `order_reopened_local`) — the
+item/SO cancels behind the CRM-read gate (agents own-region only), reopen
+behind root.
 
 The sync never clobbers the overlay: an amended qty survives every tick (the
 rate still refreshes and re-prices the line), a removed line keeps its flag,
@@ -89,7 +92,11 @@ three states, so it appears under **Dispatched**, **Scheduled** AND **To Schedul
 Filtering by the derived lifecycle hid exactly the leftover work (a
 `partially_dispatched` order with undated items never showed up under Schedule).
 An order whose items have not been captured yet counts as unscheduled — nothing
-ships before it is dated. `cancelled` is out of every working tab. Every tab
+ships before it is dated. `cancelled` is out of every working tab and has its
+own **Cancelled** tab (full floor cancels plus partially line-cancelled orders —
+the first tab is now labelled **Today's Dispatches**). The Dispatched cards
+carry a Docs strip (Before/After packing, Transport receipt, Courier receipt,
+Packing list — pending until attached on any proof). Every tab
 reads newest-first (created date desc, then SO number desc).
 
 Rules live once per side and are asserted equal by

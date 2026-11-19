@@ -12,9 +12,9 @@
 //             Dispatching is the floor's job — the desk scopes share it
 //             (founder decision 2026-11-19: `crm`-only holders were read-locked
 //             out of every write, leaving root as the only operator).
-//   CANCEL  — anyone with CRM read (floor + sales agents + sales-head + root);
-//             agents are region-locked to their OWN region server-side, like
-//             promise dates. Reopen stays root-only.
+//   CANCEL  — whole-SO or pending-lines, anyone with CRM read (floor + sales
+//             agents + sales-head + root); agents are region-locked to their
+//             OWN region server-side, like promise dates. Reopen stays root-only.
 //   PROMISE — tentative dates + delay reasons: the floor AND sales agents, but
 //             an agent may only touch orders in their OWN region (server-enforced
 //             from the session, never from a client-supplied region).
@@ -30,6 +30,7 @@ import {
   CrmError,
   amendOrderItems,
   attachProofDocs,
+  cancelOrderItems,
   cancelOrderLocal,
   confirmSourceDeletion,
   dispatchOrder,
@@ -452,6 +453,42 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
         actor: v.name,
       });
       notifyLive(c, { type: 'crm', action: 'cancelled_local', so: res.order?.soNumber });
+      return c.json({ ok: true, lifecycle: res.lifecycle, order: res.order });
+    } catch (e) {
+      return fail(c, e);
+    }
+  });
+
+  // ── Cancel pending lines (partial SO cancel — anyone with CRM read; agents
+  // own-region only, enforced from the session like promise dates). Unavailable
+  // stock only: dispatched lines are rejected, and the last live line must go
+  // through the whole-SO cancel so partial vs full stays unambiguous.
+  app.post('/api/crm/orders/:id/cancel-items', async (c) => {
+    const v = await requireRead(c);
+    if (v instanceof Response) return v;
+    const idOrSo = c.req.param('id');
+    if (!v.isManager) {
+      if (!v.region) {
+        return denial(c, 'No sales region is mapped to your login — ask the sales-head to map you on the roster.');
+      }
+      const region = await orderRegion(idOrSo);
+      if (region === null) return c.json({ error: 'Sales order not found.' }, 404);
+      if (region !== v.region) {
+        return denial(c, 'This sales order belongs to another region.');
+      }
+    }
+    const body = await readBody(c);
+    const itemIds = Array.isArray(body?.itemIds)
+      ? body.itemIds.map((e: any) => String((e as any)?.itemId ?? e ?? ''))
+      : [];
+    try {
+      const res = await cancelOrderItems({
+        idOrSo,
+        itemIds,
+        reason: body?.reason ? String(body.reason) : null,
+        actor: v.name,
+      });
+      notifyLive(c, { type: 'crm', action: 'items_cancelled', so: res.order?.soNumber });
       return c.json({ ok: true, lifecycle: res.lifecycle, order: res.order });
     } catch (e) {
       return fail(c, e);

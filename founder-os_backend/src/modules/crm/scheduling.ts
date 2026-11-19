@@ -20,6 +20,6 @@
 
 // Pieces split into ./scheduling-parts/ (importable on their own); re-exported for compat.
 export type { ItemLike, OrderLike, ValidationOk, ValidationFail, Validation, ScheduleEntry, ScheduleArgs, RescheduleEntry, RescheduleArgs, DispatchEntry, DispatchProof, DispatchArgs, AmendQtyChange, AmendRemove, AmendAdd, AmendArgs, LocalCancelArgs } from "./scheduling-parts/types";
-export { effectiveQty, isRemovedItem, isCancelledOrder, deriveLifecycle, isOverdueItem, isDueTodayItem, isOrderOverdue, countDueToday, validateReason, validateSchedule, validateReschedule, validateDispatch, resolveDispatchQty, validateAmend, validateLocalCancel } from "./scheduling-parts/pure";
+export { effectiveQty, isRemovedItem, isCancelledOrder, deriveLifecycle, isOverdueItem, isDueTodayItem, isOrderOverdue, countDueToday, validateReason, validateSchedule, validateReschedule, validateDispatch, resolveDispatchQty, validateAmend, validateCancelItems, validateLocalCancel } from "./scheduling-parts/pure";
 
 

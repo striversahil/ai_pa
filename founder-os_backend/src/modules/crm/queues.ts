@@ -83,6 +83,11 @@ export function orderMatchesView(order: ViewOrder, view: View, today: string): b
       return live && someItem('scheduled');
     case 'dispatched':
       return live && someItem('dispatched');
+    case 'cancelled':
+      // Fully floor-cancelled OR partially line-cancelled (some lines
+      // removed as unavailable, live work remains). Zoho-cancelled rows keep
+      // their lifecycle but leave every queue via `live`.
+      return order.sourceState === 'active' && (order.lifecycle === 'cancelled' || isPartiallyCancelled(order));
     case 'all':
       return order.sourceState === 'active';
     // Unified Sales → Dispatch buckets. Incomplete keeps the whole pipeline
@@ -125,6 +130,14 @@ export interface OrderFlags {
   dueToday: number;
   canSchedule: boolean;
   canDispatch: boolean;
+}
+
+/** Partially cancelled: some lines cancelled as unavailable, live work remains.
+ *  MIRROR: founder-os_frontend/src/crm/queue.ts — change both together. */
+export function isPartiallyCancelled(order: Pick<ViewOrder, 'lifecycle' | 'items'>): boolean {
+  if (order.lifecycle === 'cancelled') return false;
+  const items = order.items || [];
+  return items.some((it) => !!(it as any)?.removedAt) && items.some((it) => !(it as any)?.removedAt);
 }
 
 export function orderFlags(order: ViewOrder, today: string): OrderFlags {

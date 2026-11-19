@@ -12,7 +12,7 @@
 // Pieces split into ./store-parts/ (importable on their own); re-exported for compat.
 export { toItemView, toOrderView, CrmError, PROOF_DOC_RULES, isChargeLine } from "./store-parts/pure";
 export type { ListArgs, ProofFile, ActionResult, ProofDocSlot, SyncedOrder, SyncVerify, SyncResult } from "./store-parts/types";
-export { listOrders, sortNewestFirst, orderRegion, getOrder, syncState, scheduleOrder, rescheduleOrder, dispatchOrder, attachProofDocs, attachProofPhotos, hasDispatchCredit, confirmSourceDeletion, updateAddresses, amendOrderItems, cancelOrderLocal, reopenOrderLocal, syncOrders, dispatchSummary } from "./store-parts/io";
+export { listOrders, sortNewestFirst, orderRegion, getOrder, syncState, scheduleOrder, rescheduleOrder, dispatchOrder, attachProofDocs, attachProofPhotos, hasDispatchCredit, confirmSourceDeletion, updateAddresses, amendOrderItems, cancelOrderItems, cancelOrderLocal, reopenOrderLocal, syncOrders, dispatchSummary } from "./store-parts/io";
 export { invalidateCrmFloorCache } from "./store-parts/cache";
 
 

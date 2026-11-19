@@ -7,7 +7,7 @@ import type { ViewOrder } from "../queues";
 import { prisma } from "../../../shared/prisma";
 import { normalizeRegionFilter, regionMatches, buildEstimateRegionIndex, resolveOrderRegion } from "../region";
 import type { EstimateRegionIndex } from "../region";
-import { deriveLifecycle, effectiveQty, validateSchedule, validateReschedule, validateDispatch, resolveDispatchQty, validateAmend, validateLocalCancel, isOverdueItem } from "../scheduling";
+import { deriveLifecycle, effectiveQty, validateSchedule, validateReschedule, validateDispatch, resolveDispatchQty, validateAmend, validateCancelItems, validateLocalCancel, isOverdueItem } from "../scheduling";
 import type { DispatchProof, ItemLike, ScheduleEntry, RescheduleEntry, DispatchEntry, AmendQtyChange, AmendRemove, AmendAdd } from "../scheduling";
 import { logger } from "../../../shared/logger";
 import { ITEM_BATCH, toItemView, str, toOrderView, num, iso, proofFile, CrmError, isPdfFile, isImageFile, assertWorkable, PROOF_DOC_SLOTS, PROOF_DOC_RULES, REGION_LOOKUP_BATCH, dayAdd, FLOOR_WINDOW_DAYS, SCORE_STAGES, STAGE_COMPLETION, isCompleteInZoho, orderStage, STAGE_DEPT, ORDER_COLS, sqlValue, ITEM_COLS, isChargeLine, lineKeyFor } from "./pure";
@@ -46,6 +46,45 @@ export async function itemsForOrders(ids: string[]): Promise<Map<string, CrmItem
       const list = out.get(item.soId) || [];
       list.push(item);
       out.set(item.soId, list);
+    }
+  }
+  return out;
+}
+
+/**
+ * Dispatch-paperwork checklist per order (list views): true = attached on at
+ * least one proof of the order. Slot IDs only — no file metadata, so the
+ * payload stays a few booleans per row. Chunked IN lookup like itemsForOrders
+ * (D1 caps ~100 bound parameters). Mirror: the frontend reads it as
+ * `CrmOrder.proofDocs` (missing = hide chips, never all-pending).
+ */
+export async function proofDocsForOrders(
+  ids: string[],
+): Promise<Map<string, { before: boolean; after: boolean; transport: boolean; courier: boolean; packingList: boolean }>> {
+  const out = new Map<string, { before: boolean; after: boolean; transport: boolean; courier: boolean; packingList: boolean }>();
+  if (!ids.length) return out;
+  for (const id of ids) {
+    out.set(id, { before: false, after: false, transport: false, courier: false, packingList: false });
+  }
+  for (let i = 0; i < ids.length; i += 50) {
+    const chunk = ids.slice(i, i + 50);
+    let rows: any[] = [];
+    try {
+      rows = (await prisma.crmDispatchProof.findMany({
+        where: { soId: { in: chunk } },
+        select: { soId: true, beforeId: true, afterId: true, transportId: true, courierId: true, packingListId: true },
+      })) as any[];
+    } catch {
+      return out; // checklist is best-effort — never fail the floor over it
+    }
+    for (const r of rows) {
+      const slot = out.get(str((r as any)?.soId));
+      if (!slot) continue;
+      if (str((r as any)?.beforeId)) slot.before = true;
+      if (str((r as any)?.afterId)) slot.after = true;
+      if (str((r as any)?.transportId)) slot.transport = true;
+      if (str((r as any)?.courierId)) slot.courier = true;
+      if (str((r as any)?.packingListId)) slot.packingList = true;
     }
   }
   return out;
@@ -94,6 +133,12 @@ export async function listOrders(args: ListArgs): Promise<CrmOrderRow[]> {
     return { rows: all, items: flat };
   });
   const orders = rows.map((r) => withFlags(toOrderView(r, items[str(r.id)] || []), today));
+  // Paperwork checklist rides the list rows (bulk slot IDs only) so the
+  // Dispatched tab draws pending-doc chips with zero per-card fetches.
+  const proofDocs = await proofDocsForOrders(orders.map((o) => str(o.id)));
+  for (const o of orders) {
+    (o as any).proofDocs = proofDocs.get(str(o.id)) || { before: false, after: false, transport: false, courier: false, packingList: false };
+  }
 
   const q = str(args.q).trim().toLowerCase();
   const region = normalizeRegionFilter(args.region);
@@ -1119,6 +1164,66 @@ export async function amendOrderItems(args: {
 }
 
 /**
+ * Cancel pending lines on the floor (client-confirmed: unavailable stock).
+ * Marks each line `removedAt/By` with an `item_cancelled` audit row — the
+ * lines stay in DB struck-through and leave every working queue. Dispatched
+ * lines are never cancellable, and cancelling the last live line is refused
+ * (use the whole-SO cancel instead) so partial vs full stays unambiguous.
+ */
+export async function cancelOrderItems(args: {
+  idOrSo: string;
+  itemIds: string[];
+  reason?: string | null;
+  actor?: string | null;
+  today?: string;
+}): Promise<ActionResult> {
+  const today = args.today || istToday();
+  const orderRow = await loadRawOrder(args.idOrSo);
+  assertWorkable(orderRow, str(orderRow.lifecycle));
+  const itemRows = await loadRawItems(str(orderRow.id));
+
+  const items = itemRows.map((r) => ({
+    id: str(r.id),
+    dispatchState: str(r.dispatchState) as ItemState,
+    tentativeDispatchDate: r.tentativeDispatchDate ? str(r.tentativeDispatchDate).slice(0, 10) : null,
+    delayReason: r.delayReason ?? null,
+    qty: effectiveQty({ qty: num(r.qty), amendedQty: (r as any).amendedQty ?? null }),
+    dispatchedQty: num(r.dispatchedQty),
+    removedAt: (r as any).removedAt ? iso((r as any).removedAt) : null,
+  })) as ItemLike[];
+
+  const check = validateCancelItems({ items, itemIds: args.itemIds, reason: args.reason });
+  if (!check.ok) throw new CrmError(check.message, 400, check.code);
+
+  const now = new Date();
+  const byId = new Map(itemRows.map((r) => [str(r.id), r]));
+  const note = str(args.reason).trim();
+  const unique = [...new Set((args.itemIds || []).map((id) => String(id).trim()).filter(Boolean))];
+  for (const id of unique) {
+    const row = byId.get(id);
+    if (!row) continue;
+    await prisma.crmSoItem.update({
+      where: { id },
+      data: { removedAt: now, removedBy: str(args.actor) || '', updatedAt: now } as any,
+    });
+    await writeEvent({
+      soId: str(orderRow.id),
+      soNumber: str(orderRow.soNumber),
+      kind: 'item_cancelled',
+      itemId: id,
+      reason: `Cancelled (unavailable: ${note}) — ${str(row.name || row.description || row.sku || 'line')}`,
+      actor: args.actor,
+      day: today,
+    });
+  }
+
+  const fresh = await loadRawItems(str(orderRow.id));
+  const lifecycle = await refreshLifecycle(orderRow, fresh);
+  await mirrorOrderTouch(str(orderRow.id));
+  return { order: await getOrder(str(orderRow.id)), lifecycle };
+}
+
+/**
  * Cancel the whole SO on the floor (client-confirmed). Sets the local marker
  * and parks the lifecycle at `cancelled` — out of every working queue, kept
  * for audit. Distinct from a Zoho `status=cancelled`; the Zoho sync never
@@ -1825,6 +1930,7 @@ export async function dispatchSummary(
     tabUnscheduled: 0,
     tabScheduled: 0,
     tabDispatched: 0,
+    tabCancelled: 0,
   };
   const regions: Record<string, { incomplete: number; completed: number; total: number }> = {};
   const bucketOf = (r: any, items: any[]) => {
@@ -1870,6 +1976,7 @@ export async function dispatchSummary(
     if (orderMatchesView(shape, 'unscheduled', today)) counts.tabUnscheduled++;
     if (orderMatchesView(shape, 'scheduled', today)) counts.tabScheduled++;
     if (orderMatchesView(shape, 'dispatched', today)) counts.tabDispatched++;
+    if (orderMatchesView(shape, 'cancelled', today)) counts.tabCancelled++;
   }
   counts.regions = regions;
   return counts;
