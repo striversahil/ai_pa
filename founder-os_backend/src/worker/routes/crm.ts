@@ -7,8 +7,11 @@
 // Authz (founder decision):
 //   READ    — `crm` / `dispatch` (the desk) + `telecalling` (the sales team, via
 //             the unified Sales workspace) + root/sales-head.
-//   FLOOR   — schedule/reschedule/dispatch/addresses/confirm: `dispatch` scope
-//             only (root always). Dispatching is the floor's job.
+//   FLOOR   — schedule/reschedule/dispatch/addresses/amend/confirm: anyone
+//             with floor access (`crm` or `dispatch` scope, root always).
+//             Dispatching is the floor's job — the desk scopes share it
+//             (founder decision 2026-11-19: `crm`-only holders were read-locked
+//             out of every write, leaving root as the only operator).
 //   CANCEL  — anyone with CRM read (floor + sales agents + sales-head + root);
 //             agents are region-locked to their OWN region server-side, like
 //             promise dates. Reopen stays root-only.
@@ -60,7 +63,7 @@ interface Viewer {
   isManager: boolean;
   /** May set tentative dates/delay reasons (floor + sales agents). */
   canPromise: boolean;
-  /** May execute floor transitions (schedule/dispatch/addresses/removal). */
+  /** May execute floor transitions (schedule/dispatch/addresses/amend/removal). */
   canWriteFloor: boolean;
 }
 
@@ -79,7 +82,7 @@ async function viewer(c: any): Promise<Viewer | null> {
       roles.includes('sales-head') ||
       scopes.includes(ScopeKeys.Crm) ||
       scopes.includes(ScopeKeys.Dispatch);
-    const canWriteFloor = isAdmin || scopes.includes(ScopeKeys.Dispatch);
+    const canWriteFloor = isAdmin || scopes.includes(ScopeKeys.Dispatch) || scopes.includes(ScopeKeys.Crm);
     const canPromise = canWriteFloor || scopes.includes(ScopeKeys.Telecalling) || scopes.includes(ScopeKeys.SalesHead) || roles.includes('sales-head');
 
     let staffId: string | null = null;
@@ -138,12 +141,12 @@ async function requireRead(c: any): Promise<Viewer | Response> {
   };
 }
 
-/** Floor transitions require the `dispatch` scope (or root). */
+/** Floor transitions require floor access (the `crm` or `dispatch` scope, or root). */
 async function requireDispatchWrite(c: any): Promise<Viewer | Response> {
   const v = await viewer(c);
   if (!v) return c.json({ error: 'Sign-in required.' }, 401);
   if (v.canWriteFloor) return v;
-  return denial(c, 'Dispatch access required — ask root for the dispatch scope.');
+  return denial(c, 'Dispatch floor access required — ask root for the crm or dispatch scope.');
 }
 
 /** Floor-cancel reversal is root-only. */
@@ -389,7 +392,7 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.post('/api/crm/orders/:id/proofs/:proofId/documents', attachProofHandler);
   app.post('/api/crm/orders/:id/proofs/:proofId/photos', attachProofHandler);
 
-  // ── Amend items (client-confirmed floor overlay — dispatch/root only) ───────
+  // ── Amend items (client-confirmed floor overlay — floor/crm/dispatch/root only) ───────
   // Qty changes, line removals and added lines. The reason is the
   // client-confirmation note and every line is audit-logged. Nothing is
   // written back to Zoho Books (read-only).
@@ -468,7 +471,7 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
     }
   });
 
-  // ── Confirm a source deletion (destructive — dispatch/root only) ─────────────
+  // ── Confirm a source deletion (destructive — floor/crm/dispatch/root only) ─────────────
   app.post('/api/crm/orders/:id/confirm-source-deletion', async (c) => {
     const v = await requireDispatchWrite(c);
     if (v instanceof Response) return v;
@@ -481,7 +484,7 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
     }
   });
 
-  // ── Correct the client addresses (floor edit — dispatch/root only) ───────────
+  // ── Correct the client addresses (floor edit — floor/crm/dispatch/root only) ───────────
   // The edit sets the edited marker, so the Zoho sync leaves that address
   // alone afterwards. Nothing is written back to Zoho Books (read-only).
   app.put('/api/crm/orders/:id/addresses', async (c) => {
