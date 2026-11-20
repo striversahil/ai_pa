@@ -203,7 +203,7 @@ export default function ProcurementQueue() {
   const tabs: Array<{ id: ProcTab; label: string; count: number }> = [
     { id: "active", label: "Active", count: pending.length },
     { id: "history", label: "History", count: historyEnquiries.length },
-    { id: "conversations", label: inbox.waitingOnYou ? `Conversations · ${inbox.waitingOnYou} need you` : "Conversations", count: inbox.open.length },
+    { id: "conversations", label: "Conversations", count: inbox.open.length },
   ];
 
   const handleOpenLightbox = useCallback((url: string, list?: string[], idx?: number) => {

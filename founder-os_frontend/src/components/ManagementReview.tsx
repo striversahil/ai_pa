@@ -382,7 +382,7 @@ export default function ManagementReview() {
       : procurementBucket.length > 0 ? "fromProcurement" : "history");
   const tabs: Array<{ id: MgmtTab; label: string; count: number }> = [
     { id: "active", label: "Active", count: pending.length },
-    { id: "conversations", label: inbox.waitingOnYou ? `Conversations · ${inbox.waitingOnYou} need you` : "Conversations", count: inbox.open.length },
+    { id: "conversations", label: "Conversations", count: inbox.open.length },
     // Legacy loop queries (retired 2026-11-20) — tab stays only until drained.
     ...(queryBucket.length + queryResolvedBucket.length > 0 ? [{ id: "query" as MgmtTab, label: "Estimates Query (old)", count: queryBucket.length }] : []),
     { id: "fromSales", label: "Pending from Sales", count: salesBucket.length },
