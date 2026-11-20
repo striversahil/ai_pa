@@ -29,8 +29,8 @@ function Banner({ tone, title, children, onDismiss }: { tone: "warning" | "dange
   );
 }
 
-// One enquiry, sales side: header (state + actions) · line items (main) ·
-// client / pipeline panel (side). Handlers and write paths unchanged —
+// One enquiry, sales side: header (state + actions) · client / pipeline
+// panel (left) · line items (right). Handlers and write paths unchanged —
 // pieces live in enquiry-detail/ (DetailHeader, AddItemsModal).
 export default function EnquiryDetail({
   selectedEnquiry, agents, currentAgent,
@@ -99,8 +99,9 @@ export default function EnquiryDetail({
         </Banner>
       )}
 
-      <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="min-w-0 space-y-4 lg:order-1 order-2">
+      {/* Client panel LEFT (as before the redesign), items right. */}
+      <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[380px_minmax(0,1fr)]">
+        <div className="order-2 min-w-0 space-y-4">
           <SpecificationsSection
             selectedEnquiry={selectedEnquiry}
             onOpenLightbox={onOpenLightbox}
@@ -123,7 +124,7 @@ export default function EnquiryDetail({
           )}
         </div>
 
-        <aside className="order-1 min-w-0 lg:order-2 lg:sticky lg:top-20">
+        <aside className="order-1 min-w-0 lg:sticky lg:top-20">
           <ClientProfile
             selectedEnquiry={selectedEnquiry}
             agents={agents}
