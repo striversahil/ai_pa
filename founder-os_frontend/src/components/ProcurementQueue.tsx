@@ -7,6 +7,9 @@ import { useAuth } from "@/auth/AuthContext";
 import ProcurementItemCard from "@/components/ProcurementItemCard";
 import ProcurementThread from "@/components/ProcurementThread";
 import Modal from "@/components/Modal";
+import ItemThreads from "@/components/enquiry-threads/ItemThreads";
+import ThreadInbox from "@/components/enquiry-threads/ThreadInbox";
+import { useDeskInbox } from "@/enquiry-threads/useThreads";
 import Lightbox from "@/components/Lightbox";
 import { Table, thClass, tdClass } from "@/components/ui/Table";
 import { ClosedDropdown } from "@/components/QueueGroups";
@@ -41,8 +44,10 @@ export default function ProcurementQueue() {
   const [saveError, setSaveError] = useState<string | null>(null);
   // Queue tabs: Active (needs rates) / History (quoted, read-only).
   // Manual pick wins; otherwise land on the first non-empty queue.
-  type ProcTab = "active" | "history";
+  type ProcTab = "active" | "history" | "conversations";
   const [tabPick, setTabPick] = useState<ProcTab | null>(null);
+  // Private Management <-> Procurement conversations (never served to sales).
+  const inbox = useDeskInbox("procurement");
 
   // Server-partitioned queues off one KV-cached scan: Active arrives COMPLETE
   // Active pending arrives COMPLETE from the cached queue endpoint
@@ -198,6 +203,7 @@ export default function ProcurementQueue() {
   const tabs: Array<{ id: ProcTab; label: string; count: number }> = [
     { id: "active", label: "Active", count: pending.length },
     { id: "history", label: "History", count: historyEnquiries.length },
+    { id: "conversations", label: inbox.waitingOnYou ? `Conversations · ${inbox.waitingOnYou} need you` : "Conversations", count: inbox.open.length },
   ];
 
   const handleOpenLightbox = useCallback((url: string, list?: string[], idx?: number) => {
@@ -353,7 +359,8 @@ export default function ProcurementQueue() {
     );
   });
 
-  const isEmpty = pending.length === 0 && reqGroups.length === 0 && historyEnquiries.length === 0 && emptyEnquiries.length === 0;
+  const isEmpty = pending.length === 0 && reqGroups.length === 0 && historyEnquiries.length === 0 && emptyEnquiries.length === 0
+    && inbox.open.length === 0 && inbox.resolved.length === 0;
 
   const enquiryTable = (list: Enquiry[], mode: "active" | "history") => (
     <Table stickyFirst>
@@ -476,6 +483,7 @@ export default function ProcurementQueue() {
             </div>
           )}
 
+          {tab === "conversations" && <ThreadInbox desk="procurement" inbox={inbox} onOpenEnquiry={(id) => setSelectedId(id)} />}
           {tab === "history" && (
             historyEnquiries.length > 0 ? (
               <section className="space-y-2">
@@ -706,6 +714,7 @@ export default function ProcurementQueue() {
                 </>
               );
             })()}
+            <ItemThreads desk="procurement" enquiryId={selEnquiry.id} items={selEnquiry.items ?? []} />
             <ProcurementThread
               enquiryId={selEnquiry.id}
               comments={comments}

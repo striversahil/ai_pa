@@ -3,8 +3,7 @@ import { Agent, Enquiry } from "../types";
 import CalendarRibbon from "./CalendarRibbon";
 import FilterControls from "./FilterControls";
 import EnquiryRowItem from "./EnquiryRowItem";
-import { Button, Card, EmptyState, TabBar } from "./ui";
-import { hasOpenLoop, needsActionThread } from "@/enquiry/queue";
+import { Button, Card, EmptyState } from "./ui";
 
 interface EnquiryListProps {
   enquiries: Enquiry[];
@@ -47,8 +46,9 @@ export default function EnquiryList({
     return new Date().toISOString().split("T")[0];
   });
   const [queueOnly, setQueueOnly] = useState(true);
-  // Thread tabs: all | open threads | needs action (spec-fix + awaiting reply/approval)
-  const [threadTab, setThreadTab] = useState<"all" | "open" | "action">("all");
+  // Conversations (Open / Resolved) live in their own board view now
+  // (EnquiryTracker → Conversations); the old loop-based All / Open threads /
+  // Needs action filter is retired (founder ask 2026-11-20).
   // Pagination: 50/100/200 per page for all filters to avoid tremendous growth
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(50);
@@ -113,17 +113,9 @@ export default function EnquiryList({
       });
   }, [enquiries, selectedDate]);
 
-  // Open threads count — bilateral until resolved
-  const openThreadCount = useMemo(() => enquiries.filter(hasOpenLoop as any).length, [enquiries]);
-  // Needs action count — actionable subset (spec-fix + awaiting reply/approval)
-  const needsActionCount = useMemo(() => enquiries.filter(needsActionThread as any).length, [enquiries]);
-
   // Filtered queries pipeline — search hits EST No. (with or without EST- prefix, partial digits), daily No, source, lead fields, title/description, items
   const filteredEnquiries = useMemo(() => {
-    const afterThread = threadTab === "open" ? enquiries.filter(hasOpenLoop as any)
-      : threadTab === "action" ? enquiries.filter(needsActionThread as any)
-      : enquiries;
-    const inQueue = queueToggle && queueOnly ? afterThread.filter(queueToggle.isPending) : afterThread;
+    const inQueue = queueToggle && queueOnly ? enquiries.filter(queueToggle.isPending) : enquiries;
     const agentNameById = new Map(agents.map(a => [a.id, (a.name || "").toLowerCase()]));
     const todayStr = new Date().toISOString().split("T")[0];
     const isTodaySelected = selectedDate === todayStr;
@@ -194,19 +186,19 @@ export default function EnquiryList({
 
       return matchSearch && matchAgent && matchSource && matchRates && matchDate;
     });
-  }, [enquiries, agents, searchQuery, agentFilter, sourceFilter, ratesFilter, selectedDate, queueToggle, queueOnly, threadTab, currentAgentId, isAdmin, redacted]);
+  }, [enquiries, agents, searchQuery, agentFilter, sourceFilter, ratesFilter, selectedDate, queueToggle, queueOnly, currentAgentId, isAdmin, redacted]);
 
   const pendingCount = queueToggle ? enquiries.filter(queueToggle.isPending).length : enquiries.length;
 
   // Reset page on any filter/search/pageSize change
-  useEffect(() => { setPage(1); }, [ratesFilter, searchQuery, agentFilter, sourceFilter, selectedDate, queueOnly, threadTab, pageSize]);
+  useEffect(() => { setPage(1); }, [ratesFilter, searchQuery, agentFilter, sourceFilter, selectedDate, queueOnly, pageSize]);
 
   const totalPages = Math.max(1, Math.ceil(filteredEnquiries.length / pageSize));
   const pageClamped = Math.min(page, totalPages);
   const visibleEnquiries = filteredEnquiries.slice((pageClamped - 1) * pageSize, pageClamped * pageSize);
 
   const shown = filteredEnquiries.length;
-  const viewNote = `${sentView ? " · sent" : ""}${threadTab === "open" ? " · open threads" : threadTab === "action" ? " · needs action" : ""}`;
+  const viewNote = sentView ? " · sent" : "";
 
   return (
     <div className="space-y-4 animate-fade-in">
@@ -253,23 +245,9 @@ export default function EnquiryList({
         </div>
       </Card>
 
-      {/* Results bar: thread view (only when threads exist) · count · page size */}
+      {/* Results bar: count · page size */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 flex-wrap items-center gap-3">
-          {openThreadCount > 0 && (
-            <TabBar
-              variant="segmented"
-              size="sm"
-              ariaLabel="Thread view"
-              items={[
-                { key: "all", label: "All" },
-                { key: "open", label: "Open threads", count: openThreadCount },
-                { key: "action", label: "Needs action", count: needsActionCount, tone: "danger" },
-              ]}
-              active={threadTab}
-              onChange={setThreadTab}
-            />
-          )}
           <span className="text-caption font-medium text-[var(--text-secondary)]">
             <span className="font-bold text-[var(--text-primary)]">{shown}</span> {shown === 1 ? "enquiry" : "enquiries"}{viewNote}
           </span>

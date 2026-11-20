@@ -5,6 +5,9 @@ import { useLiveDashboard, useLiveEvent } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
 import ManagementRatesPanel from "@/components/ManagementRatesPanel";
 import Modal from "@/components/Modal";
+import ItemThreads from "@/components/enquiry-threads/ItemThreads";
+import ThreadInbox from "@/components/enquiry-threads/ThreadInbox";
+import { useDeskInbox } from "@/enquiry-threads/useThreads";
 import { Table, thClass, tdClass } from "@/components/ui/Table";
 import type { Enquiry } from "@/types";
 import { enquiryLabel, historyDateChip } from "@/types";
@@ -37,8 +40,10 @@ export default function ManagementReview() {
   // History (fully decided). Active rows are excluded from the Pending tabs
   // (the Active tab owns them). Manual pick wins; otherwise land on the first
   // non-empty queue.
-  type MgmtTab = "active" | "query" | "fromSales" | "fromProcurement" | "history";
+  type MgmtTab = "active" | "conversations" | "query" | "fromSales" | "fromProcurement" | "history";
   const [tabPick, setTabPick] = useState<MgmtTab | null>(null);
+  // Conversations with Sales and (privately) Procurement — Open = needs you first.
+  const inbox = useDeskInbox("management");
   // Query sub-filter: Needs action (open asks) | Resolved (recent answers).
   const [queryFilter, setQueryFilter] = useState<"action" | "resolved">("action");
 
@@ -377,7 +382,9 @@ export default function ManagementReview() {
       : procurementBucket.length > 0 ? "fromProcurement" : "history");
   const tabs: Array<{ id: MgmtTab; label: string; count: number }> = [
     { id: "active", label: "Active", count: pending.length },
-    { id: "query", label: "Estimates Query", count: queryBucket.length },
+    { id: "conversations", label: inbox.waitingOnYou ? `Conversations · ${inbox.waitingOnYou} need you` : "Conversations", count: inbox.open.length },
+    // Legacy loop queries (retired 2026-11-20) — tab stays only until drained.
+    ...(queryBucket.length + queryResolvedBucket.length > 0 ? [{ id: "query" as MgmtTab, label: "Estimates Query (old)", count: queryBucket.length }] : []),
     { id: "fromSales", label: "Pending from Sales", count: salesBucket.length },
     { id: "fromProcurement", label: "Pending from Procurement", count: procurementBucket.length },
     { id: "history", label: "History", count: historyTotal },
@@ -707,7 +714,7 @@ export default function ManagementReview() {
         </span>
       </div>
 
-      {pending.length === 0 && historyTotal === 0 && salesBucket.length === 0 && procurementBucket.length === 0 ? (
+      {pending.length === 0 && historyTotal === 0 && salesBucket.length === 0 && procurementBucket.length === 0 && inbox.open.length === 0 && inbox.resolved.length === 0 ? (
         <div className="rounded-2xl border border-[var(--border-card)] bg-[var(--bg-card)] p-10 text-center">
           <p className="text-lg font-bold text-[var(--text-primary)]">Nothing awaiting review 🎉</p>
           <p className="mt-1 text-sm text-[var(--text-secondary)]">Rated items will appear here for markup + finalize automatically.</p>
@@ -756,6 +763,8 @@ export default function ManagementReview() {
               </div>
             )
           )}
+
+          {tab === "conversations" && <ThreadInbox desk="management" inbox={inbox} onOpenEnquiry={(id) => setSelectedId(id)} />}
 
           {tab === "fromSales" && (
             visibleSales.length > 0 ? (
@@ -1005,6 +1014,7 @@ export default function ManagementReview() {
             enquiry={sel}
             onSave={(items, finalize) => handleSaveRates(sel.id, items, finalize)}
           />
+          <div className="mt-4"><ItemThreads desk="management" enquiryId={sel.id} items={sel.items ?? []} /></div>
         </Modal>
       )}
     </div>

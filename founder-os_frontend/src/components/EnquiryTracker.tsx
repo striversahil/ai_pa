@@ -4,7 +4,9 @@ import React, { useState, useCallback, useRef, useEffect } from "react";
 import { useEnquiryData } from "@/hooks/useEnquiryData";
 import { useLiveEvent } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
-import { Button, Skeleton, SkeletonCard } from "@/components/ui";
+import { Button, Skeleton, SkeletonCard, TabBar } from "@/components/ui";
+import ThreadInbox from "@/components/enquiry-threads/ThreadInbox";
+import { useDeskInbox } from "@/enquiry-threads/useThreads";
 import EnquiryList from "@/components/EnquiryList";
 import EnquiryDetail from "@/components/EnquiryDetail";
 import EnquiryModal from "@/components/EnquiryModal";
@@ -72,6 +74,9 @@ export default function EnquiryTracker() {
   }, [isAdmin]);
 
   const selectedEnquiry = enquiries.find((e) => e.id === selectedId) || null;
+  // Board view: the enquiry list, or this desk's conversations (Open | Resolved).
+  const [board, setBoard] = useState<"enquiries" | "conversations">("enquiries");
+  const inbox = useDeskInbox("sales");
   // Customer Master is its own tab in the Sales bar (same masterCapabilities
   // gate in sales/tabs.ts) — no second in-board toggle here.
 
@@ -279,7 +284,22 @@ export default function EnquiryTracker() {
 
   return (
     <div className="space-y-3">
-      {selectedEnquiry ? (
+      {!selectedEnquiry && (
+        <TabBar
+          variant="segmented"
+          ariaLabel="Enquiry board view"
+          items={[
+            { key: "enquiries", label: "Enquiries" },
+            { key: "conversations", label: "Conversations", count: inbox.open.length, tone: inbox.waitingOnYou > 0 ? "danger" : undefined },
+          ]}
+          active={board}
+          onChange={setBoard}
+          className="w-fit"
+        />
+      )}
+      {!selectedEnquiry && board === "conversations" ? (
+        <ThreadInbox desk="sales" inbox={inbox} onOpenEnquiry={(id) => setSelectedId(id)} />
+      ) : selectedEnquiry ? (
         <EnquiryDetail selectedEnquiry={selectedEnquiry} agents={agents} currentAgent={currentAgent} comments={comments}
           ratesMode="none"
           onUpdateStatus={(id, s) => void handleUpdateStatus(id, s)}
@@ -309,7 +329,7 @@ export default function EnquiryTracker() {
       )}
       {/* Cursor paging: newest 500 load first (flat DB cost); older rows append
           here without disturbing the loaded pipeline. */}
-      {!selectedEnquiry && hasMore && (
+      {!selectedEnquiry && board === "enquiries" && hasMore && (
         <div className="flex justify-center pt-1">
           <Button size="sm" onClick={loadMore}>Load older enquiries · {loadedCount} loaded</Button>
         </div>

@@ -518,8 +518,7 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                             onAnswer={(id, text, media) => saveItems((prev) => prev.map((x, j) => (j === idx ? { ...x, loopAnswer: { id, text, media } } : x)))}
                             onWithdraw={(id) => saveItems((prev) => prev.map((x, j) => (j === idx ? { ...x, loopWithdraw: { id } } : x)))}
                             onOpenLightbox={onOpenLightbox}
-                            askKinds={editable && it.finalRate !== undefined && it.finalRate !== null ? ["query"] : []}
-                            askLabels={{ query: "Request info / alternate" }}
+                            askKinds={[] /* retired 2026-11-20: sales asks go through Conversations (enquiry-threads) */}
                           />
                         </div>
                       )}

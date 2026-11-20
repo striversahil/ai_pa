@@ -59,15 +59,17 @@ describe('note composer stays retired', () => {
     assert.ok(!src.includes('Spec flagged by Procurement'), 'old flagged-by-Procurement label must not come back');
   });
 
-  it('sales query ask waits for the management rate (no pre-rate alternate)', () => {
-    // "Request info / alternate" is a post-rate ask: sales sees Rate
-    // Received only after management sets finalRate, so the composer must
-    // stay hidden until then. Existing query cards still render as history.
+  it('sales item asks moved to Conversations (no loop query composer)', () => {
+    // Founder decision 2026-11-20 retires the 2026-11-19 post-rate gate:
+    // sales may ask anytime, but through enquiry-threads (Conversations),
+    // where Management <-> Procurement talk is never served to sales. The
+    // old "Request info / alternate" loop composer must not come back;
+    // existing query cards still render as history.
     const src = readFe('components/SpecificationsSection.tsx');
     const m = src.match(/askKinds=\{([^}]*)\}/);
     assert.ok(m, 'sales LoopCards askKinds missing');
-    assert.ok(m[1].includes('finalRate'), 'sales query composer must gate on finalRate');
-    assert.ok(!/\beditable\s*\?\s*\[\s*"query"\s*\]/.test(src), 'ungated editable ? ["query"] must not come back');
+    assert.ok(!/"query"|'query'/.test(m[1]), 'sales loop query composer must stay retired (use Conversations)');
+    assert.ok(readFe('components/EnquiryDetail.tsx').includes('<ItemThreads desk="sales"'), 'sales detail must mount Conversations');
   });
 
   it('management can flag incorrect spec like procurement', () => {

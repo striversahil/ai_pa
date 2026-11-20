@@ -9,6 +9,7 @@ import { isOpenSpecFlag } from "@/enquiry/queue";
 import { enquiryRateState } from "@/enquiry/rate-state";
 import DetailHeader from "./enquiry-detail/DetailHeader";
 import AddItemsModal from "./enquiry-detail/AddItemsModal";
+import ItemThreads from "./enquiry-threads/ItemThreads";
 import type { EnquiryDetailProps } from "./enquiry-detail/types";
 
 const COPILOT_KEY = "enquiry-copilot-open";
@@ -111,6 +112,8 @@ export default function EnquiryDetail({
             intake={intake}
             onAcceptSuggestion={onAcceptSuggestion ? (idx) => void onAcceptSuggestion(selectedEnquiry.id, idx) : undefined}
           />
+
+          {!redacted && <ItemThreads desk="sales" enquiryId={selectedEnquiry.id} items={selectedEnquiry.items ?? []} />}
 
           {saveError && (
             <Banner tone="danger" title="Save failed — the server did NOT keep your last change" onDismiss={onDismissSaveError}>

@@ -345,6 +345,32 @@ Department points are scored from the status moves during sync — **dispatch +5
 +25 partial once per SO**, with the Zoho ship credit suppressed when the floor already
 scored it so one shipment never scores twice.
 
+### 3.2b Enquiry threads — three-desk Conversations (2026-11-20, migration 0148)
+
+Per-item conversations between Sales, Procurement and Management, stored in D1 `EnquiryThread`
+(one row per thread, `messages` JSON). Deliberately NOT in the enquiry `items` blob: items are
+served by many paths (lists, queues, redacted procurement view, live summaries, Copilot AI
+tools), and keeping threads out of them means none of those paths can leak a private thread.
+
+- **Channels**: `sales` (sales ↔ management) and `internal` (management ↔ procurement). Sales and
+  procurement never talk directly (`channelBetween` → null).
+- **Visibility (founder rule)**: anything between procurement and management is never visible to
+  sales. Every request names the acting `desk`; `service.ts` checks `deskAllowed(me, desk)`
+  (management = `canManageRates`, procurement = `procurement` scope, sales = sales scopes;
+  management access covers any desk) and serves only `channelsFor(desk)` — list, inbox and by-id
+  (invisible ids 404). Live events carry ids only.
+- **Flow**: either party replies (turn passes to the other side, a reply reopens), either party
+  resolves/reopens. Management "Ask Procurement privately" on a sales thread opens a separate
+  `internal` thread with `parentThreadId` (served to management only); the sales thread is untouched.
+- **API** (`worker/routes/enquiry-threads.ts`): `GET /api/enquiry-threads?desk&enquiryId`,
+  `GET …/inbox?desk&status`, `GET …/counts?desk`, `POST /api/enquiry-threads`,
+  `POST …/:id/{reply,resolve,reopen,forward}`.
+- **UI**: `components/enquiry-threads/` — `ItemThreads` (per-item section in Sales detail,
+  Procurement modal, Management Review modal) and `ThreadInbox` (Open | Resolved per desk: Sales
+  board "Conversations" view, Procurement + Management "Conversations" tab).
+- Replaces the sales loop `query` ask ("Request info / alternate") and its 2026-11-19 post-rate
+  gate. Guard: `scripts/guards/enquiry-threads.test.mjs`.
+
 ### 3.3 Trigger dispatch
 `POST /api/trigger/:slug` runs the matching automation (auth required). On the Worker,
 cron-driven automations are reached via GitHub Actions → `curl /api/trigger/:slug`.
