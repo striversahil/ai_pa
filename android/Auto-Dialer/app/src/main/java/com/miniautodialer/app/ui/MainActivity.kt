@@ -10,8 +10,12 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -86,14 +90,32 @@ fun rememberCaller(): Caller {
 
 private data class TopItem(val route: String, val label: String, val icon: ImageVector)
 
+/** Bottom bar: Home first, the Dialer as the big centre button. Lists/Customers are reachable from Home only. */
+private const val DIALER = "dialer"
 private val TOP = listOf(
-    TopItem("dialer", "Dialer", Icons.Filled.PhoneInTalk),
     TopItem("dashboard", "Home", Icons.Filled.Dashboard),
-    TopItem("campaigns", "Lists", Icons.Filled.Checklist),
-    TopItem("customers", "Customers", Icons.Filled.People),
     TopItem("followups", "Callbacks", Icons.Filled.Event),
+    TopItem(DIALER, "Dialer", Icons.Filled.Call),
     TopItem("recordings", "Records", Icons.Filled.Mic),
+    TopItem("settings", "Settings", Icons.Filled.Settings),
 )
+
+/** The raised round Dialer button in the middle of the bar. */
+@Composable
+private fun RowScope.DialerTab(selected: Boolean, onClick: () -> Unit) {
+    Column(Modifier.weight(1f).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        Surface(
+            onClick = onClick,
+            shape = CircleShape,
+            color = if (selected) CallGreen else Brand,
+            shadowElevation = 6.dp,
+            modifier = Modifier.size(58.dp),
+        ) {
+            Box(contentAlignment = Alignment.Center) { Icon(Icons.Filled.Call, "Dialer", tint = Color.White, modifier = Modifier.size(30.dp)) }
+        }
+        Text("Dialer", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (selected) CallGreen else Brand)
+    }
+}
 
 private var lastAutoScan = 0L
 
@@ -188,6 +210,7 @@ fun AppRoot(intents: MutableStateFlow<Intent?>) {
                 if (TOP.any { it.route == route }) {
                     NavigationBar {
                         TOP.forEach { item ->
+                            if (item.route == DIALER) { DialerTab(route == DIALER) { nav.goTop(DIALER) }; return@forEach }
                             NavigationBarItem(
                                 selected = route == item.route,
                                 onClick = { nav.goTop(item.route) },

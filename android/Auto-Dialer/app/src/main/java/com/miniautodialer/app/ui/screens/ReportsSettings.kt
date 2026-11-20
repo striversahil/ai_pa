@@ -170,7 +170,8 @@ fun SettingsScreen(nav: NavHostController) {
     val restoreLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) confirmRestore = uri }
     val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permTick++ }
 
-    AppScaffold(title = "Settings", onBack = { nav.popBackStack() }) { p ->
+    // A bottom-bar tab now: no back arrow (system Back still works when opened from a gear icon).
+    AppScaffold(title = "Settings", topLevel = true) { p ->
         Column(Modifier.padding(p).fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
             busy?.let { Text(it); LinearProgressIndicator(Modifier.fillMaxWidth()) }
 

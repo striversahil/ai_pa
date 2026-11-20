@@ -38,9 +38,7 @@ import kotlinx.coroutines.launch
 fun DialerScreen(nav: NavHostController) {
     val session = MiniDialerApp.session
     val paired by session.paired.collectAsState()
-    AppScaffold(title = "Auto Dialer", subtitle = if (paired) session.agentName else null, topLevel = true, actions = {
-        IconButton(onClick = { nav.navigate("settings") }) { Icon(Icons.Filled.Settings, "Settings") }
-    }) { p ->
+    AppScaffold(title = "Auto Dialer", subtitle = if (paired) session.agentName else null, topLevel = true) { p ->
         Column(Modifier.padding(p).fillMaxSize().verticalScroll(rememberScrollState())) {
             if (paired) DialerPanel() else PairingCard()
         }
