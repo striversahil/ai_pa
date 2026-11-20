@@ -209,6 +209,15 @@ export async function computeDashboard(
   const ph: Record<string, number> = {};
   let pt = Date.now();
   const mark = (k: string): void => { const n = Date.now(); ph[k] = (ph[k] ?? 0) + (n - pt); pt = n; };
+  /** Phase-1: self-contained timing for parallel sections (no shared cursor). */
+  const timed = async <T>(k: string, fn: () => Promise<T>): Promise<T> => {
+    const s = Date.now();
+    try {
+      return await fn();
+    } finally {
+      ph[k] = Date.now() - s;
+    }
+  };
   await ensureInstances(dateStr);
   mark('ensure');
   const [roster, allTemplates, logs] = await Promise.all([
@@ -245,8 +254,7 @@ export async function computeDashboard(
   // copy, and vice versa — that was the shared-Done bug).
   const inSlot = (t: any, slot: string) => !laneEnforced || !(t as any).isShared || slot === laneRole;
   const dueTemplates = active.filter((t) => inLane(t) && isDueOn(t, dateStr));
-  const carried = await getCarriedOverdue(dueTemplates.map((t) => String(t.id)), dateStr);
-  mark('carried');
+  const carried = await timed('carried', () => getCarriedOverdue(dueTemplates.map((t) => String(t.id)), dateStr));
   // Range grace: while a window is still open, earlier unresolved days inside
   // the same window are grace (plain pending, no red) — strip them from the
   // carryover so neither today's card nor the Incomplete tray counts them.
@@ -367,6 +375,10 @@ export async function computeDashboard(
   // its next due date — this list stays visible until each row is done, and
   // honours the same lane scoping as items. Per-day model: rows are never
   // rewritten to `overdue`; legacy `overdue` rows are included as not-done.
+  // Phase-1: tray + history + team + dues + payHistory + cash are mutually
+  // independent (all read from the snapshots above) — one Promise.all instead
+  // of six sequential awaits.
+  const trayP = timed('tray', async () => {
   const overdueLogs = await (prisma as any).accountsTaskLog.findMany({
     where: {
       dueDate: { gte: addDays(dateStr, -120), lt: dateStr },
@@ -466,9 +478,11 @@ export async function computeDashboard(
     row.daysOverdue = s;
     row.daysIncomplete = s;
   }
-  mark('tray');
+  return overdueList;
+  });
   // Historical done — last 30 days BEFORE today, lane-scoped, capped.
   // Gives the Done tab's missing context and powers the new History view.
+  const historyP = timed('history', async () => {
   const historyLogsRaw = await (prisma as any).accountsTaskLog.findMany({
     where: {
       dueDate: { gte: addDays(dateStr, -30), lt: dateStr },
@@ -531,20 +545,22 @@ export async function computeDashboard(
         incomplete: false,
       };
     });
-  mark('history');
-  const team = await computeTeam(dateStr, carriedEffective, { roster, todayLogs: logs });
-  mark('team');
-  // Payment dues ride the same payload (no lane scoping). Fetch once.
-  const paymentDues = await getPaymentDues(dateStr);
-  mark('dues');
-  const paymentHistory = await getPaymentHistory(dateStr);
-  mark('payHistory');
-  // Dispatch cash ledger rides along too (small table, no lane scoping).
-  const { listCashEntries } = await import('../cash');
-  const cashReport = await listCashEntries(1000).catch(() => ({
-    entries: [], summary: { opening: 0, totalIn: 0, totalOut: 0, closing: 0, count: 0 },
-  }));
-  mark('cash');
+  return history;
+  });
+  const [overdueList, history, team, paymentDues, paymentHistory, cashReport] = await Promise.all([
+    trayP,
+    historyP,
+    timed('team', () => computeTeam(dateStr, carriedEffective, { roster, todayLogs: logs })),
+    timed('dues', () => getPaymentDues(dateStr)),
+    timed('payHistory', () => getPaymentHistory(dateStr)),
+    timed('cash', async () => {
+      // Dispatch cash ledger rides along too (small table, no lane scoping).
+      const { listCashEntries } = await import('../cash');
+      return listCashEntries(1000).catch(() => ({
+        entries: [], summary: { opening: 0, totalIn: 0, totalOut: 0, closing: 0, count: 0 },
+      }));
+    }),
+  ]);
   return {
     meta: {
       date: dateStr,
