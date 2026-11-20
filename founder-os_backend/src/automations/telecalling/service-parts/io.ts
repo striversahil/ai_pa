@@ -267,6 +267,9 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
  * `getTelecallingDashboardData` wraps this in the KV cache.
  */
 export async function computeTelecallingDashboardData(ctx?: AutomationContext): Promise<any> {
+  // Phase-0 perf probe: wall-clock cost of one full compute, read live from
+  // `meta.computeMs` (cold = off-date cache key, warm = repeat fetch).
+  const t0 = Date.now();
   const q = (ctx?.subject ?? {}) as Record<string, unknown>;
   const requestedDay = (typeof q.date === 'string' && DATE_RE.test(q.date) ? q.date : istDate());
   const periodRangeInfo = periodRange(typeof q.period === 'string' ? q.period : 'today', istDate());
@@ -1230,6 +1233,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
           day,
           agents: agentList,
           generatedAt: new Date().toISOString(),
+          computeMs: Date.now() - t0,
           error: 'agent not found',
         },
       };
@@ -1380,6 +1384,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
         regionName: def?.name ?? 'Unmapped',
         agents: agentList,
         generatedAt: new Date().toISOString(),
+        computeMs: Date.now() - t0,
       },
       agent: {
         id: drillStaff ? String(drillStaff.id) : regionId,
@@ -1458,6 +1463,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       periodFrom: periodRangeInfo?.from ?? null,
       periodTo: periodRangeInfo?.to ?? null,
       generatedAt: new Date().toISOString(),
+      computeMs: Date.now() - t0,
       // Sales taxonomy: the region table first-class in the payload.
       taxonomy: REGIONS.map((r) => ({ id: r.id, name: r.name, tl: r.tl, states: r.states })),
       tlLevels: TL_LEVELS,

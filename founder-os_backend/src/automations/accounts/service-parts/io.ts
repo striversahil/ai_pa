@@ -203,6 +203,9 @@ export async function computeDashboard(
   dateStr: string,
   scope: { scope: LaneScope | null; isAdmin: boolean } | null = null,
 ) {
+  // Phase-0 perf probe: wall-clock cost of one full compute, read live from
+  // `meta.computeMs` (cold = off-date cache key, warm = repeat fetch).
+  const t0 = Date.now();
   await ensureInstances(dateStr);
   const [roster, allTemplates, logs] = await Promise.all([
     prisma.accountant.findMany({ where: { deleted: false }, orderBy: { order: 'asc' } }),
@@ -544,6 +547,7 @@ export async function computeDashboard(
       overdue: overdueCount,
       incomplete: overdueCount,
       generatedAt: new Date().toISOString(),
+      computeMs: Date.now() - t0,
       isAdmin: scope?.isAdmin ?? true,
       self: scope && !scope.isAdmin && scope.scope
         ? { id: scope.scope.selfId, name: scope.scope.selfName, role: scope.scope.selfRole }
