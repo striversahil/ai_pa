@@ -365,9 +365,11 @@ tools), and keeping threads out of them means none of those paths can leak a pri
 - **API** (`worker/routes/enquiry-threads.ts`): `GET /api/enquiry-threads?desk&enquiryId`,
   `GET …/inbox?desk&status`, `GET …/counts?desk`, `POST /api/enquiry-threads`,
   `POST …/:id/{reply,resolve,reopen,forward}`.
-- **UI**: `components/enquiry-threads/` — `ItemThreads` (per-item section in Sales detail,
-  Procurement modal, Management Review modal) and `ThreadInbox` (Open | Resolved per desk: Sales
-  board "Conversations" view, Procurement + Management "Conversations" tab).
+- **UI**: `components/enquiry-threads/` — `ItemQueries` ("Ask a query" button + that item's
+  threads, inside every item card: Sales `SpecificationsSection`, `ProcurementItemCard`,
+  `ManagementRatesPanel`), fed by one `EnquiryThreadsProvider` per open enquiry (one fetch, not
+  one per item), and `ThreadInbox` (Open | Resolved per desk: Sales board "Queries" view,
+  Procurement + Management "Queries" tab).
 - Replaces the sales loop `query` ask ("Request info / alternate") and its 2026-11-19 post-rate
   gate. Guard: `scripts/guards/enquiry-threads.test.mjs`.
 

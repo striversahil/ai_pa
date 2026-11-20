@@ -27,7 +27,7 @@ export default function ThreadInbox({ desk, inbox, onOpenEnquiry }: {
         <TabBar
           variant="segmented"
           size="sm"
-          ariaLabel="Conversation status"
+          ariaLabel="Query status"
           items={[
             { key: "open", label: "Open", count: inbox.open.length, tone: inbox.waitingOnYou > 0 ? "danger" : undefined },
             { key: "resolved", label: "Resolved", count: inbox.resolved.length },
@@ -36,18 +36,18 @@ export default function ThreadInbox({ desk, inbox, onOpenEnquiry }: {
           onChange={setTab}
         />
         <p className="text-caption text-[var(--text-secondary)]">
-          {tab === "open" ? OPEN_HINT[desk] : "Resolved conversations (most recent first). Reply to reopen one."}
+          {tab === "open" ? OPEN_HINT[desk] : "Resolved queries (most recent first). Reply to reopen one."}
           {tab === "open" && inbox.waitingOnYou > 0 && <b className="ml-1 text-[var(--text-primary)]">{inbox.waitingOnYou} waiting on you.</b>}
         </p>
       </div>
 
-      {inbox.error ? <p className="text-caption font-semibold text-[var(--color-danger)]">Couldn&apos;t load conversations — {String((inbox.error as any)?.message ?? inbox.error)}</p> : null}
+      {inbox.error ? <p className="text-caption font-semibold text-[var(--color-danger)]">Couldn&apos;t load queries — {String((inbox.error as any)?.message ?? inbox.error)}</p> : null}
       {inbox.loading ? (
         <div className="space-y-2"><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></div>
       ) : list.length === 0 ? (
         <EmptyState
-          title={tab === "open" ? "No open conversations" : "Nothing resolved yet"}
-          description={tab === "open" ? "Start one from an enquiry's item (Conversations section)." : "Resolved conversations will appear here."}
+          title={tab === "open" ? "No open queries" : "Nothing resolved yet"}
+          description={tab === "open" ? "Open an enquiry and use “Ask a query” on any item." : "Resolved queries will appear here."}
         />
       ) : (
         <div className="space-y-2">

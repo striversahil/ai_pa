@@ -5,7 +5,7 @@ import { useLiveDashboard, useLiveEvent } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
 import ManagementRatesPanel from "@/components/ManagementRatesPanel";
 import Modal from "@/components/Modal";
-import ItemThreads from "@/components/enquiry-threads/ItemThreads";
+import EnquiryThreadsProvider from "@/components/enquiry-threads/EnquiryThreadsProvider";
 import ThreadInbox from "@/components/enquiry-threads/ThreadInbox";
 import { useDeskInbox } from "@/enquiry-threads/useThreads";
 import { Table, thClass, tdClass } from "@/components/ui/Table";
@@ -382,7 +382,7 @@ export default function ManagementReview() {
       : procurementBucket.length > 0 ? "fromProcurement" : "history");
   const tabs: Array<{ id: MgmtTab; label: string; count: number }> = [
     { id: "active", label: "Active", count: pending.length },
-    { id: "conversations", label: "Conversations", count: inbox.open.length },
+    { id: "conversations", label: "Queries", count: inbox.open.length },
     // Legacy loop queries (retired 2026-11-20) — tab stays only until drained.
     ...(queryBucket.length + queryResolvedBucket.length > 0 ? [{ id: "query" as MgmtTab, label: "Estimates Query (old)", count: queryBucket.length }] : []),
     { id: "fromSales", label: "Pending from Sales", count: salesBucket.length },
@@ -1010,11 +1010,12 @@ export default function ManagementReview() {
               </ul>
             </div>
           )}
-          <ManagementRatesPanel
-            enquiry={sel}
-            onSave={(items, finalize) => handleSaveRates(sel.id, items, finalize)}
-          />
-          <div className="mt-4"><ItemThreads desk="management" enquiryId={sel.id} items={sel.items ?? []} /></div>
+          <EnquiryThreadsProvider desk="management" enquiryId={sel.id}>
+            <ManagementRatesPanel
+              enquiry={sel}
+              onSave={(items, finalize) => handleSaveRates(sel.id, items, finalize)}
+            />
+          </EnquiryThreadsProvider>
         </Modal>
       )}
     </div>

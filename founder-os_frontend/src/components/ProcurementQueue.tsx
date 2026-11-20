@@ -7,7 +7,7 @@ import { useAuth } from "@/auth/AuthContext";
 import ProcurementItemCard from "@/components/ProcurementItemCard";
 import ProcurementThread from "@/components/ProcurementThread";
 import Modal from "@/components/Modal";
-import ItemThreads from "@/components/enquiry-threads/ItemThreads";
+import EnquiryThreadsProvider from "@/components/enquiry-threads/EnquiryThreadsProvider";
 import ThreadInbox from "@/components/enquiry-threads/ThreadInbox";
 import { useDeskInbox } from "@/enquiry-threads/useThreads";
 import Lightbox from "@/components/Lightbox";
@@ -203,7 +203,7 @@ export default function ProcurementQueue() {
   const tabs: Array<{ id: ProcTab; label: string; count: number }> = [
     { id: "active", label: "Active", count: pending.length },
     { id: "history", label: "History", count: historyEnquiries.length },
-    { id: "conversations", label: "Conversations", count: inbox.open.length },
+    { id: "conversations", label: "Queries", count: inbox.open.length },
   ];
 
   const handleOpenLightbox = useCallback((url: string, list?: string[], idx?: number) => {
@@ -652,6 +652,7 @@ export default function ProcurementQueue() {
               </div>
             );
           })()}
+          <EnquiryThreadsProvider desk="procurement" enquiryId={selEnquiry.id}>
           <div className="space-y-2.5">
             {(() => {
               const submitted = isSubmitted(selEnquiry);
@@ -714,7 +715,6 @@ export default function ProcurementQueue() {
                 </>
               );
             })()}
-            <ItemThreads desk="procurement" enquiryId={selEnquiry.id} items={selEnquiry.items ?? []} />
             <ProcurementThread
               enquiryId={selEnquiry.id}
               comments={comments}
@@ -722,6 +722,7 @@ export default function ProcurementQueue() {
               onAddComment={(c) => void addComment(c)}
             />
           </div>
+          </EnquiryThreadsProvider>
         </Modal>
       )}
 

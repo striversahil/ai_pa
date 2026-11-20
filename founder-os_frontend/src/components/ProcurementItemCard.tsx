@@ -5,6 +5,7 @@ import ItemRateForm from "@/components/ItemRateForm";
 import KnownRatesPicker from "@/components/KnownRatesPicker";
 import type { KnownRateRow as KnownPick } from "@/enquiry/api";
 import LoopCards from "@/components/LoopCards";
+import ItemQueries from "@/components/enquiry-threads/ItemQueries";
 import type { EnquiryItem, EnquiryItemRate } from "@/types";
 import { historyDateChip } from "@/types";
 import { isOpenSpecFlag, openLoops } from "@/enquiry/queue";
@@ -160,6 +161,8 @@ export default function ProcurementItemCard({
         askKinds={["spec", "not_available"]}
         askLabels={{ spec: "Incorrect Spec", not_available: "Not Available" }}
       />
+      {/* Private queries with Management (enquiry-threads) — open even on read-only lines. */}
+      <ItemQueries itemIndex={itemIdx} itemName={item.name} />
 
       {media.length > 0 && (
         <div className="flex flex-wrap gap-1.5">

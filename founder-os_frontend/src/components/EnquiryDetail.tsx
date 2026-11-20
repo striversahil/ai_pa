@@ -9,7 +9,7 @@ import { isOpenSpecFlag } from "@/enquiry/queue";
 import { enquiryRateState } from "@/enquiry/rate-state";
 import DetailHeader from "./enquiry-detail/DetailHeader";
 import AddItemsModal from "./enquiry-detail/AddItemsModal";
-import ItemThreads from "./enquiry-threads/ItemThreads";
+import EnquiryThreadsProvider from "./enquiry-threads/EnquiryThreadsProvider";
 import type { EnquiryDetailProps } from "./enquiry-detail/types";
 
 const COPILOT_KEY = "enquiry-copilot-open";
@@ -103,6 +103,7 @@ export default function EnquiryDetail({
       {/* Client panel LEFT (as before the redesign), items right. */}
       <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[380px_minmax(0,1fr)]">
         <div className="order-2 min-w-0 space-y-4">
+          <EnquiryThreadsProvider desk="sales" enquiryId={selectedEnquiry.id}>
           <SpecificationsSection
             selectedEnquiry={selectedEnquiry}
             onOpenLightbox={onOpenLightbox}
@@ -112,8 +113,7 @@ export default function EnquiryDetail({
             intake={intake}
             onAcceptSuggestion={onAcceptSuggestion ? (idx) => void onAcceptSuggestion(selectedEnquiry.id, idx) : undefined}
           />
-
-          {!redacted && <ItemThreads desk="sales" enquiryId={selectedEnquiry.id} items={selectedEnquiry.items ?? []} />}
+          </EnquiryThreadsProvider>
 
           {saveError && (
             <Banner tone="danger" title="Save failed — the server did NOT keep your last change" onDismiss={onDismissSaveError}>

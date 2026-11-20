@@ -290,7 +290,7 @@ export default function EnquiryTracker() {
           ariaLabel="Enquiry board view"
           items={[
             { key: "enquiries", label: "Enquiries" },
-            { key: "conversations", label: "Conversations", count: inbox.open.length, tone: inbox.waitingOnYou > 0 ? "danger" : undefined },
+            { key: "conversations", label: "Queries", count: inbox.open.length, tone: inbox.waitingOnYou > 0 ? "danger" : undefined },
           ]}
           active={board}
           onChange={setBoard}

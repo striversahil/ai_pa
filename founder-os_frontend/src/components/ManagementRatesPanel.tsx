@@ -6,6 +6,7 @@ import { parseMoneyInput, parseSignedMoneyInput, historyDateChip } from "@/types
 import { RATE_STATUS_LABEL, fmtINR, ceil5, finalRound, shareKey } from "@/enquiry/pricing";
 import { isOpenSpecFlag } from "@/enquiry/queue";
 import LoopCards from "@/components/LoopCards";
+import ItemQueries from "@/components/enquiry-threads/ItemQueries";
 import KnownRatesPicker from "@/components/KnownRatesPicker";
 import type { KnownRateRow as KnownPick } from "@/enquiry/api";
 import { openLoops } from "@/enquiry/loops";
@@ -825,6 +826,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                     onReject={(id) => loopRejectNow(i, id)}
                     onOpenLightbox={openLightbox}
                   />
+                  <ItemQueries itemIndex={i} itemName={it.name} />
                   <button type="button" onClick={() => handleClearNotAvailable(i)} disabled={flagBusy}
                     className="px-2.5 py-1.5 bg-transparent border border-[var(--border-card)] text-[var(--text-secondary)] hover:bg-[var(--bg-input)] hover:text-[var(--text-primary)] font-bold text-[11px] rounded-lg cursor-pointer disabled:opacity-50">
                     ↩ Clear — available again
@@ -859,6 +861,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                     onReject={(id) => loopRejectNow(i, id)}
                     onOpenLightbox={openLightbox}
                   />
+                  <ItemQueries itemIndex={i} itemName={it.name} />
                   {notAvailableOpen === i ? (
                     <div className="space-y-1.5 rounded-lg border border-dashed border-[var(--border-card)] p-2">
                       <input
@@ -933,6 +936,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                     onReject={(id) => loopRejectNow(i, id)}
                     onOpenLightbox={openLightbox}
                   />
+                  <ItemQueries itemIndex={i} itemName={it.name} />
                   <ItemRateForm
                     submitLabel="Add internal rate"
                     onAdd={(rate) => void addInternalRate(i, rate)}
@@ -990,6 +994,7 @@ export default function ManagementRatesPanel({ enquiry, onSave }: ManagementRate
                   askKinds={["spec", "rates"]}
                   askLabels={{ spec: "Flag incorrect spec", rates: "Flag procurement" }}
                 />
+                <ItemQueries itemIndex={i} itemName={it.name} />
                 {(it as any).expectedRate !== undefined && (it as any).expectedRate !== null && (
                   <p className="text-[11px] font-extrabold text-sky-400">
                     🎯 Client expects ₹{Number((it as any).expectedRate).toLocaleString("en-IN")}

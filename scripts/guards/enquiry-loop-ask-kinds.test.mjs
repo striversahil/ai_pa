@@ -69,7 +69,8 @@ describe('note composer stays retired', () => {
     const m = src.match(/askKinds=\{([^}]*)\}/);
     assert.ok(m, 'sales LoopCards askKinds missing');
     assert.ok(!/"query"|'query'/.test(m[1]), 'sales loop query composer must stay retired (use Conversations)');
-    assert.ok(readFe('components/EnquiryDetail.tsx').includes('<ItemThreads desk="sales"'), 'sales detail must mount Conversations');
+    assert.ok(readFe('components/EnquiryDetail.tsx').includes('<EnquiryThreadsProvider desk="sales"'), 'sales detail must provide item queries');
+    assert.ok(src.includes('<ItemQueries itemIndex={idx}'), 'each sales item card must offer Ask a query');
   });
 
   it('management can flag incorrect spec like procurement', () => {

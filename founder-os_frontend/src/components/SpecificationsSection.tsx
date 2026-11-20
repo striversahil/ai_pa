@@ -7,6 +7,7 @@ import AiProcessingLoader from "./AiProcessingLoader";
 import { missingForItem, unmatchedMissing, SHOW_INTAKE_REMARKS } from "../hooks/useIntake";
 import { cleanQty, duplicateItem } from "./ItemBoxList";
 import LoopCards from "@/components/LoopCards";
+import ItemQueries from "@/components/enquiry-threads/ItemQueries";
 import { openLoops } from "@/enquiry/loops";
 import { isOpenSpecFlag } from "@/enquiry/queue";
 import { filesToUploadedMedia, dragHasFiles } from "../lib/imageFiles";
@@ -518,8 +519,9 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                             onAnswer={(id, text, media) => saveItems((prev) => prev.map((x, j) => (j === idx ? { ...x, loopAnswer: { id, text, media } } : x)))}
                             onWithdraw={(id) => saveItems((prev) => prev.map((x, j) => (j === idx ? { ...x, loopWithdraw: { id } } : x)))}
                             onOpenLightbox={onOpenLightbox}
-                            askKinds={[] /* retired 2026-11-20: sales asks go through Conversations (enquiry-threads) */}
+                            askKinds={[] /* retired 2026-11-20: sales asks go through per-item queries (enquiry-threads) */}
                           />
+                          <ItemQueries itemIndex={idx} itemName={it.name} />
                         </div>
                       )}
                       {it.qty && <div className="text-[11px] font-bold text-[var(--text-secondary)]">Qty: {it.qty}</div>}

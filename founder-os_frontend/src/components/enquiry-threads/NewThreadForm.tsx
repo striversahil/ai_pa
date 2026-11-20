@@ -4,7 +4,7 @@ import { Button } from "@/components/ui";
 import { DESK_LABEL, startTargets, type ThreadDesk } from "@/enquiry-threads/types";
 import { PrivateNotice } from "./ThreadCard";
 
-// Start a conversation on one item. Targets follow the desk rules:
+// Ask a query on one item. Targets follow the desk rules:
 // sales/procurement → management; management → sales or procurement.
 export default function NewThreadForm({ desk, onStart, onCancel }: {
   desk: ThreadDesk;
@@ -22,7 +22,7 @@ export default function NewThreadForm({ desk, onStart, onCancel }: {
     const v = text.trim();
     if (!v || busy) return;
     setBusy(true); setErr(null);
-    onStart(to, v).then(() => onCancel()).catch((e: any) => { setErr(e?.message || "Could not start the thread"); setBusy(false); });
+    onStart(to, v).then(() => onCancel()).catch((e: any) => { setErr(e?.message || "Could not send the query"); setBusy(false); });
   };
 
   return (
@@ -49,7 +49,7 @@ export default function NewThreadForm({ desk, onStart, onCancel }: {
       {err && <p className="text-caption font-semibold text-[var(--color-danger)]">{err}</p>}
       <div className="flex justify-end gap-2">
         <Button size="sm" variant="ghost" onClick={onCancel} disabled={busy}>Cancel</Button>
-        <Button size="sm" variant="primary" onClick={submit} disabled={busy || !text.trim()}>{busy ? "Starting…" : "Start conversation"}</Button>
+        <Button size="sm" variant="primary" onClick={submit} disabled={busy || !text.trim()}>{busy ? "Sending…" : "Send query"}</Button>
       </div>
     </div>
   );

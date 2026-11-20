@@ -62,7 +62,7 @@ export default function ThreadCard({ thread: t, desk, onReply, onResolve, onReop
         <div className="min-w-0 space-y-1">
           <p className="text-label font-semibold text-[var(--text-primary)]">
             {t.enquiryLabel && <span className="text-[var(--color-brand-indigo)]">{t.enquiryLabel} · </span>}
-            {showItem ? <>Item {t.itemIndex + 1}{t.itemName ? ` — ${t.itemName}` : ""}</> : <>Conversation with {DESK_LABEL[other]}</>}
+            {showItem ? <>Item {t.itemIndex + 1}{t.itemName ? ` — ${t.itemName}` : ""}</> : <>Query with {DESK_LABEL[other]}</>}
           </p>
           <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-[var(--text-secondary)]">
             {showItem && <span>With {DESK_LABEL[other]}</span>}
