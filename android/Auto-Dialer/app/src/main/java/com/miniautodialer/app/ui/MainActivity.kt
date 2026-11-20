@@ -103,15 +103,16 @@ private val TOP = listOf(
 /** The raised round Dialer button in the middle of the bar. */
 @Composable
 private fun RowScope.DialerTab(selected: Boolean, onClick: () -> Unit) {
-    Column(Modifier.weight(1f).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+    // No fillMaxHeight: NavigationBar only sets a MIN height, so filling would stretch the bar over the whole screen.
+    Column(Modifier.weight(1f).padding(vertical = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Surface(
             onClick = onClick,
             shape = CircleShape,
             color = if (selected) CallGreen else Brand,
             shadowElevation = 6.dp,
-            modifier = Modifier.size(58.dp),
+            modifier = Modifier.size(54.dp),
         ) {
-            Box(contentAlignment = Alignment.Center) { Icon(Icons.Filled.Call, "Dialer", tint = Color.White, modifier = Modifier.size(30.dp)) }
+            Box(contentAlignment = Alignment.Center) { Icon(Icons.Filled.Call, "Dialer", tint = Color.White, modifier = Modifier.size(28.dp)) }
         }
         Text("Dialer", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (selected) CallGreen else Brand)
     }
