@@ -206,7 +206,11 @@ export async function computeDashboard(
   // Phase-0 perf probe: wall-clock cost of one full compute, read live from
   // `meta.computeMs` (cold = off-date cache key, warm = repeat fetch).
   const t0 = Date.now();
+  const ph: Record<string, number> = {};
+  let pt = Date.now();
+  const mark = (k: string): void => { const n = Date.now(); ph[k] = (ph[k] ?? 0) + (n - pt); pt = n; };
   await ensureInstances(dateStr);
+  mark('ensure');
   const [roster, allTemplates, logs] = await Promise.all([
     prisma.accountant.findMany({ where: { deleted: false }, orderBy: { order: 'asc' } }),
     prisma.accountsTaskTemplate.findMany({ where: { active: true }, orderBy: { order: 'asc' } }),
@@ -225,6 +229,7 @@ export async function computeDashboard(
       orderBy: { createdAt: 'asc' },
     }).catch(() => [])
     : [];
+  mark('mainReads');
   const bySlot = new Map((logs as any[]).map((l) => [slotKey(l.templateId, l.slot), l]));
   const active = (templates as any[]).filter((t) => !UNSCHEDULED_RULES.has(String(parseRule(t)?.type ?? t.ruleType ?? '')));
   // Lane enforcement: non-root viewers only receive their own lane (their role
@@ -241,6 +246,7 @@ export async function computeDashboard(
   const inSlot = (t: any, slot: string) => !laneEnforced || !(t as any).isShared || slot === laneRole;
   const dueTemplates = active.filter((t) => inLane(t) && isDueOn(t, dateStr));
   const carried = await getCarriedOverdue(dueTemplates.map((t) => String(t.id)), dateStr);
+  mark('carried');
   // Range grace: while a window is still open, earlier unresolved days inside
   // the same window are grace (plain pending, no red) — strip them from the
   // carryover so neither today's card nor the Incomplete tray counts them.
@@ -460,6 +466,7 @@ export async function computeDashboard(
     row.daysOverdue = s;
     row.daysIncomplete = s;
   }
+  mark('tray');
   // Historical done — last 30 days BEFORE today, lane-scoped, capped.
   // Gives the Done tab's missing context and powers the new History view.
   const historyLogsRaw = await (prisma as any).accountsTaskLog.findMany({
@@ -524,15 +531,20 @@ export async function computeDashboard(
         incomplete: false,
       };
     });
+  mark('history');
   const team = await computeTeam(dateStr, carriedEffective, { roster, todayLogs: logs });
+  mark('team');
   // Payment dues ride the same payload (no lane scoping). Fetch once.
   const paymentDues = await getPaymentDues(dateStr);
+  mark('dues');
   const paymentHistory = await getPaymentHistory(dateStr);
+  mark('payHistory');
   // Dispatch cash ledger rides along too (small table, no lane scoping).
   const { listCashEntries } = await import('../cash');
   const cashReport = await listCashEntries(1000).catch(() => ({
     entries: [], summary: { opening: 0, totalIn: 0, totalOut: 0, closing: 0, count: 0 },
   }));
+  mark('cash');
   return {
     meta: {
       date: dateStr,
@@ -548,6 +560,7 @@ export async function computeDashboard(
       incomplete: overdueCount,
       generatedAt: new Date().toISOString(),
       computeMs: Date.now() - t0,
+      phaseMs: ph,
       isAdmin: scope?.isAdmin ?? true,
       self: scope && !scope.isAdmin && scope.scope
         ? { id: scope.scope.selfId, name: scope.scope.selfName, role: scope.scope.selfRole }
