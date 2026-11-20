@@ -18,16 +18,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshCw, Send, ShieldAlert, XCircle } from 'lucide-react';
 import {
-  REGION_CODES, SKIP_LABELS, agentSplitLabel, batchDistributionLabel, batchOutcome, batchPct,
-  distributionOptions, distributionSummary, formatStamp,
+  PUSH_TARGETS, REGION_CODES, SKIP_LABELS, agentSplitLabel, batchDistributionLabel, batchOutcome, batchPct,
+  dialerPairLabel, distributionOptions, distributionSummary, formatStamp,
   type CampaignDistrictCount, type CampaignPreview, type CampaignStatesPayload, type Distribution, type PushBatch,
-  type PushProgress,
+  type PushProgress, type PushTarget,
 } from '@/telecalling/neodove-campaign';
 import type { Props } from "./neo-dove-campaign-section/types";
 import { jsonFetch } from "./neo-dove-campaign-section/helpers";
 import { AgentUrlRow } from "./neo-dove-campaign-section/AgentUrlRow";
 
 export default function NeoDoveCampaignSection({ canManage }: Props) {
+  // Same selection + assignment for both destinations; only delivery differs.
+  const [target, setTarget] = useState<PushTarget>('neodove');
+  const dialer = target === 'dialer';
   const [region, setRegion] = useState<string>('R1');
   const [states, setStates] = useState<CampaignStatesPayload | null>(null);
   const [stateName, setStateName] = useState<string>('');
@@ -56,7 +59,7 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
     setLoadingStates(true);
     setError(null);
     try {
-      const params = new URLSearchParams({ region: code });
+      const params = new URLSearchParams({ region: code, target });
       if (type) params.set('clientType', type);
       const payload = await jsonFetch<CampaignStatesPayload>(
         `/api/neodove/campaign/states?${params.toString()}`,
@@ -76,7 +79,7 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
     } finally {
       if (!cancelled.current) setLoadingStates(false);
     }
-  }, []);
+  }, [target]);
 
   const loadHistory = useCallback(async (code: string) => {
     try {
@@ -147,7 +150,7 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
     let alive = true;
     setLoadingPreview(true);
     setError(null);
-    const params = new URLSearchParams({ region, state: stateName, distribution });
+    const params = new URLSearchParams({ region, state: stateName, distribution, target });
     if (distribution === 'single' && agentKey) params.set('agent', agentKey);
     if (clientType) params.set('clientType', clientType);
     if (districtName) params.set('district', districtName);
@@ -156,7 +159,7 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
       .catch((e: any) => { if (alive) setError(e?.message ?? 'Failed to preview'); })
       .finally(() => { if (alive) setLoadingPreview(false); });
     return () => { alive = false; };
-  }, [region, stateName, districtName, distribution, agentKey, clientType]);
+  }, [region, stateName, districtName, distribution, agentKey, clientType, target]);
 
   const selectedState = useMemo(
     () => states?.states.find((s) => s.state === stateName) ?? null,
@@ -209,10 +212,13 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
       const created = await jsonFetch<{ batch: PushBatch }>('/api/neodove/campaign/push', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ region, state: stateName, distribution, agentKey, clientType, district: districtName }),
+        body: JSON.stringify({ region, state: stateName, distribution, agentKey, clientType, district: districtName, target }),
       });
       setBatch(created.batch);
-      if (created.batch.mode === 'dry-run') {
+      if (created.batch.target === 'dialer') {
+        // Delivered at creation: no send loop, the phones pull their queues.
+        setNotice(`Queued ${created.batch.sent} leads in the dialer${created.batch.skipped ? ` · ${created.batch.skipped} skipped (no phone or already waiting)` : ''}.`);
+      } else if (created.batch.mode === 'dry-run') {
         setNotice(
           `Dry run recorded: ${created.batch.planned} leads validated, nothing was sent. ` +
           'Switch on live sending to push for real.',
@@ -234,7 +240,7 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
     } finally {
       if (!cancelled.current) setPushing(false);
     }
-  }, [canManage, stateName, districtName, pushing, region, distribution, agentKey, clientType, runRemaining, loadHistory, loadStates]);
+  }, [canManage, stateName, districtName, pushing, region, distribution, agentKey, clientType, target, runRemaining, loadHistory, loadStates]);
 
   if (!canManage) return null;
 
@@ -249,21 +255,38 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
         <div>
           <h3 className="text-lg font-bold flex items-center gap-2">
             <Send className="w-4 h-4 text-indigo-500" />
-            NeoDove campaign
+            Customer push
           </h3>
           <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-            Push a region&apos;s customers, state by state or district by district, into the live NeoDove calling campaign —
-            to one agent, split across the region&apos;s pair, or as a full copy to the Team Lead.
+            Push a region&apos;s customers, state by state or district by district, into NeoDove or the Founder OS
+            dialer — to one agent, split across the region&apos;s agents, or as a full copy to the Team Lead.
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wide ${
-            liveOn
-              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-              : 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
-          }`}>
-            {liveOn ? 'Live sending on' : 'Dry-run mode'}
-          </span>
+          {/* Send to: same selection, two destinations */}
+          <div className="inline-flex rounded-lg border border-zinc-200 dark:border-zinc-800 p-0.5" role="group" aria-label="Send to">
+            {PUSH_TARGETS.map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                aria-pressed={target === t.key}
+                disabled={pushing}
+                onClick={() => { setTarget(t.key); setStateName(''); setDistrictName(''); setDistricts(null); setAgentKey(''); setDistribution('split'); setNotice(null); }}
+                className={`px-2.5 py-1 text-[11px] font-bold rounded-md ${target === t.key ? 'bg-indigo-600 text-white' : 'text-zinc-600 dark:text-zinc-300'}`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+          {!dialer && (
+            <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wide ${
+              liveOn
+                ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                : 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+            }`}>
+              {liveOn ? 'Live sending on' : 'Dry-run mode'}
+            </span>
+          )}
           <button
             type="button"
             onClick={() => { void loadStates(region, clientType); void loadHistory(region); }}
@@ -294,16 +317,27 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
         <span className="ml-1 text-[11px] text-zinc-500 dark:text-zinc-400">
           {agents.length === 0
             ? `No agents registered for ${region}`
-            : `${agents.filter((a) => a.configured).length}/${agents.length} agent URLs configured`}
+            : dialer
+              ? `${agents.filter((a) => a.source === 'device').length}/${agents.length} agents have a paired phone`
+              : `${agents.filter((a) => a.configured).length}/${agents.length} agent URLs configured`}
         </span>
-        {!configured && agents.length > 0 && (
+        {!dialer && !configured && agents.length > 0 && (
           <span className="text-[11px] text-amber-600 dark:text-amber-400">
             · pushes blocked until every agent has a URL
           </span>
         )}
       </div>
 
+      {dialer && agents.length > 0 && (
+        <ul className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-zinc-600 dark:text-zinc-300">
+          {agents.map((a) => (
+            <li key={a.key}><b>{a.name}</b> · {dialerPairLabel(a)}</li>
+          ))}
+        </ul>
+      )}
+
       {/* Agent URL mapping — paste a URL or a full curl command per agent */}
+      {!dialer && (<>
       <div className="space-y-1.5">
         <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
           Agent campaign URLs
@@ -349,6 +383,7 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
           )}
         </div>
       </div>
+      </>)}
 
       {/* State picker */}
       <div className="flex flex-wrap items-end gap-3">
@@ -590,7 +625,7 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
                     <ShieldAlert className="w-4 h-4 mt-0.5 shrink-0" />
                     <span>
                       This sends <b>{preview.ready} leads</b>{preview.clientType ? <> of type <b>{preview.clientType}</b></> : null}{preview.district ? <> in <b>{preview.district}</b></> : null} {distributionSummary(preview.distribution, preview.agents)}
-                      {' '}in the live {preview.region} campaign
+                      {' '}{dialer ? `into the ${preview.region} dialer queues` : `in the live ${preview.region} campaign`}
                       {lastPushNote?.lastPushedAt
                         ? ` — ${preview.district || preview.state} was already pushed on ${formatStamp(lastPushNote.lastPushedAt)} and will be duplicated.`
                         : '.'}
@@ -623,7 +658,7 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
                     className="inline-flex items-center gap-2 px-4 py-2 text-xs rounded-lg font-bold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50"
                   >
                     <Send className="w-3.5 h-3.5" />
-                    {preview.liveEnabled ? `Push ${preview.ready} leads` : `Dry run ${preview.ready} leads`}
+                    {dialer ? `Queue ${preview.ready} leads in the dialer` : preview.liveEnabled ? `Push ${preview.ready} leads` : `Dry run ${preview.ready} leads`}
                   </button>
                   {!preview.liveEnabled && (
                     <span className="text-[11px] text-amber-600 dark:text-amber-400">
@@ -694,6 +729,7 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
                   <th className="text-left font-semibold px-2 py-1">When</th>
                   <th className="text-left font-semibold px-2 py-1">State</th>
                   <th className="text-left font-semibold px-2 py-1">Type</th>
+                  <th className="text-left font-semibold px-2 py-1">Sent to</th>
                   <th className="text-left font-semibold px-2 py-1">Mode</th>
                   <th className="text-left font-semibold px-2 py-1">Assign</th>
                   <th className="text-left font-semibold px-2 py-1">Result</th>
@@ -706,6 +742,7 @@ export default function NeoDoveCampaignSection({ canManage }: Props) {
                     <td className="px-2 py-1 text-zinc-500">{formatStamp(row.createdAt)}</td>
                     <td className="px-2 py-1 font-semibold">{row.state}{row.district ? ` · ${row.district}` : ''}</td>
                     <td className="px-2 py-1 text-zinc-500">{row.clientType || 'All'}</td>
+                    <td className="px-2 py-1 text-zinc-500">{row.target === 'dialer' ? 'Dialer' : 'NeoDove'}</td>
                     <td className="px-2 py-1">
                       <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
                         row.mode === 'live'

@@ -1000,6 +1000,28 @@ for every approved member — not an automation.
 - **WhatsApp chat UX:** per-chat local cache (instant switch), scroll-up cursor pagination
   (50 at a time), and contact/group profile pictures (`picture` column + `PUT …/picture`).
 
+### 14.1 Auto Dialer (Android, 2026-11-20, migration 0147)
+
+- **Pairing:** phone `POST /api/android/pair-request` (agent name, device) → 6-digit code +
+  one-time secret; phone polls `GET /api/android/pair-status`. Sales head approves in
+  Sales → Controller → Auto Dialer (`/api/dialer/pair-requests/:id/approve`), choosing the
+  roster agent; approval revokes that agent's previous phone and mints the `fc_` device
+  token (reuses `DeviceRegistration` + SHA-256 token hashing). Token is handed out once.
+- **Queue:** `DialerQueue` (unique pending per telecaller+mobile). Filled by the push screen
+  with "Send to: Founder OS Dialer" (`NeoDovePushBatch.target='dialer'`, same selection +
+  ledger as NeoDove); retries (Busy/Not Answered, 2h gap, max 3) and callbacks re-enqueue.
+- **Sync:** `POST /api/android/dialer/sync` takes calls, breaks and live state in one body
+  and answers `acceptedCalls/rejectedCalls/acceptedBreaks/rejectedBreaks`; the phone's
+  Room outbox marks rows done only on accept (offline → WorkManager retry, 15-min periodic
+  safety net). Calls land in `DeviceCall` (+ disposition, remarks, callbackAt, queueId,
+  manual, autoSaved). Recordings use the existing upload route (R2 pending → 501, phone retries).
+- **Loop (phone):** `remote/AutoDialer.kt` — countdown (`nextCallSec`) → dial → disposition
+  window (`dispositionSec`, auto-save: 0 s talk = Not Answered, else NOT_DISPOSED flagged)
+  → next. Callback pauses the timer. Shift hours lock auto-dial. Breaks stop the loop until
+  Resume. Manual dial saves the open disposition first and is logged only (no customer).
+- **Controller UI:** `components/telecalling/auto-dialer/*` — pair requests, live board
+  (state, break overrun red), settings (`dialer:config`), hourly report (`/api/dialer/report`).
+
 ## 15. Deployment map (current)
 
 | Component | Target | How |

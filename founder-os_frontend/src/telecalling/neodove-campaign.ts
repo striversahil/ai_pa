@@ -11,6 +11,13 @@
 export type PushMode = "dry-run" | "live";
 export type PushStatus = "queued" | "running" | "done" | "failed";
 export type Distribution = "single" | "split";
+/** Where a push lands: NeoDove campaign URLs or Founder OS dialer queues. */
+export type PushTarget = "neodove" | "dialer";
+
+export const PUSH_TARGETS: Array<{ key: PushTarget; label: string }> = [
+  { key: "neodove", label: "NeoDove" },
+  { key: "dialer", label: "Founder OS Dialer" },
+];
 
 export interface CampaignStateCount {
   state: string;
@@ -41,8 +48,9 @@ export interface CampaignAgent {
   name: string;
   configured: boolean;
   active: boolean;
-  /** db = mapped in Controller, secret = Worker-secret fallback, none = unset. */
-  source: "db" | "secret" | "none";
+  /** db = mapped in Controller, secret = Worker-secret fallback, none = unset.
+   *  Dialer target: device = agent has a paired phone, none = not paired yet. */
+  source: "db" | "secret" | "none" | "device";
   /** Roster regions this Team Lead covers (hint only — routing never blocks on it). */
   covers?: string[];
 }
@@ -54,6 +62,7 @@ export interface CampaignAgentPlan extends CampaignAgent {
 export interface CampaignStatesPayload {
   region: string;
   clientType: string;
+  target: PushTarget;
   configured: boolean;
   liveEnabled: boolean;
   agents: CampaignAgent[];
@@ -85,6 +94,7 @@ export interface CampaignPreview {
   liveEnabled: boolean;
   detail1: string;
   detail2: string;
+  target: PushTarget;
 }
 
 export interface PushBatch {
@@ -112,6 +122,7 @@ export interface PushBatch {
   createdAt: string;
   updatedAt: string;
   finishedAt: string | null;
+  target: PushTarget;
 }
 
 export interface AgentTally {
@@ -138,6 +149,11 @@ export const SKIP_LABELS: Record<CampaignSkip["reason"], string> = {
   invalid_phone: "Phone is not a reachable Indian number",
   duplicate_mobile_in_batch: "Same mobile already in this push",
 };
+
+/** "Neha · phone paired" style hint for a dialer destination. */
+export function dialerPairLabel(agent: CampaignAgent): string {
+  return agent.source === "device" ? "phone paired" : "no phone yet — leads wait in the queue";
+}
 
 /**
  * "Both agents — split evenly" vs one named agent vs a full copy to a TL.
@@ -243,6 +259,9 @@ export function batchPct(batch: PushBatch | null): number {
 export function batchOutcome(batch: PushBatch): string {
   if (batch.mode === "dry-run") {
     return `Dry run · ${batch.planned} would send`;
+  }
+  if (batch.target === "dialer") {
+    return `Queued ${batch.sent}${batch.skipped ? ` · ${batch.skipped} skipped` : ""}`;
   }
   if (batch.status === "done") {
     return `Sent ${batch.sent}${batch.failed ? ` · ${batch.failed} failed` : ""}`;

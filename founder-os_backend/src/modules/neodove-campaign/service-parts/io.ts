@@ -1,7 +1,8 @@
 // Extracted verbatim from service.ts by scripts/refactor/split-module.mjs.
 // service.ts re-exports everything public here, so existing imports keep working.
 import { listAgents, listTeamLeads, getAgentRow, setAgentUrl, listStateCounts, lastLivePushes, listTypeCounts, listCustomersByState, listBatches, insertBatch, insertLeadRows, recountBatch, updateBatch, getBatch, agentTallies, recoverStuckClaims, claimPending, markOutcomes, listFailedLeads, batchesWithPending, listDistrictCounts, lastDistrictPushes } from "../store";
-import type { CampaignAgent, StateCount, TypeCount, DistrictCount, CampaignPreview, CampaignAgentPlan, PushBatch, Actor, AgentTally, PushProgress } from "../types";
+import type { CampaignAgent, StateCount, TypeCount, DistrictCount, CampaignPreview, CampaignAgentPlan, PushBatch, Actor, AgentTally, PushProgress, PushTarget } from "../types";
+import { normalizeTarget, resolveDialerTargets, deliverToDialer } from "./targets";
 import { selectLeads, assignAgents, maskMobile } from "../selection";
 import type { ResolvedAgent, SendOutcome } from "./types";
 import { normalizeCampaignUrl, urlFromSecret, CampaignError, hostOf, validateAgentUrl, normalizeRegion, normalizeClientType, liveEnabled, normalizeState, normalizeDistrict, normalizeDistribution, participantsFor, newId, FETCH_TIMEOUT_MS, DEFAULT_CHUNK, MAX_CHUNK, CONCURRENCY } from "./pure";
@@ -94,12 +95,20 @@ export async function setAgentCampaignUrl(
   };
 }
 
+/** Destinations for a push target: NeoDove registry rows, or roster agents for the dialer. */
+async function targetsFor(env: any, code: string, target: PushTarget): Promise<{ agents: ResolvedAgent[]; teamLeads: ResolvedAgent[] }> {
+  if (target === 'dialer') return resolveDialerTargets(code);
+  const [agents, teamLeads] = await Promise.all([resolveAgents(env, code), resolveTeamLeads(env)]);
+  return { agents, teamLeads };
+}
+
 // ── Reads ──────────────────────────────────────────────────────────────────
 
 /** Region-scoped agents + state dropdown with phone coverage and last pushes. */
-export async function getCampaignStates(env: any, region: unknown, clientType?: unknown): Promise<{
+export async function getCampaignStates(env: any, region: unknown, clientType?: unknown, targetRaw?: unknown): Promise<{
   region: string;
   clientType: string;
+  target: PushTarget;
   configured: boolean;
   liveEnabled: boolean;
   agents: CampaignAgent[];
@@ -110,10 +119,13 @@ export async function getCampaignStates(env: any, region: unknown, clientType?: 
 }> {
   const code = normalizeRegion(region);
   const type = normalizeClientType(clientType);
-  const [counts, last, resolved, types, resolvedTls, coverage] = await Promise.all([
-    listStateCounts(code, type), lastLivePushes(code, type), resolveAgents(env, code), listTypeCounts(code),
-    resolveTeamLeads(env), teamLeadCoverage(),
+  const target = normalizeTarget(targetRaw);
+  const [counts, last, dest, types, coverage] = await Promise.all([
+    listStateCounts(code, type), lastLivePushes(code, type), targetsFor(env, code, target), listTypeCounts(code),
+    teamLeadCoverage(),
   ]);
+  const resolved = dest.agents;
+  const resolvedTls = dest.teamLeads;
   const active = resolved.filter((a) => a.active);
   const agents: CampaignAgent[] = active.map((a) => ({
     key: a.key,
@@ -130,7 +142,7 @@ export async function getCampaignStates(env: any, region: unknown, clientType?: 
     configured: a.configured,
     active: a.active,
     source: a.source,
-    covers: coverage.get(String(a.name ?? '').trim().toLowerCase()) ?? [],
+    covers: a.covers ?? coverage.get(String(a.name ?? '').trim().toLowerCase()) ?? [],
   }));
   const states: StateCount[] = counts.map((row) => {
     const prior = last.get(row.state);
@@ -145,8 +157,10 @@ export async function getCampaignStates(env: any, region: unknown, clientType?: 
   return {
     region: code,
     clientType: type,
+    target,
     configured: agents.length > 0 && agents.every((a) => a.configured),
-    liveEnabled: liveEnabled(env),
+    // The dialer has no dry-run switch: a dialer push always queues for real.
+    liveEnabled: target === 'dialer' || liveEnabled(env),
     agents,
     teamLeads,
     states,
@@ -195,16 +209,19 @@ export async function getCampaignPreview(
   agentKey?: unknown,
   clientType?: unknown,
   district?: unknown,
+  targetRaw?: unknown,
 ): Promise<CampaignPreview> {
   const code = normalizeRegion(region);
   const stateName = normalizeState(state);
   const dist = normalizeDistribution(distribution);
   const type = normalizeClientType(clientType);
   const distName = normalizeDistrict(district);
+  const target = normalizeTarget(targetRaw);
 
-  const active = (await resolveAgents(env, code)).filter((a) => a.active);
-  if (active.length === 0) throw new CampaignError(`no NeoDove agents configured for ${code}`, 400);
-  const tls = (await resolveTeamLeads(env)).filter((a) => a.active);
+  const dest = await targetsFor(env, code, target);
+  const active = dest.agents.filter((a) => a.active);
+  if (active.length === 0) throw new CampaignError(`no ${target === 'dialer' ? 'roster agents' : 'NeoDove agents configured'} for ${code}`, 400);
+  const tls = dest.teamLeads.filter((a) => a.active);
   const participants = participantsFor(active, tls, dist, agentKey);
 
   const rows = await listCustomersByState(code, stateName, type, distName);
@@ -242,9 +259,10 @@ export async function getCampaignPreview(
     agents,
     distribution: dist,
     configured: agents.every((a) => a.configured),
-    liveEnabled: liveEnabled(env),
+    liveEnabled: target === 'dialer' || liveEnabled(env),
     detail1: distName ? `${stateName} · ${distName}` : stateName,
     detail2: code,
+    target,
   };
 }
 
@@ -279,6 +297,7 @@ export async function createPush(
     agentKey?: unknown;
     clientType?: unknown;
     district?: unknown;
+    target?: unknown;
     actor: Actor;
   },
 ): Promise<PushBatch> {
@@ -287,10 +306,12 @@ export async function createPush(
   const dist = normalizeDistribution(input.distribution);
   const type = normalizeClientType((input as any)?.clientType);
   const distName = normalizeDistrict((input as any)?.district);
+  const target = normalizeTarget(input.target);
 
-  const active = (await resolveAgents(env, code)).filter((a) => a.active);
-  if (active.length === 0) throw new CampaignError(`no NeoDove agents configured for ${code}`, 400);
-  const tls = (await resolveTeamLeads(env)).filter((a) => a.active);
+  const dest = await targetsFor(env, code, target);
+  const active = dest.agents.filter((a) => a.active);
+  if (active.length === 0) throw new CampaignError(`no ${target === 'dialer' ? 'roster agents' : 'NeoDove agents configured'} for ${code}`, 400);
+  const tls = dest.teamLeads.filter((a) => a.active);
   const participants = participantsFor(active, tls, dist, input.agentKey);
 
   // Fail closed: never send a state half-routed.
@@ -307,8 +328,9 @@ export async function createPush(
 
   const assigned = assignAgents(leads, dist, participants.map((a) => a.key));
 
-  // Dry run unless the server switch is explicitly on.
-  const live = liveEnabled(env);
+  // Dry run unless the server switch is explicitly on (NeoDove only — the
+  // dialer queues are ours, so a dialer push is always real).
+  const live = target === 'dialer' || liveEnabled(env);
   const now = new Date().toISOString();
   const batch: PushBatch = {
     id: newId('ndp'),
@@ -328,16 +350,21 @@ export async function createPush(
     agentKey: dist === 'single' ? participants[0].key : '',
     requestedBy: String(input.actor?.id ?? ''),
     requestedByName: String(input.actor?.name ?? ''),
-    campaignHost: hostOf(participants[0]?.url ?? ''),
+    campaignHost: target === 'dialer' ? 'Founder OS dialer' : hostOf(participants[0]?.url ?? ''),
     detail1: distName ? `${stateName} · ${distName}` : stateName,
     error: null,
     createdAt: now,
     updatedAt: now,
     finishedAt: live ? null : now,
+    target,
   };
 
   await insertBatch(batch);
   await insertLeadRows(batch.id, code, stateName, assigned, skipped, !live);
+  if (target === 'dialer') {
+    await deliverToDialer(batch.id, assigned);
+    return (await getBatch(batch.id)) ?? batch;
+  }
 
   const recounted = await recountBatch(batch.id);
   if (!live) {

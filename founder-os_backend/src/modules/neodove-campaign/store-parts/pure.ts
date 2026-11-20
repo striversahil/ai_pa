@@ -23,8 +23,11 @@ export const BATCH_COLUMNS = [
   'id', 'region', 'state', 'district', 'clientType', 'mode', 'status', 'total', 'planned', 'sent', 'failed', 'skipped', 'pending',
   'distribution', 'agentKey',
   'requestedBy', 'requestedByName', 'campaignHost', 'detail1', 'error',
-  'createdAt', 'updatedAt', 'finishedAt',
+  'createdAt', 'updatedAt', 'finishedAt', 'target',
 ].join(', ');
+
+/** Batch columns for an isolate whose DB predates 0147 (no `target`). */
+export const BATCH_COLUMNS_PRE_TARGET = BATCH_COLUMNS.replace(', target', '');
 
 export function toBatch(row: any): PushBatch {
   return {
@@ -51,6 +54,7 @@ export function toBatch(row: any): PushBatch {
     createdAt: String(row?.createdAt ?? ''),
     updatedAt: String(row?.updatedAt ?? ''),
     finishedAt: row?.finishedAt == null ? null : String(row.finishedAt),
+    target: String(row?.target ?? '') === 'dialer' ? 'dialer' : 'neodove',
   };
 }
 

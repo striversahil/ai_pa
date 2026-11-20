@@ -2,7 +2,7 @@
 // store.ts re-exports everything public here, so existing imports keep working.
 import { getD1Database } from "../../../shared/prisma-d1";
 import type { CampaignAgent, AgentTally, PushBatch, AssignedLead, SkippedLead } from "../types";
-import { AGENT_COLUMNS, CUSTOMER_COLUMNS, BATCH_COLUMNS, toBatch, PATCHABLE, INSERT_CHUNK, LEAD_COLUMNS, LIVE_CUSTOMER_WHERE } from "./pure";
+import { AGENT_COLUMNS, CUSTOMER_COLUMNS, BATCH_COLUMNS, BATCH_COLUMNS_PRE_TARGET, toBatch, PATCHABLE, INSERT_CHUNK, LEAD_COLUMNS, LIVE_CUSTOMER_WHERE } from "./pure";
 import type { LeadOutcome } from "./types";
 
 export function campaignDb(): any {
@@ -311,14 +311,14 @@ export async function insertBatch(batch: PushBatch): Promise<void> {
   await db
     .prepare(
       `INSERT INTO NeoDovePushBatch (${BATCH_COLUMNS})
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       batch.id, batch.region, batch.state, batch.district || '', batch.clientType || '', batch.mode, batch.status,
       batch.total, batch.planned, batch.sent, batch.failed, batch.skipped, batch.pending,
       batch.distribution, batch.agentKey,
       batch.requestedBy, batch.requestedByName, batch.campaignHost, batch.detail1, batch.error,
-      batch.createdAt, batch.updatedAt, batch.finishedAt,
+      batch.createdAt, batch.updatedAt, batch.finishedAt, batch.target ?? 'neodove',
     )
     .run();
 }
@@ -331,7 +331,7 @@ export async function getBatch(id: string): Promise<PushBatch | null> {
     return row ? toBatch(row) : null;
   } catch {
     // Pre-0145 isolate without the district column.
-    const noDistrict = BATCH_COLUMNS.replace(', district', '');
+    const noDistrict = BATCH_COLUMNS_PRE_TARGET.replace(', district', '');
     try {
       const row: any = await db.prepare(`SELECT ${noDistrict} FROM NeoDovePushBatch WHERE id = ?`).bind(id).first();
       return row ? toBatch({ ...row, district: '' }) : null;
@@ -388,7 +388,7 @@ export async function listBatches(region: string, limit = 20): Promise<PushBatch
     return ((res?.results ?? []) as any[]).map(toBatch);
   } catch {
     // Pre-0145 isolate without the district column.
-    const noDistrict = BATCH_COLUMNS.replace(', district', '');
+    const noDistrict = BATCH_COLUMNS_PRE_TARGET.replace(', district', '');
     const res = region
       ? await db.prepare(`SELECT ${noDistrict} FROM NeoDovePushBatch WHERE region = ? ORDER BY createdAt DESC LIMIT ?`).bind(region, limit).all().catch(() => null)
       : await db.prepare(`SELECT ${noDistrict} FROM NeoDovePushBatch ORDER BY createdAt DESC LIMIT ?`).bind(limit).all().catch(() => null);

@@ -80,7 +80,7 @@ export interface CampaignAgent {
    * the Worker secret fallback ('secret'), or nothing ('none').
    * The URL itself is never exposed — only this flag plus `configured`.
    */
-  source: 'db' | 'secret' | 'none';
+  source: 'db' | 'secret' | 'none' | 'device';
   /**
    * Roster regions this Team Lead covers (from Telecaller region+region2).
    * Hint only — routing is never blocked on it. Empty/absent for pair agents.
@@ -115,9 +115,13 @@ export interface CampaignPreview {
   detail1: string;
   /** NeoDove field 2: region code. */
   detail2: string;
+  target: PushTarget;
 }
 
 export type PushMode = 'dry-run' | 'live';
+/** Where a push lands: a NeoDove campaign URL, or Founder OS dialer queues
+ *  (modules/dialer). Same selection + assignment rules for both. */
+export type PushTarget = 'neodove' | 'dialer';
 export type PushStatus = 'queued' | 'running' | 'done' | 'failed';
 
 export interface PushBatch {
@@ -148,6 +152,7 @@ export interface PushBatch {
   createdAt: string;
   updatedAt: string;
   finishedAt: string | null;
+  target: PushTarget;
 }
 
 /** Per-agent tally inside a batch, derived from the ledger. */

@@ -1,0 +1,10 @@
+.gradle/
+build/
+app/build/
+local.properties
+# APKs come from the GitHub Actions build (see README), never committed
+apk/
+*.apk
+.idea/
+*.iml
+.kotlin/

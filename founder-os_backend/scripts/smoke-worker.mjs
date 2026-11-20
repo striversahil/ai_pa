@@ -81,6 +81,11 @@ const tests = [
   ['GET /api/call-log/calls no-auth -> 401', '/api/call-log/calls'],
   ['GET /api/call-log/devices no-auth -> 403', '/api/call-log/devices'],
   ['POST /api/android/pair empty -> 400', '/api/android/pair', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }],
+  ['POST /api/android/pair-request empty -> 400', '/api/android/pair-request', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }],
+  ['GET /api/android/dialer/queue no-token -> 401', '/api/android/dialer/queue'],
+  ['POST /api/android/dialer/sync no-token -> 401', '/api/android/dialer/sync', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }],
+  ['GET /api/dialer/board no-auth -> 401', '/api/dialer/board'],
+  ['PUT /api/dialer/config no-auth -> 401', '/api/dialer/config', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: '{}' }],
   ['GET /nope', '/nope'],
 ];
 

@@ -41,7 +41,8 @@ export interface ParseResult {
   errors: string[];
 }
 
-export async function parseBatch(body: unknown, deviceId: string): Promise<ParseResult> {
+/** `maxAgeDays`: the dialer queues offline for longer than the 7-day call-log default. */
+export async function parseBatch(body: unknown, deviceId: string, maxAgeDays = 7): Promise<ParseResult> {
   const list = (body as any)?.calls;
   const errors: string[] = [];
   if (!Array.isArray(list) || list.length === 0) return { calls: [], errors: ['calls[] required'] };
@@ -55,7 +56,7 @@ export async function parseBatch(body: unknown, deviceId: string): Promise<Parse
     const attemptAt = iso(raw.attemptAt);
     if (!attemptAt) { errors.push(`#${i}: attemptAt invalid`); continue; }
     const age = Date.now() - Date.parse(attemptAt);
-    if (age > 7 * 24 * 3600_000) { errors.push(`#${i}: older than 7 days`); continue; }
+    if (age > maxAgeDays * 24 * 3600_000) { errors.push(`#${i}: older than ${maxAgeDays} days`); continue; }
 
     const status = String(raw.status ?? '').toUpperCase();
     if (!STATUSES.has(status)) { errors.push(`#${i}: bad status`); continue; }

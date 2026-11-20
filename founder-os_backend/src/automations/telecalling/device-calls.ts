@@ -13,22 +13,31 @@ export async function invalidateDeviceCallCaches(): Promise<void> {
   await cacheDelPrefix('device-calls:');
 }
 
-/** Map key `${day}|${telecallerId}` → counts. Cached 60s. */
+/**
+ * Map key `${day}|${telecallerId}` → counts. Cached 60s.
+ * "Connected" follows the dialer disposition when the agent chose one (talk
+ * time alone can be a network announcement), else the call-log status — the
+ * same rule as modules/dialer/report.ts `reached()`.
+ */
 export async function getDeviceCallSums(from: string, to: string): Promise<Map<string, DeviceCallDaySum>> {
   return cached(`device-calls:sum:${from}:${to}`, 60_000, async () => {
     const out = new Map<string, DeviceCallDaySum>();
     const db: any = getD1Database();
     if (!db?.prepare) return out;
     try {
+      const { getConfig } = await import('../../modules/dialer/queue');
+      const keys = (await getConfig(db)).dispositions.filter((d) => d.connected).map((d) => d.key);
+      const inList = keys.length ? keys.map(() => '?').join(',') : "''";
+      const reached = `CASE WHEN disposition != '' AND disposition != 'NOT_DISPOSED' THEN disposition IN (${inList}) ELSE status = 'CONNECTED' END`;
       const res: any = await db.prepare(
         `SELECT telecallerId, day,
                 COUNT(*) AS attempted,
-                SUM(CASE WHEN status='CONNECTED' THEN 1 ELSE 0 END) AS connected,
-                SUM(CASE WHEN status!='CONNECTED' THEN 1 ELSE 0 END) AS notConnected,
+                SUM(CASE WHEN ${reached} THEN 1 ELSE 0 END) AS connected,
+                SUM(CASE WHEN ${reached} THEN 0 ELSE 1 END) AS notConnected,
                 SUM(durationSec) AS talkSec
            FROM DeviceCall WHERE day >= ? AND day <= ?
           GROUP BY telecallerId, day`,
-      ).bind(from, to).all();
+      ).bind(...keys, ...keys, from, to).all();
       for (const r of (res?.results ?? [])) {
         out.set(`${String(r.day)}|${String(r.telecallerId)}`, {
           attempted: Number(r.attempted ?? 0),

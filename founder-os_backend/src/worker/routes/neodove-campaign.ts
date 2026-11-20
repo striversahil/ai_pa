@@ -50,7 +50,7 @@ export function registerNeodoveCampaignRoutes(app: Hono<{ Bindings: Bindings }>)
   app.get('/api/neodove/campaign/states', async (c) => {
     try {
       await requireCampaignManager(c);
-      const payload = await getCampaignStates(c.env, c.req.query('region'), c.req.query('clientType'));
+      const payload = await getCampaignStates(c.env, c.req.query('region'), c.req.query('clientType'), c.req.query('target'));
       return c.json(payload);
     } catch (e) {
       return fail(c, e);
@@ -88,6 +88,7 @@ export function registerNeodoveCampaignRoutes(app: Hono<{ Bindings: Bindings }>)
         c.req.query('agent'),
         c.req.query('clientType'),
         c.req.query('district'),
+        c.req.query('target'),
       );
       return c.json({ preview });
     } catch (e) {
@@ -106,6 +107,7 @@ export function registerNeodoveCampaignRoutes(app: Hono<{ Bindings: Bindings }>)
         agentKey: body?.agentKey ?? body?.agent,
         clientType: body?.clientType,
         district: body?.district,
+        target: body?.target,
         actor: { id: String(me?.user?.id ?? ''), name: String(me?.user?.name ?? me?.user?.email ?? '') },
       });
       notifyLive(c, { type: LiveEvent.NeodoveCampaign, batchId: batch.id, status: batch.status });
