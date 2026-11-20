@@ -1,6 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { Enquiry, EnquiryComment, EnquiryRequirement, EnquiryStore, parseItems, parseRequirements, istDayKey, normalizeVisibility } from "./store";
-import { encodeEnquiryCursor } from "./types";
+import { encodeEnquiryCursor, ENQUIRY_CURSOR_MAX } from "./types";
 
 // Prisma-backed EnquiryStore for the Express / Postgres runtime. Kept in a
 // separate file so the Prisma client never enters the Cloudflare Worker bundle.
@@ -70,7 +70,7 @@ export class PrismaEnquiryStore implements EnquiryStore {
     return { rows: rows.map(mapEnquiry).filter(Boolean) as Enquiry[], total };
   }
   async listEnquiriesCursor(cursor: { createdAt: string; id: string } | null, limit: number) {
-    const lim = Math.min(100, Math.max(1, Math.floor(limit)));
+    const lim = Math.min(ENQUIRY_CURSOR_MAX, Math.max(1, Math.floor(limit)));
     const rows = await this.prisma.enquiry.findMany({
       ...(cursor
         ? {

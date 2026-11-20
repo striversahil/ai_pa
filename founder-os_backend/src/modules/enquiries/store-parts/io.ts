@@ -1,6 +1,6 @@
 // Extracted verbatim from store.ts by scripts/refactor/split-module.mjs.
 // store.ts re-exports everything public here, so existing imports keep working.
-import { istDayKey, encodeEnquiryCursor, nextDailyNo } from "../types";
+import { istDayKey, encodeEnquiryCursor, nextDailyNo, ENQUIRY_CURSOR_MAX } from "../types";
 import type { EnquiryStore, Enquiry, EnquiryComment } from "../types";
 import { composeSearchText, normalizeVisibility } from "../parse";
 import { newId, mapEnquiry, mapComment, sanitize } from "./pure";
@@ -27,7 +27,7 @@ export class MemoryEnquiryStore implements EnquiryStore {
     return { rows: all.slice(offset, offset + limit), total: all.length };
   }
   async listEnquiriesCursor(cursor: { createdAt: string; id: string } | null, limit: number) {
-    const lim = Math.min(100, Math.max(1, Math.floor(limit)));
+    const lim = Math.min(ENQUIRY_CURSOR_MAX, Math.max(1, Math.floor(limit)));
     const all = [...this.enquiries].sort(
       (a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id),
     );
@@ -123,7 +123,7 @@ export class D1EnquiryStore implements EnquiryStore {
     };
   }
   async listEnquiriesCursor(cursor: { createdAt: string; id: string } | null, limit: number) {
-    const lim = Math.min(100, Math.max(1, Math.floor(limit)));
+    const lim = Math.min(ENQUIRY_CURSOR_MAX, Math.max(1, Math.floor(limit)));
     const take = lim + 1; // one extra row proves hasMore without a COUNT(*) scan
     const res = cursor
       ? await this.db

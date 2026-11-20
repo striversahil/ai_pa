@@ -264,6 +264,11 @@ export interface EnquiryStore {
   } | null>;
 }
 
+/** Max rows one cursor page may return. Stores AND the route clamp to this
+ *  (founder ask 2026-11-20: Sales board first load = 500; newest 500 rows ≈
+ *  17 MB raw before the list strips media). Default page stays 100. */
+export const ENQUIRY_CURSOR_MAX = 500;
+
 // ── Cursor codec: opaque keyset token for queue pagination ───────────────
 // Worker-safe (btoa/atob, no Buffer). Fail-open: malformed → null → first page.
 export function encodeEnquiryCursor(createdAt: string, id: string): string {
