@@ -44,7 +44,9 @@ export async function enquiryList(store: EnquiryStore, me: MeResponse, opts?: Re
     // Cursor mode: newest-first keyset page. Zoho pre-attach + promotions
     // below run on the page only, so the Estimate lookup stays proportional
     // to the page (targeted chunked IN), never a table scan.
-    const clim = Math.min(100, Math.max(1, Math.floor(Number(opts?.limit) || 100)));
+    // Cap 500 (founder ask 2026-11-20: Sales board opens with ≥500 rows);
+    // default stays 100 so queue callers are unchanged. IN lookups chunk (D1 100-param cap).
+    const clim = Math.min(500, Math.max(1, Math.floor(Number(opts?.limit) || 100)));
     const rawCursor = typeof opts?.cursor === "string" ? opts.cursor : "";
     const decoded = rawCursor ? decodeEnquiryCursor(rawCursor) : null;
     const paged = await store.listEnquiriesCursor(decoded, clim);

@@ -24,8 +24,9 @@ export interface RedactOpts {
   page?: number;
   limit?: number;
   /** Opaque keyset cursor (presence, even "" for the first page, selects
-   *  cursor mode over page/offset mode). Cap 100 — the queue dashboards take
-   *  the newest 100 and Load-more the rest, so D1 bills a flat ~100 rows no
+   *  cursor mode over page/offset mode). Default 100, cap 500 — the Sales
+   *  board takes the newest 500 (founder ask 2026-11-20), queue dashboards
+   *  the newest 100; Load-more pages the rest, so D1 bills a flat page no
    *  matter how large the table grows. */
   cursor?: string;
   /** Server search across ALL rows (old + new): EST no., enquiry no.,
