@@ -188,6 +188,7 @@ export async function runDailyRollover(): Promise<{ date: string; created: numbe
   const created = await ensureInstances(today);
   const overdue = await flagOverdue(today);
   await invalidateAccountsCache();
+  await syncDueReceiptMirror(today).catch(() => null); // day rollover re-mirrors (reads never do)
   return { date: today, created, overdue };
 }
 
@@ -813,12 +814,14 @@ export async function listTemplates(includeInactive = false) {
 export async function createTemplate(input: Record<string, any>) {
   const row = await (prisma as any).accountsTaskTemplate.create({ data: { active: true, ...cleanTemplateInput(input) } as any });
   await invalidateAccountsCache();
+  await syncDueReceiptMirror().catch(() => null); // write-path mirror (never on reads)
   return row;
 }
 
 export async function updateTemplate(id: string, input: Record<string, any>) {
   const row = await prisma.accountsTaskTemplate.update({ where: { id }, data: cleanTemplateInput(input, true) });
   await invalidateAccountsCache();
+  await syncDueReceiptMirror().catch(() => null); // write-path mirror (never on reads)
   return row;
 }
 
@@ -916,6 +919,7 @@ export async function logTask(
   }
   const row = await prisma.accountsTaskLog.update({ where: { id: logId }, data });
   await invalidateAccountsCache();
+  await syncDueReceiptMirror().catch(() => null); // payDue funnel incl. — sig-gated no-op otherwise
   return row;
 }
 
@@ -989,44 +993,52 @@ export async function getPaymentDues(dateStr: string): Promise<PaymentDueRow[]> 
       }
     }
   }
-  // Phase 5a dual-write: project dues into core_receipt (convergent on reads;
-  // template CRUD busts the calendar cache, which re-mirrors on next read).
-  //
-  // Perf gate (2026-11-12): this block is a READ path — it runs on every cold
-  // dashboard compute, and the payload recomputes on every cache miss (5-min
-  // TTL + a bust on every accounts write). The mirror alone is ~1 DELETE + 1
-  // INSERT per template (~180 statements at 82 templates) and the shadow does
-  // its own full scan; both are idempotent projections of `built`. So they are
-  // signature-gated: identical dues inside DUE_SYNC_TTL_MS do zero writes. The
-  // TTL doubles as the self-heal — after it lapses the mirror re-converges even
-  // if core_receipt was touched elsewhere. Never blocks the calendar.
+  // Phase 5a dual-write lives on the WRITE path now (syncDueReceiptMirror,
+  // called from createTemplate / updateTemplate / logTask / runDailyRollover).
+  // Reads never mirror — the old read-path block (~180 sequential D1 writes,
+  // 60s+ under latency) is what took cold computes past the 30s timeout.
+  // NOTE: getPaymentDues must stay a pure read — calling syncDueReceiptMirror
+  // here would recurse (mirror calls getPaymentDues) and hang the worker.
+  return rows.sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.title.localeCompare(b.title));
+}
+
+/**
+ * Phase 5a dual-write, write-path edition (perf fix 2026-11-20): projecting
+ * dues into core_receipt used to run awaited on the dashboard READ path —
+ * ~180 sequential D1 statements (~1 DELETE + 1 INSERT per template), 60s+
+ * under D1 latency, past the 30s frontend timeout. Reads never mirror now;
+ * this runs (signature-gated, non-throwing) on dues-changing writes
+ * (createTemplate / updateTemplate / logTask incl. the payDue funnel) plus
+ * the daily rollover. Same convergence contract: identical dues do zero
+ * writes; the sig key is the self-heal cursor.
+ * (NOTE: modules/core/finance.ts stays untouched — locked, human-only.)
+ */
+export async function syncDueReceiptMirror(dateStr: string = istDateStr()): Promise<void> {
   try {
+    const rows = await getPaymentDues(dateStr);
     const { upsertDueReceipts, shadowCompareFinance } = await import('../../../modules/core/finance');
     const built = rows.sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.title.localeCompare(b.title));
     const sig = built
       .map((r) => `${r.templateId}|${r.dueDate}|${Number(r.amount ?? 0) || 0}|${r.statementDate ?? ''}`)
       .join(';');
     const prevSig = await cacheGet<string>(DUES_SIG_KEY, DUE_SYNC_TTL_MS).catch(() => null);
-    if (prevSig !== sig) {
-      await upsertDueReceipts(built.map((r) => ({
-        templateId: String(r.templateId ?? ''), biller: String(r.biller ?? ''),
-        category: String(r.category ?? ''), amount: Number(r.amount ?? 0) || 0,
-        dueDate: String(r.dueDate ?? '').slice(0, 10),
-        statementDate: r.statementDate ? String(r.statementDate).slice(0, 10) : null,
-        identifier: String(r.identifier ?? ''),
-      })));
-      // Phase 5a finance shadow (accounts-read-only, log-only) rides the same
-      // gate: a changed due set is exactly when a divergence can appear, and
-      // the TTL keeps receivables/promise coverage without a per-read scan.
-      await shadowCompareFinance(built.map((r) => ({
-        templateId: String(r.templateId ?? ''), dueDate: String(r.dueDate ?? '').slice(0, 10),
-        amount: Number(r.amount ?? 0) || 0,
-      })));
-      await cacheSet(DUES_SIG_KEY, sig, DUE_SYNC_TTL_MS).catch(() => null);
-    }
-    return built;
-  } catch { /* never block the calendar */ }
-  return rows.sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.title.localeCompare(b.title));
+    if (prevSig === sig) return;
+    await upsertDueReceipts(built.map((r) => ({
+      templateId: String(r.templateId ?? ''), biller: String(r.biller ?? ''),
+      category: String(r.category ?? ''), amount: Number(r.amount ?? 0) || 0,
+      dueDate: String(r.dueDate ?? '').slice(0, 10),
+      statementDate: r.statementDate ? String(r.statementDate).slice(0, 10) : null,
+      identifier: String(r.identifier ?? ''),
+    })));
+    // Phase 5a finance shadow (accounts-read-only, log-only) rides the same
+    // gate: a changed due set is exactly when a divergence can appear, and
+    // the TTL keeps receivables/promise coverage without a per-read scan.
+    await shadowCompareFinance(built.map((r) => ({
+      templateId: String(r.templateId ?? ''), dueDate: String(r.dueDate ?? '').slice(0, 10),
+      amount: Number(r.amount ?? 0) || 0,
+    })));
+    await cacheSet(DUES_SIG_KEY, sig, DUE_SYNC_TTL_MS).catch(() => null);
+  } catch { /* never block callers */ }
 }
 
 /** Complete paid history: every done cycle, newest first (cap 500). */
