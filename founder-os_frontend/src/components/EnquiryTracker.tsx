@@ -1,16 +1,16 @@
 "use client";
 
 import React, { useState, useCallback, useRef, useEffect } from "react";
-import dynamic from "next/dynamic";
 import { useEnquiryData } from "@/hooks/useEnquiryData";
 import { useLiveEvent } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
-import { masterCapabilities } from "@/master-data/permissions";
-import { TabBar } from "@/components/ui";
+import { Button, Skeleton, SkeletonCard } from "@/components/ui";
 import EnquiryList from "@/components/EnquiryList";
 import EnquiryDetail from "@/components/EnquiryDetail";
 import EnquiryModal from "@/components/EnquiryModal";
 import Lightbox from "@/components/Lightbox";
+import LiveToast from "@/components/enquiry-tracker/LiveToast";
+import type { LiveToastData, LiveToastKind } from "@/components/enquiry-tracker/LiveToast";
 import type { Enquiry, Comment, EnquiryItem } from "@/types";
 import { enquiryLabel } from "@/types";
 import { isOpenSpecFlag } from "@/enquiry/queue";
@@ -29,14 +29,14 @@ export default function EnquiryTracker() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Live intimations: toast when an enquiry transitions to finalized
   // (rates ready) or gains a spec flag (needs correction) while open.
-  const [rateToast, setRateToast] = useState<{ id: string; label: string; title: string; kind: "rates" | "spec" | "specdiff" | "reopened" | "loop" } | null>(null);
+  const [rateToast, setRateToast] = useState<LiveToastData | null>(null);
   const rateStatusRef = useRef<Record<string, string>>({});
   const flagCountRef = useRef<Record<string, number>>({});
   const specDiffCountRef = useRef<Record<string, number>>({});
   const loopCountRef = useRef<Record<string, number>>({});
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const flashToast = useCallback((id: string, label: string, title: string, kind: "rates" | "spec" | "specdiff" | "reopened" | "loop") => {
+  const flashToast = useCallback((id: string, label: string, title: string, kind: LiveToastKind) => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     setRateToast({ id, label, title, kind });
     toastTimer.current = setTimeout(() => setRateToast(null), 10000);
@@ -57,7 +57,7 @@ export default function EnquiryTracker() {
     addComment, updateItems, addRequirement, makeActivity, clients,
     saveError: itemsSaveError, dismissSaveError: dismissItemsSaveError,
     mergeSingle, hasMore, loadMore, loadedCount,
-  } = useEnquiryData("sales", { pageSize: 100 });
+  } = useEnquiryData("sales", { pageSize: 500 });
   // Fallback telecaller roster for root: /api/enquiries/agents is filtered for restricted viewers; Telecaller table is the source of truth for UN fallback
   const [telecallers, setTelecallers] = useState<any[]>([]);
   useEffect(() => {
@@ -72,22 +72,8 @@ export default function EnquiryTracker() {
   }, [isAdmin]);
 
   const selectedEnquiry = enquiries.find((e) => e.id === selectedId) || null;
-
-  // Customer Master toggle: the Zoho customer book lives beside the pipeline
-  // (same sales board). Lazy-mounted on first open — the board below keeps
-  // working exactly as before, defaulting to Enquiries.
-  const [section, setSection] = useState<"enquiries" | "master">("enquiries");
-  const [masterMounted, setMasterMounted] = useState(false);
-  const [masterTotal, setMasterTotal] = useState<number | null>(null);
-  const canViewMaster = masterCapabilities(me).canView;
-  const MasterDataView = React.useMemo(
-    () => dynamic(() => import("@/components/master-data/MasterDataView"), { ssr: false }),
-    [],
-  );
-  const showMaster = (key: "enquiries" | "master") => {
-    if (key === "master") setMasterMounted(true);
-    setSection(key);
-  };
+  // Customer Master is its own tab in the Sales bar (same masterCapabilities
+  // gate in sales/tabs.ts) — no second in-board toggle here.
 
   // List rows arrive WITHOUT item media bytes (payload size) — backfill the
   // full row (photos, loops) the moment it is opened, same pattern as the
@@ -282,30 +268,17 @@ export default function EnquiryTracker() {
   }, [enquiries]);
 
   if (!loaded) {
-    return <div className="flex min-h-[50vh] items-center justify-center text-zinc-500 animate-pulse">Loading enquiries…</div>;
+    return (
+      <div className="space-y-3" aria-busy="true" aria-label="Loading enquiries">
+        <Skeleton className="h-16 w-full" />
+        <SkeletonCard />
+        <SkeletonCard />
+      </div>
+    );
   }
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-2xl font-bold font-heading text-zinc-900 dark:text-white">Daily Enquiries</h1>
-        {canViewMaster && (
-          <TabBar
-            items={[
-              { key: "enquiries", label: `Enquiries (${enquiries.length})` },
-              { key: "master", label: masterTotal != null ? `Customer Master (${masterTotal.toLocaleString("en-IN")})` : "Customer Master" },
-            ]}
-            active={section}
-            onChange={showMaster}
-            ariaLabel="Sales board sections"
-          />
-        )}
-      </div>
-
-      {section === "master" && masterMounted ? (
-        <MasterDataView onStats={setMasterTotal} />
-      ) : (
-      <>
       {selectedEnquiry ? (
         <EnquiryDetail selectedEnquiry={selectedEnquiry} agents={agents} currentAgent={currentAgent} comments={comments}
           ratesMode="none"
@@ -334,13 +307,11 @@ export default function EnquiryTracker() {
           triggerCSVInput={() => fileInputRef.current?.click()}
         />
       )}
-      {/* Cursor paging: newest 100 load first (flat DB cost); older rows append
+      {/* Cursor paging: newest 500 load first (flat DB cost); older rows append
           here without disturbing the loaded pipeline. */}
       {!selectedEnquiry && hasMore && (
         <div className="flex justify-center pt-1">
-          <button type="button" onClick={loadMore} className="px-4 py-1.5 rounded-xl border border-[var(--border-card)] bg-[var(--bg-input)] text-xs font-extrabold text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer">
-            Load older enquiries · showing {loadedCount}
-          </button>
+          <Button size="sm" onClick={loadMore}>Load older enquiries · {loadedCount} loaded</Button>
         </div>
       )}
 
@@ -354,44 +325,12 @@ export default function EnquiryTracker() {
         />
       )}
 
-      </>
-      )}
-
       {rateToast && (
-        <div className={`fixed bottom-5 right-5 z-50 max-w-sm rounded-2xl border p-4 shadow-2xl animate-scale-up bg-[var(--bg-card)] ${
-          rateToast.kind === "spec" ? "border-red-500/40" : rateToast.kind === "specdiff" ? "border-amber-500/40" : rateToast.kind === "reopened" ? "border-amber-500/40" : rateToast.kind === "loop" ? "border-sky-500/40" : "border-emerald-500/40"
-        }`}>
-          <div className="flex items-start gap-3">
-            <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-base ${
-              rateToast.kind === "spec" ? "bg-red-500/15" : rateToast.kind === "specdiff" ? "bg-amber-500/15" : rateToast.kind === "reopened" ? "bg-amber-500/15" : rateToast.kind === "loop" ? "bg-sky-500/15" : "bg-emerald-500/15"
-            }`}>{rateToast.kind === "spec" ? "🚩" : rateToast.kind === "specdiff" ? "⚠" : rateToast.kind === "reopened" ? "🔔" : rateToast.kind === "loop" ? "💬" : "💰"}</span>
-            <div className="min-w-0 flex-1">
-              <p className={`text-xs font-extrabold ${
-                rateToast.kind === "spec" ? "text-red-500" : rateToast.kind === "specdiff" ? "text-amber-600 dark:text-amber-400" : rateToast.kind === "reopened" ? "text-amber-600 dark:text-amber-400" : rateToast.kind === "loop" ? "text-sky-600 dark:text-sky-400" : "text-emerald-600 dark:text-emerald-400"
-              }`}>{rateToast.kind === "spec" ? "Spec flagged — correction needed" : rateToast.kind === "specdiff" ? "Vendor quoted a different spec" : rateToast.kind === "reopened" ? "New vendor rates — decision reopened" : rateToast.kind === "loop" ? "New loop update" : "Rates ready"}</p>
-              <p className="truncate text-sm font-bold text-[var(--text-primary)]">{rateToast.title}</p>
-              <p className="text-[11px] font-semibold text-[var(--color-brand-indigo)]">{rateToast.label}</p>
-              <div className="mt-2 flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => { setSelectedId(rateToast.id); setRateToast(null); }}
-                  className={`px-3 py-1.5 rounded-lg text-white text-xs font-bold cursor-pointer border-0 ${
-                    rateToast.kind === "spec" ? "bg-red-500 hover:bg-red-400" : rateToast.kind === "specdiff" ? "bg-amber-500 hover:bg-amber-400" : rateToast.kind === "loop" ? "bg-sky-600 hover:bg-sky-500" : "bg-emerald-600 hover:bg-emerald-500"
-                  }`}
-                >
-                  {rateToast.kind === "rates" ? "View rates" : "View item"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setRateToast(null)}
-                  className="px-3 py-1.5 rounded-lg text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer border-0 bg-transparent"
-                >
-                  Dismiss
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <LiveToast
+          toast={rateToast}
+          onOpen={() => { setSelectedId(rateToast.id); setRateToast(null); }}
+          onDismiss={() => setRateToast(null)}
+        />
       )}
 
       {lightbox && (

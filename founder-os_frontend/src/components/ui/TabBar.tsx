@@ -29,19 +29,39 @@ export type TabBarItem<K extends string = string> = {
   badges?: TabBarBadge[];
 };
 
+/** `pill` (default): wrapping row of brand-filled pills.
+ *  `segmented`: one bordered track, active segment lifts onto the card
+ *  surface — quieter, reads as "pick one view" (scrolls on narrow screens). */
+export type TabBarVariant = "pill" | "segmented";
+
 export function TabBar<K extends string>({
   items, active, onChange, className = "", ariaLabel = "Dashboard tabs",
+  variant = "pill", size = "md",
 }: {
   items: TabBarItem<K>[];
   active: K;
   onChange: (key: K) => void;
   className?: string;
   ariaLabel?: string;
+  variant?: TabBarVariant;
+  size?: "sm" | "md";
 }) {
+  const seg = variant === "segmented";
+  const navClass = seg
+    ? "flex max-w-full flex-row flex-nowrap gap-1 overflow-x-auto rounded-[var(--radius-control)] border border-[var(--border-card)] bg-[var(--surface-soft)] p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+    : "flex flex-row flex-wrap gap-2";
+  const pad = size === "sm" ? "px-3 py-1.5 text-caption" : seg ? "px-3.5 py-2 text-label" : "px-4 py-2.5 text-label";
   return (
-    <nav aria-label={ariaLabel} className={`flex flex-row flex-wrap gap-2 ${className}`}>
+    <nav aria-label={ariaLabel} className={`${navClass} ${className}`}>
       {items.map((t) => {
         const isActive = active === t.key;
+        const tone = seg
+          ? isActive
+            ? "bg-[var(--bg-card)] text-[var(--text-primary)] shadow-[var(--shadow-soft)]"
+            : "bg-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+          : isActive
+            ? "bg-[var(--color-brand-indigo)] text-white shadow-[var(--shadow-soft)]"
+            : "bg-[var(--surface-soft)] text-[var(--text-secondary)] hover:bg-[var(--bg-input)]";
         return (
           <button
             key={t.key}
@@ -50,17 +70,15 @@ export function TabBar<K extends string>({
             disabled={t.disabled}
             title={t.title}
             aria-current={isActive ? "page" : undefined}
-            className={`flex items-center gap-2.5 rounded-[var(--radius-control)] px-4 py-2.5 text-left text-label font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-              isActive
-                ? "bg-[var(--color-brand-indigo)] text-white shadow-[var(--shadow-soft)]"
-                : "bg-[var(--surface-soft)] text-[var(--text-secondary)] hover:bg-[var(--bg-input)]"
-            }`}
+            className={`flex items-center ${seg ? "shrink-0 gap-2 whitespace-nowrap rounded-[calc(var(--radius-control)-4px)]" : "gap-2.5 rounded-[var(--radius-control)]"} ${pad} text-left font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${tone}`}
           >
-            {t.icon && <span className="text-base leading-none">{t.icon}</span>}
+            {t.icon && <span className={`${size === "sm" ? "text-sm" : "text-base"} leading-none`}>{t.icon}</span>}
             {t.label}
             {t.count != null && t.count > 0 && (
               <span className={`inline-flex h-5 min-w-[20px] items-center justify-center rounded-full px-1.5 text-[11px] font-extrabold ${
-                isActive
+                isActive && seg
+                  ? "bg-[color-mix(in_srgb,var(--color-brand-indigo)_14%,transparent)] text-[var(--color-brand-indigo)]"
+                  : isActive
                   ? "bg-white/25 text-white"
                   : t.tone === "danger"
                     ? "bg-rose-500/15 text-rose-500 dark:text-rose-400"

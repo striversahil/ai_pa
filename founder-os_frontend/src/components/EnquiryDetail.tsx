@@ -1,312 +1,106 @@
-import { useState, useRef } from "react";
-import { EnquiryItem, enquiryLabel } from "../types";
+import { useState } from "react";
+import type { ReactNode } from "react";
 import ChatbaseCopilot from "./ChatbaseCopilot";
 import { useIntake } from "../hooks/useIntake";
 import ClientProfile from "./ClientProfile";
 import SpecificationsSection from "./SpecificationsSection";
-import Modal from "./Modal";
-import ItemBoxList, { blankItem } from "./ItemBoxList";
-import { companiesDiffer } from "@/enquiry/company";
+import { ConfirmDialog } from "./ui";
 import { isOpenSpecFlag } from "@/enquiry/queue";
+import { enquiryRateState } from "@/enquiry/rate-state";
+import DetailHeader from "./enquiry-detail/DetailHeader";
+import AddItemsModal from "./enquiry-detail/AddItemsModal";
 import type { EnquiryDetailProps } from "./enquiry-detail/types";
 
+const COPILOT_KEY = "enquiry-copilot-open";
+
+function Banner({ tone, title, children, onDismiss }: { tone: "warning" | "danger"; title: string; children: ReactNode; onDismiss?: () => void }) {
+  const c = tone === "danger" ? "var(--color-danger)" : "var(--color-warning)";
+  return (
+    <div className="flex items-start gap-3 rounded-[var(--radius-control)] border px-4 py-3" style={{ borderColor: `color-mix(in srgb, ${c} 30%, transparent)`, background: `color-mix(in srgb, ${c} 8%, transparent)` }}>
+      <span className="mt-0.5 text-sm" style={{ color: c }} aria-hidden>⚠</span>
+      <div className="min-w-0 flex-1">
+        <p className="text-label font-semibold" style={{ color: c }}>{title}</p>
+        <div className="mt-1 space-y-1 text-caption leading-relaxed text-[var(--text-secondary)]">{children}</div>
+      </div>
+      {onDismiss && (
+        <button type="button" onClick={onDismiss} className="flex-shrink-0 cursor-pointer border-0 bg-transparent text-caption font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)]">Dismiss</button>
+      )}
+    </div>
+  );
+}
+
+// One enquiry, sales side: header (state + actions) · line items (main) ·
+// client / pipeline panel (side). Handlers and write paths unchanged —
+// pieces live in enquiry-detail/ (DetailHeader, AddItemsModal).
 export default function EnquiryDetail({
-  selectedEnquiry,
-  agents,
-  currentAgent,
-  onUpdateStatus,
-  onUpdateAgent,
-  onUpdateItems,
-  onAddRequirement,
-  onAcceptSuggestion,
-  onMarkSent,
-  onReviseSent,
-  onDeleteEnquiry,
-  onOpenEdit,
-  onBack,
-  onOpenLightbox,
-  redacted = false,
-  ratesMode,
-  saveError,
-  onDismissSaveError
+  selectedEnquiry, agents, currentAgent,
+  onUpdateStatus, onUpdateAgent, onUpdateItems, onAddRequirement, onAcceptSuggestion,
+  onReviseSent, onDeleteEnquiry, onOpenEdit, onBack, onOpenLightbox,
+  redacted = false, ratesMode, saveError, onDismissSaveError,
 }: EnquiryDetailProps) {
   const userInitial = String(currentAgent?.name || currentAgent?.id || "S").trim().charAt(0).toUpperCase() || "S";
-
-  // Multi-item add: same item boxes as the B2B form (name/qty/spec/media +
-  // duplicate + new-item box), appended to the enquiry's items on save.
   const [itemsOpen, setItemsOpen] = useState(false);
-  const [newItems, setNewItems] = useState<EnquiryItem[]>([blankItem()]);
-  // Structured-add in flight: the button disables + labels itself so a slow
-  // save can never be double-submitted into duplicate items.
-  const [savingItems, setSavingItems] = useState(false);
-  // AI bulk requirement (unstructured) — same textarea + photos as Log New B2B Enquiry create (AI intake path). Appended as a new line item with spec=text + media so it reuses the existing items flow.
-  const [addReqText, setAddReqText] = useState("");
-  const [addReqImages, setAddReqImages] = useState<string[]>([]);
-  const [addReqDragOver, setAddReqDragOver] = useState(false);
-  const addReqFileRef = useRef<HTMLInputElement>(null);
-  // Delete confirmation
   const [confirmDelete, setConfirmDelete] = useState(false);
-  // Revise confirmation (any team member may reopen a sent enquiry — new
-  // items still need procurement + management before re-sent)
+  // Revise: any team member may reopen a sent enquiry — new items still need
+  // procurement + management before re-sent.
   const [confirmRevise, setConfirmRevise] = useState(false);
+  const [reviseBusy, setReviseBusy] = useState(false);
   const [reviseError, setReviseError] = useState<string | null>(null);
-  // Sent is now Zoho-driven: any non-draft Zoho status (sent/accepted/declined…)
-  // auto-means internal `sent` (5-min sync + list derive). No manual button.
-  const sentState = String((selectedEnquiry as any).rateStatus ?? "");
-  const zohoStatusLower = String((selectedEnquiry as any).zohoStatus ?? '').toLowerCase();
-  const isZohoSent = !!zohoStatusLower && zohoStatusLower !== 'draft';
-  // Open sent-revision loops again — not terminal even with a sent Zoho chip.
-  const revising = !!String((selectedEnquiry as any).sentRevisionAt ?? '').trim();
-  const effectiveSent = !revising && (sentState === "sent" || isZohoSent);
-  // Copilot rail (per-enquiry AI sidebar) — closed by default for sales;
-  // opens only on manual click, persisted per browser.
+  // Sent is Zoho-driven: any non-draft Zoho status auto-means internal `sent`.
+  const state = enquiryRateState(selectedEnquiry);
+  const sentState = String(selectedEnquiry.rateStatus ?? "");
+  // Copilot rail — closed by default for sales; opens on click, persisted per browser.
   const [copilotOpen, setCopilotOpen] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem("enquiry-copilot-open") === "1";
-    } catch {
-      return false;
-    }
+    try { return localStorage.getItem(COPILOT_KEY) === "1"; } catch { return false; }
   });
   const toggleCopilot = (next: boolean) => {
     setCopilotOpen(next);
-    try {
-      localStorage.setItem("enquiry-copilot-open", next ? "1" : "0");
-    } catch { /* ignore */ }
+    try { localStorage.setItem(COPILOT_KEY, next ? "1" : "0"); } catch { /* ignore */ }
   };
   // Per-item AI intake (suggestions + missing slots, written by the runner).
   const intake = useIntake(selectedEnquiry.id, (selectedEnquiry as any).updatedAt);
-  // Per-enquiry partial tag: management decided some (not all) loop items
-  // while the enquiry is still open. Committed enquiries need no tag.
-  // Resolved flags rejoin the loop (audit trail only).
+  // Partial tag: management decided some (not all) loop items while still
+  // open. Resolved flags rejoin the loop (audit trail only).
   const rateLoopItems = (selectedEnquiry.items ?? []).filter((it) => !isOpenSpecFlag(it) && !it.rateAvailable);
   const decidedRateItems = rateLoopItems.filter((it) => it.finalRate !== undefined && it.finalRate !== null).length;
-  const showPartialTag = !effectiveSent && sentState !== "finalized" && decidedRateItems > 0;
-
-  const handleSaveNewItems = () => {
-    const fresh = newItems.filter((it) => it.name.trim() || it.qty.trim() || it.spec.trim() || (it.media ?? []).length > 0);
-    if (fresh.length === 0 || !onUpdateItems || savingItems) return;
-    // Updater form: appends to the LATEST items at execution time (after any
-    // queued write resolved) — a slow earlier save can no longer be wiped by
-    // this one, which is how added items "disappeared" and got re-added as
-    // duplicates. Modal closes only on success; failure keeps it open with
-    // the saveError banner explaining why.
-    setSavingItems(true);
-    Promise.resolve(onUpdateItems(selectedEnquiry.id, (prev) => [...(prev ?? []), ...fresh]))
-      .then(() => {
-        setNewItems([blankItem()]);
-        setItemsOpen(false);
-      })
-      .catch(() => { /* saveError banner carries the message; boxes are kept */ })
-      .finally(() => setSavingItems(false));
-  };
-
-  const handleAddReqImages = async (files: FileList | File[] | null) => {
-    if (!files || files.length === 0) return;
-    const list = Array.from(files);
-    const { media } = await import("../lib/imageFiles").then(m => m.filesToUploadedMedia(list));
-    const urls = media.filter((m) => m.type === "image").map((m) => m.url);
-    if (urls.length > 0) setAddReqImages((prev) => [...prev, ...urls]);
-  };
-  // "Add via AI": appends ONE raw item flagged aiPending — the save kicks
-  // the GH intake action (same as new-enquiry intake), which replaces it
-  // with vision-split items. Sales sees an "AI splitting…" chip meanwhile.
-  // "Add via AI": prefers the server-side append endpoint (reads FRESH stored
-  // items, appends ONE raw aiPending row, kicks intake). The old full-array
-  // echo via onUpdateItems is fallback only — echoing stale client items once
-  // wiped an enquiry's AI-split lines (No 3 - 30 SEP TL).
-  // Single-flight: while an aiPending row is unprocessed the split is still
-  // working — the button disables (backend also 409s) so an impatient second
-  // click can't append a twin row that splits into duplicate lines.
-  const aiSplitActive = (selectedEnquiry.items ?? []).some((it) => (it as any)?.aiPending === true);
-  const [savingReq, setSavingReq] = useState(false);
-  const handleSaveAdditionalRequirement = () => {
-    const text = addReqText.trim();
-    if ((!text && addReqImages.length === 0) || savingReq) return;
-    if (aiSplitActive) return;
-    const done = () => {
-      setAddReqText("");
-      setAddReqImages([]);
-      setItemsOpen(false);
-      setSavingReq(false);
-    };
-    if (onAddRequirement) {
-      setSavingReq(true);
-      Promise.resolve(onAddRequirement(selectedEnquiry.id, text, addReqImages.length > 0 ? addReqImages : undefined))
-        .then(done)
-        .catch(() => setSavingReq(false));
-    } else {
-      if (!onUpdateItems) return;
-      const newItem: EnquiryItem = {
-        name: "",
-        qty: "",
-        spec: text.slice(0, 2000),
-        media: addReqImages.map((url) => ({ type: "image" as const, url })),
-        aiPending: true,
-      };
-      setSavingReq(true);
-      Promise.resolve(onUpdateItems(selectedEnquiry.id, (prev) => [...(prev ?? []), newItem]))
-        .then(done)
-        .catch(() => setSavingReq(false));
-    }
-  };
+  const showPartialTag = !state.sent && sentState !== "finalized" && decidedRateItems > 0;
+  const canRevise = !redacted && !!onReviseSent && (sentState === "sent" || state.isZohoSent) && !state.revising;
+  const ref = selectedEnquiry.estNumber || "This enquiry";
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      {/* Header / Actions */}
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 pb-4 border-b border-[var(--border-card)]">
-        <div className="flex items-center gap-3">
-          <button 
-            onClick={onBack}
-            className="p-2 bg-[var(--bg-card)] border border-[var(--border-card)] hover:bg-[var(--bg-input)] rounded-xl transition-all duration-200 cursor-pointer"
-            type="button"
-          >
-            <svg className="w-4.5 h-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-            </svg>
-          </button>
-          <div>
-            <h1 className="text-xl md:text-2xl font-extrabold font-heading tracking-tight">{selectedEnquiry.title}</h1>
-            <div className="mt-0.5 flex items-center gap-2 flex-wrap">
-              <span className="text-xs font-extrabold text-[var(--color-brand-indigo)]">{enquiryLabel(selectedEnquiry)}</span>
-              <span className="text-[10px] text-[var(--text-tertiary)]">•</span>
-              <span className="text-xs text-[var(--text-secondary)]">Logged {new Date(selectedEnquiry.createdAt).toLocaleString()}</span>
-              {showPartialTag && (
-                <>
-                  <span className="text-[10px] text-[var(--text-tertiary)]">•</span>
-                  <span className="px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30">
-                    Partial rates received ({decidedRateItems} of {rateLoopItems.length})
-                  </span>
-                </>
-              )}
-              {(selectedEnquiry as any).zohoStatus && selectedEnquiry.estNumber && (
-                <>
-                  <span className="text-[10px] text-[var(--text-tertiary)]">•</span>
-                  <span className={`px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap ${
-                    (selectedEnquiry as any).zohoStatus === 'sent' ? "bg-sky-500/10 text-sky-600 border-sky-500/30"
-                    : (selectedEnquiry as any).zohoStatus === 'accepted' ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/30"
-                    : (selectedEnquiry as any).zohoStatus === 'declined' ? "bg-red-500/10 text-red-500 border-red-500/30"
-                    : "bg-zinc-500/10 text-zinc-500 border-zinc-500/30"
-                  }`} title="Live Zoho status (5-min sync)">
-                    Zoho: {(selectedEnquiry as any).zohoStatus}
-                  </span>
-                </>
-              )}
-              {selectedEnquiry.estNumber && (selectedEnquiry as any).zohoCustomerName && companiesDiffer(selectedEnquiry.clientCompany, String((selectedEnquiry as any).zohoCustomerName)) && (
-                <>
-                  <span className="text-[10px] text-[var(--text-tertiary)]">•</span>
-                  <span className="px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/40" title={`Client mismatch — Enquiry: "${selectedEnquiry.clientCompany}" vs Zoho: "${String((selectedEnquiry as any).zohoCustomerName)}" (loosely normalized)`}>
-                    ⚠ Name mismatch — Zoho: {String((selectedEnquiry as any).zohoCustomerName)}
-                  </span>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
+    <div className="space-y-5 animate-fade-in">
+      <DetailHeader
+        enquiry={selectedEnquiry}
+        redacted={redacted}
+        partial={showPartialTag ? { decided: decidedRateItems, total: rateLoopItems.length } : null}
+        copilotOpen={copilotOpen}
+        onBack={onBack}
+        onAddItems={() => setItemsOpen(true)}
+        onEdit={() => onOpenEdit(selectedEnquiry)}
+        onRevise={canRevise ? () => { setReviseError(null); setConfirmRevise(true); } : undefined}
+        onToggleCopilot={() => toggleCopilot(!copilotOpen)}
+        onDelete={() => setConfirmDelete(true)}
+      />
 
-        {!redacted && (
-        <div className="flex items-center gap-2 flex-wrap">
-          {revising && (
-            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-bold bg-indigo-500/10 border border-indigo-500/30 text-indigo-600 dark:text-indigo-400"
-              title="Management reopened this sent enquiry — add items and they loop procurement → management → sent again">
-              Under revision — add items to re-quote
-            </span>
-          )}
-          {effectiveSent ? (
-            <span className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-extrabold bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400" title={isZohoSent ? `Zoho: ${zohoStatusLower}` : 'Marked as sent'}>
-              ✓ {isZohoSent ? `Sent (Zoho: ${zohoStatusLower})` : 'Marked as sent'}
-            </span>
-          ) : sentState === "finalized" ? (
-            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-bold bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400">
-              Finalized — awaiting Zoho send (still draft)
-            </span>
-          ) : null}
-          <button
-            onClick={() => onOpenEdit(selectedEnquiry)}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[var(--bg-card)] border border-[var(--border-card)] hover:bg-[var(--bg-input)] font-bold text-xs rounded-xl transition-all duration-200 cursor-pointer"
-            type="button"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-            </svg>
-            <span>Edit Details</span>
-          </button>
-          {!redacted && onReviseSent && (sentState === "sent" || isZohoSent) && !revising && (
-            <button
-              onClick={() => { setReviseError(null); setConfirmRevise(true); }}
-              title="Reopen for additional scope — new items loop procurement → management → sent again"
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl transition-all duration-200 cursor-pointer border-0"
-              type="button"
-            >
-              <span>Reopen for revision</span>
-            </button>
-          )}
-          <button
-            onClick={() => toggleCopilot(!copilotOpen)}
-            className={`inline-flex items-center gap-1.5 px-3.5 py-2 border font-bold text-xs rounded-xl transition-all duration-200 cursor-pointer ${copilotOpen ? "bg-brand-indigo text-white border-brand-indigo hover:opacity-90" : "bg-brand-indigo/10 border-brand-indigo/40 text-brand-indigo hover:bg-brand-indigo/20"}`}
-            type="button"
-          >
-            <span>✨</span>
-            <span>Copilot</span>
-          </button>
-
-          <button 
-            onClick={() => setConfirmDelete(true)} 
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[color-mix(in_srgb,var(--color-danger)_10%,transparent)] border border-[color-mix(in_srgb,var(--color-danger)_25%,transparent)] text-[var(--color-danger)] hover:bg-[var(--color-danger)] hover:text-white font-bold text-xs rounded-xl transition-all duration-200 cursor-pointer"
-            type="button"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-            </svg>
-            <span>Delete</span>
-          </button>
-        </div>
-        )}
-      </div>
-
-      {selectedEnquiry.estNumber && (selectedEnquiry as any).zohoCustomerName && companiesDiffer(selectedEnquiry.clientCompany, String((selectedEnquiry as any).zohoCustomerName)) && (
-        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 flex items-start gap-3">
-          <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-amber-500/20 text-amber-700 dark:text-amber-400 text-sm">⚠</span>
-          <div className="min-w-0 flex-1">
-            <p className="text-xs font-extrabold text-amber-700 dark:text-amber-400">Client name mismatch — Zoho vs Enquiry</p>
-            <p className="mt-1 text-xs leading-relaxed text-[var(--text-secondary)]">
-              Enquiry: <span className="font-bold text-[var(--text-primary)]">"{selectedEnquiry.clientCompany}"</span>
-              <span className="mx-1.5 text-[var(--text-tertiary)]">vs</span>
-              Zoho: <span className="font-bold text-[var(--text-primary)]">"{String((selectedEnquiry as any).zohoCustomerName)}"</span>
-            </p>
-            <p className="mt-1 text-[11px] text-[var(--text-tertiary)]">Loosely normalized (case/punctuation/Pvt Ltd stripped). Fix the Zoho customer or enquiry client name to clear.</p>
-          </div>
-        </div>
+      {state.revising && !redacted && (
+        <Banner tone="warning" title="Under revision — add items to re-quote">
+          <p>Management reopened this sent enquiry. New items loop procurement → management → sent again.</p>
+        </Banner>
       )}
 
-      {/* Split View */}
-      <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-6 items-start">
-        
-        {/* Left Column Profile panel */}
-        <ClientProfile
-          selectedEnquiry={selectedEnquiry}
-          agents={agents}
-          redacted={redacted}
-          onUpdateStatus={onUpdateStatus}
-          onUpdateAgent={onUpdateAgent}
-        />
+      {state.zohoNameMismatch && (
+        <Banner tone="warning" title="Client name mismatch — Zoho vs Enquiry">
+          <p>
+            Enquiry: <span className="font-semibold text-[var(--text-primary)]">&quot;{selectedEnquiry.clientCompany}&quot;</span>
+            <span className="mx-1.5 text-[var(--text-tertiary)]">vs</span>
+            Zoho: <span className="font-semibold text-[var(--text-primary)]">&quot;{state.zohoNameMismatch}&quot;</span>
+          </p>
+          <p className="text-[var(--text-tertiary)]">Loosely normalized (case/punctuation/Pvt Ltd stripped). Fix the Zoho customer or enquiry client name to clear.</p>
+        </Banner>
+      )}
 
-{/* Right Column with Requirements & discussion thread */}
-        <div className="space-y-6 min-w-0">
-
-          <div className="flex items-center justify-between">
-            <h3 className="font-heading font-extrabold text-base text-[var(--text-primary)]">Requirements</h3>
-            <button
-              onClick={() => { setNewItems([blankItem()]); setItemsOpen(true); }}
-              className="inline-flex items-center gap-1.5 px-3 py-2 bg-[var(--bg-card)] border border-[var(--border-card)] hover:bg-[var(--bg-input)] font-bold text-xs rounded-xl transition-all duration-200 cursor-pointer"
-              type="button"
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-              </svg>
-              Add Items
-            </button>
-          </div>
-
+      <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="min-w-0 space-y-4 lg:order-1 order-2">
           <SpecificationsSection
             selectedEnquiry={selectedEnquiry}
             onOpenLightbox={onOpenLightbox}
@@ -318,26 +112,28 @@ export default function EnquiryDetail({
           />
 
           {saveError && (
-            <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 flex items-start gap-3">
-              <span className="text-sm">⚠</span>
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-extrabold text-red-600 dark:text-red-400">Save failed — nothing was lost on screen, but the server did NOT keep your last change</p>
-                <p className="mt-1 text-xs text-[var(--text-secondary)] break-words">{saveError}</p>
-                <p className="mt-1 text-[11px] text-[var(--text-tertiary)]">Check connection, then retry the same action — do not re-add the item (that creates duplicates).</p>
-              </div>
-              {onDismissSaveError && (
-                <button type="button" onClick={onDismissSaveError} className="text-[11px] font-bold text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer bg-transparent border-0 flex-shrink-0">Dismiss</button>
-              )}
-            </div>
+            <Banner tone="danger" title="Save failed — the server did NOT keep your last change" onDismiss={onDismissSaveError}>
+              <p className="break-words">{saveError}</p>
+              <p className="text-[var(--text-tertiary)]">Nothing was lost on screen. Check connection, then retry the same action — do not re-add the item (that creates duplicates).</p>
+            </Banner>
           )}
 
           {redacted && selectedEnquiry.redactedPending && (
-            <p className="text-[11px] text-amber-500 font-semibold px-1">Securing the latest updates for this view…</p>
+            <p className="px-1 text-caption font-semibold text-[var(--color-warning)]">Securing the latest updates for this view…</p>
           )}
         </div>
+
+        <aside className="order-1 min-w-0 lg:order-2 lg:sticky lg:top-20">
+          <ClientProfile
+            selectedEnquiry={selectedEnquiry}
+            agents={agents}
+            redacted={redacted}
+            onUpdateStatus={onUpdateStatus}
+            onUpdateAgent={onUpdateAgent}
+          />
+        </aside>
       </div>
 
-      {/* Chatbase-style copilot: bottom-center pill + centered popup, enquiry-scoped, dark */}
       {!redacted && (
         <ChatbaseCopilot
           enquiryId={selectedEnquiry.id}
@@ -348,125 +144,43 @@ export default function EnquiryDetail({
         />
       )}
 
-      {/* Revise confirmation */}
-      {confirmRevise && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50" onClick={() => setConfirmRevise(false)}>
-          <div className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded-2xl shadow-xl w-full max-w-sm animate-fade-in" onClick={(e) => e.stopPropagation()}>
-            <div className="p-5 space-y-3">
-              <h2 className="font-heading font-extrabold text-base text-[var(--text-primary)]">Reopen for revision?</h2>
-              <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
-                <span className="font-mono font-bold text-[var(--text-primary)]">{selectedEnquiry.estNumber}</span>
-                {selectedEnquiry.title ? ` — ${selectedEnquiry.title}` : ""} goes back to rates-ready so new items loop
-                procurement → management → sent again. Nothing already decided is lost.
-              </p>
-              {reviseError && (
-                <p className="text-xs font-semibold text-red-500">{reviseError}</p>
-              )}
-              <div className="flex justify-end gap-2 pt-1">
-                <button type="button" onClick={() => setConfirmRevise(false)} className="px-3.5 py-1.5 border border-[var(--border-card)] hover:bg-[var(--bg-input)] font-bold text-xs rounded-lg cursor-pointer bg-transparent text-[var(--text-primary)]">Cancel</button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!onReviseSent) { setConfirmRevise(false); return; }
-                    void onReviseSent(selectedEnquiry.id)
-                      .then(() => setConfirmRevise(false))
-                      .catch((e: any) => setReviseError(e?.message || "Reopen failed"));
-                  }}
-                  className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-lg cursor-pointer"
-                >
-                  Reopen
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        open={confirmRevise}
+        danger={false}
+        busy={reviseBusy}
+        title="Reopen for revision?"
+        confirmLabel="Reopen"
+        message={<>
+          <span className="font-mono font-semibold">{ref}</span>{selectedEnquiry.title ? ` — ${selectedEnquiry.title}` : ""} goes back to rates-ready so new items loop procurement → management → sent again. Nothing already decided is lost.
+          {reviseError && <span className="mt-2 block font-semibold text-[var(--color-danger)]">{reviseError}</span>}
+        </>}
+        onCancel={() => setConfirmRevise(false)}
+        onConfirm={() => {
+          if (!onReviseSent) { setConfirmRevise(false); return; }
+          setReviseBusy(true);
+          void onReviseSent(selectedEnquiry.id)
+            .then(() => setConfirmRevise(false))
+            .catch((e: any) => setReviseError(e?.message || "Reopen failed"))
+            .finally(() => setReviseBusy(false));
+        }}
+      />
 
-      {/* Delete confirmation */}      {confirmDelete && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50" onClick={() => setConfirmDelete(false)}>
-          <div className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded-2xl shadow-xl w-full max-w-sm animate-fade-in" onClick={(e) => e.stopPropagation()}>
-            <div className="p-5 space-y-3">
-              <h2 className="font-heading font-extrabold text-base text-[var(--text-primary)]">Delete enquiry?</h2>
-              <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
-                <span className="font-mono font-bold text-[var(--text-primary)]">{selectedEnquiry.estNumber}</span>
-                {selectedEnquiry.title ? ` — ${selectedEnquiry.title}` : ""} and its comments will be permanently removed. This cannot be undone.
-              </p>
-              <div className="flex justify-end gap-2 pt-1">
-                <button type="button" onClick={() => setConfirmDelete(false)} className="px-3.5 py-1.5 border border-[var(--border-card)] hover:bg-[var(--bg-input)] font-bold text-xs rounded-lg cursor-pointer bg-transparent text-[var(--text-primary)]">Cancel</button>
-                <button
-                  type="button"
-                  onClick={() => { setConfirmDelete(false); onDeleteEnquiry(selectedEnquiry.id); }}
-                  className="px-3.5 py-1.5 bg-[var(--color-danger)] hover:opacity-90 text-white font-bold text-xs rounded-lg cursor-pointer"
-                >
-                  Delete
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        open={confirmDelete}
+        title="Delete enquiry?"
+        confirmLabel="Delete"
+        message={<><span className="font-mono font-semibold">{ref}</span>{selectedEnquiry.title ? ` — ${selectedEnquiry.title}` : ""} and its comments will be permanently removed. This cannot be undone.</>}
+        onCancel={() => setConfirmDelete(false)}
+        onConfirm={() => { setConfirmDelete(false); onDeleteEnquiry(selectedEnquiry.id); }}
+      />
 
       {itemsOpen && (
-        <Modal
-          title="Add Items"
-          subtitle="New items join the vendor-rate flow as rate-pending — use AI bulk with photos or structured boxes"
-          onClose={() => { setItemsOpen(false); setAddReqText(""); setAddReqImages([]); setNewItems([blankItem()]); }}
-        >
-          {/* AI bulk requirement — unstructured text + photos, split by AI intake runner */}
-          <div className={`space-y-2 rounded-xl p-3 border ${addReqDragOver ? "border-brand-indigo bg-brand-indigo/10" : "border-[var(--border-card)]/60 bg-[var(--bg-input)]/20"}`}
-               onDragOver={(e) => { const hasFiles = (e.dataTransfer.types || []).includes("Files"); if (hasFiles) { e.preventDefault(); setAddReqDragOver(true); } }}
-               onDragLeave={() => setAddReqDragOver(false)}
-               onDrop={(e) => { const hasFiles = (e.dataTransfer.types || []).includes("Files"); if (!hasFiles) return; e.preventDefault(); setAddReqDragOver(false); void handleAddReqImages(e.dataTransfer.files); }}>
-            <label className="block text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">AI bulk — type or paste anything + photos (image supported)</label>
-            <textarea
-              value={addReqText}
-              onChange={(e) => setAddReqText(e.target.value)}
-              rows={5}
-              placeholder={"e.g. Rajdhani Flour Mill — 24GG Milling Fabric 136cm 50 mtr + extra roller 2 nos…\n\nWrite items in your own words; AI splits items, attaches photos as drawings and checks past prices."}
-              className="w-full px-3 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl outline-none focus:border-brand-indigo text-sm resize-y min-h-[110px] text-[var(--text-primary)]"
-            />
-            <input ref={addReqFileRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { void handleAddReqImages(e.target.files); e.target.value=""; }} />
-            <div className="flex flex-wrap items-center gap-2">
-              <button type="button" onClick={() => addReqFileRef.current?.click()} className="inline-flex items-center px-3 py-1.5 border border-dashed border-[var(--border-card)] rounded-xl text-xs font-bold text-[var(--text-secondary)] hover:bg-[var(--bg-input)] cursor-pointer bg-transparent">+ Attach photos</button>
-              <span className="text-[11px] text-[var(--text-tertiary)]">Drag & drop photos here (AI reads text + images)</span>
-            </div>
-            {addReqImages.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {addReqImages.map((url, i) => (
-                  <div key={i} className="relative w-16 h-16 rounded-lg overflow-hidden border border-[var(--border-card)]">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={url} alt={`req ${i+1}`} className="w-full h-full object-cover" />
-                    <button type="button" onClick={() => setAddReqImages(prev => prev.filter((_, j) => j !== i))} className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/60 text-white text-[11px] cursor-pointer border-0">×</button>
-                  </div>
-                ))}
-              </div>
-            )}
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-[11px] text-[var(--text-tertiary)]">
-                {aiSplitActive
-                  ? "AI is splitting the pending requirement below — wait for it to finish before adding again (a second add would duplicate every line)"
-                  : "Runs the AI intake action — items auto-split in ~1 min"}
-              </span>
-              <button type="button" disabled={(!addReqText.trim() && addReqImages.length===0) || aiSplitActive || savingReq} onClick={handleSaveAdditionalRequirement} className="px-3.5 py-1.5 bg-brand-indigo hover:opacity-90 text-white font-bold text-xs rounded-lg cursor-pointer disabled:opacity-40">
-                {savingReq ? "Adding…" : aiSplitActive ? "Splitting…" : "Add via AI"}
-              </button>
-            </div>
-          </div>
-
-          <div className="my-3 flex items-center gap-2">
-            <span className="flex-1 h-px bg-[var(--border-card)]" />
-            <span className="text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">or add structured items manually</span>
-            <span className="flex-1 h-px bg-[var(--border-card)]" />
-          </div>
-
-          <ItemBoxList items={newItems} onChange={setNewItems} />
-          <div className="flex justify-end gap-2 pt-3">
-            <button type="button" onClick={() => { setItemsOpen(false); setAddReqText(""); setAddReqImages([]); setNewItems([blankItem()]); }} className="px-3.5 py-1.5 border border-[var(--border-card)] hover:bg-[var(--bg-input)] font-bold text-xs rounded-lg cursor-pointer bg-transparent text-[var(--text-primary)]">Cancel</button>
-            <button type="button" onClick={handleSaveNewItems} disabled={savingItems} className="px-3.5 py-1.5 bg-transparent border border-brand-indigo/40 text-brand-indigo hover:bg-brand-indigo/10 font-bold text-xs rounded-lg cursor-pointer disabled:opacity-50">
-              {savingItems ? "Saving…" : "Add structured items"}
-            </button>
-          </div>
-        </Modal>
+        <AddItemsModal
+          enquiry={selectedEnquiry}
+          onUpdateItems={onUpdateItems}
+          onAddRequirement={onAddRequirement}
+          onClose={() => setItemsOpen(false)}
+        />
       )}
     </div>
   );

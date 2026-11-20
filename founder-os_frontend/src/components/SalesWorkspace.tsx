@@ -50,15 +50,16 @@ export default function SalesWorkspace() {
         </div>
       </header>
 
-      {/* Sticky section switch: stays visible while the board scrolls. The
-          active pill gets a ring + shadow so the current section is obvious. */}
-      <div className="sticky top-0 z-10 -mx-1 border-b border-[var(--border-card)] bg-[var(--bg-app)]/95 px-1 py-2 backdrop-blur">
+      {/* Sticky section switch: one segmented track that stays visible while
+          the board scrolls (scrolls sideways on narrow screens). */}
+      <div className="sticky top-0 z-10 -mx-1 bg-[var(--bg-app)]/95 px-1 py-2 backdrop-blur">
         <TabBar
           ariaLabel="Sales sections"
+          variant="segmented"
           items={tabs.map((t) => ({ key: t.key, label: t.label, icon: t.icon }))}
           active={active}
           onChange={(k) => setActive(k as typeof active)}
-          className="[&_button[aria-current=page]]:shadow-lg [&_button[aria-current=page]]:ring-2 [&_button[aria-current=page]]:ring-white/70"
+          className="w-fit"
         />
       </div>
 

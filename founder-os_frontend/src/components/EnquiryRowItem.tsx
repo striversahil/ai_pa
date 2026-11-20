@@ -1,8 +1,7 @@
 import React from "react";
 import { Agent, Enquiry, enquiryLabel } from "../types";
-import { isOpenSpecFlag } from "@/enquiry/queue";
-import { StatusBadge, PriorityBadge } from "./ui";
-import { companiesDiffer } from "@/enquiry/company";
+import { Badge, StatusBadge, PriorityBadge } from "./ui";
+import { enquiryHeading, enquiryRateState, zohoTone } from "@/enquiry/rate-state";
 
 interface EnquiryRowItemProps {
   enq: Enquiry;
@@ -11,130 +10,72 @@ interface EnquiryRowItemProps {
   onViewDetail: (id: string) => void;
 }
 
+// One scannable row: identity on the left (label · date, title, client ·
+// EST), status chips beneath, stage / priority / lead pinned right. Rendered
+// inside EnquiryList's divided card — no per-row card chrome.
 export default function EnquiryRowItem({ enq, agent, hideIdentity = false, onViewDetail }: EnquiryRowItemProps) {
-  const items = enq.items ?? [];
-  const hasRates = items.some((it) => (it.rates ?? []).length > 0);
-  const finalized = (enq.rateStatus ?? "") === "finalized";
-  // Zoho is source of truth: sent/accepted/declined/etc. (non-draft) auto-means internal `sent`.
-  const zohoStatus = String((enq as any)?.zohoStatus ?? '').toLowerCase();
-  const isZohoSent = !!zohoStatus && zohoStatus !== 'draft';
-  // Open sent-revision: the row loops again (not terminal) — chip reads revision, not sent.
-  const revising = !!String((enq as any)?.sentRevisionAt ?? '').trim();
-  const sent = !revising && ((enq.rateStatus ?? "") === "sent" || isZohoSent);
-  // Rate available / not available overrides the hold — kept hidden in D1 (update.ts:239), UI must not show Fix Spec for it; sent is terminal (even flagged rows show Marked as Sent).
-  // Resolved flags are audit trail only — the chip follows the OPEN flag.
-  const flagged = items.some((it) => isOpenSpecFlag(it) && !it.rateAvailable && !(it as any).notAvailable && !(it as any).internalRates);
-  const notAvailable = items.some((it) => (it as any).notAvailable);
-  const hasPartialRates = !finalized && !sent && items.some((it) => it.finalRate !== undefined && it.finalRate !== null);
-  // Overdue: not sent and older than 24h → chip in red (card stays neutral)
-  const createdMs = enq.createdAt ? new Date(enq.createdAt).getTime() : 0;
-  const hoursOverdue = !sent && createdMs ? Math.floor((Date.now() - createdMs) / 3600000) : 0;
-  const isOverdue = !sent && hoursOverdue >= 24;
-  const overdueLevel = isOverdue ? Math.min(3, Math.floor((hoursOverdue - 24) / 24)) : -1; // 0:24-48,1:48-72,2:72-96,3:96+
-  const overdueLabel = isOverdue ? (hoursOverdue >= 48 ? `${Math.floor(hoursOverdue/24)}d overdue` : `${hoursOverdue}h overdue`) : null;
-  const noItems = items.length === 0;
+  const s = enquiryRateState(enq);
+  const isField = !hideIdentity && (enq.source === "Field Staff" || agent?.type === "field_staff");
+  const rawZoho = String((enq as any).zohoStatus ?? "");
+  // Compact row: enquiry number only — the item title shows in the detail view.
+  const { heading } = enquiryHeading(enq, enquiryLabel(enq));
   return (
     <div
-      className="flex cursor-pointer flex-col items-start gap-3 rounded-xl border border-[var(--border-card)] bg-[var(--bg-card)] p-4 shadow-[var(--shadow-card)] transition-all duration-150 hover:border-[var(--color-brand-indigo)]/50 hover:bg-[var(--bg-input)]/40 md:grid md:grid-cols-[2fr_1fr_1fr_1fr_auto] md:items-center md:gap-6"
+      role="button"
+      tabIndex={0}
       onClick={() => onViewDetail(enq.id)}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onViewDetail(enq.id); } }}
+      className="group grid cursor-pointer grid-cols-1 gap-3 px-4 py-3.5 transition-colors hover:bg-[var(--surface-sunken)] focus-visible:bg-[var(--surface-sunken)] focus-visible:outline-none md:grid-cols-[minmax(0,1fr)_auto] md:items-center md:gap-6 md:px-5"
     >
-      <div className="min-w-0">
-        <span className="block truncate font-bold text-sm md:text-base text-[var(--text-primary)]">{enq.title || enq.estNumber || "—"}</span>
-        <div className="mt-1 flex items-center gap-2 flex-wrap">
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); onViewDetail(enq.id); }}
-            className="text-[10px] font-extrabold text-[var(--color-brand-indigo)] hover:underline cursor-pointer bg-transparent border-0 p-0"
-          >
-            {enquiryLabel(enq)}
-          </button>
-          <span className="text-[10px] text-[var(--text-tertiary)]">•</span>
-          {!hideIdentity && (enq.source === "Field Staff" || agent?.type === "field_staff") && (
-            <span
-              className="px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30"
-              title={`Field Staff referral — lead, region and 20% generator credit belong to ${agent?.name ?? 'the field staff'}`}
-            >
-              Field Staff{agent?.region ? ` · ${agent.region}` : ""}
-            </span>
+      <div className="min-w-0 space-y-1.5">
+        <p className="truncate font-heading text-base font-bold leading-snug text-[var(--text-primary)]">{heading}</p>
+        {isField && (
+          <p className="text-caption text-[var(--color-sky)]" title={`Field Staff referral — lead, region and 20% generator credit belong to ${agent?.name ?? "the field staff"}`}>
+            Field Staff{agent?.region ? ` · ${agent.region}` : ""}
+          </p>
+        )}
+        {!hideIdentity && (
+          <p className="truncate text-label font-medium text-[var(--text-secondary)]">
+            {enq.clientCompany || "—"}
+            <span className="mx-1.5 text-[var(--text-tertiary)]">·</span>
+            <span className="font-mono text-caption">{enq.estNumber || "No EST yet"}</span>
+          </p>
+        )}
+        <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+          {!hideIdentity && <span title={s.title}><Badge tone={s.tone} dot>{s.label}</Badge></span>}
+          {s.overdue && (
+            <Badge tone="danger" className={s.overdue.level >= 1 ? "!bg-[var(--color-danger)] !text-white" : ""}>{s.overdue.label}</Badge>
           )}
-          {!hideIdentity && (
-            <>
-              <span className="text-xs font-semibold text-[var(--text-secondary)]">{enq.clientCompany}</span>
-              <span className="text-[10px] text-[var(--text-tertiary)]">•</span>
-              <span className="text-[10px] font-mono text-[var(--color-brand-indigo)]">{enq.estNumber || "—"}</span>
-              <span className="text-[10px] text-[var(--text-tertiary)]">•</span>
-            </>
+          {s.noItems && (
+            <span title="No line items yet — open the enquiry and add items before quoting"><Badge tone="violet">⚠ No items</Badge></span>
           )}
-          <span className="text-[10px] text-[var(--text-tertiary)]">{enq.createdAt ? new Date(enq.createdAt).toDateString() : ""}</span>
-          {isOverdue && overdueLabel && (
-            <span className={`px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap ${
-              overdueLevel === 3 ? "bg-red-700 text-white border-red-700" : overdueLevel === 2 ? "bg-red-600 text-white border-red-600" : overdueLevel === 1 ? "bg-red-500 text-white border-red-500" : "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/40"
-            }`}>{overdueLabel}</span>
+          {!hideIdentity && s.notAvailableCount > 0 && !s.sent && (
+            <span title={s.notAvailableTitle}><Badge>{s.notAvailableCount} not available</Badge></span>
           )}
-          {noItems && (
-            <span className="px-2 py-0.5 text-[11px] font-black uppercase tracking-wide rounded-full border-2 whitespace-nowrap bg-violet-600 text-white border-violet-700 shadow-sm" title="No line items yet — open the enquiry and add items before quoting">⚠ No items</span>
+          {enq.estNumber && rawZoho && (
+            <span title="Live Zoho status (5-min sync)"><Badge tone={zohoTone(rawZoho)}>Zoho · {rawZoho}</Badge></span>
           )}
-          {!hideIdentity && (
-            <span className={`px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap ${
-              revising
-                ? "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/30"
-                : sent
-                ? "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30"
-                : notAvailable
-                ? "bg-[var(--surface-soft)] text-[var(--text-primary)] border-[var(--border-card)]"
-                : flagged
-                ? "bg-red-500/10 text-red-500 border-red-500/30"
-                : finalized
-                  ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
-                : hasPartialRates || hasRates
-                    ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30"
-                    : "bg-zinc-500/10 text-zinc-500 border-zinc-500/30"
-              }`} title={revising ? "Management reopened this sent enquiry — new items loop procurement → management again" : undefined}>
-              {revising ? "Under revision" : sent ? "Marked as Sent" : notAvailable ? "Not Available" : flagged ? "Fix Spec" : finalized ? "Rates Ready" : hasPartialRates ? "Partial rates" : hasRates ? "Rating…" : "Awaiting rates"}
-            </span>
-          )}
-          {!hideIdentity && notAvailable && !sent && (
-            <span className="px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-[var(--surface-soft)] text-[var(--text-primary)] border-[var(--border-card)]" title={(items.filter((it) => (it as any).notAvailable) as any[]).map((it: any) => `${it.name || "Item"}${it.notAvailableReason ? `: ${it.notAvailableReason}` : ""}`).join(" · ")}>
-              {items.filter((it) => (it as any).notAvailable).length} not available
-            </span>
-          )}
-          {enq.estNumber && (enq as any).zohoStatus && (
-            <span className={`px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap ${
-              (enq as any).zohoStatus === 'sent' ? "bg-sky-500/10 text-sky-600 border-sky-500/30"
-              : (enq as any).zohoStatus === 'accepted' ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/30"
-              : (enq as any).zohoStatus === 'draft' ? "bg-zinc-500/10 text-zinc-500 border-zinc-500/30"
-              : (enq as any).zohoStatus === 'declined' ? "bg-red-500/10 text-red-500 border-red-500/30"
-              : "bg-zinc-500/10 text-zinc-500 border-zinc-500/30"
-            }`} title="Live Zoho status (5-min sync)">
-              Zoho: {(enq as any).zohoStatus}
-            </span>
-          )}
-          {!hideIdentity && enq.estNumber && (enq as any).zohoCustomerName && companiesDiffer(enq.clientCompany, String((enq as any).zohoCustomerName)) && (
-            <span className="px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide rounded-full border whitespace-nowrap bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/40" title={`Client mismatch — Enquiry: "${enq.clientCompany}" vs Zoho: "${String((enq as any).zohoCustomerName)}" (loosely normalized)`}>
-              ⚠ Name mismatch
-            </span>
+          {!hideIdentity && s.zohoNameMismatch && (
+            <span title={`Client mismatch — Enquiry: "${enq.clientCompany}" vs Zoho: "${s.zohoNameMismatch}" (loosely normalized)`}><Badge tone="warning">⚠ Name mismatch</Badge></span>
           )}
         </div>
       </div>
 
-      {!hideIdentity && (
-        <div>
-          <StatusBadge status={enq.status} />
-        </div>
-      )}
-
-      <div>
+      <div className="flex items-center gap-4 md:justify-end">
+        {!hideIdentity && <StatusBadge status={enq.status} />}
         <PriorityBadge priority={enq.priority} />
-      </div>
-
-      {!hideIdentity && (
-        <div className="flex items-center gap-2">
-          <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white" style={{ backgroundColor: agent?.color }}>
-            {agent?.initials || "UN"}
+        {!hideIdentity && (
+          <div className="flex min-w-0 items-center gap-2 md:w-28">
+            <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white" style={{ backgroundColor: agent?.color || "var(--text-tertiary)" }}>
+              {agent?.initials || "UN"}
+            </span>
+            <span className="truncate text-caption font-semibold text-[var(--text-secondary)]">{agent?.name?.split(" ")[0] ?? "Unassigned"}</span>
           </div>
-          <span className="text-xs font-semibold text-[var(--text-secondary)]">{agent?.name.split(" ")[0]}</span>
-        </div>
-      )}
+        )}
+        <svg className="ml-auto hidden h-4 w-4 text-[var(--text-tertiary)] transition-transform group-hover:translate-x-0.5 md:block" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" aria-hidden>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+        </svg>
+      </div>
     </div>
   );
 }

@@ -7,7 +7,9 @@ export { EmptyState, ErrorState } from "./States";
 export { Table, thClass, tdClass, stickyCol } from "./Table";
 
 export { TabBar } from "./TabBar";
-export type { TabBarItem } from "./TabBar";
+export type { TabBarItem, TabBarVariant } from "./TabBar";
+export { Button, buttonClass } from "./Button";
+export type { ButtonVariant, ButtonSize } from "./Button";
 
 // Overlays — use these instead of hand-rolling `fixed inset-0` panels.
 // Modal: ESC + backdrop close, body scroll lock. (Implementation stays at
