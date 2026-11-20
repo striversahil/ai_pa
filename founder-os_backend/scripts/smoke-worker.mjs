@@ -87,6 +87,7 @@ const tests = [
   ['GET /api/dialer/board no-auth -> 401', '/api/dialer/board'],
   ['PUT /api/dialer/config no-auth -> 401', '/api/dialer/config', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: '{}' }],
   ['GET /api/dialer/app no-auth -> 401', '/api/dialer/app'],
+  ['GET /api/dialer/app/download no-auth -> 401', '/api/dialer/app/download'],
   ['GET /nope', '/nope'],
 ];
 

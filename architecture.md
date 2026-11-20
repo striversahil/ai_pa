@@ -1024,8 +1024,9 @@ for every approved member — not an automation.
 - **App distribution:** `.github/workflows/android-apk.yml` builds the APK in GitHub Actions on
   every `android/Auto-Dialer/**` push and (for `main` / `feat/auto-dialer*`) republishes the rolling
   public release `auto-dialer-latest` (`auto-dialer.apk` + `auto-dialer.json`). `GET /api/dialer/app`
-  (`modules/dialer/app-release.ts`, KV-cached 5 min) returns that version; Controller `AppDownload`
-  links to the APK and copies the link for agents. No local Android toolchain needed.
+  (`modules/dialer/app-release.ts`, KV-cached 5 min) returns that version and
+  `GET /api/dialer/app/download` streams the APK same-origin (the upstream GitHub URL is never sent
+  to the browser); Controller `AppDownload` shows version + Download. No local Android toolchain needed.
 
 ## 15. Deployment map (current)
 

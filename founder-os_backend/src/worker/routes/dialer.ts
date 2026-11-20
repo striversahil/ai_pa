@@ -10,7 +10,7 @@
 // Controller side (/api/dialer/*, sales head / root):
 //   GET  /api/dialer/pair-requests  ·  POST /api/dialer/pair-requests/:id/approve|reject
 //   GET|PUT /api/dialer/config  ·  GET /api/dialer/board  ·  GET /api/dialer/report?day=
-//   POST /api/dialer/queue/recall  ·  GET /api/dialer/app (latest APK version + download link)
+//   POST /api/dialer/queue/recall  ·  GET /api/dialer/app (latest APK version) · GET /api/dialer/app/download
 // Handlers stay thin: logic in modules/dialer/*.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
@@ -23,7 +23,7 @@ import { createPairRequest, listPendingRequests, approveRequest, rejectRequest, 
 import { getConfig, saveConfig, listDue, recallQueue } from '../../modules/dialer/queue';
 import { applySync } from '../../modules/dialer/sync';
 import { dayReport, liveBoard } from '../../modules/dialer/report';
-import { latestAppRelease } from '../../modules/dialer/app-release';
+import { latestAppRelease, streamLatestApk } from '../../modules/dialer/app-release';
 import { readBody, writeError } from '../http';
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -152,6 +152,11 @@ function registerControllerRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.get('/api/dialer/app', async (c) => {
     if (!(await manager(c))) return c.json({ error: 'sales-head or root only' }, 403);
     return c.json(await latestAppRelease());
+  });
+
+  app.get('/api/dialer/app/download', async (c) => {
+    if (!(await manager(c))) return c.json({ error: 'sales-head or root only' }, 403);
+    return (await streamLatestApk()) ?? c.json({ error: 'No app build published yet' }, 404);
   });
 
   app.post('/api/dialer/queue/recall', async (c) => {

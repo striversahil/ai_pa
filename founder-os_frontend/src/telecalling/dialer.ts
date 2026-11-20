@@ -92,8 +92,7 @@ export interface AppRelease {
   sizeBytes: number;
   builtAt: string | null;
   commit: string;
-  branch: string;
-  runUrl: string;
+  /** Same-origin Founder OS route that streams the APK. */
   downloadUrl: string;
 }
 

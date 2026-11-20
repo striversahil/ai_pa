@@ -228,8 +228,9 @@ It takes about 4–6 minutes and also runs the unit tests.
 
 ### Getting the APK
 - **Founder OS (easiest):** Sales → Controller → Auto Dialer shows the newest version with
-  **Download APK** and **Copy link** (paste the link to an agent on WhatsApp; they open it on the
-  phone and install). Open the Controller on the agent's phone and tap Download to install directly.
+  **Download APK**. The file is served by Founder OS itself (`/api/dialer/app/download`, sales head /
+  root only), so the browser never sees the GitHub address. Open the Controller on the agent's phone
+  and tap Download to install directly.
 - **Fixed link:** every build on `main` or a `feat/auto-dialer*` branch is published to the rolling
   release `auto-dialer-latest`, so this link always serves the newest APK:
   `https://github.com/striversahil/ai_pa/releases/download/auto-dialer-latest/auto-dialer.apk`
