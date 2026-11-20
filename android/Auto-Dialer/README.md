@@ -227,6 +227,13 @@ workflow [`.github/workflows/android-apk.yml`](../../.github/workflows/android-a
 It takes about 4–6 minutes and also runs the unit tests.
 
 ### Getting the APK
+- **Founder OS (easiest):** Sales → Controller → Auto Dialer shows the newest version with
+  **Download APK** and **Copy link** (paste the link to an agent on WhatsApp; they open it on the
+  phone and install). Open the Controller on the agent's phone and tap Download to install directly.
+- **Fixed link:** every build on `main` or a `feat/auto-dialer*` branch is published to the rolling
+  release `auto-dialer-latest`, so this link always serves the newest APK:
+  `https://github.com/striversahil/ai_pa/releases/download/auto-dialer-latest/auto-dialer.apk`
+  (version details: `.../auto-dialer-latest/auto-dialer.json`). The repository is public, so the link needs no login.
 - **Browser:** open the finished run under **Actions → Android APK** and download the
   **auto-dialer-apk** artifact (a zip containing `auto-dialer-<version>.apk`; kept 30 days).
 - **Command line** (with the GitHub CLI logged in):

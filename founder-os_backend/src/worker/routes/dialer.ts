@@ -10,7 +10,7 @@
 // Controller side (/api/dialer/*, sales head / root):
 //   GET  /api/dialer/pair-requests  ·  POST /api/dialer/pair-requests/:id/approve|reject
 //   GET|PUT /api/dialer/config  ·  GET /api/dialer/board  ·  GET /api/dialer/report?day=
-//   POST /api/dialer/queue/recall
+//   POST /api/dialer/queue/recall  ·  GET /api/dialer/app (latest APK version + download link)
 // Handlers stay thin: logic in modules/dialer/*.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
@@ -23,6 +23,7 @@ import { createPairRequest, listPendingRequests, approveRequest, rejectRequest, 
 import { getConfig, saveConfig, listDue, recallQueue } from '../../modules/dialer/queue';
 import { applySync } from '../../modules/dialer/sync';
 import { dayReport, liveBoard } from '../../modules/dialer/report';
+import { latestAppRelease } from '../../modules/dialer/app-release';
 import { readBody, writeError } from '../http';
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -146,6 +147,11 @@ function registerControllerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const day = String(c.req.query('day') ?? '');
     const cfg = await getConfig(c.env.DB);
     return c.json({ ...(await dayReport(c.env.DB, cfg, DAY_RE.test(day) ? day : istDay(new Date()))), config: cfg });
+  });
+
+  app.get('/api/dialer/app', async (c) => {
+    if (!(await manager(c))) return c.json({ error: 'sales-head or root only' }, 403);
+    return c.json(await latestAppRelease());
   });
 
   app.post('/api/dialer/queue/recall', async (c) => {

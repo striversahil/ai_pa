@@ -13,6 +13,7 @@ import { PairRequests, type AgentOption } from "./PairRequests";
 import { LiveBoard } from "./LiveBoard";
 import { HourlyReport } from "./HourlyReport";
 import { DialerSettings } from "./DialerSettings";
+import { AppDownload } from "./AppDownload";
 
 type Pending = { kind: "recall" | "unpair"; id: string; name: string } | null;
 
@@ -28,6 +29,8 @@ export default function AutoDialerSection({ rosterRows }: { rosterRows: RosterRo
   const board = useLiveQuery(dialerApi.board, { ...opts, pollMs: 60_000 });
   const report = useLiveQuery(() => dialerApi.report(day), { ...opts, deps: [day] });
   const source = useLiveQuery(dialerApi.callSource, { events: ["telecalling"] });
+  // New builds come from GitHub, not a live event; the server caches 5 min.
+  const app = useLiveQuery(dialerApi.app, { ...opts, pollMs: 300_000 });
 
   const paired = useMemo(() => new Set((board.data?.agents ?? []).map((r) => r.telecallerId)), [board.data]);
   const agents: AgentOption[] = useMemo(
@@ -75,6 +78,8 @@ export default function AutoDialerSection({ rosterRows }: { rosterRows: RosterRo
           </select>
         </label>
       </div>
+
+      <AppDownload release={app.data ?? null} loading={app.loading} />
 
       {error && <p className="rounded-lg border border-rose-500/30 bg-rose-500/5 px-3 py-2 text-xs text-rose-600 dark:text-rose-400">{error}</p>}
 

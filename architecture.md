@@ -1021,6 +1021,11 @@ for every approved member — not an automation.
   Resume. Manual dial saves the open disposition first and is logged only (no customer).
 - **Controller UI:** `components/telecalling/auto-dialer/*` — pair requests, live board
   (state, break overrun red), settings (`dialer:config`), hourly report (`/api/dialer/report`).
+- **App distribution:** `.github/workflows/android-apk.yml` builds the APK in GitHub Actions on
+  every `android/Auto-Dialer/**` push and (for `main` / `feat/auto-dialer*`) republishes the rolling
+  public release `auto-dialer-latest` (`auto-dialer.apk` + `auto-dialer.json`). `GET /api/dialer/app`
+  (`modules/dialer/app-release.ts`, KV-cached 5 min) returns that version; Controller `AppDownload`
+  links to the APK and copies the link for agents. No local Android toolchain needed.
 
 ## 15. Deployment map (current)
 

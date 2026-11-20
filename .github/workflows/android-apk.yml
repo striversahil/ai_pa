@@ -18,6 +18,9 @@ concurrency:
   group: android-apk-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write   # publish the auto-dialer-latest release
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -64,3 +67,24 @@ jobs:
           name: auto-dialer-apk
           path: ${{ steps.apk.outputs.file }}
           retention-days: 30
+
+      # Rolling "latest" release: fixed public links that Founder OS (Controller → Auto Dialer →
+      # Download app) reads. Only main and the auto-dialer feature branches publish.
+      - name: Publish as the latest app release
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/feat/auto-dialer')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk auto-dialer.apk
+          name=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+          code=$(grep -oP 'versionCode = \K[0-9]+' app/build.gradle.kts)
+          size=$(stat -c %s auto-dialer.apk)
+          printf '{"versionName":"%s","versionCode":%s,"sizeBytes":%s,"commit":"%s","branch":"%s","builtAt":"%s","runUrl":"%s"}\n' \
+            "$name" "$code" "$size" "$GITHUB_SHA" "$GITHUB_REF_NAME" "$(date -u +%FT%TZ)" \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > auto-dialer.json
+          notes="Auto Dialer $name (code $code) · ${GITHUB_REF_NAME}@${GITHUB_SHA::7}. Rebuilt on every push; download from Founder OS → Sales → Controller → Auto Dialer."
+          gh release view auto-dialer-latest >/dev/null 2>&1 || \
+            gh release create auto-dialer-latest --title "Auto Dialer (latest build)" --notes "$notes" --target "$GITHUB_SHA" --latest=false
+          gh release upload auto-dialer-latest auto-dialer.apk auto-dialer.json --clobber
+          gh release edit auto-dialer-latest --notes "$notes"

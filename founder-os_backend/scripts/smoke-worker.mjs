@@ -86,6 +86,7 @@ const tests = [
   ['POST /api/android/dialer/sync no-token -> 401', '/api/android/dialer/sync', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }],
   ['GET /api/dialer/board no-auth -> 401', '/api/dialer/board'],
   ['PUT /api/dialer/config no-auth -> 401', '/api/dialer/config', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: '{}' }],
+  ['GET /api/dialer/app no-auth -> 401', '/api/dialer/app'],
   ['GET /nope', '/nope'],
 ];
 

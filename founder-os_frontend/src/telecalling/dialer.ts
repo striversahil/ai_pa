@@ -84,6 +84,19 @@ export interface AgentDay {
 
 export type CallSource = "neodove" | "manual" | "device";
 
+/** Latest phone app build (backend mirror: modules/dialer/app-release.ts AppRelease). */
+export interface AppRelease {
+  available: boolean;
+  versionName: string;
+  versionCode: number;
+  sizeBytes: number;
+  builtAt: string | null;
+  commit: string;
+  branch: string;
+  runUrl: string;
+  downloadUrl: string;
+}
+
 /** Live-event filter for every dialer read (backend LiveEvent.DeviceCalls). */
 export const DIALER_EVENTS = ["device-calls"];
 
@@ -113,6 +126,7 @@ export const dialerApi = {
   revokeDevice: (deviceId: string) => call<{ ok: boolean }>(`/api/call-log/devices/${encodeURIComponent(deviceId)}`, { method: "DELETE" }),
   callSource: () => call<{ mode: CallSource }>("/api/telecalling/manual-calls/mode"),
   setCallSource: (mode: CallSource) => call<{ mode: CallSource }>("/api/telecalling/manual-calls/mode", json("PUT", { mode })),
+  app: () => call<AppRelease>("/api/dialer/app"),
 };
 
 export const LIVE_STATE_LABEL: Record<string, string> = {
