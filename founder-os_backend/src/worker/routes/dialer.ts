@@ -10,7 +10,7 @@
 // Controller side (/api/dialer/*, sales head / root):
 //   GET  /api/dialer/pair-requests  ·  POST /api/dialer/pair-requests/:id/approve|reject
 //   GET|PUT /api/dialer/config  ·  GET /api/dialer/board  ·  GET /api/dialer/report?day=
-//   POST /api/dialer/queue/recall  ·  GET /api/dialer/app (latest APK version) · GET /api/dialer/app/download
+//   POST /api/dialer/queue/recall  ·  POST /api/dialer/agents/:id/reset {wipeToday?}  ·  GET /api/dialer/app (latest APK version) · GET /api/dialer/app/download
 // Handlers stay thin: logic in modules/dialer/*.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
@@ -24,6 +24,7 @@ import { getConfig, saveConfig, listDue, recallQueue } from '../../modules/diale
 import { applySync } from '../../modules/dialer/sync';
 import { dayReport, liveBoard } from '../../modules/dialer/report';
 import { latestAppRelease, streamLatestApk } from '../../modules/dialer/app-release';
+import { resetAgent } from '../../modules/dialer/reset';
 import { readBody, writeError } from '../http';
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -157,6 +158,15 @@ function registerControllerRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.get('/api/dialer/app/download', async (c) => {
     if (!(await manager(c))) return c.json({ error: 'sales-head or root only' }, 403);
     return (await streamLatestApk()) ?? c.json({ error: 'No app build published yet' }, 404);
+  });
+
+  app.post('/api/dialer/agents/:telecallerId/reset', async (c) => {
+    if (!(await manager(c))) return c.json({ error: 'sales-head or root only' }, 403);
+    const body = await readBody(c);
+    const out = await resetAgent(c.env.DB, c.env.CALL_RECORDINGS, c.req.param('telecallerId'), istDay(new Date()), body?.wipeToday === true);
+    if (out.callsDeleted > 0) invalidateDeviceCallCaches().catch(() => null);
+    notifyLive(c, { type: LiveEvent.DeviceCalls, action: 'reset' });
+    return c.json({ ok: true, ...out });
   });
 
   app.post('/api/dialer/queue/recall', async (c) => {

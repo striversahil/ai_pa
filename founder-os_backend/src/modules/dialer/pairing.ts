@@ -5,6 +5,7 @@
 import { randomToken, hashToken } from '../device-calls/tokens';
 import { createDevice, findActiveAgent, findAgentName } from '../device-calls/store';
 import { DialerError } from './pure';
+import { closeOpenBreaks } from './reset';
 
 type Db = D1Database;
 const REQUEST_TTL_MS = 30 * 60_000;
@@ -64,6 +65,8 @@ export async function approveRequest(db: Db, id: string, telecallerId: string, a
   await db.prepare(
     `UPDATE DeviceRegistration SET status='revoked', revokedAt=?, revokedBy=?, updatedAt=? WHERE telecallerId=? AND status='active'`,
   ).bind(now, actorName, now, telecallerId).run();
+  // The old phone can't end a break any more; don't let it haunt the new one.
+  await closeOpenBreaks(db, telecallerId);
   await createDevice(db, {
     telecallerId,
     deviceId: String(row.deviceId),

@@ -467,7 +467,13 @@ Gateway design (one place, both runtimes):
   `GROQ_API_KEYS` / `OPENROUTER_API_KEYS` / `DEEPSEEK_API_KEYS` / `LLM_API_KEY` /
   `OMNIROUTE_*` vars are still merged for backwards compat, and obvious
   placeholders (`your_api_key_here` etc.) are ignored. Deduped.
-- **Selection**: least-failures → least-recently-used among enabled, non-cooling keys.
+  Plus Setting `ai:providers` BYOK JSON (root-only Settings UI, 20 providers ×
+  10 keys max, OpenAI-compatible `{id,baseUrl,model,keys}`; never echoed —
+  GET/PUT redact to ids + counts). Custom ids register into `PROVIDERS` at
+  runtime (TS + JS port).
+- **Selection**: global `ai:strategy` (`least-used-first` default: random inside
+  the least-failures tier; `round-robin`: cycles the healthy tier). `sessionKey`
+  still sticky-pins while healthy.
 - **Failure handling**: 401/403 → key disabled permanently; 429 → cooldown
   (exponential backoff, honors `retry-after`); 402/quota → 5-min cooldown;
   5xx/network → short cooldown + rotate immediately; attempts = pool size (min 3).
@@ -477,8 +483,11 @@ Gateway design (one place, both runtimes):
   Adding a vendor = one line in `PROVIDERS`.
 - **Surface**: `complete({ messages, temperature, json, model, reasoningEffort,
   provider })` → `{ content, provider, keyId, usage }`; `completeJson()` parses.
-  `scripts/runner-lib.js` exposes the same `groq()`/`groqJson()`/`omnirouteJson()`
-  names as thin gateway wrappers, so existing runners needed zero call-site changes.
+  `scripts/runner-lib.js` exposes the same `groq()`/`groqJson()`/
+  `agnesText()` names as thin wrappers — they prefer single endpoint
+  `POST /api/ai/complete` (viewer session OR `SHARED_SECRET`; `GET /api/ai/health`
+  shows strategy + per-provider usable counts, no keys) with local-gateway
+  fallback, so existing runners needed zero call-site changes.
 
 **Omniroute is NOT the production AI path** — it's the final fallback inside the pool.
 
@@ -1014,11 +1023,20 @@ for every approved member — not an automation.
   and answers `acceptedCalls/rejectedCalls/acceptedBreaks/rejectedBreaks`; the phone's
   Room outbox marks rows done only on accept (offline → WorkManager retry, 15-min periodic
   safety net). Calls land in `DeviceCall` (+ disposition, remarks, callbackAt, queueId,
-  manual, autoSaved). Recordings use the existing upload route (R2 pending → 501, phone retries).
+  manual, autoSaved). Recordings upload via `PUT /api/android/recordings/:callId` into R2
+  `CALL_RECORDINGS` (`calls/<yyyy-mm>/<agent>/<callId>-<part>.<ext>`, real format kept via
+  `recordingFormat`; bucket lifecycle deletes after 90 days). Controller → Auto Dialer →
+  Recordings lists `/api/call-log/calls?recorded=1` for the day and streams
+  `/api/call-log/recording/:id` (Range, `?download=1`). Transcription is a planned follow-up.
 - **Loop (phone):** `remote/AutoDialer.kt` — countdown (`nextCallSec`) → dial → disposition
   window (`dispositionSec`, auto-save: 0 s talk = Not Answered, else NOT_DISPOSED flagged)
   → next. Callback pauses the timer. Shift hours lock auto-dial. Breaks stop the loop until
   Resume. Manual dial saves the open disposition first and is logged only (no customer).
+- **Agent reset:** activity is keyed by agent, not phone, so a re-paired phone would inherit an open
+  break / stale status. Approve-new-phone and Unpair close open breaks (`modules/dialer/reset.ts`
+  `closeOpenBreaks`); Controller **Reset** (`POST /api/dialer/agents/:id/reset`) recalls the queue,
+  closes breaks, sets status idle and, only with the explicit `wipeToday` tick, deletes today's
+  DeviceCall + DialerBreak rows and their R2 recordings.
 - **Controller UI:** `components/telecalling/auto-dialer/*` — pair requests, live board
   (state, break overrun red), settings (`dialer:config`), hourly report (`/api/dialer/report`).
 - **App distribution:** `.github/workflows/android-apk.yml` builds the APK in GitHub Actions on

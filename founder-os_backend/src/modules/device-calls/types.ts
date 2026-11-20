@@ -12,6 +12,19 @@ export const CALL_LOG_TYPES: Record<number, string> = {
 
 export const MAX_BATCH = 200;
 export const MAX_RECORDING_BYTES = 30 * 1024 * 1024;
+
+/** Phone dialers record in different formats (Samsung m4a, Lava/Unisoc amr, …). Keep the real one. */
+const AUDIO_EXT: Record<string, string> = {
+  'audio/mp4': 'm4a', 'audio/x-m4a': 'm4a', 'audio/m4a': 'm4a', 'audio/aac': 'aac',
+  'audio/amr': 'amr', 'audio/3gpp': '3gp', 'audio/mpeg': 'mp3', 'audio/ogg': 'ogg',
+  'audio/opus': 'opus', 'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/webm': 'webm',
+};
+
+/** Pure: request Content-Type → stored type + file extension (unknown → m4a, the old default). */
+export function recordingFormat(contentType: string | null | undefined): { type: string; ext: string } {
+  const type = String(contentType ?? '').split(';')[0].trim().toLowerCase();
+  return AUDIO_EXT[type] ? { type, ext: AUDIO_EXT[type] } : { type: 'audio/mp4', ext: 'm4a' };
+}
 export const PART_MINUTES = 10;
 export const MAX_CALL_MINUTES = 60;
 export const PAIR_CODE_TTL_MS = 15 * 60 * 1000;

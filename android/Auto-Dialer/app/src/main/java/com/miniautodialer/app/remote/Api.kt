@@ -51,6 +51,19 @@ class Api(private val session: Session) {
     suspend fun sync(body: JSONObject): JSONObject = request("POST", "/api/android/dialer/sync", body)
 
     /** One recording part. 501 = storage not enabled on the server yet (kept for later). */
+    /** Real audio type from the recorder's file extension (mirror: backend device-calls/types.ts recordingFormat). */
+    private fun audioType(name: String): String = when (name.substringAfterLast('.', "").lowercase()) {
+        "amr" -> "audio/amr"
+        "3gp", "3gpp" -> "audio/3gpp"
+        "mp3" -> "audio/mpeg"
+        "ogg", "oga" -> "audio/ogg"
+        "opus" -> "audio/opus"
+        "wav" -> "audio/wav"
+        "aac" -> "audio/aac"
+        "webm" -> "audio/webm"
+        else -> "audio/mp4" // m4a / mp4 / unknown
+    }
+
     suspend fun uploadRecording(serverCallId: String, file: File): Int = withContext(Dispatchers.IO) {
         val conn = (URL("${session.baseUrl}/api/android/recordings/$serverCallId?part=0").openConnection() as HttpURLConnection).apply {
             requestMethod = "PUT"
@@ -58,7 +71,7 @@ class Api(private val session: Session) {
             connectTimeout = 15_000
             readTimeout = 120_000
             setFixedLengthStreamingMode(file.length())
-            setRequestProperty("Content-Type", "audio/mp4")
+            setRequestProperty("Content-Type", audioType(file.name))
             session.token?.let { setRequestProperty("Authorization", "Bearer $it") }
         }
         try {

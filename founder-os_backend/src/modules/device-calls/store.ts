@@ -163,6 +163,8 @@ export interface ListFilters {
   status?: string | null;
   q?: string | null;
   before?: string | null;
+  /** Only calls whose audio reached storage. */
+  recorded?: boolean;
   limit: number;
 }
 
@@ -184,6 +186,7 @@ function whereFor(f: ListFilters): { sql: string; params: any[] } {
     params.push(needle, needle);
   }
   if (f.before) { clauses.push('attemptAt < ?'); params.push(f.before); }
+  if (f.recorded) clauses.push("recordingKey IS NOT NULL AND recordingKey != ''");
   return { sql: clauses.join(' AND '), params };
 }
 
@@ -208,6 +211,10 @@ function view(row: any) {
     recordingState: row.recordingState,
     recordingBytes: row.recordingBytes,
     hasRecording: !!row.recordingKey,
+    // Auto-dialer columns (mig 0147); empty for plain call-log rows.
+    disposition: row.disposition ?? '',
+    remarks: row.remarks ?? '',
+    manual: !!row.manual,
   };
 }
 

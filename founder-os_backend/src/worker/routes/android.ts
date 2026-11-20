@@ -21,7 +21,7 @@ import {
   setRecording,
   touchDevice,
 } from '../../modules/device-calls/store';
-import { MAX_RECORDING_BYTES, PART_MINUTES, MAX_CALL_MINUTES } from '../../modules/device-calls/types';
+import { MAX_RECORDING_BYTES, PART_MINUTES, MAX_CALL_MINUTES, recordingFormat } from '../../modules/device-calls/types';
 import { cacheGet, cacheSet } from '../../shared/cache';
 import { invalidateDeviceCallCaches } from '../../automations/telecalling/device-calls';
 import { readBody } from '../http';
@@ -152,9 +152,10 @@ export function registerAndroidRoutes(app: Hono<{ Bindings: Bindings }>): void {
     }
     const part = Math.max(0, Math.min(Number(c.req.query('part') ?? 0) || 0, 59));
     const day = String(call.attemptAt).slice(0, 7);
-    const key = `calls/${day}/${String(auth.telecallerId).replace(/[^A-Za-z0-9_-]/g, '_')}/${call.id}-${part}.m4a`;
+    const fmt = recordingFormat(c.req.header('content-type'));
+    const key = `calls/${day}/${String(auth.telecallerId).replace(/[^A-Za-z0-9_-]/g, '_')}/${call.id}-${part}.${fmt.ext}`;
     await c.env.CALL_RECORDINGS.put(key, bytes, {
-      httpMetadata: { contentType: 'audio/mp4' },
+      httpMetadata: { contentType: fmt.type },
       customMetadata: { callId: String(call.id), telecallerId: auth.telecallerId, part: String(part) },
     });
     await setRecording(c.env.DB, call.id, { key, bytes: bytes.byteLength, parts: part + 1, state: 'uploaded' });

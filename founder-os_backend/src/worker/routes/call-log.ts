@@ -19,6 +19,7 @@ import {
   summary,
 } from '../../modules/device-calls/store';
 import { readBody } from '../http';
+import { closeOpenBreaks } from '../../modules/dialer/reset';
 
 function filters(c: any, telecallerId: string | null) {
   return {
@@ -30,6 +31,7 @@ function filters(c: any, telecallerId: string | null) {
     status: c.req.query('status') ?? null,
     q: c.req.query('q') ?? null,
     before: c.req.query('before') ?? null,
+    recorded: c.req.query('recorded') === '1',
     limit: Number(c.req.query('limit') ?? 100) || 100,
   };
 }
@@ -64,14 +66,20 @@ export function registerCallLogRoutes(app: Hono<{ Bindings: Bindings }>): void {
     headers.set('Accept-Ranges', 'bytes');
     headers.set('Cache-Control', 'private, max-age=3600');
     if (!headers.has('Content-Type')) headers.set('Content-Type', 'audio/mp4');
-    const range = c.req.header('range');
-    const outHeaders = Object.fromEntries(headers.entries());
-    if (range && obj.range) {
-      const r: any = obj.range;
-      headers.set('Content-Range', `bytes ${r.offset}-${r.offset + (r.length ?? obj.size) - 1}/${obj.size}`);
-      return c.body(obj.body, 206, outHeaders);
+    const ext = String(call.recordingKey).split('.').pop() || 'm4a';
+    const disposition = c.req.query('download') === '1' ? 'attachment' : 'inline';
+    headers.set('Content-Disposition', `${disposition}; filename="call-${call.id}.${ext}"`);
+    const r: any = obj.range;
+    if (c.req.header('range') && r) {
+      // Content-Range must be set before the headers are serialised (seeking breaks without it).
+      const offset = Number(r.offset ?? 0);
+      const length = Number(r.length ?? obj.size - offset);
+      headers.set('Content-Range', `bytes ${offset}-${offset + length - 1}/${obj.size}`);
+      headers.set('Content-Length', String(length));
+      return c.body(obj.body, 206, Object.fromEntries(headers.entries()));
     }
-    return c.body(obj.body, 200, outHeaders);
+    headers.set('Content-Length', String(obj.size));
+    return c.body(obj.body, 200, Object.fromEntries(headers.entries()));
   });
 
   // ── Device provisioning (managers) ────────────────────────────────────────
@@ -108,6 +116,8 @@ export function registerCallLogRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if (!device) return c.json({ error: 'device not found' }, 404);
     const viewer = await callViewer(c);
     const ok = await revokeDevice(c.env.DB, c.req.param('id'), viewer?.name ?? '');
+    // An unpaired phone can't end its break; close it so the agent isn't stuck "On break".
+    if (ok && (device as any).telecallerId) await closeOpenBreaks(c.env.DB, String((device as any).telecallerId));
     notifyLive(c, { type: LiveEvent.DeviceCalls, action: 'revoked' });
     return c.json({ ok });
   });

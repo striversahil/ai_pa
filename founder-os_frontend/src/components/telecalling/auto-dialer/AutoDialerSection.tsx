@@ -14,20 +14,23 @@ import { LiveBoard } from "./LiveBoard";
 import { HourlyReport } from "./HourlyReport";
 import { DialerSettings } from "./DialerSettings";
 import { AppDownload } from "./AppDownload";
+import { Recordings } from "./Recordings";
 
-type Pending = { kind: "recall" | "unpair"; id: string; name: string } | null;
+type Pending = { kind: "reset" | "unpair"; id: string; name: string } | null;
 
 export default function AutoDialerSection({ rosterRows }: { rosterRows: RosterRow[] }) {
   const [day, setDay] = useState(istToday());
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<Pending>(null);
   const [busy, setBusy] = useState(false);
+  const [wipeToday, setWipeToday] = useState(false);
 
   const opts = { events: DIALER_EVENTS };
   const requests = useLiveQuery(dialerApi.pairRequests, { ...opts, pollMs: 15_000 });
   // Polled too: "offline" is the absence of syncs, which emits no event.
   const board = useLiveQuery(dialerApi.board, { ...opts, pollMs: 60_000 });
   const report = useLiveQuery(() => dialerApi.report(day), { ...opts, deps: [day] });
+  const recordings = useLiveQuery(() => dialerApi.recordings(day), { ...opts, deps: [day] });
   const source = useLiveQuery(dialerApi.callSource, { events: ["telecalling"] });
   // New builds come from GitHub, not a live event; the server caches 5 min.
   const app = useLiveQuery(dialerApi.app, { ...opts, pollMs: 300_000 });
@@ -47,9 +50,11 @@ export default function AutoDialerSection({ rosterRows }: { rosterRows: RosterRo
   const doConfirm = async () => {
     if (!confirm) return;
     setBusy(true);
-    await run(() => (confirm.kind === "recall" ? dialerApi.recall(confirm.id) : dialerApi.revokeDevice(confirm.id)));
+    await run(() => (confirm.kind === "reset" ? dialerApi.reset(confirm.id, wipeToday) : dialerApi.revokeDevice(confirm.id)));
+    report.refresh(); recordings.refresh();
     setBusy(false);
     setConfirm(null);
+    setWipeToday(false);
   };
 
   const setSource = (mode: CallSource) => run(async () => { await dialerApi.setCallSource(mode); source.refresh(); });
@@ -94,7 +99,7 @@ export default function AutoDialerSection({ rosterRows }: { rosterRows: RosterRo
         <h4 className="text-xs font-bold uppercase tracking-wide text-zinc-500">Live board · today</h4>
         <LiveBoard
           rows={board.data?.agents ?? []}
-          onRecall={(id, name) => setConfirm({ kind: "recall", id, name })}
+          onReset={(id, name) => setConfirm({ kind: "reset", id, name })}
           onUnpair={(id, name) => setConfirm({ kind: "unpair", id, name })}
         />
       </div>
@@ -108,6 +113,11 @@ export default function AutoDialerSection({ rosterRows }: { rosterRows: RosterRo
         {report.data && config ? <HourlyReport agents={report.data.agents} config={config} /> : <p className="text-[11px] text-zinc-500">Loading…</p>}
       </div>
 
+      <div className="space-y-2">
+        <h4 className="text-xs font-bold uppercase tracking-wide text-zinc-500">Recordings · same day</h4>
+        {recordings.data ? <Recordings calls={recordings.data.calls} config={config} /> : <p className="text-[11px] text-zinc-500">Loading…</p>}
+      </div>
+
       <details className="space-y-2">
         <summary className="cursor-pointer text-xs font-bold uppercase tracking-wide text-zinc-500">Dialer settings</summary>
         {config && <DialerSettings config={config} onSave={async (cfg) => { await dialerApi.saveConfig(cfg); board.refresh(); report.refresh(); }} />}
@@ -116,12 +126,21 @@ export default function AutoDialerSection({ rosterRows }: { rosterRows: RosterRo
       <ConfirmDialog
         open={!!confirm}
         busy={busy}
-        title={confirm?.kind === "recall" ? `Clear ${confirm?.name}'s queue?` : `Unpair ${confirm?.name}'s phone?`}
-        message={confirm?.kind === "recall"
-          ? "Every lead still waiting in this agent's dialer queue is pulled back. Calls already made stay in the report."
-          : "The phone stops syncing and must be paired again. Anything it has not synced yet stays on the phone until it is re-paired."}
-        confirmLabel={confirm?.kind === "recall" ? "Clear queue" : "Unpair"}
-        onCancel={() => setConfirm(null)}
+        title={confirm?.kind === "reset" ? `Reset ${confirm?.name}?` : `Unpair ${confirm?.name}'s phone?`}
+        message={confirm?.kind === "reset" ? (
+          <div className="space-y-2">
+            <p>Leads waiting in the queue are pulled back, any open break is ended, and the status goes back to idle.</p>
+            <label className="flex items-start gap-2">
+              <input id="dialer-reset-wipe" type="checkbox" checked={wipeToday} onChange={(e) => setWipeToday(e.target.checked)} className="mt-0.5" />
+              <span>
+                Also delete <b>today&apos;s</b> calls, breaks and recordings for this agent (e.g. test data).
+                <span className="block text-rose-600 dark:text-rose-400">This cannot be undone.</span>
+              </span>
+            </label>
+          </div>
+        ) : "The phone stops syncing and must be paired again. Anything it has not synced yet stays on the phone until it is re-paired. An open break is ended."}
+        confirmLabel={confirm?.kind === "reset" ? (wipeToday ? "Reset and delete today" : "Reset") : "Unpair"}
+        onCancel={() => { setConfirm(null); setWipeToday(false); }}
         onConfirm={() => void doConfirm()}
       />
     </section>

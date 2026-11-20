@@ -84,6 +84,22 @@ export interface AgentDay {
 
 export type CallSource = "neodove" | "manual" | "device";
 
+/** One call row from /api/call-log/calls (backend mirror: modules/device-calls/store.ts `view`). */
+export interface RecordedCall {
+  id: string;
+  telecallerId: string;
+  agentName: string;
+  number: string;
+  contactName: string;
+  attemptAt: string;
+  durationSec: number;
+  recordingBytes: number;
+  hasRecording: boolean;
+  disposition: string;
+  remarks: string;
+  manual: boolean;
+}
+
 /** Latest phone app build (backend mirror: modules/dialer/app-release.ts AppRelease). */
 export interface AppRelease {
   available: boolean;
@@ -122,11 +138,23 @@ export const dialerApi = {
   config: () => call<{ config: DialerConfig }>("/api/dialer/config"),
   saveConfig: (cfg: DialerConfig) => call<{ config: DialerConfig }>("/api/dialer/config", json("PUT", cfg)),
   recall: (telecallerId: string) => call<{ recalled: number }>("/api/dialer/queue/recall", json("POST", { telecallerId })),
+  /** Clean slate for an agent: queue recalled, open breaks closed, status idle; wipeToday also deletes today's calls/breaks/recordings. */
+  reset: (telecallerId: string, wipeToday: boolean) =>
+    call<{ recalled: number; breaksClosed: number; callsDeleted: number; breaksDeleted: number; recordingsDeleted: number }>(
+      `/api/dialer/agents/${encodeURIComponent(telecallerId)}/reset`, json("POST", { wipeToday })),
   revokeDevice: (deviceId: string) => call<{ ok: boolean }>(`/api/call-log/devices/${encodeURIComponent(deviceId)}`, { method: "DELETE" }),
   callSource: () => call<{ mode: CallSource }>("/api/telecalling/manual-calls/mode"),
   setCallSource: (mode: CallSource) => call<{ mode: CallSource }>("/api/telecalling/manual-calls/mode", json("PUT", { mode })),
   app: () => call<AppRelease>("/api/dialer/app"),
+  /** Calls with audio in storage for one IST day (shared call-log route, managers see all agents). */
+  recordings: (day: string) =>
+    call<{ calls: RecordedCall[] }>(`/api/call-log/calls?from=${encodeURIComponent(day)}&to=${encodeURIComponent(day)}&recorded=1&limit=500`),
 };
+
+/** Streams a recording (Range-capable) — `download` forces a file save. */
+export function recordingUrl(callId: string, download = false): string {
+  return `/api/call-log/recording/${encodeURIComponent(callId)}${download ? "?download=1" : ""}`;
+}
 
 export const LIVE_STATE_LABEL: Record<string, string> = {
   idle: "Idle",

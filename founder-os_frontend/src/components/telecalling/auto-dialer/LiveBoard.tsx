@@ -8,10 +8,10 @@ import { LIVE_STATE_LABEL, fmtDuration, stateTone, type BoardRow } from "@/telec
 const TONE = { good: "success", watch: "warning", bad: "danger" } as const;
 
 export function LiveBoard({
-  rows, onRecall, onUnpair,
+  rows, onReset, onUnpair,
 }: {
   rows: BoardRow[];
-  onRecall: (telecallerId: string, name: string) => void;
+  onReset: (telecallerId: string, name: string) => void;
   onUnpair: (deviceId: string, name: string) => void;
 }) {
   if (rows.length === 0) {
@@ -58,7 +58,7 @@ export function LiveBoard({
                 <td className="px-2 py-1.5 text-right">{r.queueDue}{r.queueLater ? <span className="text-zinc-500"> +{r.queueLater}</span> : null}</td>
                 <td className={`px-2 py-1.5 text-right ${r.pendingSync > 0 ? "font-bold text-amber-600 dark:text-amber-400" : "text-zinc-500"}`}>{r.pendingSync}</td>
                 <td className="whitespace-nowrap px-2 py-1.5 text-right">
-                  <button type="button" onClick={() => onRecall(r.telecallerId, r.agentName)} className="rounded px-1.5 py-0.5 text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800">Clear queue</button>
+                  <button type="button" onClick={() => onReset(r.telecallerId, r.agentName)} title="Clear queue, end open breaks, reset status (optionally delete today's activity)" className="rounded px-1.5 py-0.5 text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800">Reset</button>
                   <button type="button" onClick={() => onUnpair(r.deviceId, r.agentName)} className="rounded px-1.5 py-0.5 text-rose-600 hover:bg-rose-500/10 dark:text-rose-400">Unpair</button>
                 </td>
               </tr>
