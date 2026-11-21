@@ -4,7 +4,7 @@ Everything below was split out of an oversized file by `scripts/refactor/split-m
 
 Conventions: frontend `<Name>.tsx` = one component, `helpers.ts` = non-UI helpers, `types.ts` = types. Backend `pure.ts` = synchronous logic with **no** DB/cache/network/async (safe to reuse anywhere, including tests), `io.ts` = everything that does I/O, `types.ts` = types. `pure.ts` never imports `io.ts`.
 
-Shared kits: `@/components/ui` (Badge, Card, KpiCard, Skeleton, EmptyState/ErrorState, Table, TabBar, Modal, ConfirmDialog, Popover) · `@/lib/format` (money/date formatters) · `@/workspaces` (WorkspaceRenderer, workspaceDataUrl, useWorkspaces, useWorkspaceHost) · backend `worker/viewer.ts` (getViewer/getViewerMe), `worker/http.ts` (readBody), `modules/workspaces/` (catalog, scoping, getWorkspaceData).
+Shared kits: `@/components/ui` (Badge, Card, KpiCard, Skeleton, EmptyState/ErrorState, Table, TabBar, Modal, ConfirmDialog, Popover, Pager/PageJumper/ChangesBanner) · `@/lib/format` (money/date formatters) · **paged lists** `@/hooks/usePagedQuery` + `@/lib/paging` ↔ backend `shared/paging.ts` (`parsePageQuery`, `searchClause`, `pagedQuery`) · `@/workspaces` (WorkspaceRenderer, workspaceDataUrl, useWorkspaces, useWorkspaceHost) · backend `worker/viewer.ts` (getViewer/getViewerMe), `worker/http.ts` (readBody), `modules/workspaces/` (catalog, scoping, getWorkspaceData).
 
 ## Frontend (133 files)
 
