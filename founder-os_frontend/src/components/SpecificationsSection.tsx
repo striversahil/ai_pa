@@ -521,7 +521,8 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                             onOpenLightbox={onOpenLightbox}
                             askKinds={[] /* retired 2026-11-20: sales asks go through per-item queries (enquiry-threads) */}
                           />
-                          <ItemQueries itemIndex={idx} itemName={it.name} />
+                          {/* Sales may ask only once management has given this item's rate; never on rate-available items (founder ask 2026-11-21). */}
+                          <ItemQueries itemIndex={idx} itemName={it.name} canAsk={it.finalRate !== undefined && it.finalRate !== null && !it.rateAvailable} />
                         </div>
                       )}
                       {it.qty && <div className="text-[11px] font-bold text-[var(--text-secondary)]">Qty: {it.qty}</div>}

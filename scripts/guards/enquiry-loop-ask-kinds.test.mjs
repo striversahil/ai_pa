@@ -71,6 +71,11 @@ describe('note composer stays retired', () => {
     assert.ok(!/"query"|'query'/.test(m[1]), 'sales loop query composer must stay retired (use Conversations)');
     assert.ok(readFe('components/EnquiryDetail.tsx').includes('<EnquiryThreadsProvider desk="sales"'), 'sales detail must provide item queries');
     assert.ok(src.includes('<ItemQueries itemIndex={idx}'), 'each sales item card must offer Ask a query');
+    // Founder ask 2026-11-21: sales may ask only after management gave the
+    // item's rate, and never on rate-available items.
+    const gate = src.match(/<ItemQueries itemIndex=\{idx\}[^>]*canAsk=\{([^}]*)\}/);
+    assert.ok(gate, 'sales Ask a query must be gated (canAsk)');
+    assert.ok(gate[1].includes('finalRate') && gate[1].includes('!it.rateAvailable'), 'sales gate = rate given AND not rate-available');
   });
 
   it('management can flag incorrect spec like procurement', () => {

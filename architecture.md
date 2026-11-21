@@ -371,7 +371,9 @@ tools), and keeping threads out of them means none of those paths can leak a pri
   one per item), and `ThreadInbox` (Open | Resolved per desk: Sales board "Queries" view,
   Procurement + Management "Queries" tab).
 - Replaces the sales loop `query` ask ("Request info / alternate") and its 2026-11-19 post-rate
-  gate. Guard: `scripts/guards/enquiry-threads.test.mjs`.
+  gate. Since 2026-11-21 the Sales "Ask a query" button shows only on items whose rate management
+  has given (`finalRate` set) and never on rate-available items; existing threads always show.
+  Guard: `scripts/guards/enquiry-threads.test.mjs` (+ gate in `enquiry-loop-ask-kinds`).
 
 ### 3.3 Trigger dispatch
 `POST /api/trigger/:slug` runs the matching automation (auth required). On the Worker,

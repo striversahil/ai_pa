@@ -15,13 +15,20 @@ const ChatIcon = () => (
 // Per-item queries inside an item card: "Ask a query" + this item's threads
 // (open ones shown, resolved behind a toggle). Renders nothing outside an
 // EnquiryThreadsProvider, so item cards stay usable anywhere.
-export default function ItemQueries({ itemIndex, itemName = "" }: { itemIndex: number; itemName?: string }) {
+export default function ItemQueries({ itemIndex, itemName = "", canAsk = true }: {
+  itemIndex: number;
+  itemName?: string;
+  /** false hides the "Ask a query" button (existing threads still show).
+   *  Sales passes "rate given, not rate-available" (founder ask 2026-11-21). */
+  canAsk?: boolean;
+}) {
   const ctx = useItemThreadsCtx();
   const [asking, setAsking] = useState(false);
   const [showResolved, setShowResolved] = useState(false);
   if (!ctx) return null;
   const { desk, enquiryId, threads, act } = ctx;
   const mine = threads.filter((t) => t.itemIndex === itemIndex);
+  if (!canAsk && mine.length === 0) return null;
   const open = mine.filter((t) => t.status === "open");
   const resolved = mine.filter((t) => t.status === "resolved");
   const targets = startTargets(desk);
@@ -37,7 +44,7 @@ export default function ItemQueries({ itemIndex, itemName = "" }: { itemIndex: n
   return (
     <div className="mt-2 space-y-2" onClick={(e) => e.stopPropagation()}>
       <div className="flex flex-wrap items-center gap-2">
-        {!asking && <Button size="sm" variant="secondary" icon={<ChatIcon />} onClick={() => setAsking(true)}>{askLabel}</Button>}
+        {canAsk && !asking && <Button size="sm" variant="secondary" icon={<ChatIcon />} onClick={() => setAsking(true)}>{askLabel}</Button>}
         {open.length > 0 && <span className="text-caption font-semibold text-[var(--color-brand-indigo)]">{open.length} open quer{open.length === 1 ? "y" : "ies"}</span>}
         {resolved.length > 0 && (
           <button type="button" onClick={() => setShowResolved(!showResolved)}
@@ -46,7 +53,7 @@ export default function ItemQueries({ itemIndex, itemName = "" }: { itemIndex: n
           </button>
         )}
       </div>
-      {asking && (
+      {canAsk && asking && (
         <NewThreadForm desk={desk} onCancel={() => setAsking(false)}
           onStart={(to, text) => act.start({ to, enquiryId, itemIndex, itemName, text })} />
       )}
