@@ -76,6 +76,8 @@ describe('note composer stays retired', () => {
     const gate = src.match(/<ItemQueries itemIndex=\{idx\}[^>]*canAsk=\{([^}]*)\}/);
     assert.ok(gate, 'sales Ask a query must be gated (canAsk)');
     assert.ok(gate[1].includes('finalRate') && gate[1].includes('!it.rateAvailable'), 'sales gate = rate given AND not rate-available');
+    // ...or the estimate is marked as sent (any item may be asked about then).
+    assert.ok(gate[1].includes('salesSent') && src.includes('enquiryRateState(selectedEnquiry).sent'), 'sent estimates must open Ask a query on every item');
   });
 
   it('management can flag incorrect spec like procurement', () => {

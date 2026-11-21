@@ -10,6 +10,7 @@ import LoopCards from "@/components/LoopCards";
 import ItemQueries from "@/components/enquiry-threads/ItemQueries";
 import { openLoops } from "@/enquiry/loops";
 import { isOpenSpecFlag } from "@/enquiry/queue";
+import { enquiryRateState } from "@/enquiry/rate-state";
 import { filesToUploadedMedia, dragHasFiles } from "../lib/imageFiles";
 import type { SpecificationsSectionProps } from "./specifications-section/types";
 import { MAX_MEDIA_BYTES } from "./specifications-section/helpers";
@@ -40,6 +41,9 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
     if (onUpdateItems) onUpdateItems(updater);
   };
   const editable = !!onUpdateItems && !redacted;
+  // Estimate marked as sent (internal or any non-draft Zoho status, not under
+  // revision) — sales may then ask about ANY item (founder ask 2026-11-21).
+  const salesSent = enquiryRateState(selectedEnquiry).sent;
   // Vendor-rate collection follows the view mode, not the item-edit flag:
   // procurement ('edit') collects, management ('view') reviews. Sales
   // ('none') never sees vendor quotes — only the decided final rate per
@@ -521,8 +525,8 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                             onOpenLightbox={onOpenLightbox}
                             askKinds={[] /* retired 2026-11-20: sales asks go through per-item queries (enquiry-threads) */}
                           />
-                          {/* Sales may ask only once management has given this item's rate; never on rate-available items (founder ask 2026-11-21). */}
-                          <ItemQueries itemIndex={idx} itemName={it.name} canAsk={it.finalRate !== undefined && it.finalRate !== null && !it.rateAvailable} />
+                          {/* Sales asks: on a sent estimate any item; otherwise only once management gave this item's rate, never on rate-available items (founder asks 2026-11-21). */}
+                          <ItemQueries itemIndex={idx} itemName={it.name} canAsk={salesSent || (it.finalRate !== undefined && it.finalRate !== null && !it.rateAvailable)} />
                         </div>
                       )}
                       {it.qty && <div className="text-[11px] font-bold text-[var(--text-secondary)]">Qty: {it.qty}</div>}
