@@ -4,7 +4,8 @@ An offline calling assistant and mini CRM for sales and support teams. Import yo
 
 - **Platform:** Android 8.0 (API 26) to Android 15 (API 35)
 - **Tech:** Kotlin, Jetpack Compose (Material 3), Room, Navigation Compose
-- **Package:** `com.miniautodialer.app` · version 1.2.0
+- **Package:** `com.miniautodialer.app` · version 1.2.1
+- **Home → "All phone calls" (1.2.1):** the agent's own totals for the chosen range read from the phone's call log, so normal-dialer calls count too: all calls, connected, outgoing, incoming answered, missed / rejected, talk time.
 - **Bottom bar:** Home · Callbacks · **Dialer** (big centre button, opens first) · Records · Settings. Lists and Customers are no longer tabs (Home still links to them).
 - **Founder OS:** once paired, the **Dialer** tab auto-dials leads pushed from Founder OS (Sales → Controller → Auto Dialer) and syncs calls, dispositions, breaks and recordings back. Unpaired, the app works fully offline as before.
   - **Phone-dialer calls (1.2.0):** calls made or received in the phone's own dialer are read from the call log and reported too (Controller switch "Phone dialer calls"; report column *Phone dialer*). Their recordings upload like dialer calls.

@@ -20,6 +20,8 @@ import com.miniautodialer.app.MiniDialerApp
 import com.miniautodialer.app.data.Outcome
 import com.miniautodialer.app.ui.*
 import com.miniautodialer.app.util.Fmt
+import com.miniautodialer.app.util.PhoneLogStats
+import com.miniautodialer.app.util.PhoneStats
 import com.miniautodialer.app.util.Summary
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -42,6 +44,9 @@ fun DashboardScreen(nav: NavHostController) {
     val recCount by db.recordings().count().collectAsState(0)
     val campaigns by db.campaigns().withStats().collectAsState(emptyList())
     val s = remember(calls) { Summary.of(calls) }
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    // Re-read when the range changes or a new app call is saved.
+    val ps by produceState(PhoneStats(), from, calls.size) { value = PhoneLogStats.since(ctx, from) }
     val lastCampaign = campaigns.firstOrNull { it.campaign.id == MiniDialerApp.prefs.lastCampaignId && it.total > it.done }
         ?: campaigns.firstOrNull { it.total > it.done }
 
@@ -104,6 +109,24 @@ fun DashboardScreen(nav: NavHostController) {
                         })
                     }
                     if (pair.size == 1) Spacer(Modifier.weight(1f))
+                }
+            }
+            // Every call on the phone, including the normal dialer (Android call log).
+            SectionTitle("All phone calls (including normal dialer)")
+            if (!ps.readable) {
+                Text("Allow call log access to see these.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            } else {
+                listOf(
+                    Triple("All calls", "${ps.total}", Icons.Filled.Call to Color(0xFF2563EB)),
+                    Triple("Connected", "${ps.connected}", Icons.Filled.PhoneInTalk to Outcome.CONNECTED.color),
+                    Triple("Outgoing", "${ps.outgoing}", Icons.Filled.CallMade to Brand),
+                    Triple("Incoming answered", "${ps.incoming}", Icons.Filled.CallReceived to Color(0xFF0D9488)),
+                    Triple("Missed / rejected", "${ps.missed}", Icons.Filled.PhoneMissed to Outcome.NOT_ANSWERED.color),
+                    Triple("Talk time", Fmt.duration(ps.talkSec.toInt()), Icons.Filled.Timer to Color(0xFF0D9488)),
+                ).chunked(2).forEach { pair ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 4.dp)) {
+                        pair.forEach { (label, value, ic) -> StatCard(label, value, ic.first, ic.second, Modifier.weight(1f)) }
+                    }
                 }
             }
             if (s.calls > 0) {
