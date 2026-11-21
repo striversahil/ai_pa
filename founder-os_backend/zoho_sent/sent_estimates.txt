@@ -1,25 +1,25 @@
 curl 'https://books.zoho.com/api/v3/estimates?page=1&per_page=200&filter_by=Status.Sent&sort_column=estimate_number&sort_order=D&requiredfields=date%2Clocation_name%2Cestimate_number%2Creference_number%2Ccustomer_name%2Cstatus%2Ctotal%2Ccreated_time%2Clast_modified_time%2Cestimate_id%2Ccustomer_id%2Cis_viewed_by_client%2Cclient_viewed_time%2Cclient_viewed_time_formatted%2Cis_viewed_in_mail%2Cmail_last_viewed_time%2Cmail_last_viewed_time_formatted%2Cis_emailed%2Cis_edited_after_sign%2Chas_attachment&usestate=true&organization_id=676267428' \
   --compressed \
-  -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:158.0) Gecko/20100101 Firefox/158.0' \
+  -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:160.0) Gecko/20100101 Firefox/160.0' \
   -H 'Accept: */*' \
   -H 'Accept-Language: en-US,en;q=0.9' \
   -H 'Accept-Encoding: gzip, deflate, br, zstd' \
   -H 'Referer: https://books.zoho.com/app/676267428' \
-  -H 'X-ZCSRF-TOKEN: zbcsparam=0a0cbeb27de6f6941b637eff60ee8eefa1dbdd71973783afd8630e42a96c8db4b4643706c5da0c6faf9740bb4763b587c25fba21aa3cfde63a8f0c3162524a3e' \
+  -H 'X-ZCSRF-TOKEN: zbcsparam=31a9482c45413af2f316a5b368dfc0f18374461ffaa391153c9a6e4825200f4744e6a0733c1b667a5499842faa1205851cd460cddcd1bfc752379b86d5681730' \
   -H 'X-ZOHO-Include-Formatted: true' \
   -H 'X-ZB-SOURCE: zbclient' \
-  -H 'X-ZB-Asset-Version: Oct_21_2026_6329' \
+  -H 'X-ZB-Asset-Version: Nov_20_2026_21926' \
   -H 'X-ROLE-ID: 1584229000000000619' \
   -H 'Sec-GPC: 1' \
   -H 'Sec-Fetch-Dest: empty' \
   -H 'Sec-Fetch-Mode: cors' \
   -H 'Sec-Fetch-Site: same-origin' \
   -H 'Connection: keep-alive' \
-  -H 'Cookie: _zxor="https://books.zoho.com"; BuildCookie_676267428=1; siq1.zohocares-_zldp=dMx6e5HtWrVO1D07cA33QgnYXhJTk31TkYVDkXEqKBVMiOOiXIYz%2Bqd5HaMm9SQBgOMZQyJ3z4k%3D; siq1.zohocares-_zldt=aa1b029b-7bf7-47f9-ad45-37d60c1b7ee9-2; ZohoMarkRef="https://www.zoho.com/in/books/"; ZohoMarkSrc="google:books|google:books|direct:books"; zalb_ba05f91d88=88b3a18fa7b8bc24eb15f5dfd0de6687; zbcscook=0a0cbeb27de6f6941b637eff60ee8eefa1dbdd71973783afd8630e42a96c8db4b4643706c5da0c6faf9740bb4763b587c25fba21aa3cfde63a8f0c3162524a3e; MU=2-19f993ac155ff898b86f6effea46fa26030d4f1ef0ba7bb5; zalb_zid=676267428; JSESSIONID=5879BA93506BD95620EB3EBB089BBA84; zalb_3309580ed5=b1a80d02702c1bbb10e1bdc6c6bb8677; zalb_8b7213828d=cfa6a7490d5ab2351361538b4ff08bab; CSRF_TOKEN=0a0cbeb27de6f6941b637eff60ee8eefa1dbdd71973783afd8630e42a96c8db4b4643706c5da0c6faf9740bb4763b587c25fba21aa3cfde63a8f0c3162524a3e; drecn=cb10eb1e29c1dc8438dcb5e1fecb2462e24b4edb776901b7d9a6039c7bea9c51ef37aeb5d4de472cf3f0f0c30a3a756bd1ef94c37d0c77063e25abf8e884afbc; zalb_9d48ce4e3a=71cc3c199df2f64534ee4b6fc3d3a0e4; __Secure-iamsdt=0.CAESdBIwEf5GabuBtaCqe-fEyNJpw-Y9HSmEcx7yibyJUTaFkSRG7QrMgS33OaxiqBqL23aDGkCMxLx57Ub2apbrls-_32xPE7Ne1dB4yWFDWIzFes_6abE2R88gdRQ7Ux8p4wdcUw6Lg2vlOp1egTxS8To2YTsXIMqhxsjY3sXZuQE; _iamadt=11fe4669bb81b5a0aa7be7c4c8d269c3e63d1d2984731ef289bc89513685912446ed0acc812df739ac62a81a8bdb7683; _iambdt=8cc4bc79ed46f66a96eb96cfbfdf6c4f13b35ed5d078c96143588cc57acffa69b13647cf2075143b531f29e3075c530e8b836be53a9d5e813c52f13a36613b17; wms-tkp-token=676267682-3dbb3d73-fffd4b1773e2454bef26b7d351c3f432; CT_CSRF_TOKEN=0a0cbeb27de6f6941b637eff60ee8eefa1dbdd71973783afd8630e42a96c8db4b4643706c5da0c6faf9740bb4763b587c25fba21aa3cfde63a8f0c3162524a3e; com_chat_owner=1792574781749; com_avcliq_owner=1792574781749' \
+  -H 'Cookie: _zxor="https://books.zoho.com"; BuildCookie_676267428=1; siq1.zohocares-_zldp=dMx6e5HtWrVO1D07cA33QgnYXhJTk31TkYVDkXEqKBVMiOOiXIYz%2Bqd5HaMm9SQBgOMZQyJ3z4k%3D; siq1.zohocares-_zldt=aa1b029b-7bf7-47f9-ad45-37d60c1b7ee9-2; CT_CSRF_TOKEN=31a9482c45413af2f316a5b368dfc0f18374461ffaa391153c9a6e4825200f4744e6a0733c1b667a5499842faa1205851cd460cddcd1bfc752379b86d5681730; ZohoMarkRef="https://www.zoho.com/in/books/"; ZohoMarkSrc="google:books|google:books|direct:books"; zalb_ba05f91d88=88b3a18fa7b8bc24eb15f5dfd0de6687; zbcscook=31a9482c45413af2f316a5b368dfc0f18374461ffaa391153c9a6e4825200f4744e6a0733c1b667a5499842faa1205851cd460cddcd1bfc752379b86d5681730; MU=2-19f993ac155ff898b86f6effea46fa26030d4f1ef0ba7bb5; zalb_zid=676267428; JSESSIONID=DBC91290F3C9714A625E68FA46C39D0F; zalb_3309580ed5=b1a80d02702c1bbb10e1bdc6c6bb8677; zalb_8b7213828d=cfa6a7490d5ab2351361538b4ff08bab; CSRF_TOKEN=31a9482c45413af2f316a5b368dfc0f18374461ffaa391153c9a6e4825200f4744e6a0733c1b667a5499842faa1205851cd460cddcd1bfc752379b86d5681730; drecn=cb10eb1e29c1dc8438dcb5e1fecb2462e24b4edb776901b7d9a6039c7bea9c51ef37aeb5d4de472cf3f0f0c30a3a756bd1ef94c37d0c77063e25abf8e884afbc; zalb_9d48ce4e3a=71cc3c199df2f64534ee4b6fc3d3a0e4; __Secure-iamsdt=0.CAESdBIwj-YgBSzdqi6NGA3qBQ6MqPZnvFnEThNO0kK4-vNW5lavF1WydMNOy8N7AT4vc34TGkD-K-sQvCD_lv6HLTpvSXa4BSmb2D1_Y1EvPysc8t5RRXe_u-ynm-1DREpqZCPNKm6nkOQQp_lbyp8XTt6V-e9nIMGS0tffu8K-PA; _iamadt=8fe620052cddaa2e8d180dea050e8ca8f667bc59c44e134ed242b8faf356e656af1755b274c34ecbc37b013e2f737e13; _iambdt=fe2beb10bc20ff96fe872d3a6f4976b805299bd83d7f63512f3f2b1cf2de514577bfbbeca79bed43444a6a6423cd2a6ea790e410a7f95bca9f174ede95f9ef67; wms-tkp-token=676267682-47e289c2-4f89dcde1e407f9f9032a2f18151f082; com_chat_owner=1795258746369; com_avcliq_owner=1795258746369' \
   -H 'Priority: u=0' \
   -H 'TE: trailers'
 
 # DPG Milling World list URL — same login as above, second organization.
 # The sync reads every organization_id in this file in order (BUI stays first
-# = primary, bare DB ids). Tested 2026-09-23: 67 sent, comments + salesorders OK.
+# = primary, bare DB ids).
 curl 'https://books.zoho.com/api/v3/estimates?page=1&per_page=200&filter_by=Status.Sent&sort_column=estimate_number&sort_order=D&requiredfields=date%2Clocation_name%2Cestimate_number%2Creference_number%2Ccustomer_name%2Cstatus%2Ctotal%2Ccreated_time%2Clast_modified_time%2Cestimate_id%2Ccustomer_id%2Cis_viewed_by_client%2Cclient_viewed_time%2Cclient_viewed_time_formatted%2Cis_viewed_in_mail%2Cmail_last_viewed_time%2Cmail_last_viewed_time_formatted%2Cis_emailed%2Cis_edited_after_sign%2Chas_attachment&usestate=true&organization_id=744573214'
