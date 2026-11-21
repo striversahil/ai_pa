@@ -1,14 +1,15 @@
 "use client";
 import React, { useState } from "react";
 import { Button } from "@/components/ui";
-import { DESK_LABEL, startTargets, type ThreadDesk } from "@/enquiry-threads/types";
+import { DESK_LABEL, startTargets, type ThreadAttachment, type ThreadDesk } from "@/enquiry-threads/types";
 import { PrivateNotice } from "./ThreadCard";
+import { AttachButton, AttachmentList, useAttachDraft } from "./Attachments";
 
 // Ask a query on one item. Targets follow the desk rules:
 // sales/procurement → management; management → sales or procurement.
 export default function NewThreadForm({ desk, onStart, onCancel }: {
   desk: ThreadDesk;
-  onStart: (to: ThreadDesk, text: string) => Promise<unknown>;
+  onStart: (to: ThreadDesk, text: string, attachments: ThreadAttachment[]) => Promise<unknown>;
   onCancel: () => void;
 }) {
   const targets = startTargets(desk);
@@ -16,13 +17,14 @@ export default function NewThreadForm({ desk, onStart, onCancel }: {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const draft = useAttachDraft();
   const privateThread = (desk === "management" && to === "procurement") || desk === "procurement";
+  const canSend = !busy && !draft.uploading && (!!text.trim() || draft.files.length > 0);
 
   const submit = () => {
-    const v = text.trim();
-    if (!v || busy) return;
+    if (!canSend) return;
     setBusy(true); setErr(null);
-    onStart(to, v).then(() => onCancel()).catch((e: any) => { setErr(e?.message || "Could not send the query"); setBusy(false); });
+    onStart(to, text.trim(), draft.files).then(() => onCancel()).catch((e: any) => { setErr(e?.message || "Could not send the query"); setBusy(false); });
   };
 
   return (
@@ -46,10 +48,14 @@ export default function NewThreadForm({ desk, onStart, onCancel }: {
         placeholder={desk === "sales" ? "Rate negotiation, client's spec message, anything about this item…" : "What do you need on this item?"}
         className="w-full resize-y rounded-[var(--radius-sm)] border border-[var(--border-card)] bg-[var(--bg-card)] px-3 py-2 text-label font-normal text-[var(--text-primary)] outline-none focus:border-[var(--color-brand-indigo)]"
       />
-      {err && <p className="text-caption font-semibold text-[var(--color-danger)]">{err}</p>}
-      <div className="flex justify-end gap-2">
-        <Button size="sm" variant="ghost" onClick={onCancel} disabled={busy}>Cancel</Button>
-        <Button size="sm" variant="primary" onClick={submit} disabled={busy || !text.trim()}>{busy ? "Sending…" : "Send query"}</Button>
+      <AttachmentList files={draft.files} onRemove={draft.remove} />
+      {(err || draft.error) && <p className="text-caption font-semibold text-[var(--color-danger)]">{err || draft.error}</p>}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <AttachButton draft={draft} disabled={busy} />
+        <div className="flex gap-2">
+          <Button size="sm" variant="ghost" onClick={onCancel} disabled={busy}>Cancel</Button>
+          <Button size="sm" variant="primary" onClick={submit} disabled={!canSend}>{busy ? "Sending…" : "Send query"}</Button>
+        </div>
       </div>
     </div>
   );

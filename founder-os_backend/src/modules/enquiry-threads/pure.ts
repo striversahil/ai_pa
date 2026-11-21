@@ -8,9 +8,10 @@
 // never visible to the sales team. Guard: scripts/guards/enquiry-threads.test.mjs.
 import type { MeResponse } from '../auth/types';
 import { canManageRates } from '../enquiries/scopes';
+import { isSafeEnquiryFileKey } from '../../shared/enquiry-files';
 import {
-  MAX_THREAD_MESSAGES, MAX_THREAD_TEXT, THREAD_DESKS,
-  type EnquiryThread, type ThreadActor, type ThreadChannel, type ThreadDesk, type ThreadMessage, type ThreadResult,
+  MAX_THREAD_ATTACHMENTS, MAX_THREAD_MESSAGES, MAX_THREAD_TEXT, THREAD_DESKS,
+  type EnquiryThread, type ThreadActor, type ThreadAttachment, type ThreadChannel, type ThreadDesk, type ThreadMessage, type ThreadResult,
 } from './types';
 
 export const DESK_LABEL: Record<ThreadDesk, string> = { sales: 'Sales', procurement: 'Procurement', management: 'Management' };
@@ -69,20 +70,50 @@ export function cleanThreadText(v: unknown): string {
   return String(v ?? '').replace(/\r\n/g, '\n').trim().slice(0, MAX_THREAD_TEXT);
 }
 
+const LOCKER_PREFIX = '/api/enquiries/files/';
+const ATTACH_TYPES: ThreadAttachment['type'][] = ['image', 'video', 'pdf'];
+
+/** Keep only enquiry-locker URLs (uploaded first via POST /api/enquiries/files);
+ *  data-URIs and outside links are dropped so rows stay small and no
+ *  arbitrary URL is ever rendered to another desk. */
+export function cleanAttachments(raw: unknown): ThreadAttachment[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ThreadAttachment[] = [];
+  for (const a of raw) {
+    const url = String((a as any)?.url ?? '');
+    if (!url.startsWith(LOCKER_PREFIX) || !isSafeEnquiryFileKey(url.slice(LOCKER_PREFIX.length))) continue;
+    const t = String((a as any)?.type ?? '');
+    const type = (ATTACH_TYPES as string[]).includes(t) ? t as ThreadAttachment['type'] : 'image';
+    out.push({ url, name: String((a as any)?.name ?? 'file').slice(0, 200), type });
+    if (out.length >= MAX_THREAD_ATTACHMENTS) break;
+  }
+  return out;
+}
+
 const newId = (p: string) => `${p}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
-function message(actor: ThreadActor, text: string, at: string, system = false): ThreadMessage {
-  return { id: newId('tm'), by: actor.desk, authorName: actor.name.slice(0, 120), text, at, ...(system ? { system: true } : {}) };
+function message(actor: ThreadActor, text: string, at: string, system = false, attachments: ThreadAttachment[] = []): ThreadMessage {
+  return {
+    id: newId('tm'), by: actor.desk, authorName: actor.name.slice(0, 120), text, at,
+    ...(system ? { system: true } : {}), ...(attachments.length ? { attachments } : {}),
+  };
+}
+
+/** Text OR at least one attachment is required. */
+function body(rawText: unknown, rawFiles: unknown): { text: string; files: ThreadAttachment[] } | null {
+  const text = cleanThreadText(rawText);
+  const files = cleanAttachments(rawFiles);
+  return text || files.length ? { text, files } : null;
 }
 
 export function createThread(input: {
   enquiryId: string; itemIndex: number; itemName: string; actor: ThreadActor; to: ThreadDesk;
-  text: string; now: string; parentThreadId?: string | null;
+  text: string; now: string; parentThreadId?: string | null; attachments?: unknown;
 }): ThreadResult<EnquiryThread> {
   const channel = channelBetween(input.actor.desk, input.to);
   if (!channel) return { ok: false, status: 400, error: `${DESK_LABEL[input.actor.desk]} cannot start a thread with ${DESK_LABEL[input.to]}` };
-  const text = cleanThreadText(input.text);
-  if (!text) return { ok: false, status: 400, error: 'message text required' };
+  const b = body(input.text, input.attachments);
+  if (!b) return { ok: false, status: 400, error: 'message text or an attachment required' };
   return {
     ok: true,
     value: {
@@ -90,7 +121,7 @@ export function createThread(input: {
       itemIndex: Math.max(0, Math.floor(input.itemIndex)), itemName: String(input.itemName ?? '').slice(0, 200),
       channel, status: 'open', openedBy: input.actor.desk, waitingOn: input.to,
       parentThreadId: input.parentThreadId ?? null,
-      messages: [message(input.actor, text, input.now)],
+      messages: [message(input.actor, b.text, input.now, false, b.files)],
       createdAt: input.now, updatedAt: input.now, resolvedAt: null, resolvedBy: null,
     },
   };
@@ -105,16 +136,16 @@ function push(thread: EnquiryThread, m: ThreadMessage): ThreadMessage[] {
 }
 
 /** Reply: reopens a resolved thread; the other side now owes the answer. */
-export function replyThread(thread: EnquiryThread, actor: ThreadActor, rawText: string, now: string): ThreadResult<EnquiryThread> {
+export function replyThread(thread: EnquiryThread, actor: ThreadActor, rawText: string, now: string, attachments?: unknown): ThreadResult<EnquiryThread> {
   if (!isParty(thread, actor.desk)) return { ok: false, status: 403, error: 'not a party to this thread' };
-  const text = cleanThreadText(rawText);
-  if (!text) return { ok: false, status: 400, error: 'message text required' };
+  const b = body(rawText, attachments);
+  if (!b) return { ok: false, status: 400, error: 'message text or an attachment required' };
   return {
     ok: true,
     value: {
       ...thread, status: 'open', resolvedAt: null, resolvedBy: null,
       waitingOn: otherParty(thread.channel, actor.desk),
-      messages: push(thread, message(actor, text, now)), updatedAt: now,
+      messages: push(thread, message(actor, b.text, now, false, b.files)), updatedAt: now,
     },
   };
 }

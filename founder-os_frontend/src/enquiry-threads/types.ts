@@ -8,6 +8,14 @@ export type ThreadDesk = 'sales' | 'procurement' | 'management';
 export type ThreadChannel = 'sales' | 'internal';
 export type ThreadStatus = 'open' | 'resolved';
 
+/** Enquiry-locker URL only (uploaded first via lib/imageFiles uploadMediaFile). */
+export interface ThreadAttachment {
+  url: string;
+  name: string;
+  type: 'image' | 'video' | 'pdf';
+}
+export const MAX_THREAD_ATTACHMENTS = 6;
+
 export interface ThreadMessage {
   id: string;
   by: ThreadDesk;
@@ -15,6 +23,7 @@ export interface ThreadMessage {
   text: string;
   at: string;
   system?: boolean;
+  attachments?: ThreadAttachment[];
 }
 
 export interface EnquiryThread {

@@ -11,6 +11,15 @@ export type ThreadStatus = 'open' | 'resolved';
 export const THREAD_DESKS: readonly ThreadDesk[] = ['sales', 'procurement', 'management'];
 export const MAX_THREAD_TEXT = 2000;
 export const MAX_THREAD_MESSAGES = 200;
+export const MAX_THREAD_ATTACHMENTS = 6;
+
+/** A file on a message — ALWAYS a short enquiry-locker URL
+ *  (`/api/enquiries/files/enq/<uuid>.<ext>`), never an inline data-URI. */
+export interface ThreadAttachment {
+  url: string;
+  name: string;
+  type: 'image' | 'video' | 'pdf';
+}
 
 export interface ThreadMessage {
   id: string;
@@ -20,6 +29,7 @@ export interface ThreadMessage {
   at: string;
   /** System line (resolve / reopen / forwarded) — rendered muted. */
   system?: boolean;
+  attachments?: ThreadAttachment[];
 }
 
 export interface EnquiryThread {

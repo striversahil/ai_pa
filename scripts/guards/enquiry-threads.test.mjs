@@ -87,6 +87,20 @@ describe('enquiry threads — open / resolved flow', () => {
     assert.equal(resolveThread(mk('sales', 'management').value, { desk: 'sales', name: 's' }, NOW).value.status, 'resolved');
   });
 
+  it('attachments: locker URLs only, attachment-only messages allowed', () => {
+    const ok = { url: '/api/enquiries/files/enq/abc-123.jpg', name: 'nameplate.jpg', type: 'image' };
+    const kept = mod.cleanAttachments([ok, { url: 'data:image/png;base64,AAAA', name: 'x' }, { url: 'https://evil.example/x.pdf', name: 'y' }, { url: '/api/enquiries/files/enq/../../x', name: 'z' }]);
+    assert.deepEqual(kept, [ok]);
+    assert.equal(mod.cleanAttachments(Array.from({ length: 10 }, () => ok)).length, 6);
+    let t = mk('sales', 'management').value;
+    const r = replyThread(t, { desk: 'management', name: 'm' }, '', NOW, [ok]);
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.value.messages.at(-1).attachments, [ok]);
+    assert.equal(replyThread(t, { desk: 'management', name: 'm' }, '  ', NOW, [{ url: 'data:x' }]).ok, false);
+    const c = createThread({ enquiryId: 'e1', itemIndex: 0, itemName: 'I', actor: { desk: 'sales', name: 's' }, to: 'management', text: '', now: NOW, attachments: [ok] });
+    assert.equal(c.ok, true);
+  });
+
   it('summary counts only what the desk can see', () => {
     const rows = [mk('sales', 'management').value, mk('management', 'procurement').value];
     assert.deepEqual(summarizeForDesk(rows, 'sales'), { open: 1, resolved: 0, waitingOnYou: 0 });
@@ -114,4 +128,5 @@ describe('enquiry threads — wiring', () => {
     assert.ok(fe.includes("'sales' | 'procurement' | 'management'"), 'FE ThreadDesk union drifted');
     assert.ok(fe.includes("'sales' | 'internal'"), 'FE ThreadChannel union drifted');
   });
+
 });

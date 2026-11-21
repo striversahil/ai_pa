@@ -4,7 +4,7 @@
 import { useCallback } from "react";
 import { useLiveQuery } from "@/hooks/useLiveData";
 import { actOnThread, fetchEnquiryThreads, fetchThreadInbox, forwardThread, startThread } from "./api";
-import type { EnquiryThread, ThreadDesk, ThreadStatus } from "./types";
+import type { EnquiryThread, ThreadAttachment, ThreadDesk, ThreadStatus } from "./types";
 
 const EVENTS = ["enquiry-threads"];
 
@@ -39,10 +39,10 @@ export type DeskInbox = ReturnType<typeof useDeskInbox>;
 export function useThreadActions(desk: ThreadDesk, refresh: () => void) {
   const done = useCallback(<T,>(p: Promise<T>) => p.then((v) => { refresh(); return v; }), [refresh]);
   return {
-    start: (b: { to: ThreadDesk; enquiryId: string; itemIndex: number; itemName: string; text: string }) => done(startThread({ desk, ...b })),
-    reply: (id: string, text: string) => done(actOnThread(id, "reply", desk, text)),
+    start: (b: { to: ThreadDesk; enquiryId: string; itemIndex: number; itemName: string; text: string; attachments?: ThreadAttachment[] }) => done(startThread({ desk, ...b })),
+    reply: (id: string, text: string, attachments?: ThreadAttachment[]) => done(actOnThread(id, "reply", desk, text, attachments)),
     resolve: (id: string) => done(actOnThread(id, "resolve", desk)),
     reopen: (id: string) => done(actOnThread(id, "reopen", desk)),
-    forward: (id: string, text: string) => done(forwardThread(id, text)),
+    forward: (id: string, text: string, attachments?: ThreadAttachment[]) => done(forwardThread(id, text, attachments)),
   };
 }

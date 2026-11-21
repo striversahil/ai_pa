@@ -53,8 +53,8 @@ export default function ThreadInbox({ desk, inbox, onOpenEnquiry }: {
         <div className="space-y-2">
           {list.map((t) => (
             <ThreadCard key={t.id} thread={t} desk={desk} defaultOpen={tab === "open" && t.waitingOn === desk}
-              onReply={(x) => inbox.act.reply(t.id, x)} onResolve={() => inbox.act.resolve(t.id)} onReopen={() => inbox.act.reopen(t.id)}
-              onForward={desk === "management" ? (x) => inbox.act.forward(t.id, x) : undefined}
+              onReply={(x, a) => inbox.act.reply(t.id, x, a)} onResolve={() => inbox.act.resolve(t.id)} onReopen={() => inbox.act.reopen(t.id)}
+              onForward={desk === "management" ? (x, a) => inbox.act.forward(t.id, x, a) : undefined}
               onOpenEnquiry={onOpenEnquiry ? () => onOpenEnquiry(t.enquiryId) : undefined} />
           ))}
         </div>

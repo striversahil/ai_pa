@@ -59,6 +59,7 @@ export async function startThread(db: D1, me: MeResponse | null, body: any): Pro
   const r = createThread({
     enquiryId, itemIndex, itemName: item.name || String(body?.itemName ?? ''),
     actor: actorFor(me as MeResponse, g.value), to: body.to, text: body?.text, now: new Date().toISOString(),
+    attachments: body?.attachments,
   });
   if (r.ok) await insertThread(db, r.value);
   return r;
@@ -74,7 +75,7 @@ export async function actOnThread(db: D1, me: MeResponse | null, id: string, bod
   if (!thread || !canSee(thread, g.value)) return { ok: false, status: 404, error: 'thread not found' };
   const actor = actorFor(me as MeResponse, g.value);
   const now = new Date().toISOString();
-  const r = op === 'reply' ? replyThread(thread, actor, body?.text, now)
+  const r = op === 'reply' ? replyThread(thread, actor, body?.text, now, body?.attachments)
     : op === 'resolve' ? resolveThread(thread, actor, now)
     : reopenThread(thread, actor, now);
   if (!r.ok) return r;
@@ -93,7 +94,7 @@ export async function forwardToProcurement(db: D1, me: MeResponse | null, id: st
   const r = createThread({
     enquiryId: src.enquiryId, itemIndex: src.itemIndex, itemName: src.itemName,
     actor: actorFor(me as MeResponse, 'management'), to: 'procurement', text: body?.text,
-    now: new Date().toISOString(), parentThreadId: src.id,
+    now: new Date().toISOString(), parentThreadId: src.id, attachments: body?.attachments,
   });
   if (r.ok) await insertThread(db, r.value);
   return r;

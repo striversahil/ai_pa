@@ -37,8 +37,8 @@ export default function ItemQueries({ itemIndex, itemName = "", canAsk = true }:
   const card = (t: (typeof mine)[number]) => (
     <ThreadCard key={t.id} thread={t} desk={desk} showItem={false}
       defaultOpen={t.status === "open" && t.waitingOn === desk}
-      onReply={(x) => act.reply(t.id, x)} onResolve={() => act.resolve(t.id)} onReopen={() => act.reopen(t.id)}
-      onForward={desk === "management" ? (x) => act.forward(t.id, x) : undefined} />
+      onReply={(x, a) => act.reply(t.id, x, a)} onResolve={() => act.resolve(t.id)} onReopen={() => act.reopen(t.id)}
+      onForward={desk === "management" ? (x, a) => act.forward(t.id, x, a) : undefined} />
   );
 
   return (
@@ -55,7 +55,7 @@ export default function ItemQueries({ itemIndex, itemName = "", canAsk = true }:
       </div>
       {canAsk && asking && (
         <NewThreadForm desk={desk} onCancel={() => setAsking(false)}
-          onStart={(to, text) => act.start({ to, enquiryId, itemIndex, itemName, text })} />
+          onStart={(to, text, attachments) => act.start({ to, enquiryId, itemIndex, itemName, text, attachments })} />
       )}
       {open.map(card)}
       {showResolved && resolved.map(card)}
