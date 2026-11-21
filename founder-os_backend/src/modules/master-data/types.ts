@@ -77,38 +77,46 @@ export function isDuplicateReview(v: unknown): v is DuplicateReview {
   return typeof v === 'string' && (DUPLICATE_REVIEWS as string[]).includes(v);
 }
 
-/** Aggregate tiles + region counts. Computed once per cache window. */
-export interface MasterDataTotals {
+/** Region-scoped KPI tiles (COUNT/SUM over the whole region, never a page). */
+export interface MasterRowSummary {
   total: number;
   active: number;
   inactive: number;
   /** 0 estimates and 0 sales orders — never quoted. */
   neverTouched: number;
-  estimateOnly: number;
-  salesOrderOnly: number;
-  estimateAndOrder: number;
-  duplicateRows: number;
+  withOrders: number;
   duplicateGroups: number;
-  duplicateHigh: number;
-  duplicateMedium: number;
-  duplicateReview: number;
-  duplicateReviewed: number;
+  duplicateOpenGroups: number;
   noPhone: number;
   noEmail: number;
   noGstin: number;
   noPincode: number;
-  byRegion: Record<string, number>;
-  /** Region ids present in the data, in R1..R4 order. */
-  regionIds: string[];
 }
 
-export interface MasterDataPayload {
-  generatedAt: string;
+export interface MasterFilterOptions {
+  types: string[];
+  states: string[];
+  /** Only for the selected state (districts belong to a state). */
+  districts: string[];
+  subAreas: string[];
+  owners: string[];
+  pipelines: string[];
+}
+
+/** GET /api/master-data/summary (+ the workspace data payload, region ''):
+ *  header + region tabs over the whole book, tiles/options for one region.
+ *  Customer rows page separately via GET /api/master-data/customers. */
+export interface MasterSummary {
   /** Last audited write (import / edit / review) — the header stamp. */
   updatedAt: string;
   regions: MasterRegion[];
-  rows: MasterCustomer[];
-  totals: MasterDataTotals;
+  /** Whole live book. */
+  total: number;
+  byRegion: Record<string, number>;
+  /** Region ids present in the data, in R1..R4 order. */
+  regionIds: string[];
+  summary: MasterRowSummary;
+  options: MasterFilterOptions;
 }
 
 /** Fields an appointed editor may change. Region ownership stays with

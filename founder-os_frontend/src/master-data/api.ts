@@ -4,10 +4,10 @@
  */
 
 import type {
-  CustomerPatch, EditorEntry, MasterCapabilities, MasterCustomerDetail,
-  MasterDataPayload, MasterImportResult, DuplicateReview, TypeBaseEntry,
+  CustomerPatch, EditorEntry, MasterCapabilities, MasterCustomer, MasterCustomerDetail,
+  MasterImportResult, MasterSummary, DuplicateReview, TypeBaseEntry,
 } from "./types";
-import { workspaceDataUrl } from "@/workspaces/api";
+import { pagedUrl } from "@/lib/paging";
 
 async function jsonOrThrow<T>(res: Response): Promise<T> {
   const body = await res.json().catch(() => ({}));
@@ -15,10 +15,25 @@ async function jsonOrThrow<T>(res: Response): Promise<T> {
   return body as T;
 }
 
-/** Dashboard payload — one KV-cached read of the whole book. */
-export async function getMasterData(): Promise<MasterDataPayload> {
-  const res = await fetch(workspaceDataUrl("master-data"), { cache: "no-store" });
-  return jsonOrThrow<MasterDataPayload>(res);
+/** Paged customer list (usePagedQuery base URL) — founder paging standard. */
+export const CUSTOMERS_URL = "/api/master-data/customers";
+
+/** Header, region tabs, KPI tiles + filter options (COUNT/GROUP BY, cached). */
+export async function getMasterSummary(region: string, state: string): Promise<MasterSummary> {
+  const res = await fetch(pagedUrl("/api/master-data/summary", { region, state }), { cache: "no-store" });
+  return jsonOrThrow<MasterSummary>(res);
+}
+
+/** Duplicate-review rows for one region (the review tab groups them). */
+export async function getDuplicateRows(region: string): Promise<MasterCustomer[]> {
+  const res = await fetch(pagedUrl("/api/master-data/duplicates", { region }), { cache: "no-store" });
+  return (await jsonOrThrow<{ rows: MasterCustomer[] }>(res)).rows ?? [];
+}
+
+/** Every row the current filters match — for the CSV export only. */
+export async function exportCustomers(params: Record<string, string | number | undefined>): Promise<MasterCustomer[]> {
+  const res = await fetch(pagedUrl("/api/master-data/export", params), { cache: "no-store" });
+  return (await jsonOrThrow<{ rows: MasterCustomer[] }>(res)).rows ?? [];
 }
 
 export async function getMasterCustomer(id: string): Promise<MasterCustomerDetail> {

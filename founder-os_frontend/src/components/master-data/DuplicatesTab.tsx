@@ -11,6 +11,7 @@ import {
   REVIEW_LABELS, formatPhone, regionLabel, shortDate,
 } from "@/master-data/normalize";
 import { Chip, GhostButton, PrimaryButton } from "./ui";
+import { Pager } from "@/components/ui";
 
 const PAGE = 12;
 
@@ -24,7 +25,7 @@ export default function DuplicatesTab({
 }) {
   const [status, setStatus] = useState<"" | "open" | "reviewed">("open");
   const [confidence, setConfidence] = useState("");
-  const [limit, setLimit] = useState(PAGE);
+  const [page, setPage] = useState(1);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -41,7 +42,10 @@ export default function DuplicatesTab({
     });
   }, [groups, status, confidence]);
 
-  const visible = filtered.slice(0, limit);
+  // Page numbers (founder paging standard): 12 groups per page.
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE));
+  const safePage = Math.min(page, totalPages);
+  const visible = filtered.slice((safePage - 1) * PAGE, safePage * PAGE);
 
   const decide = async (group: string, review: DuplicateReview) => {
     setBusy(group);
@@ -67,15 +71,15 @@ export default function DuplicatesTab({
   return (
     <div className="space-y-2.5">
       <div className="flex flex-wrap items-center gap-1.5">
-        <Chip active={status === ""} onClick={() => { setStatus(""); setLimit(PAGE); }}>All ({groups.length})</Chip>
-        <Chip active={status === "open"} onClick={() => { setStatus("open"); setLimit(PAGE); }} tone="danger">Needs review ({openCount})</Chip>
-        <Chip active={status === "reviewed"} onClick={() => { setStatus("reviewed"); setLimit(PAGE); }}>Reviewed ({reviewedCount})</Chip>
+        <Chip active={status === ""} onClick={() => { setStatus(""); setPage(1); }}>All ({groups.length})</Chip>
+        <Chip active={status === "open"} onClick={() => { setStatus("open"); setPage(1); }} tone="danger">Needs review ({openCount})</Chip>
+        <Chip active={status === "reviewed"} onClick={() => { setStatus("reviewed"); setPage(1); }}>Reviewed ({reviewedCount})</Chip>
         <div className="flex-1" />
         {["High", "Medium", "Review"].map((c) => (
           <Chip
             key={c}
             active={confidence === c}
-            onClick={() => { setConfidence((v) => (v === c ? "" : c)); setLimit(PAGE); }}
+            onClick={() => { setConfidence((v) => (v === c ? "" : c)); setPage(1); }}
           >
             {c}
           </Chip>
@@ -168,12 +172,8 @@ export default function DuplicatesTab({
         })
       )}
 
-      {filtered.length > visible.length && (
-        <div className="flex justify-center pt-1">
-          <GhostButton onClick={() => setLimit((n) => n + PAGE)}>
-            Show more ({filtered.length - visible.length} left)
-          </GhostButton>
-        </div>
+      {filtered.length > 0 && (
+        <Pager page={safePage} limit={PAGE} total={filtered.length} totalPages={totalPages} onPage={setPage} noun="groups" />
       )}
     </div>
   );

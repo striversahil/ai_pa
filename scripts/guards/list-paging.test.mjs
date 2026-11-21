@@ -52,6 +52,30 @@ describe('shared paging helper', () => {
   });
 });
 
+describe('customer master is paged server-side', () => {
+  const lq = read(join(BE_SRC, 'modules', 'master-data', 'list-query.ts'));
+  const svc = read(join(BE_SRC, 'modules', 'master-data', 'service.ts'));
+  const route = read(join(BE_SRC, 'worker', 'routes', 'master-data.ts'));
+  const view = read(join(FRONTEND_SRC, 'components', 'master-data', 'MasterDataView.tsx'));
+  const tab = read(join(FRONTEND_SRC, 'components', 'master-data', 'CustomersTab.tsx'));
+
+  it('list/summary/duplicates/export routes are view-gated', () => {
+    for (const p of ['/api/master-data/customers', '/api/master-data/summary', '/api/master-data/duplicates', '/api/master-data/export']) {
+      const at = route.indexOf(`app.get('${p}'`);
+      assert.ok(at >= 0, `missing ${p}`);
+      assert.ok(route.slice(at, at + 400).includes('requireView(c)'), `${p} must requireView`);
+    }
+    assert.ok(lq.includes('pagedQuery') && lq.includes('LIVE_WHERE'), 'paged SQL over the live book');
+  });
+
+  it('no whole-book payload reaches the screen', () => {
+    assert.ok(!svc.includes('listAllCustomers'), 'service must not load the whole book');
+    assert.ok(view.includes('usePagedQuery') && !/getMasterData\b/.test(view), 'view pages via the shared hook');
+    assert.ok(!/applyFilters|sortRows|summarizeRows|buildFilterOptions/.test(view + tab), 'no client-side filtering of the book');
+    assert.ok(svc.includes('invalidateMasterSummaries'), 'writes must bust the cached summaries');
+  });
+});
+
 describe('product-line rates are paged, never capped', () => {
   const io = read(join(BE_SRC, 'automations', 'product-line', 'service-parts', 'io.ts'));
   const route = read(join(BE_SRC, 'worker', 'routes', 'product-line.ts'));

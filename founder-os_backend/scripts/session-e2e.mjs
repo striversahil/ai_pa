@@ -91,11 +91,19 @@ r = await call('/api/neodove/campaign/districts');
 check('districts needs a session (401)', r.status === 401);
 r = await call('/api/neodove/campaign/districts?region=R1&state=Uttar+Pradesh', 'root');
 check('districts signed-in → 200 + list', r.status === 200 && Array.isArray(r.body?.districts), String(r.status));
-// District round-trip: book row → master-data payload carries district.
+// District round-trip: book row → paged list filters on it + summary lists it.
 await db.prepare("INSERT INTO core_customer (id, zohoCustomerId, displayName, region, state, district, status) VALUES (?, ?, ?, ?, ?, ?, ?)")
   .bind('e2e-1', 'e2e-1', 'E2E Traders', 'R1', 'Uttar Pradesh', 'Lucknow', 'Active').run();
-r = await call('/api/session/workspaces/master-data/data', 'root');
-check('master-data payload carries district', r.status === 200 && (r.body?.rows ?? []).some((x) => x?.district === 'Lucknow'), String(r.status));
+r = await call('/api/master-data/customers?district=Lucknow', 'nobody');
+check('master-data list refused without grant (403)', r.status === 403, String(r.status));
+r = await call('/api/master-data/customers?district=Lucknow&q=e2e', 'root');
+check('master-data paged list filters by district', r.status === 200 && r.body?.total >= 1 && (r.body?.rows ?? []).every((x) => x?.district === 'Lucknow'), JSON.stringify({ s: r.status, total: r.body?.total }));
+// Summary: gate + shape only — d1-mock cannot evaluate GROUP BY/aggregate SQL
+// (semantics were parity-checked against the live book, see list-query.ts).
+r = await call('/api/master-data/summary?region=R1&state=Uttar+Pradesh', 'nobody');
+check('master-data summary refused without grant (403)', r.status === 403, String(r.status));
+r = await call('/api/master-data/summary?region=R1&state=Uttar+Pradesh', 'root');
+check('master-data summary shape', r.status === 200 && Array.isArray(r.body?.options?.districts) && typeof r.body?.summary?.total === 'number' && typeof r.body?.byRegion === 'object', String(r.status));
 r = await call('/api/estimates/movement?from=junk&region=R9', 'nobody');
 check('movement clamps bad range/region', r.status === 200 && r.body?.from === r.body?.to && r.body?.region === 'all', JSON.stringify({ from: r.body?.from, to: r.body?.to, region: r.body?.region }));
 

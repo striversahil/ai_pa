@@ -57,19 +57,32 @@ function likeWord(word: string): string {
 /**
  * Whole-table search clause: every word must appear in at least one column
  * (`word1 in (a OR b) AND word2 in (a OR b)`), case-insensitive LIKE.
- * Returns '' when there is nothing to search.
+ * Returns '' when there is nothing to search. `alsoMatch(word)` may add one
+ * extra alternative per word (e.g. phone digits: "98765-43210" → 9876543210).
  */
-export function searchClause(columns: readonly string[], q: string): { sql: string; binds: string[] } {
+export function searchClause(
+  columns: readonly string[],
+  q: string,
+  alsoMatch?: (word: string) => { sql: string; binds: string[] } | null,
+): { sql: string; binds: string[] } {
   const words = q.toLowerCase().split(/\s+/).filter(Boolean).slice(0, 6);
   if (!words.length || !columns.length) return { sql: '', binds: [] };
   const parts: string[] = [];
   const binds: string[] = [];
   for (const w of words) {
     const pattern = `%${likeWord(w)}%`;
-    parts.push(`(${columns.map((c) => `LOWER(COALESCE(${c}, '')) LIKE ? ESCAPE '\\'`).join(' OR ')})`);
+    const alts = columns.map((c) => `LOWER(COALESCE(${c}, '')) LIKE ? ESCAPE '\\'`);
     for (let i = 0; i < columns.length; i++) binds.push(pattern);
+    const extra = alsoMatch?.(w);
+    if (extra?.sql) { alts.push(extra.sql); binds.push(...extra.binds); }
+    parts.push(`(${alts.join(' OR ')})`);
   }
   return { sql: parts.join(' AND '), binds };
+}
+
+/** `%…%` LIKE pattern for one raw value (escaped, D1 length-capped). */
+export function likePattern(value: string): string {
+  return `%${likeWord(value.toLowerCase())}%`;
 }
 
 export interface PagedSql {

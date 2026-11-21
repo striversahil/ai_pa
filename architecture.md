@@ -867,7 +867,11 @@ events out to every component via an in-process event bus — no per-dashboard s
   `refresh()` and are muted for 4s. Footer `<Pager>` ("Showing 1–50 of N" + page numbers) from
   `@/components/ui`. Never paged: Management Active/Unprocessed, today's dispatches, overdue,
   procurement pending. Rolled out: product line (rates + product detail quotes, migration 0150);
-  next Master → Dispatch → Enquiries history → rest. Guard `list-paging`.
+  Customer Master (`/api/master-data/customers` paged + filtered + sorted in SQL, `/summary`
+  KV-cached COUNT/GROUP BY for region tabs, KPI tiles and filter options — busted by every
+  master write via `invalidateMasterSummaries`, `/duplicates` per region for the review tab
+  (12 groups/page), `/export` = all filtered rows for CSV; the old whole-book payload is gone).
+  Next Dispatch → Enquiries history → rest. Guard `list-paging`.
 - Backend `src/live.ts` defines `LiveEvent` (canonical type names) and `broadcastLive(c, type,
   extra?)`, which `notifyLive` now delegates to. **Every data-write path calls `broadcastLive`**:
   runner writes (`/api/runner/digests`, `tasks`, `pending-items`, `messages/mark-processed`,

@@ -29,6 +29,7 @@ const store = read(join(SRC, 'modules', 'master-data', 'store.ts'));
 const parse = read(join(SRC, 'modules', 'master-data', 'parse.ts'));
 const beTypes = read(join(SRC, 'modules', 'master-data', 'types.ts'));
 const beService = read(join(SRC, 'modules', 'master-data', 'service.ts'));
+const beListQuery = read(join(SRC, 'modules', 'master-data', 'list-query.ts'));
 const campStorePure = read(join(SRC, 'modules', 'neodove-campaign', 'store-parts', 'pure.ts'));
 const campStoreIo = read(join(SRC, 'modules', 'neodove-campaign', 'store-parts', 'io.ts'));
 const campSvcIo = read(join(SRC, 'modules', 'neodove-campaign', 'service-parts', 'io.ts'));
@@ -36,7 +37,9 @@ const campRoutes = read(join(SRC, 'worker', 'routes', 'neodove-campaign.ts'));
 
 const feTypes = read(join(FE, 'master-data', 'types.ts'));
 const feFilters = read(join(FE, 'master-data', 'filters.ts'));
-const feView = read(join(FE, 'components', 'master-data', 'MasterDataView.tsx'));
+// The filter panel was extracted from the view (2026-11-21) — read both.
+const feView = read(join(FE, 'components', 'master-data', 'MasterDataView.tsx'))
+  + read(join(FE, 'components', 'master-data', 'master-data-view', 'FilterPanel.tsx'));
 const feDrawerHelpers = read(join(FE, 'components', 'master-data', 'customer-drawer', 'helpers.ts'));
 const feDraftTypes = read(join(FE, 'components', 'master-data', 'customer-drawer', 'types.ts'));
 const feCampMirror = read(join(FE, 'telecalling', 'neodove-campaign.ts'));
@@ -104,8 +107,11 @@ describe('frontend mirrors district', () => {
   it('master-data mirror: types, filter, drawer', () => {
     assert.ok(feTypes.includes('district: string') && feTypes.includes('district?: string'), 'FE types missing district');
     assert.ok(feFilters.includes('district: "",') || feFilters.includes('district: "",'), 'EMPTY_FILTERS missing district');
-    assert.ok(feFilters.includes('if (f.district && r.district !== f.district) return false'), 'matchesFilters missing district');
-    assert.ok(feFilters.includes('districts: string[]'), 'FilterOptions missing districts');
+    // Filtering moved server-side 2026-11-21 (founder paging standard): the
+    // district predicate lives in list-query.ts, the FE only sends the param.
+    assert.ok(beListQuery.includes("eq(T('district'), f.district)"), 'server list filter missing district');
+    assert.ok(feFilters.includes('district: f.district'), 'filterParams must send district');
+    assert.ok(feTypes.includes('districts: string[]'), 'FilterOptions missing districts');
     assert.ok(feFilters.includes('["District", (r) => r.district]'), 'CSV missing District column');
     assert.ok(feView.includes('label="District"'), 'MasterDataView missing District filter');
     assert.ok(feDrawerHelpers.includes('"district"') || feDrawerHelpers.includes("'district'"), 'drawer DRAFT/MANAGER keys missing district');
