@@ -22,10 +22,9 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
   const [draft, setDraft] = useState<EnquiryItem>({ name: "", qty: "", spec: "" });
   const [mediaError, setMediaError] = useState<string | null>(null);
   const [rateError, setRateError] = useState<string | null>(null);
-  // Sales negotiation: client-side expected price + note per item.
-  const [expOpen, setExpOpen] = useState<number | null>(null);
-  const [expRate, setExpRate] = useState("");
-  const [expNote, setExpNote] = useState("");
+  // Sales "Negotiate — set client-expected price" editor retired 2026-11-21
+  // (founder ask): sales talks rates through per-item queries now. Targets
+  // already set still display read-only below.
   // Sales query ask: text + common attachment (example pic). Opens a query
   // loop held by management first (Query tab); answers land in LoopCards.
   // Procurement fulfilling with a new rate OR new item media clears it; sales may withdraw anytime.
@@ -172,44 +171,6 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
     if (!onUpdateItems) return;
     saveItems((prev) => prev.filter((_, i) => i !== idx));
     if (editingIdx === idx) setEditingIdx(null);
-  };
-  // Sales-owned expected price: target ₹ (+ optional note like "client
-  // quoted X elsewhere"). Saved onto the item + trailed as a sales remark
-  // so procurement (negotiation target) and management (vs vendor rates)
-  // both see it live. Clearing removes the target, also trailed.
-  const openExpected = (idx: number) => {
-    const it = items[idx];
-    setExpOpen(idx);
-    setExpRate(it?.expectedRate !== undefined && it?.expectedRate !== null ? String(it.expectedRate) : "");
-    setExpNote(it?.expectedNote ?? "");
-    setRateError(null);
-  };
-  const saveExpected = (idx: number) => {
-    if (!onUpdateItems) return;
-    const raw = expRate.trim();
-    const note = expNote.trim();
-    let rate: number | undefined;
-    if (raw) {
-      const v = parseMoneyInput(raw);
-      if (v === null) {
-        setRateError(`"${raw}" is not a valid amount — use digits only (e.g. 1200 or 1200.50).`);
-        return;
-      }
-      rate = v;
-    }
-    setRateError(null);
-    const text = rate !== undefined
-      ? `Expected price set: ₹${rate.toLocaleString("en-IN")}${note ? ` — ${note}` : ""}`
-      : "Expected price removed";
-    saveItems((prev) => prev.map((it, i) => (i === idx ? {
-      ...it,
-      expectedRate: rate,
-      expectedNote: note || undefined,
-      loopOpen: { kind: "note" as const, text: text.slice(0, 500) },
-    } : it)));
-    setExpOpen(null);
-    setExpRate("");
-    setExpNote("");
   };
   const copyItem = (idx: number) => {
     if (!onUpdateItems) return;
@@ -545,50 +506,6 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                             <p className="text-xs text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed mt-0.5">{it.expectedNote}</p>
                           )}
                         </div>
-                      )}
-                      {editable && mode === "none"
-                        && String(selectedEnquiry.rateStatus ?? "") === "sent"
-                        && it.finalRate !== undefined && it.finalRate !== null && (
-                        expOpen === idx ? (
-                          <div className="mt-1.5 space-y-1.5 rounded-lg border border-dashed border-sky-500/40 p-2">
-                            <div className="flex items-center gap-1.5">
-                              <input
-                                value={expRate}
-                                onChange={(e) => setExpRate(e.target.value)}
-                                placeholder="Client-expected ₹ (e.g. 1100)"
-                                inputMode="decimal"
-                                className="flex-1 px-2.5 py-1.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-sky-500 text-xs text-[var(--text-primary)]"
-                              />
-                              {it.expectedRate !== undefined && it.expectedRate !== null && (
-                                <button type="button" onClick={() => { setExpRate(""); setExpNote(""); }}
-                                  className="px-2 py-1.5 text-[11px] font-bold text-[var(--color-danger)] hover:opacity-80 cursor-pointer bg-transparent border-0 flex-shrink-0">
-                                  Clear
-                                </button>
-                              )}
-                            </div>
-                            <input
-                              value={expNote}
-                              onChange={(e) => setExpNote(e.target.value)}
-                              placeholder="Note — e.g. client quoted lower elsewhere, budget cap… (optional)"
-                              className="w-full px-2.5 py-1.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-lg outline-none focus:border-sky-500 text-xs text-[var(--text-primary)]"
-                            />
-                            <div className="flex gap-2">
-                              <button type="button" onClick={() => saveExpected(idx)} disabled={!expRate.trim() && (it.expectedRate === undefined || it.expectedRate === null)}
-                                className="px-3 py-1 bg-sky-600 hover:bg-sky-500 text-white font-bold text-[11px] rounded-lg cursor-pointer disabled:opacity-50">
-                                {it.expectedRate !== undefined && it.expectedRate !== null ? "Update target" : "Set target"}
-                              </button>
-                              <button type="button" onClick={() => { setExpOpen(null); setExpRate(""); setExpNote(""); setRateError(null); }}
-                                className="px-3 py-1 font-bold text-[11px] rounded-lg cursor-pointer border-0 bg-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
-                                Cancel
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <button type="button" onClick={() => openExpected(idx)}
-                            className="mt-1.5 text-[11px] font-bold text-sky-600 dark:text-sky-400 hover:opacity-80 cursor-pointer bg-transparent border-0">
-                            💬 {it.expectedRate !== undefined && it.expectedRate !== null ? "Negotiate — update expected price" : "Negotiate — set client-expected price"}
-                          </button>
-                        )
                       )}
                                               {(() => {
                         if (it.rateAvailable || (it as any).notAvailable) return null; // rate available / not available overrides — hide stored final/notes (state kept hidden in D1, restored when toggled off)
