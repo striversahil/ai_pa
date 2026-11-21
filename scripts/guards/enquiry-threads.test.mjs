@@ -143,6 +143,18 @@ describe('enquiry threads — ask-procurement transfer', () => {
     assert.ok(serveForDesk(r.value.thread, 'management'));
   });
 
+  it('a transfer never annotates the sales thread (sales learns nothing)', () => {
+    const src = srcThread();
+    const before = JSON.stringify(src.messages);
+    const r = transfer({ src, actor: mgmt, note: 'please quote this — client is waiting', now: NOW });
+    assert.equal(r.ok, true);
+    // The sales conversation is a pure input: no marker, no note, no mutation.
+    assert.equal(JSON.stringify(src.messages), before);
+    assert.ok(!/procurement|transferred|private/i.test(JSON.stringify(src)), 'sales thread must not mention the internal hand-off');
+    // And the served sales payload is literally nothing for that thread.
+    assert.equal(JSON.stringify(serveForDesk(r.value.thread, 'sales') ?? null), 'null');
+  });
+
   it('re-forward copies only the delta and reopens the same child', () => {
     const src = srcThread();
     const first = transfer({ src, actor: mgmt, note: 'please quote', now: NOW });
@@ -215,6 +227,14 @@ describe('enquiry threads — wiring', () => {
     const salesFilters = [...src.matchAll(/queueUnprocessed\.filter\(\(e\) => ([^)]+)\)/g)].map((m) => m[1]);
     assert.ok(salesFilters.some((f) => f.includes('hasOpenFlag') && !f.includes('isManagementPendingEnquiry')),
       'sales bucket must not exclude Active rows (mixed rows double-list by design)');
+  });
+
+  it('the Transferred marker can never render on the sales desk', () => {
+    const fe = readFileSync(join(FRONTEND_SRC, 'components', 'enquiry-threads', 'ThreadCard.tsx'), 'utf8');
+    const line = (fe.match(/[^\n]*m\.transferred[^\n]*/) ?? [''])[0];
+    assert.ok(line, 'marker must exist so its gate stays reviewable');
+    assert.ok(/internal/.test(line), 'marker gated to the internal channel');
+    assert.ok(/sales/.test(line), 'marker explicitly blocked on the sales desk');
   });
 
   it('thread writes paint optimistic echoes before the server confirms', () => {

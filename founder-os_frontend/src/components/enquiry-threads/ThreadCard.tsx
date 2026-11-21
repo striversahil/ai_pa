@@ -97,7 +97,12 @@ export default function ThreadCard({ thread: t, desk, onReply, onResolve, onReop
                   <p className="text-caption font-semibold text-[var(--text-secondary)]">
                     {DESK_LABEL[m.by]}{m.authorName ? ` · ${m.authorName}` : ""}{' '}
                     <span className="font-normal text-[var(--text-tertiary)]">· {when(m.at)}</span>
-                    {m.transferred && (
+                    {/* Why the double gate: copies only ever exist on the
+                        'internal' channel, and sales must never see ANY trace of
+                        the management↔procurement hand-off (founder rule) —
+                        even if a future surface wrongly mounts an internal
+                        thread on the sales desk. */}
+                    {t.channel === "internal" && desk !== "sales" && m.transferred && (
                       <span className="ml-1.5 rounded bg-[color-mix(in_srgb,var(--color-violet)_14%,transparent)] px-1 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-[var(--color-violet)]">
                         Transferred
                       </span>
