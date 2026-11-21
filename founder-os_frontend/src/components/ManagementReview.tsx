@@ -11,7 +11,7 @@ import { useDeskInbox } from "@/enquiry-threads/useThreads";
 import { Table, thClass, tdClass } from "@/components/ui/Table";
 import type { Enquiry } from "@/types";
 import { enquiryLabel, historyDateChip } from "@/types";
-import { itemNeedsDecision, isOpenSpecFlag, isManagementPendingEnquiry, isManagementHistoryEnquiry, isZohoClosedStatus, ratesCoverage, hasOpenQuery, hasResolvedQuery, openLoops } from "@/enquiry/queue";
+import { itemNeedsDecision, isOpenSpecFlag, isManagementPendingEnquiry, isManagementHistoryEnquiry, isZohoClosedStatus, ratesCoverage, hasOpenQuery, hasResolvedQuery } from "@/enquiry/queue";
 import { matchesEnquiryQuery } from "@/enquiry/search";
 import { toEnquiry } from "@/enquiry/normalize";
 import { enquirySalesSignal } from "@/enquiry/sales-signal";
@@ -40,12 +40,11 @@ export default function ManagementReview() {
   // History (fully decided). Active rows are excluded from the Pending tabs
   // (the Active tab owns them). Manual pick wins; otherwise land on the first
   // non-empty queue.
-  type MgmtTab = "active" | "conversations" | "query" | "fromSales" | "fromProcurement" | "history";
+  type MgmtTab = "active" | "conversations" | "fromSales" | "fromProcurement" | "history";
   const [tabPick, setTabPick] = useState<MgmtTab | null>(null);
-  // Conversations with Sales and (privately) Procurement — Open = needs you first.
+  // Queries with Sales and (privately) Procurement — Open = needs you first.
+  // (The old loop-based "Estimates Query" tab is retired, founder ask 2026-11-21.)
   const inbox = useDeskInbox("management");
-  // Query sub-filter: Needs action (open asks) | Resolved (recent answers).
-  const [queryFilter, setQueryFilter] = useState<"action" | "resolved">("action");
 
   // ── Data layer: KV-cached server queues (flat D1 cost) ──
   // Active + Unprocessed + item-less arrive COMPLETE from the cached
@@ -337,30 +336,6 @@ export default function ManagementReview() {
   // these are plain aliases (kept for symmetry with visibleHistoryPage).
   const visibleSales = salesBucket;
   const visibleProcurement = procurementBucket;
-  // Query: sales info/alternate asks — complete server sets (open + recently
-  // answered), split by the same predicates as the backend compute. Open asks
-  // show under Needs action with a with-management/with-procurement chip;
-  // answered ones under Resolved. Search folds in like the other tabs.
-  const queryBase = useMemo(() => [...(queues.data?.query ?? [])].sort(byActivity), [queues.data]);
-  const queryResolvedBase = useMemo(() => [...(queues.data?.queryResolved ?? [])].sort(byActivity), [queues.data]);
-  const queryBucket: Enquiry[] = useMemo(() => {
-    if (searchActive) {
-      return searchRows.filter((e) => hasOpenQuery(e as any)).sort(byActivity);
-    }
-    const q = searchQuery.trim();
-    if (!q) return queryBase;
-    return queryBase.filter((e) => matchesEnquiryQuery(e, q, [agentNameOf((e as any).assignedAgentId)]));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchActive, searchRows, queryBase, searchQuery]);
-  const queryResolvedBucket: Enquiry[] = useMemo(() => {
-    if (searchActive) {
-      return searchRows.filter((e) => hasResolvedQuery(e as any)).sort(byActivity);
-    }
-    const q = searchQuery.trim();
-    if (!q) return queryResolvedBase;
-    return queryResolvedBase.filter((e) => matchesEnquiryQuery(e, q, [agentNameOf((e as any).assignedAgentId)]));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchActive, searchRows, queryResolvedBase, searchQuery]);
   // Item-less rows sit in NO tab queue (every predicate needs items) — the
   // server ships them separately so a fresh enquiry is never invisible.
   // Closed requirements are dead/won — never "waiting on sales".
@@ -377,14 +352,11 @@ export default function ManagementReview() {
 
   const tab: MgmtTab = tabPick
     ?? (pending.length > 0 ? "active"
-      : queryBucket.length > 0 ? "query"
       : salesBucket.length > 0 ? "fromSales"
       : procurementBucket.length > 0 ? "fromProcurement" : "history");
   const tabs: Array<{ id: MgmtTab; label: string; count: number }> = [
     { id: "active", label: "Active", count: pending.length },
     { id: "conversations", label: "Queries", count: inbox.open.length },
-    // Legacy loop queries (retired 2026-11-20) — tab stays only until drained.
-    ...(queryBucket.length + queryResolvedBucket.length > 0 ? [{ id: "query" as MgmtTab, label: "Estimates Query (old)", count: queryBucket.length }] : []),
     { id: "fromSales", label: "Pending from Sales", count: salesBucket.length },
     { id: "fromProcurement", label: "Pending from Procurement", count: procurementBucket.length },
     { id: "history", label: "History", count: historyTotal },
@@ -565,7 +537,7 @@ export default function ManagementReview() {
     );
   }
 
-  const allOpenRows = useMemo(() => [...pending, ...queryBucket, ...queryResolvedBucket, ...unprocessedEnquiries, ...visibleHistory], [pending, queryBucket, queryResolvedBucket, unprocessedEnquiries, visibleHistory]);
+  const allOpenRows = useMemo(() => [...pending, ...unprocessedEnquiries, ...visibleHistory], [pending, unprocessedEnquiries, visibleHistory]);
   const selQueued = selectedId ? allOpenRows.find((e) => e.id === selectedId) ?? null : null;
   const sel = selFull && selFull.id === selectedId ? selFull : selQueued;
   if (!queuesLoaded) {
@@ -596,19 +568,10 @@ export default function ManagementReview() {
     return { done, total: loop.length };
   };
 
-  const renderEnquiryRows = (list: Enquiry[], mode: "active" | "pending" | "history" | "query") => list.map((e) => {
+  const renderEnquiryRows = (list: Enquiry[], mode: "active" | "pending" | "history") => list.map((e) => {
     const items = e.items ?? [];
     const { done, total } = loopProgress(e);
     const held = items.filter((it) => isOpenSpecFlag(it)).length;
-    // Sales-query state for the Query tab (open asks + recent answers).
-    const openQueries = items.filter((it) => openLoops(it, 'query').length > 0);
-    const withProc = openQueries.filter((it) => openLoops(it, 'query', 'procurement').length > 0).length;
-    const withMgmt = openQueries.length - withProc;
-    const answeredCount = items.filter((it) => {
-      const loops = Array.isArray((it as any)?.loops) ? (it as any).loops : [];
-      return openLoops(it, 'query').length === 0
-        && loops.some((l: any) => l?.kind === 'query' && l?.status === 'answered');
-    }).length;
     // Rates coverage badge: did procurement quote every loop item?
     // True bypasses (rateAvailable/internal/notAvailable) are excluded, but
     // spec-HELD items still have no rates — they block green and show as
@@ -662,10 +625,6 @@ export default function ManagementReview() {
           <span className="text-[11px] text-[var(--text-secondary)] whitespace-nowrap">
             {mode === "active"
               ? `${total - done} awaiting decision`
-              : mode === "query"
-                ? (openQueries.length > 0
-                  ? `${openQueries.length} quer${openQueries.length === 1 ? "y" : "ies"}${withMgmt > 0 ? ` · ${withMgmt} with you` : ""}${withProc > 0 ? ` · ${withProc} with procurement` : ""}`
-                  : `${answeredCount} answered ✓`)
                 : mode === "pending"
                   ? (held > 0 ? `${held} held — with sales` : "awaiting rates — with procurement")
                   : `${done} decided`}
@@ -679,7 +638,7 @@ export default function ManagementReview() {
     );
   });
 
-  const enquiryTable = (list: Enquiry[], mode: "active" | "pending" | "history" | "query") => (
+  const enquiryTable = (list: Enquiry[], mode: "active" | "pending" | "history") => (
     <Table stickyFirst>
       <thead>
         <tr>
@@ -814,42 +773,6 @@ export default function ManagementReview() {
                 <p className="mt-1 text-xs text-[var(--text-secondary)]">Every open item is quoted — the rest is either awaiting your decision or decided.</p>
               </div>
             )
-          )}
-
-          {tab === "query" && (
-            (() => {
-              const list = queryFilter === "action" ? queryBucket : queryResolvedBucket;
-              return list.length > 0 ? (
-                <section className="space-y-2">
-                <div className="flex items-center gap-2 mb-3">
-                  <div className="flex-1 relative">
-                    <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--text-tertiary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M10 18a8 8 0 110-16 8 8 0 010 16z" /></svg>
-                    <input value={searchQuery} onChange={(e)=> setSearchQuery(e.target.value)} placeholder="Search EST No., enquiry no., client, item, vendor… (all enquiries)" className="w-full pl-8 pr-3 py-2 rounded-xl bg-[var(--bg-input)] border border-[var(--border-card)] text-xs focus:outline-none focus:border-brand-indigo" />
-                    {(searchQuery || searchActive) && <button type="button" onClick={clearSearch} className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)] hover:text-[var(--text-primary)] text-xs">×</button>}
-                  </div>
-                  <div className="flex gap-1 rounded-full bg-black/5 p-0.5">
-                    {(["action", "resolved"] as const).map((f) => (
-                      <button key={f} type="button" onClick={() => setQueryFilter(f)}
-                        className={`rounded-full px-3 py-1 text-[11px] font-extrabold cursor-pointer border-0 ${queryFilter === f ? "bg-[var(--color-brand-indigo)] text-white shadow" : "bg-transparent text-[var(--text-secondary)]"}`}>
-                        {f === "action" ? `Needs action (${queryBucket.length})` : `Resolved (${queryResolvedBucket.length})`}
-                      </button>
-                    ))}
-                  </div>
-                  {searching ? <span className="text-xs text-[var(--text-secondary)]">Searching…</span>
-                    : (searchActive || searchLocal) ? <span className="text-xs text-[var(--text-secondary)]">{list.length} match{list.length === 1 ? "" : "es"} across all{searchHasMore ? " · top 50" : ""}</span> : null}
-                </div>
-                {enquiryTable(list, "query")}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-3 border-t border-[var(--border-card)] mt-3">
-                  <span className="text-xs font-semibold text-[var(--text-secondary)]">{queryFilter === "action" ? `Showing all ${list.length} open sales quer${list.length === 1 ? "y" : "ies"} — answer them or send to procurement` : `Showing ${list.length} recently answered quer${list.length === 1 ? "y" : "ies"} (last ${30} days)`}</span>
-                </div>
-                 </section>
-              ) : (
-                <div className="rounded-2xl border border-[var(--border-card)] bg-[var(--bg-card)] p-10 text-center">
-                  <p className="text-sm font-bold text-[var(--text-primary)]">{queryFilter === "action" ? "No open sales queries" : "No answered queries yet"}</p>
-                  <p className="mt-1 text-xs text-[var(--text-secondary)]">{queryFilter === "action" ? "Sales info/alternate asks will land here for your answer or forward." : "Answered queries will appear here once sales asks are resolved."}</p>
-                </div>
-              );
-            })()
           )}
 
           {tab === "history" && (
