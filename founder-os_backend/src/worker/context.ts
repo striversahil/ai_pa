@@ -232,6 +232,10 @@ export const AUTH_EXEMPT = [
   // GH Actions runners authenticate with SHARED_SECRET, not a session cookie.
   // These endpoints already enforce requireSecret() in their handlers.
   '/api/token/',
+  // Single AI gateway: POST /api/ai/complete (+ health/providers) enforces
+  // authorized() (runner secret OR viewer session) in-handler — the global
+  // session gate would otherwise 401 every runner call (no cookie on GH).
+  '/api/ai/',
   '/api/estimates/bulk-upsert',
   '/api/neodove/report',
   // Android devices authenticate with a per-device bearer token (requireDevice)
