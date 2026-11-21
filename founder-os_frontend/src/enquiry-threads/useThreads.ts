@@ -129,9 +129,11 @@ export function useThreadActions(
       );
     },
     forward: (id: string, text: string, attachments?: ThreadAttachment[]) => {
-      // Management-only: the private procurement thread echoes instantly in
-      // the management lists; the sales thread is untouched.
-      const echo = echoThread("procurement", "", 0, "", text, attachments);
+      // Management-only: the WHOLE sales query transfers into the private
+      // procurement thread (server copies every message + attachment); the
+      // sales thread is untouched. The echo only announces it — the server
+      // response replaces it on refresh.
+      const echo = echoThread("procurement", "", 0, "", text.trim() || "Sales query transferred to Procurement", attachments);
       return send(
         (ts) => [...ts, echo],
         () => forwardThread(id, text, attachments),

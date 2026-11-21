@@ -360,8 +360,14 @@ tools), and keeping threads out of them means none of those paths can leak a pri
   management access covers any desk) and serves only `channelsFor(desk)` — list, inbox and by-id
   (invisible ids 404). Live events carry ids only.
 - **Flow**: either party replies (turn passes to the other side, a reply reopens), either party
-  resolves/reopens. Management "Ask Procurement privately" on a sales thread opens a separate
-  `internal` thread with `parentThreadId` (served to management only); the sales thread is untouched.
+  resolves/reopens. Management **"Send query to Procurement"** on a sales thread TRANSFERS the
+  complete query (`transferTranscript`): every message, author, timestamp and attachment is copied
+  as a snapshot into ONE `internal` thread with `parentThreadId` (served to management only); the
+  sales thread is untouched and sales never sees the internal side. Re-forwarding the same sales
+  thread appends only the not-yet-copied messages (deduped by source message id) and reopens that
+  one child — one private thread per sales thread, never a duplicate per click. The over-cap case
+  (200 messages) drops the oldest and says how many were omitted, never silently. Management's note
+  is optional — the transcript alone is a complete hand-off. Index: migration `0151`.
 - **API** (`worker/routes/enquiry-threads.ts`): `GET /api/enquiry-threads?desk&enquiryId`,
   `GET …/inbox?desk&status`, `GET …/counts?desk`, `POST /api/enquiry-threads`,
   `POST …/:id/{reply,resolve,reopen,forward}`.

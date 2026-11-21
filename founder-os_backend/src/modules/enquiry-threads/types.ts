@@ -30,6 +30,10 @@ export interface ThreadMessage {
   /** System line (resolve / reopen / forwarded) — rendered muted. */
   system?: boolean;
   attachments?: ThreadAttachment[];
+  /** Copied verbatim from a Sales query when management transferred it to
+   *  Procurement (keeps the source id so a re-forward copies only the delta). */
+  transferred?: boolean;
+  sourceThreadId?: string;
 }
 
 export interface EnquiryThread {

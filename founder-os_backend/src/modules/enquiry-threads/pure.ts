@@ -176,6 +176,70 @@ export function reopenThread(thread: EnquiryThread, actor: ThreadActor, now: str
   };
 }
 
+/**
+ * Management hands a Sales query to Procurement (founder ask 2026-11-21): the
+ * COMPLETE conversation — every message, author, timestamp and attachment —
+ * is copied into the private internal thread, so Procurement answers the real
+ * question instead of a re-typed summary.
+ *
+ * Snapshot semantics, not a live mirror: the sales thread is untouched and
+ * `channelsFor` is unchanged, so the confidentiality rule (internal is never
+ * served to sales) still holds by construction. Later sales replies reach
+ * Procurement by re-forwarding — only the delta is copied, deduped by source
+ * message id (never by text: two identical "ok" replies are two messages).
+ *
+ * Idempotent per sales thread: one internal child, re-forwarded in place
+ * (reopens a resolved child, re-points `waitingOn` at procurement).
+ */
+export function transferTranscript(input: {
+  src: EnquiryThread;
+  actor: ThreadActor;
+  note: string;
+  now: string;
+  attachments?: unknown;
+  existing?: EnquiryThread | null;
+}): ThreadResult<{ thread: EnquiryThread; copied: number; attached: number; reopened: boolean }> {
+  const { src, actor, now } = input;
+  if (src.channel !== 'sales') return { ok: false, status: 404, error: 'sales thread not found' };
+  if (actor.desk !== 'management') return { ok: false, status: 403, error: 'management only' };
+  const child = input.existing ?? null;
+  const seen = new Set((child?.messages ?? []).filter((m) => m.transferred).map((m) => String(m.id)));
+  const fresh = src.messages.filter((m) => m && typeof m.id === 'string' && !seen.has(m.id));
+  const note = cleanThreadText(input.note);
+  const files = cleanAttachments(input.attachments);
+  if (fresh.length === 0 && !note && files.length === 0) {
+    return { ok: false, status: 400, error: 'No new sales messages since the last transfer' };
+  }
+  const attached = fresh.reduce((n, m) => n + (m.attachments?.length ?? 0), 0);
+  // Copies keep the SOURCE id: that is the re-forward dedupe key.
+  const copies: ThreadMessage[] = fresh.map((m) => ({ ...m, transferred: true, sourceThreadId: src.id }));
+  const header = message(
+    actor,
+    `Sales query transferred by ${DESK_LABEL[actor.desk]} — ${fresh.length} message${fresh.length === 1 ? '' : 's'}`
+      + (attached ? ` · ${attached} attachment${attached === 1 ? '' : 's'}` : ''),
+    now, true,
+  );
+  const noteMsg = note || files.length ? message(actor, note, now, false, files) : null;
+  let messages = [...(child?.messages ?? []), header, ...copies, ...(noteMsg ? [noteMsg] : [])];
+  // Never silently truncate: over the cap, drop the oldest and say so.
+  if (messages.length > MAX_THREAD_MESSAGES) {
+    const keep = messages.slice(-(MAX_THREAD_MESSAGES - 1));
+    const omitted = messages.length - keep.length;
+    messages = [message(actor, `${omitted} earlier message${omitted === 1 ? '' : 's'} omitted`, now, true), ...keep];
+  }
+  const thread: EnquiryThread = child
+    ? {
+        ...child, status: 'open', resolvedAt: null, resolvedBy: null,
+        waitingOn: 'procurement', messages, updatedAt: now,
+      }
+    : {
+        id: newId('th'), enquiryId: src.enquiryId, itemIndex: src.itemIndex, itemName: src.itemName,
+        channel: 'internal', status: 'open', openedBy: 'management', waitingOn: 'procurement',
+        parentThreadId: src.id, messages, createdAt: now, updatedAt: now, resolvedAt: null, resolvedBy: null,
+      };
+  return { ok: true, value: { thread, copied: fresh.length, attached, reopened: child?.status === 'resolved' } };
+}
+
 /** Counts for a desk's Open / Resolved tabs (+ how many wait on that desk). */
 export function summarizeForDesk(threads: EnquiryThread[], desk: ThreadDesk): { open: number; resolved: number; waitingOnYou: number } {
   let open = 0, resolved = 0, waitingOnYou = 0;

@@ -45,7 +45,11 @@ export default function ThreadCard({ thread: t, desk, onReply, onResolve, onReop
   const myTurn = !resolved && t.waitingOn === desk;
   const canForward = !!onForward && desk === "management" && t.channel === "sales";
   const draft = useAttachDraft();
-  const canSend = !busy && !draft.uploading && (!!text.trim() || draft.files.length > 0);
+  // Forward transfers the whole query server-side, so an empty note is valid
+  // (every message + attachment is copied); a normal reply needs text or a file.
+  const handed = t.messages.filter((m) => !m.system);
+  const handedFiles = handed.reduce((n, m) => n + (m.attachments?.length ?? 0), 0);
+  const canSend = !busy && !draft.uploading && (mode === "forward" || !!text.trim() || draft.files.length > 0);
 
   const run = (p: () => Promise<unknown>, clear = false) => {
     setBusy(true); setErr(null);
@@ -90,7 +94,15 @@ export default function ThreadCard({ thread: t, desk, onReply, onResolve, onReop
             ) : (
               <li key={m.id} className={`flex ${m.by === desk ? "justify-end" : "justify-start"}`}>
                 <div className={`max-w-[85%] rounded-[var(--radius-sm)] px-3 py-2 ${m.by === desk ? "bg-[color-mix(in_srgb,var(--color-brand-indigo)_10%,transparent)]" : "bg-[var(--surface-sunken)]"}`}>
-                  <p className="text-caption font-semibold text-[var(--text-secondary)]">{DESK_LABEL[m.by]}{m.authorName ? ` · ${m.authorName}` : ""} <span className="font-normal text-[var(--text-tertiary)]">· {when(m.at)}</span></p>
+                  <p className="text-caption font-semibold text-[var(--text-secondary)]">
+                    {DESK_LABEL[m.by]}{m.authorName ? ` · ${m.authorName}` : ""}{' '}
+                    <span className="font-normal text-[var(--text-tertiary)]">· {when(m.at)}</span>
+                    {m.transferred && (
+                      <span className="ml-1.5 rounded bg-[color-mix(in_srgb,var(--color-violet)_14%,transparent)] px-1 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-[var(--color-violet)]">
+                        Transferred
+                      </span>
+                    )}
+                  </p>
                   {m.text && <p className="mt-0.5 whitespace-pre-wrap break-words text-label font-normal text-[var(--text-primary)]">{m.text}</p>}
                   <AttachmentList files={m.attachments ?? []} />
                 </div>
@@ -99,16 +111,22 @@ export default function ThreadCard({ thread: t, desk, onReply, onResolve, onReop
           </ol>
 
           {mode === "forward" && (
-            <p className="rounded-[var(--radius-sm)] bg-[color-mix(in_srgb,var(--color-violet)_8%,transparent)] px-3 py-2 text-caption text-[var(--text-secondary)]">
-              Opens a <b>private</b> thread with Procurement on this item. Sales will not see it — reply to Sales here once you have the answer.
-            </p>
+            <div className="space-y-1 rounded-[var(--radius-sm)] bg-[color-mix(in_srgb,var(--color-violet)_8%,transparent)] px-3 py-2 text-caption text-[var(--text-secondary)]">
+              <p>
+                Transfers the <b>complete query</b> to Procurement — {handed.length} message{handed.length === 1 ? "" : "s"}
+                {handedFiles > 0 && <> · {handedFiles} attachment{handedFiles === 1 ? "" : "s"}</>} from this Sales conversation, in a <b>private</b> thread Sales never sees.
+              </p>
+              <p className="text-[var(--text-tertiary)]">
+                A note below is optional. Sending again later transfers only the new Sales messages to the same thread.
+              </p>
+            </div>
           )}
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) send(); }}
             rows={2}
-            placeholder={mode === "forward" ? "Question for Procurement…" : resolved ? `Reply to reopen — ${DESK_LABEL[other]} will see it` : `Reply to ${DESK_LABEL[other]}…`}
+            placeholder={mode === "forward" ? "Note for Procurement (optional)…" : resolved ? `Reply to reopen — ${DESK_LABEL[other]} will see it` : `Reply to ${DESK_LABEL[other]}…`}
             className="w-full resize-y rounded-[var(--radius-sm)] border border-[var(--border-card)] bg-[var(--bg-input)] px-3 py-2 text-label font-normal text-[var(--text-primary)] outline-none focus:border-[var(--color-brand-indigo)]"
           />
           <AttachmentList files={draft.files} onRemove={draft.remove} />
@@ -121,13 +139,13 @@ export default function ThreadCard({ thread: t, desk, onReply, onResolve, onReop
                 : <Button size="sm" variant="ghost" disabled={busy} onClick={() => run(onResolve)}>✓ Mark resolved</Button>}
               {canForward && (
                 <Button size="sm" variant="ghost" disabled={busy} onClick={() => setMode(mode === "forward" ? "reply" : "forward")}>
-                  {mode === "forward" ? "Cancel" : "Ask Procurement privately"}
+                  {mode === "forward" ? "Cancel" : "Send query to Procurement"}
                 </Button>
               )}
               {onOpenEnquiry && <Button size="sm" variant="ghost" onClick={onOpenEnquiry}>Open enquiry →</Button>}
             </div>
             <Button size="sm" variant="primary" disabled={!canSend} onClick={send}>
-              {busy ? "Sending…" : mode === "forward" ? "Send to Procurement" : "Send"}
+              {busy ? "Sending…" : mode === "forward" ? "Transfer query" : "Send"}
             </Button>
           </div>
         </div>

@@ -5,9 +5,10 @@
 import type { MeResponse } from '../auth/types';
 import {
   canSee, channelsFor, createThread, deskAllowed, isDesk, reopenThread, replyThread, resolveThread, serveForDesk,
+  transferTranscript,
 } from './pure';
 import {
-  countOpenByEnquiry, getThread, insertThread, listInbox, listThreadsForEnquiry, readItemName, saveThreadState,
+  countOpenByEnquiry, findChildThread, getThread, insertThread, listInbox, listThreadsForEnquiry, readItemName, saveThreadState,
 } from './store';
 import type { EnquiryThread, ThreadActor, ThreadDesk, ThreadResult } from './types';
 
@@ -83,19 +84,24 @@ export async function actOnThread(db: D1, me: MeResponse | null, id: string, bod
   return { ok: true, value: serveForDesk(r.value, g.value) as EnquiryThread };
 }
 
-/** Management sends a sales thread's question on to procurement: opens a
- *  SEPARATE internal thread (parent link kept for management only). The
- *  sales thread is untouched — sales never learns procurement was asked. */
+/** Management sends a sales thread's question on to procurement: the WHOLE
+ *  conversation (messages + attachments) is transferred into a SEPARATE
+ *  internal thread (parent link kept for management only). The sales thread
+ *  is untouched — sales never learns procurement was asked. Re-forwarding the
+ *  same sales thread appends only the new messages to the one child thread. */
 export async function forwardToProcurement(db: D1, me: MeResponse | null, id: string, body: any): Promise<Res<EnquiryThread>> {
   const g = gate(me, 'management');
   if (!g.ok) return g;
   const src = await getThread(db, id);
   if (!src || src.channel !== 'sales') return { ok: false, status: 404, error: 'sales thread not found' };
-  const r = createThread({
-    enquiryId: src.enquiryId, itemIndex: src.itemIndex, itemName: src.itemName,
-    actor: actorFor(me as MeResponse, 'management'), to: 'procurement', text: body?.text,
-    now: new Date().toISOString(), parentThreadId: src.id, attachments: body?.attachments,
+  const existing = await findChildThread(db, src.id);
+  const r = transferTranscript({
+    src, actor: actorFor(me as MeResponse, 'management'),
+    note: String(body?.text ?? ''), attachments: body?.attachments,
+    now: new Date().toISOString(), existing,
   });
-  if (r.ok) await insertThread(db, r.value);
-  return r;
+  if (!r.ok) return r;
+  if (existing) await saveThreadState(db, r.value.thread);
+  else await insertThread(db, r.value.thread);
+  return { ok: true, value: serveForDesk(r.value.thread, g.value) as EnquiryThread };
 }

@@ -108,6 +108,84 @@ describe('enquiry threads — open / resolved flow', () => {
   });
 });
 
+describe('enquiry threads — ask-procurement transfer', () => {
+  const transfer = mod.transferTranscript;
+  const files = [{ url: '/api/enquiries/files/enq/a.jpg', name: 'a.jpg', type: 'image' }];
+  /** A real sales query: ask -> management reply -> sales follow-up with a photo. */
+  const srcThread = () => {
+    const t = mk('sales', 'management', 'what is the motor rating?').value;
+    const answered = replyThread(t, { desk: 'management', name: 'Mgr' }, 'checking with the vendor', NOW).value;
+    return replyThread(answered, { desk: 'sales', name: 'Rep' }, '', NOW, files).value;
+  };
+  const mgmt = { desk: 'management', name: 'M' };
+
+  it('transfers the COMPLETE sales query — every message, author and attachment', () => {
+    const src = srcThread();
+    const r = transfer({ src, actor: mgmt, note: '', now: NOW });
+    assert.equal(r.ok, true);
+    assert.equal(r.value.thread.channel, 'internal');
+    assert.equal(r.value.thread.parentThreadId, src.id);
+    assert.equal(r.value.thread.waitingOn, 'procurement');
+    assert.equal(r.value.copied, src.messages.length);
+    const copied = r.value.thread.messages.filter((m) => m.transferred);
+    assert.deepEqual(copied.map((m) => m.text), src.messages.map((m) => m.text));
+    assert.deepEqual(copied.flatMap((m) => m.attachments ?? []), files);
+    assert.equal(r.value.attached, 1);
+    // authors survive, so procurement knows who asked what
+    assert.deepEqual([...new Set(copied.map((m) => m.by))], ['sales', 'management']);
+    assert.ok(r.value.thread.messages.some((m) => m.system && /transferred/i.test(m.text)));
+  });
+
+  it('privacy still holds: the transferred child is never served to sales', () => {
+    const r = transfer({ src: srcThread(), actor: mgmt, note: '', now: NOW });
+    assert.equal(serveForDesk(r.value.thread, 'sales'), null);
+    assert.ok(serveForDesk(r.value.thread, 'procurement'));
+    assert.ok(serveForDesk(r.value.thread, 'management'));
+  });
+
+  it('re-forward copies only the delta and reopens the same child', () => {
+    const src = srcThread();
+    const first = transfer({ src, actor: mgmt, note: 'please quote', now: NOW });
+    const child = resolveThread(first.value.thread, { desk: 'procurement', name: 'P' }, NOW).value;
+    assert.equal(child.status, 'resolved');
+    const later = replyThread(src, { desk: 'sales', name: 'Rep' }, 'client added: IP55', NOW).value;
+    const again = transfer({ src: later, actor: mgmt, note: '', now: NOW, existing: child });
+    assert.equal(again.ok, true);
+    assert.equal(again.value.copied, 1);
+    assert.equal(again.value.reopened, true);
+    assert.equal(again.value.thread.status, 'open');
+    assert.equal(again.value.thread.waitingOn, 'procurement');
+    assert.equal(again.value.thread.id, child.id);
+    assert.ok(again.value.thread.messages.filter((m) => m.transferred).some((m) => m.text === 'client added: IP55'));
+    // no duplicate copies of the messages already transferred
+    assert.equal(again.value.thread.messages.filter((m) => m.transferred).length, src.messages.length + 1);
+  });
+
+  it('refuses an empty re-forward instead of spamming the thread', () => {
+    const src = srcThread();
+    const first = transfer({ src, actor: mgmt, note: '', now: NOW });
+    const again = transfer({ src, actor: mgmt, note: '  ', now: NOW, existing: first.value.thread });
+    assert.equal(again.ok, false);
+    assert.equal(again.status, 400);
+  });
+
+  it('over-cap transcripts say how many messages were omitted', () => {
+    const many = mk('sales', 'management', 'm0').value;
+    many.messages = Array.from({ length: 205 }, (_, i) => ({ id: `tm_cap_${i}`, by: 'sales', authorName: 's', text: `m${i}`, at: NOW }));
+    const r = transfer({ src: many, actor: mgmt, note: '', now: NOW });
+    assert.equal(r.ok, true);
+    assert.ok(r.value.thread.messages.length <= 200, 'thread stays under the message cap');
+    assert.match(r.value.thread.messages[0].text, /\d+ earlier messages? omitted/);
+  });
+
+  it('management-only, sales-thread-only', () => {
+    const src = srcThread();
+    assert.equal(transfer({ src, actor: { desk: 'procurement', name: 'P' }, note: '', now: NOW }).ok, false);
+    assert.equal(transfer({ src, actor: { desk: 'sales', name: 'S' }, note: '', now: NOW }).ok, false);
+    assert.equal(transfer({ src: mk('management', 'procurement').value, actor: mgmt, note: '', now: NOW }).ok, false);
+  });
+});
+
 describe('enquiry threads — wiring', () => {
   it('service gates every read and write by desk + channel', () => {
     const src = readFileSync(join(BACKEND_DIR, 'src', 'modules', 'enquiry-threads', 'service.ts'), 'utf8');

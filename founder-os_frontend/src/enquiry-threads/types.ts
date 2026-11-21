@@ -24,6 +24,10 @@ export interface ThreadMessage {
   at: string;
   system?: boolean;
   attachments?: ThreadAttachment[];
+  /** Copied verbatim from a Sales query when management transferred it to
+   *  Procurement (mirror: backend enquiry-threads/types.ts). */
+  transferred?: boolean;
+  sourceThreadId?: string;
 }
 
 export interface EnquiryThread {

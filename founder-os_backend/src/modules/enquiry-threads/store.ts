@@ -68,6 +68,15 @@ export async function getThread(db: D1, id: string): Promise<EnquiryThread | nul
   return r ? rowToThread(r) : null;
 }
 
+/** The internal child forwarded from a sales thread (one per source thread —
+ *  a re-forward appends the delta instead of opening a duplicate). */
+export async function findChildThread(db: D1, parentThreadId: string): Promise<EnquiryThread | null> {
+  const r = await db
+    .prepare("SELECT * FROM EnquiryThread WHERE parentThreadId = ? AND channel = 'internal' ORDER BY createdAt ASC LIMIT 1")
+    .bind(parentThreadId).first();
+  return r ? rowToThread(r) : null;
+}
+
 /** Item name snapshot without loading the (multi-MB) items blob. */
 export async function readItemName(db: D1, enquiryId: string, itemIndex: number): Promise<{ exists: boolean; name: string }> {
   const r = await db
