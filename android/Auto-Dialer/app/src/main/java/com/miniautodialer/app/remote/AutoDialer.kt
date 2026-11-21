@@ -99,7 +99,8 @@ object AutoDialer {
             while (true) {
                 val cfg = session.config // re-read: the Controller can change it between rounds
                 if (session.breakId != null) return@launch
-                cfg.activeScheduledBreak()?.let { set(State.Scheduled(it.label, it.end)); delay(20_000); continue }
+                val scheduled = cfg.activeScheduledBreak()
+                if (scheduled != null) { set(State.Scheduled(scheduled.label, scheduled.end)); delay(20_000); continue }
                 if (!cfg.inShift()) { set(State.OffShift); delay(60_000); continue }
                 val item = dao.nextDue(System.currentTimeMillis())
                 if (item == null) {
