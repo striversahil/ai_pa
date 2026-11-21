@@ -9,6 +9,7 @@ export { Table, thClass, tdClass, stickyCol } from "./Table";
 export { TabBar } from "./TabBar";
 export type { TabBarItem, TabBarVariant } from "./TabBar";
 export { Button, buttonClass } from "./Button";
+export { Pager, PageJumper, ChangesBanner } from "./Pager";
 export type { ButtonVariant, ButtonSize } from "./Button";
 
 // Overlays — use these instead of hand-rolling `fixed inset-0` panels.

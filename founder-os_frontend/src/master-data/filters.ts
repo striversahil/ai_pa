@@ -1,8 +1,11 @@
-// filters.ts — pure search/filter/sort/grouping for the customer master.
+// filters.ts — filter state, duplicate grouping and CSV for the customer master.
 //
-// Single home for the table's predicates (the dashboard filters client-side on
-// the cached payload, so no backend mirror is needed). Framework-free: every
-// function takes rows and returns rows, which keeps the component about render.
+// Filtering, search, sorting, KPI tiles and filter options run on the SERVER
+// since 2026-11-21 (founder paging standard): this file only shapes the
+// filter state into query params — mirror of
+// founder-os_backend/src/modules/master-data/list-query.ts `parseCustomerFilters`
+// (same param names; the SQL there reproduces the retired client predicates,
+// parity-checked on the live book).
 import type { MasterCustomer } from "./types";
 
 export interface MasterFilters {
@@ -53,66 +56,6 @@ export function hasActiveFilters(f: MasterFilters): boolean {
   );
 }
 
-function haystack(r: MasterCustomer): string {
-  return [
-    r.name, r.company, r.contact, r.designation, r.city, r.state, r.district, r.subArea,
-    r.pincode, r.gstin, r.owner, r.customerType, r.typeBase, r.typeTag,
-    r.duplicateGroup, r.duplicateAction, r.emails.join(" "), r.phones.join(" "),
-    r.zohoCustomerId,
-  ]
-    .join(" ")
-    .toLowerCase();
-}
-
-function phoneDigits(r: MasterCustomer): string {
-  return r.phones.map((p) => p.replace(/\D/g, "")).join(" ");
-}
-
-/** Every whitespace-separated token must match; a numeric token also matches a
- *  phone number (so "98765 43210" and "9876543210" both find the record). */
-export function matchesQuery(r: MasterCustomer, q: string): boolean {
-  const tokens = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  if (tokens.length === 0) return true;
-  const text = haystack(r);
-  const digits = phoneDigits(r);
-  return tokens.every((token) => {
-    if (text.includes(token)) return true;
-    const d = token.replace(/\D/g, "");
-    return d.length >= 3 && digits.includes(d);
-  });
-}
-
-export function matchesFilters(r: MasterCustomer, f: MasterFilters): boolean {
-  if (f.region && r.region !== f.region) return false;
-  if (f.status && r.status !== f.status) return false;
-  if (f.pipeline && r.pipeline !== f.pipeline) return false;
-  if (f.typeBase && r.typeBase !== f.typeBase) return false;
-  if (f.state && r.state !== f.state) return false;
-  if (f.district && r.district !== f.district) return false;
-  if (f.subArea && r.subArea !== f.subArea) return false;
-  if (f.owner && r.owner !== f.owner) return false;
-  if (f.hasEmail && r.emails.length === 0) return false;
-  if (f.hasPhone && r.phones.length === 0) return false;
-  if (f.hasGstin && !r.gstin) return false;
-  if (f.hasPincode && !r.pincode) return false;
-  if (f.duplicates) {
-    if (!r.duplicateGroup) return false;
-    if (f.duplicates === "open" && r.duplicateReview !== "open") return false;
-    if (f.duplicates === "reviewed" && r.duplicateReview === "open") return false;
-    if (
-      f.duplicates !== "all" && f.duplicates !== "open" && f.duplicates !== "reviewed" &&
-      r.duplicateConfidence !== f.duplicates
-    ) {
-      return false;
-    }
-  }
-  return matchesQuery(r, f.q);
-}
-
-export function applyFilters(rows: MasterCustomer[], f: MasterFilters): MasterCustomer[] {
-  return rows.filter((r) => matchesFilters(r, f));
-}
-
 export type SortKey = "name" | "region" | "city" | "type" | "est" | "lastEst" | "so" | "lastSo" | "status";
 
 export interface SortState {
@@ -122,110 +65,15 @@ export interface SortState {
 
 export const DEFAULT_SORT: SortState = { key: "name", dir: "asc" };
 
-const dateValue = (iso: string): number => {
-  if (!iso) return -Infinity;
-  const t = Date.parse(iso);
-  return Number.isFinite(t) ? t : -Infinity;
-};
-
-export function compareRows(a: MasterCustomer, b: MasterCustomer, key: SortKey): number {
-  switch (key) {
-    case "est":
-      return a.estCount - b.estCount;
-    case "so":
-      return a.soCount - b.soCount;
-    case "lastEst":
-      return dateValue(a.lastEstimateDate) - dateValue(b.lastEstimateDate);
-    case "lastSo":
-      return dateValue(a.lastSalesOrderDate) - dateValue(b.lastSalesOrderDate);
-    case "city":
-      return (a.city || "").localeCompare(b.city || "");
-    case "region":
-      return (a.region || "").localeCompare(b.region || "");
-    case "type":
-      return a.typeBase.localeCompare(b.typeBase);
-    case "status":
-      return a.status.localeCompare(b.status);
-    default:
-      return a.name.localeCompare(b.name);
-  }
-}
-
-export function sortRows(rows: MasterCustomer[], sort: SortState): MasterCustomer[] {
-  const factor = sort.dir === "asc" ? 1 : -1;
-  return [...rows].sort((a, b) => {
-    const primary = compareRows(a, b, sort.key) * factor;
-    return primary !== 0 ? primary : a.name.localeCompare(b.name);
-  });
-}
-
-export interface FilterOptions {
-  types: string[];
-  states: string[];
-  districts: string[];
-  subAreas: string[];
-  owners: string[];
-  pipelines: string[];
-}
-
-/** View-only counter bundle for the KPI tiles when a single region is in scope.
- *  (The server's totals cover the whole book; this keeps a filtered view's
- *  tiles honest without a second endpoint.) */
-export interface RowSummary {
-  total: number;
-  active: number;
-  inactive: number;
-  neverTouched: number;
-  withOrders: number;
-  duplicateGroups: number;
-  duplicateOpenGroups: number;
-  noPhone: number;
-  noEmail: number;
-  noGstin: number;
-  noPincode: number;
-}
-
-export function summarizeRows(rows: MasterCustomer[]): RowSummary {
-  const groups = new Map<string, boolean>();
-  const out: RowSummary = {
-    total: rows.length, active: 0, inactive: 0, neverTouched: 0, withOrders: 0,
-    duplicateGroups: 0, duplicateOpenGroups: 0, noPhone: 0, noEmail: 0, noGstin: 0, noPincode: 0,
-  };
-  for (const r of rows) {
-    if (r.status === "Inactive") out.inactive++;
-    else out.active++;
-    if (r.estCount === 0 && r.soCount === 0) out.neverTouched++;
-    if (r.soCount > 0) out.withOrders++;
-    if (!r.phones.length) out.noPhone++;
-    if (!r.emails.length) out.noEmail++;
-    if (!r.gstin) out.noGstin++;
-    if (!r.pincode) out.noPincode++;
-    if (r.duplicateGroup) {
-      const open = groups.get(r.duplicateGroup);
-      groups.set(r.duplicateGroup, open === undefined ? r.duplicateReview === "open" : open || r.duplicateReview === "open");
-    }
-  }
-  out.duplicateGroups = groups.size;
-  out.duplicateOpenGroups = [...groups.values()].filter(Boolean).length;
-  return out;
-}
-
-export function buildFilterOptions(rows: MasterCustomer[], stateFilter = ""): FilterOptions {
-  const pick = (fn: (r: MasterCustomer) => string) =>
-    [...new Set(rows.map(fn).filter(Boolean))].sort((a, b) => a.localeCompare(b));
-  // District options narrow to the selected state — a state has tens of
-  // districts, the whole book has hundreds. No state → no district list
-  // (districts belong to a state; pick one first).
-  const districts = stateFilter
-    ? [...new Set(rows.filter((r) => r.state === stateFilter).map((r) => r.district).filter(Boolean))].sort((a, b) => a.localeCompare(b))
-    : [];
+/** Filters + sort → server query params (search `q` rides the paged hook). */
+export function filterParams(f: MasterFilters, sort: SortState = DEFAULT_SORT): Record<string, string | undefined> {
+  const flag = (b: boolean) => (b ? "1" : undefined);
   return {
-    types: pick((r) => r.typeBase),
-    states: pick((r) => r.state),
-    districts,
-    subAreas: pick((r) => r.subArea),
-    owners: pick((r) => r.owner),
-    pipelines: pick((r) => r.pipeline),
+    region: f.region, status: f.status, pipeline: f.pipeline, typeBase: f.typeBase,
+    state: f.state, district: f.district, subArea: f.subArea, owner: f.owner,
+    duplicates: f.duplicates,
+    hasEmail: flag(f.hasEmail), hasPhone: flag(f.hasPhone), hasGstin: flag(f.hasGstin), hasPincode: flag(f.hasPincode),
+    sort: sort.key, dir: sort.dir,
   };
 }
 

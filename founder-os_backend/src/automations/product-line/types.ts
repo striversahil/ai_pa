@@ -7,6 +7,8 @@ export interface ProductRow {
   active: boolean;
   guideCount: number;
   rateCount: number;
+  /** Lowest active quoted price (whole table, not a page). */
+  bestPrice: number | null;
 }
 
 export interface GuideRow {
@@ -66,11 +68,18 @@ export interface ProductLineData {
   products: ProductRow[];
   guide: Record<string, GuideRow[]>;
   vendors: VendorRow[];
-  rates: RateRow[];
+  /** COUNT(*) of every quote. The rows page via GET /api/product-line/rates. */
+  rateTotal: number;
 }
 
 export interface ProductDetail {
   product: ProductRow & { createdAt: string };
   guide: GuideRow[];
   rates: RateRow[];
+}
+
+/** GET /api/product-line/products/:id — the dashboard detail header. */
+export interface ProductSummary {
+  product: ProductRow & { createdAt: string; activeRateCount: number };
+  guide: GuideRow[];
 }

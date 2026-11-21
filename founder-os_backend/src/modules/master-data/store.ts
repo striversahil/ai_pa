@@ -13,7 +13,7 @@ export function masterDb(): any {
   return getD1Database();
 }
 
-const LIST_COLUMNS = [
+export const LIST_COLUMNS = [
   'id', 'zohoCustomerId', 'region', 'zone', 'subArea', 'state', 'district', 'pincode',
   'displayName', 'companyName', 'customerType', 'customerTypeBase', 'customerTypeTag',
   'status', 'contactPerson', 'designation', 'phonesJson', 'emailsJson', 'gstin', 'owner',

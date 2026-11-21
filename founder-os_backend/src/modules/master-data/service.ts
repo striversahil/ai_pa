@@ -1,28 +1,28 @@
 // service.ts — read/write lifecycles for the customer master.
 //
-// Reads serve one KV-cached payload (regions + compact rows + totals): the
-// dashboard filters/sorts client-side, so the whole book must arrive in one
-// request. Writes are narrow (a record patch, a duplicate-group review, a JSON
-// re-import) and every one of them invalidates the cache + audits the actor.
-import { cached, cacheDel, cacheDelPrefix } from '../../shared/cache';
-import type {
-  CustomerPatch, DuplicateReview, MasterCustomerDetail, MasterDataPayload,
-  MasterDataTotals, MasterImportResult,
-} from './types';
+// Reads are paged in SQL (list-query.ts, founder paging standard 2026-11-21):
+// one page of customers + COUNT totals, and a KV-cached summary (region tabs,
+// KPI tiles, filter options). Writes are narrow (a record patch, a
+// duplicate-group review, a JSON re-import) and every one of them invalidates
+// the summaries + audits the actor.
+import { cacheDel, cacheDelPrefix } from '../../shared/cache';
+import type { CustomerPatch, DuplicateReview, MasterCustomerDetail, MasterImportResult, MasterSummary } from './types';
 import { isDuplicateReview } from './types';
 import {
-  cleanText, toCustomer, toCustomerDetail, parseImportPayload, normalizePhone,
+  cleanText, toCustomerDetail, parseImportPayload, normalizePhone,
   normalizeEmail, normalizeGstin, normalizeCustomerType, cleanBlock,
 } from './parse';
 import {
-  countCustomers, getCustomerRow, insertAudit, lastAuditAt, listAllCustomers,
-  listRegions, upsertCustomers, upsertRegions, updateCustomerRow, patchToColumns,
+  countCustomers, getCustomerRow, insertAudit, lastAuditAt,
+  upsertCustomers, upsertRegions, updateCustomerRow, patchToColumns,
   MANAGER_ONLY_FIELDS, markDuplicateGroupRow, deleteCustomerRow, PATCH_COLUMNS, listCustomerIds,
   masterDb,
 } from './store';
+import { getMasterSummary, invalidateMasterSummaries } from './list-query';
 
+/** Legacy whole-book payload key (rows left the payload 2026-11-21) — still
+ *  deleted on writes so a stale v2 blob can never be served. */
 export const MASTER_CACHE_KEY = 'master:data:v2';
-const CACHE_TTL_MS = 5 * 60 * 1000;
 
 export class MasterDataError extends Error {
   status: number;
@@ -35,72 +35,13 @@ export class MasterDataError extends Error {
 /** Every write funnels through here so no caller forgets the invalidation. */
 export async function invalidateMasterDataCache(): Promise<void> {
   await cacheDel(MASTER_CACHE_KEY);
+  await invalidateMasterSummaries();
 }
 
-function emptyTotals(): MasterDataTotals {
-  return {
-    total: 0, active: 0, inactive: 0, neverTouched: 0, estimateOnly: 0,
-    salesOrderOnly: 0, estimateAndOrder: 0, duplicateRows: 0, duplicateGroups: 0,
-    duplicateHigh: 0, duplicateMedium: 0, duplicateReview: 0, duplicateReviewed: 0,
-    noPhone: 0, noEmail: 0, noGstin: 0, noPincode: 0, byRegion: {}, regionIds: [],
-  };
-}
-
-/** Totals are derived from the same rows the table renders, so every tile can
- *  be explained by filtering the list (never a second, drifting query). */
-export function computeTotals(rows: ReturnType<typeof toCustomer>[]): MasterDataTotals {
-  const t = emptyTotals();
-  const groups = new Map<string, { review: boolean }>();
-  for (const r of rows) {
-    t.total++;
-    if (r.status === 'Inactive') t.inactive++;
-    else t.active++;
-    if (r.estCount === 0 && r.soCount === 0) t.neverTouched++;
-    else if (r.estCount > 0 && r.soCount > 0) t.estimateAndOrder++;
-    else if (r.estCount > 0) t.estimateOnly++;
-    else t.salesOrderOnly++;
-    if (!r.phones.length) t.noPhone++;
-    if (!r.emails.length) t.noEmail++;
-    if (!r.gstin) t.noGstin++;
-    if (!r.pincode) t.noPincode++;
-    if (r.duplicateGroup) {
-      t.duplicateRows++;
-      if (r.duplicateConfidence === 'High') t.duplicateHigh++;
-      else if (r.duplicateConfidence === 'Medium') t.duplicateMedium++;
-      else if (r.duplicateConfidence === 'Review') t.duplicateReview++;
-      if (r.duplicateReview !== 'open') t.duplicateReviewed++;
-      const g = groups.get(r.duplicateGroup);
-      if (g) g.review = g.review && r.duplicateReview !== 'open';
-      else groups.set(r.duplicateGroup, { review: r.duplicateReview !== 'open' });
-    }
-    if (r.region) t.byRegion[r.region] = (t.byRegion[r.region] ?? 0) + 1;
-  }
-  t.duplicateGroups = groups.size;
-  t.regionIds = Object.keys(t.byRegion).sort();
-  return t;
-}
-
-async function computePayload(): Promise<MasterDataPayload> {
-  // Single table since collapse 0136 (MasterCustomer IS core_customer) — the
-  // gated switch and its fallback are gone with the mirror.
-  const [regions, rawRows, updatedAt] = await Promise.all([
-    listRegions(),
-    listAllCustomers(),
-    lastAuditAt(),
-  ]);
-  const rows = rawRows.map(toCustomer).sort((a, b) => a.name.localeCompare(b.name));
-  return {
-    generatedAt: new Date().toISOString(),
-    updatedAt,
-    regions,
-    rows,
-    totals: computeTotals(rows),
-  };
-}
-
-/** Dashboard payload — one KV-cached compute per window per isolate. */
-export async function getMasterDataPayload(): Promise<MasterDataPayload> {
-  return cached<MasterDataPayload>(MASTER_CACHE_KEY, CACHE_TTL_MS, computePayload);
+/** Workspace data payload: the whole-book summary (no rows — customers page
+ *  via GET /api/master-data/customers). */
+export async function getMasterDataPayload(): Promise<MasterSummary> {
+  return getMasterSummary('', '');
 }
 
 /** Header stamp: last import or edit. Cheap enough to sit outside the payload

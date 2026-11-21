@@ -5,12 +5,15 @@
 // The viewer (region + write flags) is resolved SERVER-side from the session;
 // the client only echoes it back for rendering.
 import { api } from "@/api/client";
+import type { Paged } from "@/lib/paging";
 import type { CrmOrder, CrmSummary, CrmViewerMeta, View } from "./types";
 
-export interface ListResponse {
+/** Paged tab list (usePagedQuery base URL) — founder paging standard
+ *  2026-11-21. "dispatch-floor" always returns every row on page 1. */
+export const ORDERS_URL = "/crm/orders";
+
+export interface ListResponse extends Paged<CrmOrder> {
   view: View;
-  orders: CrmOrder[];
-  count: number;
   /** The region filter the server actually applied ('' when none). */
   region?: string;
   viewer?: CrmViewerMeta;
@@ -37,9 +40,6 @@ const qs = (params: Record<string, string | undefined>) => {
 };
 
 export const crmApi = {
-  list: (view: View, q = "", region = "") =>
-    api.get<ListResponse>(`/crm/orders${qs({ view, q, region })}`),
-
   summary: (region = "") => api.get<SummaryResponse>(`/crm/summary${qs({ region })}`),
 
   order: (id: string) => api.get<{ order: CrmOrder; viewer?: CrmViewerMeta }>(`/crm/orders/${encodeURIComponent(id)}`),

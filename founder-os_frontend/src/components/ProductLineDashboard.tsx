@@ -3,17 +3,22 @@
 import React, { useMemo, useState } from "react";
 import {
   Search, Plus, ArrowLeft, Pencil, Trash2, X, Check, Package, ClipboardList,
-  Users, Wallet, Building2, Phone, MapPin, ChevronRight, Factory, Tag,
-  IndianRupee, RefreshCw, CircleDot, Info, Layers,
+  Users, Wallet, Building2, Phone, MapPin, ChevronRight, Factory,
+  IndianRupee, RefreshCw, CircleDot, Info,
 } from "lucide-react";
 import { useLiveDashboard } from "@/hooks/useLiveData";
+import { usePagedQuery } from "@/hooks/usePagedQuery";
 import { useAuth } from "@/auth/AuthContext";
 import ProductCopilot from "./ProductCopilot";
 import { workspaceDataUrl } from "@/workspaces/api";
 import type { Payload, Detail, ProductRow, GuideRow, VendorRow, RateRow } from "./product-line-dashboard/types";
-import { api, panel, ghostBtn, isNum, isPhotoValue, isHttpUrl, fmtINR, attrLabel, shortDate, primaryBtn, iconBtn, hueFor, specSummary, field, dangerBtn, label } from "./product-line-dashboard/helpers";
+import { api, panel, ghostBtn, isNum, isPhotoValue, isHttpUrl, fmtINR, primaryBtn, iconBtn, hueFor, field, dangerBtn, label } from "./product-line-dashboard/helpers";
 import { ModalShell } from "./product-line-dashboard/ModalShell";
 import { ModalFoot } from "./product-line-dashboard/ModalFoot";
+import { RatesTab } from "./product-line-dashboard/RatesTab";
+import { QuotesSection } from "./product-line-dashboard/QuotesSection";
+
+const RATES_URL = "/api/product-line/rates";
 
 export default function ProductLineDashboard() {
   const { me } = useAuth();
@@ -36,8 +41,14 @@ export default function ProductLineDashboard() {
   const [detailId, setDetailId] = useState<string | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [selRateId, setSelRateId] = useState<string | null>(null);
-  const [compareAll, setCompareAll] = useState(false);
+  const [rateStatus, setRateStatus] = useState("");
+  // Paged lists (founder standard 2026-11-21): rates never ride the payload.
+  const ratesList = usePagedQuery<RateRow>(RATES_URL, {
+    events: ["product-line"], filters: { status: rateStatus }, enabled: !detailId && tab === "rates",
+  });
+  const quotesList = usePagedQuery<RateRow>(RATES_URL, {
+    events: ["product-line"], filters: { productId: detailId ?? undefined }, enabled: !!detailId,
+  });
 
   const [pModal, setPModal] = useState<null | { id?: string; category: string; name: string; aliases: string; active: boolean }>(null);
   const [delProduct, setDelProduct] = useState<ProductRow | null>(null);
@@ -100,33 +111,26 @@ export default function ProductLineDashboard() {
     });
   }, [data, q, cat]);
   const totalQuestions = useMemo(() => Object.values(data?.guide ?? {}).reduce((n, l) => n + l.length, 0), [data]);
-  const bestByProduct = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const r of data?.rates ?? []) {
-      if (!r.active || r.pricePerUnit == null || !r.productId) continue;
-      const cur = m.get(r.productId);
-      if (cur === undefined || Number(r.pricePerUnit) < cur) m.set(r.productId, Number(r.pricePerUnit));
-    }
-    return m;
-  }, [data]);
-
   const mutate = async (fn: () => Promise<void>) => {
     setBusy(true); setErr(null);
-    try { await fn(); await dash.refresh(); if (detailId) await loadDetail(detailId, true); }
+    try {
+      await fn();
+      await dash.refresh();
+      ratesList.refresh();
+      quotesList.refresh();
+      if (detailId) await loadDetail(detailId, true);
+    }
     catch (e: any) { setErr(String(e?.message ?? "save failed")); }
     finally { setBusy(false); }
   };
 
   const loadDetail = async (id: string, silent = false) => {
-    if (!silent) { setDetailId(id); setDetail(null); setSelRateId(null); setCompareAll(false); void loadPhotos(); }
+    if (!silent) { setDetailId(id); setDetail(null); void loadPhotos(); }
     setDetailLoading(true);
     try {
       const res = await fetch(`/api/product-line/products/${id}`);
       if (!res.ok) throw new Error("failed to load product");
-      const d: Detail = await res.json();
-      setDetail(d);
-      const first = d.rates.find((r) => r.active) ?? d.rates[0] ?? null;
-      setSelRateId(first?.id ?? null);
+      setDetail(await res.json() as Detail);
     } catch (e: any) {
       if (!silent) setErr(String(e?.message ?? "failed to load product"));
     } finally {
@@ -205,7 +209,6 @@ export default function ProductLineDashboard() {
     );
   }
 
-  const selRate: RateRow | null = detail?.rates.find((r) => r.id === selRateId) ?? null;
   // Live validation for the quote form — save stays disabled until every
   // filled numeric reads as a number and discount sits in 0–100.
   const rateFormError: string | null = !rModal ? null
@@ -219,39 +222,11 @@ export default function ProductLineDashboard() {
     : rModal.imageUrl.trim() !== "" && !isPhotoValue(rModal.imageUrl) ? "Photo must be an uploaded photo or an https:// URL."
     : rModal.videoUrl.trim() !== "" && !isHttpUrl(rModal.videoUrl) ? "Video must be an https:// URL."
     : null;
-  const cmpRows: { label: string; get: (r: RateRow) => string }[] = detail
-    ? [
-        { label: "Price", get: (r) => (r.pricePerUnit != null ? `${fmtINR(r.pricePerUnit)}${r.unit ? ` / ${r.unit}` : ""}` : "—") },
-        { label: "Discount", get: (r) => (r.discountPercent != null ? `${r.discountPercent}%` : "—") },
-        { label: "MOQ", get: (r) => r.moq ?? "—" },
-        { label: "Delivery", get: (r) => (r.deliveryDays != null ? `${r.deliveryDays} days` : "—") },
-        ...[...new Set(detail.rates.flatMap((r) => Object.keys(r.attrValues ?? {})))].map((k) => ({
-          label: attrLabel(k, detail.guide),
-          get: (r: RateRow) => r.attrValues?.[k] || "—",
-        })),
-      ]
-    : [];
-  const bestRate = detail?.rates.filter((r) => r.active && r.pricePerUnit != null)
-    .sort((a, b) => Number(a.pricePerUnit) - Number(b.pricePerUnit))[0] ?? null;
-  const commercialRows: [string, string, boolean][] = selRate
-    ? [
-        ["Price", selRate.pricePerUnit != null ? `${fmtINR(selRate.pricePerUnit)}${selRate.unit ? ` / ${selRate.unit}` : ""}` : "—", true],
-        ["Discount", selRate.discountPercent != null ? `${selRate.discountPercent}%` : "—", false],
-        ["Base rate", fmtINR(selRate.baseRate), false],
-        ["MOQ", selRate.moq ?? "—", false],
-        ["Weight / unit", selRate.weightPerUnit != null ? `${selRate.weightPerUnit} kg` : "—", false],
-        ["Pack qty", selRate.packageQty ?? "—", false],
-        ["Pack dims", selRate.packageDims ?? "—", false],
-        ["Delivery", selRate.deliveryDays != null ? `${selRate.deliveryDays} days` : "—", false],
-        ["Quoted", shortDate(selRate.quotedAt), false],
-      ]
-    : [];
-
   const stats = [
     { icon: Package, tint: "bg-indigo-500/10 text-indigo-500", value: String(data?.products.length ?? 0), label: "Products" },
     { icon: ClipboardList, tint: "bg-amber-500/10 text-amber-600 dark:text-amber-400", value: String(totalQuestions), label: "Guide questions" },
     { icon: Users, tint: "bg-sky-500/10 text-sky-600 dark:text-sky-400", value: String(data?.vendors.length ?? 0), label: "Vendors" },
-    { icon: Wallet, tint: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400", value: String(data?.rates.length ?? 0), label: "Quote facts" },
+    { icon: Wallet, tint: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400", value: (data?.rateTotal ?? 0).toLocaleString("en-IN"), label: "Quote facts" },
   ];
 
   return (
@@ -349,9 +324,9 @@ export default function ProductLineDashboard() {
                 <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                   {[
                     { icon: ClipboardList, k: "Requirements", v: String(detail.guide.length) },
-                    { icon: Factory, k: "Vendor quotes", v: String(detail.rates.length) },
-                    { icon: Check, k: "Active quotes", v: String(detail.rates.filter((r) => r.active).length) },
-                    { icon: IndianRupee, k: "Best price", v: bestRate ? `${fmtINR(bestRate.pricePerUnit)}${bestRate.unit ? `/${bestRate.unit}` : ""}` : "—" },
+                    { icon: Factory, k: "Vendor quotes", v: detail.product.rateCount.toLocaleString("en-IN") },
+                    { icon: Check, k: "Active quotes", v: detail.product.activeRateCount.toLocaleString("en-IN") },
+                    { icon: IndianRupee, k: "Best price", v: detail.product.bestPrice != null ? fmtINR(detail.product.bestPrice) : "—" },
                   ].map((m) => (
                     <div key={m.k} className="rounded-xl border border-[var(--border-card)]/70 px-3.5 py-3 flex items-center gap-2.5">
                       <m.icon size={16} className="text-[var(--text-tertiary)] flex-shrink-0" />
@@ -397,130 +372,10 @@ export default function ProductLineDashboard() {
                 </ol>
               </section>
 
-              {/* Vendor quotes */}
-              <section className={`${panel} p-5`}>
-                <div className="flex items-center gap-2 mb-1 flex-wrap">
-                  <h3 className="font-extrabold tracking-tight text-[var(--text-primary)]">Vendor quotes</h3>
-                  <span className="text-xs tabular-nums text-[var(--text-tertiary)]">{detail.rates.length}</span>
-                  <span className="flex-1" />
-                  {canQuote && <button type="button" onClick={() => openRateModal(detail.product.id)} className={ghostBtn}><Plus size={13} /> Quote</button>}
-                  {detail.rates.length > 1 && (
-                    <button type="button" onClick={() => setCompareAll(!compareAll)} className={ghostBtn}><Layers size={13} /> {compareAll ? "Single view" : "Compare all"}</button>
-                  )}
-                </div>
-                <p className="mb-4 text-xs text-[var(--text-tertiary)]">Each quote is pinned to the exact spec combination it was given for — same product, different spec, never conflated.</p>
-                {detail.rates.length === 0 && <p className="py-4 text-center text-sm text-[var(--text-tertiary)]">No vendor quotes recorded for this product yet.</p>}
-
-                {!compareAll && detail.rates.length > 0 && (
-                  <>
-                    <div className="mb-4 flex gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Vendor quotes">
-                      {detail.rates.map((r) => {
-                        const active = r.id === selRateId;
-                        return (
-                          <button key={r.id} type="button" role="tab" aria-selected={active} onClick={() => setSelRateId(r.id)}
-                            className={`flex-shrink-0 rounded-xl border-2 px-3.5 py-2.5 text-left cursor-pointer bg-transparent ${active ? "border-brand-indigo" : "border-[var(--border-card)]"}`}>
-                            <p className={`text-[13px] font-extrabold ${active ? "text-brand-indigo" : "text-[var(--text-primary)]"}`}>
-                              {r.vendorName ?? "Unknown"}{r.active ? "" : " · off"}
-                            </p>
-                            <p className="mt-0.5 text-[11px] text-[var(--text-tertiary)]">{specSummary(r)}</p>
-                            <p className="mt-0.5 text-[13px] font-extrabold tabular-nums text-[var(--text-primary)]">
-                              {r.pricePerUnit != null ? `${fmtINR(r.pricePerUnit)}${r.unit ? `/${r.unit}` : ""}` : "No price"}
-                            </p>
-                          </button>
-                        );
-                      })}
-                    </div>
-                    {selRate && (
-                      <div className="grid grid-cols-1 lg:grid-cols-5 gap-3">
-                        {(selRate.imageUrl || selRate.videoUrl) && (
-                          <div className="lg:col-span-5 flex flex-wrap items-start gap-4 rounded-xl border border-[var(--border-card)]/80 p-4">
-                            {selRate.imageUrl && (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img src={selRate.imageUrl} alt={`${selRate.vendorName ?? "vendor"} item`}
-                                className="h-32 w-32 rounded-xl border border-[var(--border-card)] object-cover" />
-                            )}
-                            {selRate.videoUrl && (
-                              <div className="min-w-60 flex-1 max-w-md">
-                                <p className="mb-1.5 text-[11px] font-extrabold uppercase tracking-wider text-[var(--text-tertiary)]">Manufacturing video</p>
-                                {/\.(mp4|webm|mov)(\?|$)/i.test(selRate.videoUrl) ? (
-                                  <video src={selRate.videoUrl} controls preload="none" className="w-full rounded-xl border border-[var(--border-card)]" />
-                                ) : (
-                                  <a href={selRate.videoUrl} target="_blank" rel="noreferrer" className="text-sm font-bold text-brand-indigo hover:underline">Watch manufacturing video →</a>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        <div className="lg:col-span-3 rounded-xl border border-[var(--border-card)]/80 overflow-hidden">
-                          <p className="px-4 py-2.5 text-[11px] font-extrabold uppercase tracking-wider text-[var(--text-tertiary)] border-b border-[var(--border-card)]/70">
-                            Spec as quoted · {selRate.vendorName}{selRate.vendorType ? ` — ${selRate.vendorType}` : ""}
-                            {(selRate.missingSpecs ?? []).length > 0 && (
-                              <span title={`Specs unknown at filing:\n${(selRate.missingSpecs ?? []).join("\n")}`} className="ml-2 rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-extrabold text-amber-600">specs missing ({(selRate.missingSpecs ?? []).length})</span>
-                            )}
-                          </p>
-                          {Object.keys(selRate.attrValues ?? {}).length === 0 && !(selRate as any)?.notes && <p className="px-4 py-3 text-sm text-[var(--text-tertiary)]">No spec breakup recorded on this quote.</p>}
-                          <dl>
-                            {Object.entries(selRate.attrValues ?? {}).map(([k, v], idx) => (
-                              <div key={k} className="flex gap-3 px-4 py-2 border-b border-[var(--border-card)] last:border-0 border-b border-[var(--border-card)]/50 last:border-0">
-                                <dt className="w-2/5 flex-shrink-0 text-xs leading-relaxed text-[var(--text-secondary)]">{attrLabel(k, detail.guide)}</dt>
-                                <dd className="flex-1 text-[13px] font-bold text-[var(--text-primary)]">{v || "—"}</dd>
-                              </div>
-                            ))}
-                            {(selRate as any)?.notes && (
-                              <div className="flex gap-3 px-4 py-2 border-b border-[var(--border-card)]/50 last:border-0 bg-amber-500/[0.04]">
-                                <dt className="w-2/5 flex-shrink-0 text-xs leading-relaxed text-[var(--text-secondary)]">Notes (non-spec extras)</dt>
-                                <dd className="flex-1 text-[13px] font-bold text-[var(--text-primary)] whitespace-pre-wrap">{String((selRate as any).notes)}</dd>
-                              </div>
-                            )}
-                          </dl>
-                        </div>
-                        <div className="lg:col-span-2 rounded-xl border border-[var(--border-card)]/80 overflow-hidden h-fit">
-                          <div className="flex items-center gap-2 px-4 py-2 border-b border-[var(--border-card)]/70">
-                            <p className="flex-1 text-[11px] font-extrabold uppercase tracking-wider text-[var(--text-tertiary)]">Commercials</p>
-                            {canQuote && <button type="button" onClick={() => openRateModal(detail.product.id, selRate)} className={ghostBtn}><Pencil size={12} /> Edit quote</button>}
-                          </div>
-                          <dl className="px-4 py-1">
-                            {commercialRows.map(([k, v, hero]) => (
-                              <div key={k} className="flex items-baseline justify-between gap-3 border-b border-[var(--border-card)]/50 py-2 last:border-0">
-                                <dt className="text-xs text-[var(--text-secondary)]">{k}</dt>
-                                <dd className={`tabular-nums ${hero ? "text-base font-extrabold text-[var(--text-primary)]" : "text-[13px] font-bold text-[var(--text-primary)]"}`}>{v}</dd>
-                              </div>
-                            ))}
-                          </dl>
-                        </div>
-                      </div>
-                    )}
-                  </>
-                )}
-
-                {compareAll && detail.rates.length > 0 && (
-                  <div className="overflow-x-auto rounded-xl border border-[var(--border-card)]/80">
-                    <table className="w-full text-sm min-w-[620px] border-collapse">
-                      <thead>
-                        <tr>
-                          <th className="sticky left-0 bg-[var(--bg-card)] py-2.5 pl-4 pr-3 text-left text-[11px] uppercase tracking-wider text-[var(--text-tertiary)]">Field</th>
-                          {detail.rates.map((r) => (
-                            <th key={r.id} className="py-2.5 px-3 text-left align-top">
-                              <p className="text-[13px] font-extrabold text-[var(--text-primary)]">{r.vendorName ?? "—"}</p>
-                              {bestRate?.id === r.id && <span className="mt-0.5 inline-block rounded-full bg-emerald-500/15 px-2 py-px text-[10px] font-extrabold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">Best price</span>}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {cmpRows.map((row) => (
-                          <tr key={row.label} className="border-t border-[var(--border-card)]/60">
-                            <td className="sticky left-0 bg-[var(--bg-card)] py-2 pl-4 pr-3 text-xs text-[var(--text-secondary)] whitespace-nowrap max-w-52 truncate" title={row.label}>{row.label}</td>
-                            {detail.rates.map((r) => (
-                              <td key={r.id} className={`py-2 px-3 text-[13px] tabular-nums align-top ${row.label === "Price" ? "font-extrabold text-[var(--text-primary)]" : "text-[var(--text-primary)]"}`}>{row.get(r)}</td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </section>
+              {/* Vendor quotes — paged (product-line-dashboard/QuotesSection.tsx) */}
+              <QuotesSection detail={detail} list={quotesList} canQuote={canQuote}
+                onAdd={() => openRateModal(detail.product.id)}
+                onEdit={(r) => openRateModal(detail.product.id, r)} />
             </>
           )}
         </div>
@@ -564,7 +419,7 @@ export default function ProductLineDashboard() {
                 <div className="mt-3 flex items-center gap-3 border-t border-[var(--border-card)]/60 pt-2.5">
                   <span className="inline-flex items-center gap-1 text-[11px] font-bold tabular-nums text-[var(--text-secondary)]"><ClipboardList size={12} /> {p.guideCount}</span>
                   <span className="inline-flex items-center gap-1 text-[11px] font-bold tabular-nums text-[var(--text-secondary)]"><Wallet size={12} /> {p.rateCount}</span>
-                  {bestByProduct.has(p.id) && <span className="text-[11px] font-extrabold tabular-nums text-emerald-600 dark:text-emerald-400">₹{Number(bestByProduct.get(p.id)).toLocaleString("en-IN")}+</span>}
+                  {p.bestPrice != null && <span className="text-[11px] font-extrabold tabular-nums text-emerald-600 dark:text-emerald-400">₹{Number(p.bestPrice).toLocaleString("en-IN")}+</span>}
                   <span className="flex-1" />
                   <ChevronRight size={15} className="text-[var(--text-tertiary)]" />
                 </div>
@@ -625,59 +480,15 @@ export default function ProductLineDashboard() {
         </div>
       )}
 
-      {/* ══ LIST: rates ══ */}
+      {/* ══ LIST: rates — paged (product-line-dashboard/RatesTab.tsx) ══ */}
       {!detailId && tab === "rates" && (
-        <div className={`${panel} overflow-hidden`}>
-          <div className="flex items-center gap-2 px-4 sm:px-5 pt-4">
-            <p className="flex-1 text-xs text-[var(--text-tertiary)]">Latest {(data?.rates ?? []).length} quote facts — open a product for full spec detail and comparison.</p>
-            {canQuote && <button type="button" disabled={busy || (data?.products.length ?? 0) === 0} onClick={() => openRateModal(data?.products[0]?.id ?? "")} className={primaryBtn}><Plus size={14} /> Quote</button>}
-          </div>
-          <div className="overflow-x-auto p-2 sm:p-3">
-            <table className="w-full text-sm border-collapse">
-              <thead>
-                <tr className="text-left">
-                  {["Product", "Vendor", "Spec", "Price", "MOQ", "Status"].map((h, i) => (
-                    <th key={h} className={`py-2.5 px-3 text-[11px] font-extrabold uppercase tracking-wider text-[var(--text-tertiary)] border-b border-[var(--border-card)] ${i === 3 ? "text-right" : ""}`}>{h}</th>
-                  ))}
-                  {canQuote && <th className="py-2.5 px-3 border-b border-[var(--border-card)]"><span className="sr-only">Actions</span></th>}
-                </tr>
-              </thead>
-              <tbody>
-                {(data?.rates ?? []).map((r) => (
-                  <tr key={r.id}>
-                    <td className="py-2.5 px-3 border-b border-[var(--border-card)]/60 font-bold text-[var(--text-primary)]">
-                      {r.productId
-                        ? <button type="button" onClick={() => void loadDetail(r.productId as string)} className="cursor-pointer bg-transparent border-0 p-0 font-bold text-brand-indigo hover:underline text-left">{r.productName ?? "—"}</button>
-                        : (r.productName ?? "—")}
-                    </td>
-                    <td className="py-2.5 px-3 border-b border-[var(--border-card)]/60 text-[var(--text-secondary)]">{r.vendorName ?? "—"}</td>
-                    <td className="py-2.5 px-3 border-b border-[var(--border-card)]/60 text-xs text-[var(--text-tertiary)] max-w-56 truncate" title={Object.entries(r.attrValues ?? {}).map(([k, v]) => `${k}: ${v}`).join(" · ")}>{specSummary(r)}</td>
-                    <td className="py-2.5 px-3 border-b border-[var(--border-card)]/60 text-right font-extrabold tabular-nums text-[var(--text-primary)] whitespace-nowrap">{r.pricePerUnit != null ? `${fmtINR(r.pricePerUnit)}${r.unit ? `/${r.unit}` : ""}` : "—"}</td>
-                    <td className="py-2.5 px-3 border-b border-[var(--border-card)]/60 text-[var(--text-secondary)]">{r.moq || "—"}</td>
-                    <td className="py-2.5 px-3 border-b border-[var(--border-card)]/60">
-                      {r.active
-                        ? <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> On</span>
-                        : <span className="inline-flex items-center gap-1 text-[11px] font-bold text-zinc-500"><span className="h-1.5 w-1.5 rounded-full bg-zinc-500" /> Off</span>}
-                    </td>
-                    {canQuote && (
-                      <td className="py-2.5 px-3 border-b border-[var(--border-card)]/60 text-right whitespace-nowrap">
-                        <button type="button" onClick={() => openRateModal(r.productId ?? "", r)} className={ghostBtn}><Pencil size={12} /> Edit</button>{" "}
-                        <button type="button" disabled={busy} onClick={() => void mutate(() => api(`/api/product-line/rates/${r.id}`, "PATCH", { active: !r.active }).then(() => {}))} className={ghostBtn}>{r.active ? "Turn off" : "Turn on"}</button>{" "}
-                        <button type="button" disabled={busy} onClick={() => setDelRate(r)} className={dangerBtn}><Trash2 size={12} /> Delete</button>
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {(data?.rates.length ?? 0) === 0 && (
-              <div className="py-10 text-center">
-                <Tag size={26} className="mx-auto text-[var(--text-tertiary)]" />
-                <p className="mt-2 text-sm font-bold text-[var(--text-primary)]">No quotes recorded yet</p>
-              </div>
-            )}
-          </div>
-        </div>
+        <RatesTab list={ratesList} status={rateStatus} setStatus={setRateStatus}
+          canQuote={canQuote} busy={busy} canAdd={(data?.products.length ?? 0) > 0}
+          onAdd={() => openRateModal(data?.products[0]?.id ?? "")}
+          onOpenProduct={(pid) => void loadDetail(pid)}
+          onEdit={(r) => openRateModal(r.productId ?? "", r)}
+          onToggle={(r) => void mutate(() => api(`/api/product-line/rates/${r.id}`, "PATCH", { active: !r.active }).then(() => {}))}
+          onDelete={(r) => setDelRate(r)} />
       )}
 
       {/* ── Product modal ── */}

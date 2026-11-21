@@ -1,21 +1,18 @@
 "use client";
 
 // CustomersTab — the customer list as dispatch-floor cards (one card per
-// customer, same shape as CrmDashboard's OrderCard). Filtering happens in the
-// parent (so KPI tiles can drive it and the CSV export can reuse it); this
-// file sorts + slices only.
+// customer, same shape as CrmDashboard's OrderCard). Filtering, search,
+// sorting and paging run on the server (usePagedQuery in the parent —
+// founder paging standard 2026-11-21); this file renders one page.
 import { ArrowDown, ArrowUp, Phone } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
 import type { MasterCustomer } from "@/master-data/types";
-import {
-  DEFAULT_SORT, sortRows, type SortKey, type SortState,
-} from "@/master-data/filters";
+import type { SortKey, SortState } from "@/master-data/filters";
+import type { PagedQuery } from "@/hooks/usePagedQuery";
+import { ChangesBanner, Pager } from "@/components/ui";
 import {
   formatPhone, initials, joinCapped,
   regionLabel, shortDate,
 } from "@/master-data/normalize";
-
-const PAGE_SIZE = 50;
 
 const SORT_OPTIONS: Array<{ key: SortKey; label: string }> = [
   { key: "name", label: "Name" },
@@ -25,45 +22,39 @@ const SORT_OPTIONS: Array<{ key: SortKey; label: string }> = [
 ];
 
 export default function CustomersTab({
-  rows, onOpen,
+  list, sort, setSort, onOpen,
 }: {
-  rows: MasterCustomer[];
+  list: PagedQuery<MasterCustomer>;
+  sort: SortState;
+  setSort: (s: SortState) => void;
   onOpen: (row: MasterCustomer) => void;
 }) {
-  const [sort, setSort] = useState<SortState>(DEFAULT_SORT);
-  const [page, setPage] = useState(0);
-
-  // Any filter change re-slices from page 1 (the parent passes a new array).
-  useEffect(() => { setPage(0); }, [rows]);
-
-  const sorted = useMemo(() => sortRows(rows, sort), [rows, sort]);
-
-  const pageCount = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
-  const safePage = Math.min(page, pageCount - 1);
-  const start = safePage * PAGE_SIZE;
-  const visible = useMemo(() => sorted.slice(start, start + PAGE_SIZE), [sorted, start]);
-
-  if (rows.length === 0) {
+  if (list.loading && !list.hasData) {
+    return <div className="h-[104px] animate-pulse rounded-2xl border border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900/40" />;
+  }
+  if (list.error != null && !list.hasData) {
+    return <p className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs text-rose-600">{list.error instanceof Error ? list.error.message : "Could not load customers"}</p>;
+  }
+  if (list.total === 0) {
     return (
       <div className="rounded-2xl border border-dashed border-zinc-300 p-10 text-center text-sm text-zinc-500 dark:border-zinc-700">
-        No customers match these filters. Clear the search or widen a filter — the whole book is loaded in this view.
+        No customers match these filters. Clear the search or widen a filter — search covers the whole book.
       </div>
     );
   }
 
   return (
-    <div className="space-y-2.5">
+    <div className={`space-y-2.5 ${list.loading ? "opacity-60" : ""}`}>
+      <ChangesBanner count={list.changes} onRefresh={list.refresh} />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-xs text-zinc-500 dark:text-zinc-400">
-          Showing{" "}
-          <strong className="text-zinc-900 tabular-nums dark:text-zinc-100">{start + 1}–{Math.min(start + PAGE_SIZE, sorted.length)}</strong>{" "}
-          of <strong className="text-zinc-900 tabular-nums dark:text-zinc-100">{sorted.length.toLocaleString("en-IN")}</strong> customers
+          <strong className="text-zinc-900 tabular-nums dark:text-zinc-100">{list.total.toLocaleString("en-IN")}</strong> customers
         </span>
         <div className="flex items-center gap-1.5">
           <span className="text-[11px] text-zinc-400">Sort</span>
           <select
             value={sort.key}
-            onChange={(e) => { setSort((p) => ({ ...p, key: e.target.value as SortKey })); setPage(0); }}
+            onChange={(e) => setSort({ ...sort, key: e.target.value as SortKey })}
             className="rounded-lg border border-zinc-200 bg-white py-1 pl-2 pr-1 text-[11px] font-semibold text-zinc-600 outline-none focus:border-indigo-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300"
             aria-label="Sort customers"
           >
@@ -71,7 +62,7 @@ export default function CustomersTab({
           </select>
           <button
             type="button"
-            onClick={() => setSort((p) => ({ ...p, dir: p.dir === "asc" ? "desc" : "asc" }))}
+            onClick={() => setSort({ ...sort, dir: sort.dir === "asc" ? "desc" : "asc" })}
             className="rounded-lg border border-zinc-200 bg-white p-1.5 text-zinc-500 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400 dark:hover:bg-zinc-800"
             title={sort.dir === "asc" ? "Ascending — switch to descending" : "Descending — switch to ascending"}
             aria-label="Toggle sort direction"
@@ -81,38 +72,11 @@ export default function CustomersTab({
         </div>
       </div>
 
-      {visible.map((r) => (
+      {list.rows.map((r) => (
         <CustomerCard key={r.id} row={r} onOpen={onOpen} />
       ))}
 
-      {pageCount > 1 && (
-        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-          <span className="text-[11px] text-zinc-400">Page {safePage + 1} of {pageCount}</span>
-          <div className="flex items-center gap-1">
-            <PageButton disabled={safePage === 0} onClick={() => setPage((p) => Math.max(0, p - 1))} label="‹ Prev" />
-            {pageWindow(safePage, pageCount).map((p) =>
-              p === "…" ? (
-                <span key={`gap-${p}-${safePage}`} className="px-1 text-[11px] text-zinc-400">…</span>
-              ) : (
-                <button
-                  key={p}
-                  type="button"
-                  onClick={() => setPage(p)}
-                  aria-current={p === safePage ? "page" : undefined}
-                  className={`min-w-[30px] rounded-lg px-2 py-1.5 text-[11px] font-semibold tabular-nums transition-colors ${
-                    p === safePage
-                      ? "bg-indigo-600 text-white shadow-sm"
-                      : "border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                  }`}
-                >
-                  {p + 1}
-                </button>
-              ),
-            )}
-            <PageButton disabled={safePage >= pageCount - 1} onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))} label="Next ›" />
-          </div>
-        </div>
-      )}
+      <Pager page={list.page} limit={list.limit} total={list.total} totalPages={list.totalPages} onPage={list.setPage} noun="customers" />
     </div>
   );
 }
@@ -232,30 +196,4 @@ function StatusDot({ status }: { status: string }) {
       {status}
     </span>
   );
-}
-
-function PageButton({ disabled, onClick, label }: { disabled: boolean; onClick: () => void; label: string }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className="rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-zinc-600 transition-colors hover:bg-zinc-50 disabled:opacity-40 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300 dark:hover:bg-zinc-800"
-    >
-      {label}
-    </button>
-  );
-}
-
-/** Compact page window: first · last · ±1 around current, with gaps. */
-function pageWindow(current: number, total: number): Array<number | "…"> {
-  if (total <= 7) return Array.from({ length: total }, (_, i) => i);
-  const keep = new Set([0, total - 1, current - 1, current, current + 1]);
-  const pages = [...keep].filter((p) => p >= 0 && p < total).sort((a, b) => a - b);
-  const out: Array<number | "…"> = [];
-  for (let i = 0; i < pages.length; i++) {
-    if (i > 0 && pages[i] - pages[i - 1] > 1) out.push("…");
-    out.push(pages[i]);
-  }
-  return out;
 }

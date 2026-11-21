@@ -60,34 +60,42 @@ export interface MasterCustomerDetail extends MasterCustomer {
   updatedAt: string;
 }
 
-export interface MasterDataTotals {
+/** Region-scoped KPI tiles — COUNT/SUM over the whole region, never a page.
+ *  mirror: founder-os_backend/src/modules/master-data/types.ts MasterRowSummary */
+export interface RowSummary {
   total: number;
   active: number;
   inactive: number;
   neverTouched: number;
-  estimateOnly: number;
-  salesOrderOnly: number;
-  estimateAndOrder: number;
-  duplicateRows: number;
+  withOrders: number;
   duplicateGroups: number;
-  duplicateHigh: number;
-  duplicateMedium: number;
-  duplicateReview: number;
-  duplicateReviewed: number;
+  duplicateOpenGroups: number;
   noPhone: number;
   noEmail: number;
   noGstin: number;
   noPincode: number;
-  byRegion: Record<string, number>;
-  regionIds: string[];
 }
 
-export interface MasterDataPayload {
-  generatedAt: string;
+export interface FilterOptions {
+  types: string[];
+  states: string[];
+  districts: string[];
+  subAreas: string[];
+  owners: string[];
+  pipelines: string[];
+}
+
+/** GET /api/master-data/summary — header + region tabs (whole book), tiles +
+ *  filter options (one region). Customers page via /api/master-data/customers.
+ *  mirror: backend MasterSummary */
+export interface MasterSummary {
   updatedAt: string;
   regions: MasterRegion[];
-  rows: MasterCustomer[];
-  totals: MasterDataTotals;
+  total: number;
+  byRegion: Record<string, number>;
+  regionIds: string[];
+  summary: RowSummary;
+  options: FilterOptions;
 }
 
 export interface CustomerPatch {

@@ -3,7 +3,7 @@
 
 
 // Mirror: founder-os_backend/src/automations/product-line/types.ts
-export interface ProductRow { id: string; category: string; name: string; aliases: string[]; active: boolean; guideCount: number; rateCount: number; }
+export interface ProductRow { id: string; category: string; name: string; aliases: string[]; active: boolean; guideCount: number; rateCount: number; bestPrice: number | null; }
 
 export interface GuideRow { id: string; productId: string; attrKey: string; question: string; guideNote: string | null; sortOrder: number; isRequired: boolean; condition: Record<string, unknown> | null; active: boolean; }
 
@@ -18,6 +18,8 @@ export interface RateRow {
   imageUrl: string | null; videoUrl: string | null;
 }
 
-export interface Payload { products: ProductRow[]; guide: Record<string, GuideRow[]>; vendors: VendorRow[]; rates: RateRow[]; }
+/** Rates are NOT in the payload — they page via GET /api/product-line/rates. */
+export interface Payload { products: ProductRow[]; guide: Record<string, GuideRow[]>; vendors: VendorRow[]; rateTotal: number; }
 
-export interface Detail { product: ProductRow & { createdAt: string }; guide: GuideRow[]; rates: RateRow[]; }
+/** GET /api/product-line/products/:id (backend ProductSummary) — quotes page separately. */
+export interface Detail { product: ProductRow & { createdAt: string; activeRateCount: number }; guide: GuideRow[]; }

@@ -3,28 +3,30 @@
 // MasterDataView — the Customer Master dashboard (the Zoho customer book).
 //
 // Speaks the Dispatch Floor dialect: zinc type scale, pill tab nav with
-// count badges, KPI cards with colored values, card rows. One KV-cached
-// payload (regions + compact rows + totals); filtering, sorting and paging
-// happen client-side. Detail (address/provenance/notes) is fetched per row
-// by the drawer. Subscribes ONLY to the typed `master-data` live event —
-// the payload must not reload on every unrelated `data-changed` broadcast.
+// count badges, KPI cards with colored values, card rows. Founder paging
+// standard (2026-11-21): the server filters/searches/sorts and serves one page
+// of 50 + a COUNT total (usePagedQuery); tiles, region badges and filter
+// options come from a cached COUNT/GROUP BY summary. Live `master-data`
+// writes refresh the summary and show a "new changes" banner on the list.
 import { useEffect, useMemo, useState } from "react";
 import { Download, Inbox, Receipt, RefreshCw, ScanSearch, Search, SlidersHorizontal, Upload, UserCog, Users } from "lucide-react";
 import { useLiveQuery } from "@/hooks/useLiveData";
+import { usePagedQuery } from "@/hooks/usePagedQuery";
 import { useAuth } from "@/auth/AuthContext";
-import { getCapabilities, getMasterData } from "@/master-data/api";
-import type { MasterCapabilities, MasterCustomer, MasterDataPayload } from "@/master-data/types";
+import { CUSTOMERS_URL, exportCustomers, getCapabilities, getDuplicateRows, getMasterSummary } from "@/master-data/api";
+import type { MasterCapabilities, MasterCustomer, MasterSummary } from "@/master-data/types";
 import { masterCapabilities } from "@/master-data/permissions";
 import {
-  EMPTY_FILTERS, applyFilters, buildFilterOptions, hasActiveFilters, summarizeRows, toCsv,
-  type MasterFilters,
+  DEFAULT_SORT, EMPTY_FILTERS, filterParams, hasActiveFilters, toCsv,
+  type MasterFilters, type SortState,
 } from "@/master-data/filters";
 import { formatDate, pct, regionLabel, relativeTime } from "@/master-data/normalize";
-import { Chip, FilterSelect, GhostButton, PrimaryButton } from "./ui";
+import { GhostButton, PrimaryButton } from "./ui";
+import { FilterPanel } from "./master-data-view/FilterPanel";
 import CustomersTab from "./CustomersTab";
 import DuplicatesTab from "./DuplicatesTab";
 import { Kpi } from "./master-data-view/Kpi";
-import { DUPLICATE_OPTIONS, CustomerDrawer, EditorsPanel, ImportModal } from "./master-data-view/helpers";
+import { CustomerDrawer, EditorsPanel, ImportModal } from "./master-data-view/helpers";
 
 export default function MasterDataView({ onStats }: { onStats?: (total: number) => void }) {
   const { me } = useAuth();
@@ -38,8 +40,21 @@ export default function MasterDataView({ onStats }: { onStats?: (total: number) 
   const [showImport, setShowImport] = useState(false);
   const [toast, setToast] = useState<{ title: string; message: string } | null>(null);
 
-  const query = useLiveQuery<MasterDataPayload>(getMasterData, { events: ["master-data"] });
-  const { data, loading, error, refresh } = query;
+  const [sort, setSort] = useState<SortState>(DEFAULT_SORT);
+  const summaryQuery = useLiveQuery<MasterSummary>(
+    () => getMasterSummary(filters.region, filters.state),
+    { events: ["master-data"], deps: [filters.region, filters.state] },
+  );
+  const { data, loading, error } = summaryQuery;
+  const list = usePagedQuery<MasterCustomer>(CUSTOMERS_URL, {
+    events: ["master-data"], filters: filterParams(filters, sort), enabled: subTab === "customers",
+  });
+  const dupQuery = useLiveQuery<MasterCustomer[]>(
+    () => (subTab === "duplicates" ? getDuplicateRows(filters.region) : Promise.resolve([])),
+    { events: ["master-data"], deps: [filters.region, subTab] },
+  );
+  const dupRows = useMemo(() => dupQuery.data ?? [], [dupQuery.data]);
+  const refresh = () => { summaryQuery.refresh(); list.refresh(); dupQuery.refresh(); };
 
   // Server truth for the action buttons (the client mirror only hides them).
   useEffect(() => {
@@ -59,7 +74,7 @@ export default function MasterDataView({ onStats }: { onStats?: (total: number) 
   const canDelete = serverCaps?.canDelete ?? false;
 
   useEffect(() => {
-    if (data?.totals?.total != null) onStats?.(data.totals.total);
+    if (data?.total != null) onStats?.(data.total);
   }, [data, onStats]);
 
   useEffect(() => {
@@ -68,18 +83,16 @@ export default function MasterDataView({ onStats }: { onStats?: (total: number) 
     return () => clearTimeout(t);
   }, [toast]);
 
-  const rows = useMemo(() => data?.rows ?? [], [data]);
   const regions = useMemo(() => data?.regions ?? [], [data]);
-
-  // Tiles + filter options follow the region tab only — search never moves them.
-  const regionBase = useMemo(
-    () => (filters.region ? rows.filter((r) => r.region === filters.region) : rows),
-    [rows, filters.region],
-  );
-  const options = useMemo(() => buildFilterOptions(regionBase, filters.state), [regionBase, filters.state]);
-  const summary = useMemo(() => summarizeRows(regionBase), [regionBase]);
-  const filtered = useMemo(() => applyFilters(rows, filters), [rows, filters]);
+  // Tiles + filter options follow the region tab only — search never moves
+  // them (server summary scoped by region; districts by the picked state).
+  const options = data?.options ?? { types: [], states: [], districts: [], subAreas: [], owners: [], pipelines: [] };
+  const summary = data?.summary ?? {
+    total: 0, active: 0, inactive: 0, neverTouched: 0, withOrders: 0, duplicateGroups: 0,
+    duplicateOpenGroups: 0, noPhone: 0, noEmail: 0, noGstin: 0, noPincode: 0,
+  };
   const openGroups = summary.duplicateOpenGroups;
+  const shownFilters = { ...filters, q: list.q };
 
   const set = <K extends keyof MasterFilters>(key: K, value: MasterFilters[K]) =>
     setFilters((f) => ({ ...f, [key]: value }));
@@ -89,8 +102,16 @@ export default function MasterDataView({ onStats }: { onStats?: (total: number) 
   const setState = (state: string) =>
     setFilters((f) => ({ ...f, state, district: "" }));
 
-  const exportCsv = () => {
-    const csv = toCsv(filtered);
+  // Export = every row the server filters match (not just this page).
+  const exportCsv = async () => {
+    let rows: MasterCustomer[];
+    try {
+      rows = await exportCustomers({ ...filterParams(filters, sort), q: list.q.trim() });
+    } catch (e) {
+      setToast({ title: "Export failed", message: e instanceof Error ? e.message : "Could not export" });
+      return;
+    }
+    const csv = toCsv(rows);
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -101,11 +122,11 @@ export default function MasterDataView({ onStats }: { onStats?: (total: number) 
   };
 
   const openRow = (row: MasterCustomer) => setDrawerId(row.id);
-  const seed = useMemo(() => filtered.find((r) => r.id === drawerId) ?? rows.find((r) => r.id === drawerId) ?? null, [filtered, rows, drawerId]);
+  const seed = useMemo(() => list.rows.find((r) => r.id === drawerId) ?? dupRows.find((r) => r.id === drawerId) ?? null, [list.rows, dupRows, drawerId]);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const activeFilterCount = useMemo(() => {
     let n = 0;
-    if (filters.q) n++;
+    if (list.q) n++;
     if (filters.status) n++;
     if (filters.pipeline) n++;
     if (filters.typeBase) n++;
@@ -119,7 +140,7 @@ export default function MasterDataView({ onStats }: { onStats?: (total: number) 
     if (filters.hasGstin) n++;
     if (filters.hasPincode) n++;
     return n;
-  }, [filters]);
+  }, [filters, list.q]);
 
   if (loading && !data) {
     return (
@@ -142,7 +163,7 @@ export default function MasterDataView({ onStats }: { onStats?: (total: number) 
       <div className="mx-auto w-full max-w-[1500px] px-4 py-6">
         <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-6 text-center">
           <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Could not load the customer master</p>
-          <p className="mt-1 text-xs text-zinc-500">{error instanceof Error ? error.message : "The cached payload failed to load."}</p>
+          <p className="mt-1 text-xs text-zinc-500">{error instanceof Error ? error.message : "The summary failed to load."}</p>
           <button
             onClick={refresh}
             className="mt-4 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500"
@@ -157,13 +178,13 @@ export default function MasterDataView({ onStats }: { onStats?: (total: number) 
   if (!data) return null;
 
   const regionItems: Array<{ key: string; label: string; count: number; title?: string }> = [
-    { key: "", label: "All regions", count: data.totals.total },
-    ...data.totals.regionIds.map((id) => {
+    { key: "", label: "All regions", count: data.total },
+    ...data.regionIds.map((id) => {
       const meta = regions.find((r) => r.region === id);
       return {
         key: id,
         label: meta?.zone ? `${id} · ${meta.zone}` : regionLabel(id),
-        count: data.totals.byRegion[id] ?? 0,
+        count: data.byRegion[id] ?? 0,
         title: meta?.coverage || undefined,
       };
     }),
@@ -175,7 +196,7 @@ export default function MasterDataView({ onStats }: { onStats?: (total: number) 
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Customer Master</h1>
           <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-            The Zoho customer book — {data.totals.total.toLocaleString("en-IN")} customers across {regions.length} zone{regions.length === 1 ? "" : "s"}
+            The Zoho customer book — {data.total.toLocaleString("en-IN")} customers across {regions.length} zone{regions.length === 1 ? "" : "s"}
             {data.updatedAt ? ` · updated ${relativeTime(data.updatedAt)}` : ""}
           </p>
         </div>
@@ -191,10 +212,10 @@ export default function MasterDataView({ onStats }: { onStats?: (total: number) 
             onClick={refresh}
             className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-600 shadow-sm hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300 dark:hover:bg-zinc-800"
           >
-            <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+            <RefreshCw className={`h-3.5 w-3.5 ${loading || summaryQuery.refreshing || list.loading ? "animate-spin" : ""}`} />
             Refresh
           </button>
-          <GhostButton onClick={exportCsv} title="Download exactly what the filters show">
+          <GhostButton onClick={() => void exportCsv()} title="Download exactly what the filters show (every page)">
             <span className="inline-flex items-center gap-1.5"><Download className="h-3.5 w-3.5" />Export CSV</span>
           </GhostButton>
           {canAppoint && (
@@ -285,8 +306,8 @@ export default function MasterDataView({ onStats }: { onStats?: (total: number) 
               <input
                 className="w-full rounded-lg border border-zinc-200 bg-white py-1.5 pl-8 pr-3 text-xs text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-indigo-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-100"
                 placeholder="Search name, company, contact, city, phone, GSTIN, Zoho id…"
-                value={filters.q}
-                onChange={(e) => set("q", e.target.value)}
+                value={list.q}
+                onChange={(e) => list.setQ(e.target.value)}
                 aria-label="Search customers"
               />
             </div>
@@ -299,57 +320,29 @@ export default function MasterDataView({ onStats }: { onStats?: (total: number) 
               <SlidersHorizontal className="h-3.5 w-3.5" />
               Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
             </button>
-            {hasActiveFilters(filters) && (
+            {hasActiveFilters(shownFilters) && (
               <button
                 type="button"
-                onClick={() => setFilters((f) => ({ ...EMPTY_FILTERS, region: f.region, q: "" }))}
+                onClick={() => { setFilters((f) => ({ ...EMPTY_FILTERS, region: f.region })); list.setQ(""); }}
                 className="text-[11px] font-semibold text-indigo-600 hover:underline dark:text-indigo-400"
               >
                 Clear
               </button>
             )}
           </div>
-          {filtersOpen && (
-            <div className="rounded-2xl border border-zinc-200 bg-white p-3.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/60">
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-                <FilterSelect label="Status" value={filters.status} onChange={(v) => set("status", v)} options={["Active", "Inactive"]} allLabel="Any status" />
-                <FilterSelect label="Type" value={filters.typeBase} onChange={(v) => set("typeBase", v)} options={options.types} allLabel="Any type" />
-                <FilterSelect label="State" value={filters.state} onChange={setState} options={options.states} allLabel="Any state" />
-                <FilterSelect label="District" value={filters.district} onChange={(v) => set("district", v)} options={options.districts} allLabel={filters.state ? "Any district" : "Pick a state first"} />
-                <FilterSelect label="Sub-area" value={filters.subArea} onChange={(v) => set("subArea", v)} options={options.subAreas} allLabel="Any sub-area" />
-                <FilterSelect label="Owner" value={filters.owner} onChange={(v) => set("owner", v)} options={options.owners} allLabel="Any owner" />
-                <FilterSelect label="Pipeline" value={filters.pipeline} onChange={(v) => set("pipeline", v)} options={options.pipelines} allLabel="Any stage" />
-              </div>
-              <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-                <label className="flex min-w-0 flex-col gap-1">
-                  <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Duplicates</span>
-                  <select
-                    value={filters.duplicates}
-                    onChange={(e) => set("duplicates", e.target.value)}
-                    className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-900 outline-none transition-colors placeholder:text-zinc-400 focus:border-indigo-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-100"
-                  >
-                    {DUPLICATE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  </select>
-                </label>
-                <div className="flex flex-wrap items-end gap-1.5 pt-4">
-                  <Chip active={filters.hasPhone} onClick={() => set("hasPhone", !filters.hasPhone)} title="Only rows with a phone number">With phone</Chip>
-                  <Chip active={filters.hasEmail} onClick={() => set("hasEmail", !filters.hasEmail)} title="Only rows with an email">With email</Chip>
-                  <Chip active={filters.hasGstin} onClick={() => set("hasGstin", !filters.hasGstin)} title="Only rows with a GSTIN">With GSTIN</Chip>
-                  <Chip active={filters.hasPincode} onClick={() => set("hasPincode", !filters.hasPincode)} title="Only rows with a pincode">With pincode</Chip>
-                </div>
-              </div>
-            </div>
-          )}
-          {!filtersOpen && hasActiveFilters(filters) && (
+          {filtersOpen && <FilterPanel filters={filters} set={set} setState={setState} options={options} />}
+          {!filtersOpen && hasActiveFilters(shownFilters) && (
             <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-              {activeFilterCount} filter{activeFilterCount === 1 ? "" : "s"} on · {filtered.length.toLocaleString("en-IN")} of {regionBase.length.toLocaleString("en-IN")} match
+              {activeFilterCount} filter{activeFilterCount === 1 ? "" : "s"} on · {list.total.toLocaleString("en-IN")} of {summary.total.toLocaleString("en-IN")} match
             </p>
           )}
 
-          <CustomersTab rows={filtered} onOpen={openRow} />
+          <CustomersTab list={list} sort={sort} setSort={setSort} onOpen={openRow} />
         </div>
+      ) : dupQuery.loading && !dupQuery.data ? (
+        <div className="h-[104px] animate-pulse rounded-2xl border border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900/40" />
       ) : (
-        <DuplicatesTab rows={regionBase} canEdit={canEdit} onOpen={openRow} onChanged={refresh} />
+        <DuplicatesTab rows={dupRows} canEdit={canEdit} onOpen={openRow} onChanged={refresh} />
       )}
 
       {drawerId && (

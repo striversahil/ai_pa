@@ -96,49 +96,62 @@ export async function proofDocsForOrders(
  * once per TTL, and each request filters the snapshot in memory.
  */
 export async function listOrders(args: ListArgs): Promise<CrmOrderRow[]> {
+  const limit = Math.min(Math.max(Number(args.limit) || 500, 1), 2000);
+  return withProofDocs((await selectOrders(args)).slice(0, limit));
+}
+
+/**
+ * The whole floor, uncapped (founder paging standard 2026-11-21: never a
+ * capped `take:` slice). Shared by the list + summary reads via
+ * cachedFloorRows — ~1.2k orders / ~3.4k items at 2026-11-21.
+ */
+async function scanFloor(): Promise<{ rows: any[]; items: Record<string, any[]> }> {
+  const all = (await prisma.crmSalesOrder.findMany({ orderBy: { createdDate: 'desc' } })) as any[];
+  const bySo = await itemsForOrders(all.map((r) => str(r.id)));
+  // Flatten the Map to a plain Record — KV-JSON-safe (see ./cache.ts).
+  const flat: Record<string, any[]> = {};
+  for (const [k, v] of bySo) flat[k] = v;
+  return { rows: all, items: flat };
+}
+
+/** Paperwork checklist rides the list rows (bulk slot IDs only) so the
+ *  Dispatched tab draws pending-doc chips with zero per-card fetches.
+ *  Call on the rows actually returned (one page), not the whole floor. */
+export async function withProofDocs(orders: CrmOrderRow[]): Promise<CrmOrderRow[]> {
+  const proofDocs = await proofDocsForOrders(orders.map((o) => str(o.id)));
+  for (const o of orders) {
+    (o as any).proofDocs = proofDocs.get(str(o.id)) || { before: false, after: false, transport: false, courier: false, packingList: false };
+  }
+  return orders;
+}
+
+/**
+ * Every order matching a tab + region + search, newest first — the complete
+ * list (no slice, no proof docs). listOrders / listOrdersPaged slice it.
+ */
+export async function selectOrders(args: ListArgs): Promise<CrmOrderRow[]> {
   const today = args.today || istToday();
   const view = args.view;
-  const limit = Math.min(Math.max(Number(args.limit) || 500, 1), 2000);
 
-  const where: any = view === 'source-deleted' ? { sourceState: 'deleted_source' } : {};
-
-  // The source-deleted view keeps its dedicated query: tombstoned rows live
-  // outside the newest-N window the live floor caches below.
+  // The source-deleted view keeps its dedicated query: tombstoned rows are
+  // filtered out of the live floor below.
   if (view === 'source-deleted') {
     const gone = (await prisma.crmSalesOrder.findMany({
-      where,
+      where: { sourceState: 'deleted_source' },
       orderBy: { createdDate: 'desc' },
-      take: 1000,
     })) as any[];
     const goneItems = await itemsForOrders(gone.map((r) => str(r.id)));
     return gone
       .map((r) => withFlags(toOrderView(r, goneItems.get(str(r.id)) || []), today))
       .filter((o) => orderMatchesView(o as ViewOrder, view, today))
-      .sort(sortNewestFirst)
-      .slice(0, limit);
+      .sort(sortNewestFirst);
   }
 
   // Live views share ONE cached raw scan (see ./cache.ts): the D1 cost is
   // paid once per TTL across all views/regions/searches, and every request
-  // filters the snapshot in memory. Superset of the old take-3000 query.
-  const { rows, items } = await cachedFloorRows(async () => {
-    const all = (await prisma.crmSalesOrder.findMany({
-      orderBy: { createdDate: 'desc' },
-      take: 4000,
-    })) as any[];
-    const bySo = await itemsForOrders(all.map((r) => str(r.id)));
-    // Flatten the Map to a plain Record — KV-JSON-safe (see ./cache.ts).
-    const flat: Record<string, any[]> = {};
-    for (const [k, v] of bySo) flat[k] = v;
-    return { rows: all, items: flat };
-  });
+  // filters the snapshot in memory.
+  const { rows, items } = await cachedFloorRows(scanFloor);
   const orders = rows.map((r) => withFlags(toOrderView(r, items[str(r.id)] || []), today));
-  // Paperwork checklist rides the list rows (bulk slot IDs only) so the
-  // Dispatched tab draws pending-doc chips with zero per-card fetches.
-  const proofDocs = await proofDocsForOrders(orders.map((o) => str(o.id)));
-  for (const o of orders) {
-    (o as any).proofDocs = proofDocs.get(str(o.id)) || { before: false, after: false, transport: false, courier: false, packingList: false };
-  }
 
   const q = str(args.q).trim().toLowerCase();
   const region = normalizeRegionFilter(args.region);
@@ -161,7 +174,7 @@ export async function listOrders(args: ListArgs): Promise<CrmOrderRow[]> {
   // the card and counted in the KPIs, so it no longer reorders the list — the
   // desk works one rolling, newest-first stack.
   filtered.sort(sortNewestFirst);
-  return filtered.slice(0, limit);
+  return filtered;
 }
 
 /** Newest Zoho creation date first; same day → highest SO number first. */
@@ -1934,14 +1947,7 @@ export async function dispatchSummary(
   // a summary hit costs zero D1 reads. Cached per region filter; every floor
   // write invalidates eagerly via mirrorOrderTouch/syncOrders.
   return cachedFloorSummary(region, async () => {
-  const { rows, items } = await cachedFloorRows(async () => {
-    const all = (await prisma.crmSalesOrder.findMany({ take: 4000 })) as any[];
-    const bySo = await itemsForOrders(all.map((r) => str(r.id)));
-    // Flatten the Map to a plain Record — KV-JSON-safe (see ./cache.ts).
-    const flat: Record<string, any[]> = {};
-    for (const [k, v] of bySo) flat[k] = v;
-    return { rows: all, items: flat };
-  });
+  const { rows, items } = await cachedFloorRows(scanFloor);
   const counts: Record<string, any> = {
     total: 0,
     unscheduled: 0,

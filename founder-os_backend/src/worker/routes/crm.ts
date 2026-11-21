@@ -36,7 +36,6 @@ import {
   dispatchOrder,
   dispatchSummary,
   getOrder,
-  listOrders,
   orderRegion,
   reopenOrderLocal,
   rescheduleOrder,
@@ -44,6 +43,8 @@ import {
   updateAddresses,
 } from '../../modules/crm/store';
 import { normalizeView } from '../../modules/crm/types';
+import { listOrdersPaged } from '../../modules/crm/list-page';
+import { parsePageQuery } from '../../shared/paging';
 import { normalizeRegionFilter } from '../../modules/crm/region';
 import { resolveRosterMatch } from '../../modules/telecalling/self';
 import { listActiveTelecallers } from '../../modules/telecalling/self-roster';
@@ -195,12 +196,10 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const v = await requireRead(c);
     if (v instanceof Response) return v;
     const view = normalizeView(c.req.query('view'));
-    const q = String(c.req.query('q') || '');
-    const limit = Number(c.req.query('limit') || 500);
     const region = scopedRegion(c, v);
     try {
-      const orders = await listOrders({ view, q, limit, region });
-      return c.json({ view, orders, count: orders.length, region, viewer: viewerMeta(v) });
+      const paged = await listOrdersPaged({ view, region }, parsePageQuery((k) => c.req.query(k)));
+      return c.json({ ...paged, view, region, viewer: viewerMeta(v) });
     } catch (e) {
       return fail(c, e);
     }

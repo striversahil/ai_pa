@@ -2,9 +2,10 @@
 // routes/master-data.ts — Customer master (Zoho customer book) API.
 //
 // Worker-only: Express is frozen (founder decision), so there is no mirror.
-// The dashboard payload rides the automation data endpoint
-// (`/api/automations/master-data/data`) like every other dashboard; this module
-// owns the detail read and every write.
+// The list pages in SQL (`/customers`, `/summary`, `/duplicates`, `/export`
+// below — founder paging standard 2026-11-21); the workspace data endpoint
+// now serves only the whole-book summary. This module also owns the detail
+// read and every write.
 //
 // Access:
 //   read    → `master-data` (dashboard grant), `enquiry-tracker` (the sales
@@ -26,6 +27,10 @@ import {
   canEditMaster, canViewMaster, isMasterManager, isSalesHead, listEditors, setEditor,
 } from '../../modules/master-data/editors';
 import type { CustomerPatch, DuplicateReview } from '../../modules/master-data/types';
+import {
+  exportCustomers, getMasterSummary, listCustomersPaged, listDuplicateRows, parseCustomerFilters,
+} from '../../modules/master-data/list-query';
+import { parsePageQuery } from '../../shared/paging';
 import { requireViewer } from '../viewer';
 import { readBody, writeError } from '../http';
 
@@ -58,6 +63,50 @@ async function requireManager(c: any) {
 }
 
 export function registerMasterDataRoutes(app: Hono<{ Bindings: Bindings }>): void {
+  // ── Paged list (founder paging standard 2026-11-21) ──────────────────────
+  // ?page&limit&q + region/status/pipeline/typeBase/state/district/subArea/
+  // owner/duplicates/hasEmail|hasPhone|hasGstin|hasPincode + sort/dir.
+  app.get('/api/master-data/customers', async (c) => {
+    try {
+      await requireView(c);
+      const get = (k: string) => c.req.query(k);
+      return c.json(await listCustomersPaged(parsePageQuery(get), parseCustomerFilters(get)));
+    } catch (e) {
+      return fail(c, e);
+    }
+  });
+
+  // ── Header, region tabs, KPI tiles + filter options (COUNT/GROUP BY) ─────
+  app.get('/api/master-data/summary', async (c) => {
+    try {
+      await requireView(c);
+      return c.json(await getMasterSummary(String(c.req.query('region') ?? ''), String(c.req.query('state') ?? '')));
+    } catch (e) {
+      return fail(c, e);
+    }
+  });
+
+  // ── Duplicate review rows for a region (grouped + paged in the tab) ──────
+  app.get('/api/master-data/duplicates', async (c) => {
+    try {
+      await requireView(c);
+      return c.json({ rows: await listDuplicateRows(String(c.req.query('region') ?? '')) });
+    } catch (e) {
+      return fail(c, e);
+    }
+  });
+
+  // ── CSV export: every row the current filters match (a download) ─────────
+  app.get('/api/master-data/export', async (c) => {
+    try {
+      await requireView(c);
+      const get = (k: string) => c.req.query(k);
+      return c.json({ rows: await exportCustomers(parseCustomerFilters(get), parsePageQuery(get).q) });
+    } catch (e) {
+      return fail(c, e);
+    }
+  });
+
   // ── Detail (drawer) ───────────────────────────────────────────────────────
   app.get('/api/master-data/customers/:id', async (c) => {
     try {

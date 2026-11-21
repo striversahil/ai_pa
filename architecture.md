@@ -858,6 +858,24 @@ events out to every component via an in-process event bus — no per-dashboard s
     without an `events` filter): refetches on every event including the automatic `data-changed`.
   - `useLiveEvent(handler)` — imperative subscription for components with their own local
     state (e.g. the WhatsApp chat window).
+- **Paged lists (founder standard 2026-11-21)** — any list that can grow: `src/hooks/usePagedQuery.ts`
+  (page numbers, 50/page, debounced server search, filters reset to page 1) over backend
+  `src/shared/paging.ts` (`parsePageQuery` clamps 50/≤100, `searchClause` = every word in some
+  column via LIKE within D1's 50-byte cap, `pagedQuery` = page + `COUNT(*)` in one `db.batch`;
+  response `{rows,total,page,limit,totalPages}`). Live events do NOT reload a paged list: they
+  count into `<ChangesBanner>` ("N new changes — click to refresh"); our own saves call
+  `refresh()` and are muted for 4s. Footer `<Pager>` ("Showing 1–50 of N" + page numbers) from
+  `@/components/ui`. Never paged: Management Active/Unprocessed, today's dispatches, overdue,
+  procurement pending. Rolled out: product line (rates + product detail quotes, migration 0150);
+  Customer Master (`/api/master-data/customers` paged + filtered + sorted in SQL, `/summary`
+  KV-cached COUNT/GROUP BY for region tabs, KPI tiles and filter options — busted by every
+  master write via `invalidateMasterSummaries`, `/duplicates` per region for the review tab
+  (12 groups/page), `/export` = all filtered rows for CSV; the old whole-book payload is gone);
+  Dispatch (`GET /api/crm/orders` → `modules/crm/list-page.ts#listOrdersPaged`: tab predicates
+  read per-item state, so they filter the ONE cached floor scan in memory — the scan is now
+  uncapped (`scanFloor`, shared with `dispatchSummary`), so search + totals cover every order;
+  proof-doc chips load for the returned page only; "dispatch-floor" = today's dispatches +
+  overdue returns everything on page 1). Next Enquiries history → rest. Guard `list-paging`.
 - Backend `src/live.ts` defines `LiveEvent` (canonical type names) and `broadcastLive(c, type,
   extra?)`, which `notifyLive` now delegates to. **Every data-write path calls `broadcastLive`**:
   runner writes (`/api/runner/digests`, `tasks`, `pending-items`, `messages/mark-processed`,

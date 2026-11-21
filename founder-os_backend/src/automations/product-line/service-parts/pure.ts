@@ -1,8 +1,9 @@
 // Extracted verbatim from service.ts by scripts/refactor/split-module.mjs.
 // service.ts re-exports everything public here, so existing imports keep working.
+import type { RateRow } from "../types";
 
-
-export const DATA_KEY = 'product-line:data:v1';
+// v2 (2026-11-21): rates left the payload (paged endpoint); rateTotal + bestPrice added.
+export const DATA_KEY = 'product-line:data:v2';
 
 export const DATA_TTL_MS = 10 * 60 * 1000;
 
@@ -53,6 +54,39 @@ export function parseMissingSpecs(raw: unknown): string[] | null {
     } catch { /* fall through */ }
   }
   return null;
+}
+
+/** One D1 VendorRate row → RateRow (the single mapper; joined names passed in). */
+export function toRateRow(
+  r: any,
+  joined: { vendorName: string | null; vendorType: string | null; productId: string | null; productName: string | null },
+): RateRow {
+  return {
+    id: String(r.id),
+    vendorId: String(r.vendorId ?? ''),
+    vendorName: joined.vendorName,
+    vendorType: joined.vendorType,
+    productId: joined.productId,
+    productName: joined.productName,
+    attrKey: String(r.attrKey ?? ''),
+    attrValues: parseAttrValues(r.attrValues),
+    pricePerUnit: r.pricePerUnit != null ? Number(r.pricePerUnit) : null,
+    unit: String(r.unit ?? ''),
+    discountPercent: r.discountPercent != null ? Number(r.discountPercent) : null,
+    baseRate: r.baseRate != null ? Number(r.baseRate) : null,
+    weightPerUnit: r.weightPerUnit != null ? Number(r.weightPerUnit) : null,
+    packageQty: r.packageQty != null ? String(r.packageQty) : null,
+    packageDims: r.packageDims != null ? String(r.packageDims) : null,
+    moq: r.moq != null ? String(r.moq) : null,
+    deliveryDays: r.deliveryDays != null ? Number(r.deliveryDays) : null,
+    imageUrl: r.imageUrl ? String(r.imageUrl) : null,
+    videoUrl: r.videoUrl ? String(r.videoUrl) : null,
+    quotedAt: String(r.quotedAt ?? ''),
+    enquiryRef: r.enquiryRef != null ? String(r.enquiryRef) : null,
+    notes: r.notes ? String(r.notes) : null,
+    missingSpecs: parseMissingSpecs(r.missingSpecs),
+    active: r.active !== false && r.active !== 0,
+  };
 }
 
 export const INDEX_KEY = 'product-line:index:v1';
