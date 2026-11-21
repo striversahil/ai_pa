@@ -129,4 +129,19 @@ describe('enquiry threads — wiring', () => {
     assert.ok(fe.includes("'sales' | 'internal'"), 'FE ThreadChannel union drifted');
   });
 
+  it('pending-from-sales bucket is any flagged draft row (lenses, not a partition)', () => {
+    const src = readFileSync(join(FRONTEND_SRC, 'components', 'ManagementReview.tsx'), 'utf8');
+    assert.ok(src.includes('threadWaitingIds'), 'sales bucket must union thread queries (threads set no loop flags)');
+    assert.ok(/waitingOn === "management"/.test(src), 'bucket must pick threads waiting on management');
+    assert.ok(/hasOpenFlag\(e\) \|\| threadWaitingIds/.test(src), 'sales bucket: open flag on any item OR waiting thread');
+    const salesFilters = [...src.matchAll(/queueUnprocessed\.filter\(\(e\) => ([^)]+)\)/g)].map((m) => m[1]);
+    assert.ok(salesFilters.some((f) => f.includes('hasOpenFlag') && !f.includes('isManagementPendingEnquiry')),
+      'sales bucket must not exclude Active rows (mixed rows double-list by design)');
+  });
+
+  it('thread writes paint optimistic echoes before the server confirms', () => {
+    const src = readFileSync(join(FRONTEND_SRC, 'enquiry-threads', 'useThreads.ts'), 'utf8');
+    assert.ok(src.includes('tmp-'), 'echoes need temp ids stripped on confirm');
+    assert.ok(src.includes('patch(optimistic)'), 'echo must paint before the request runs');
+  });
 });

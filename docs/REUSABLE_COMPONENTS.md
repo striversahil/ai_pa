@@ -6,7 +6,7 @@ Conventions: frontend `<Name>.tsx` = one component, `helpers.ts` = non-UI helper
 
 Shared kits: `@/components/ui` (Badge, Card, KpiCard, Skeleton, EmptyState/ErrorState, Table, TabBar, Modal, ConfirmDialog, Popover) · `@/lib/format` (money/date formatters) · `@/workspaces` (WorkspaceRenderer, workspaceDataUrl, useWorkspaces, useWorkspaceHost) · backend `worker/viewer.ts` (getViewer/getViewerMe), `worker/http.ts` (readBody), `modules/workspaces/` (catalog, scoping, getWorkspaceData).
 
-## Frontend (120 files)
+## Frontend (133 files)
 
 ### `components/accounts-dashboard/`
 - `Controller.tsx` — components: `Controller`
@@ -28,6 +28,12 @@ Shared kits: `@/components/ui` (Badge, Card, KpiCard, Skeleton, EmptyState/Error
 - `PayDialog.tsx` — components: `PayDialog`
 - `helpers.ts` — functions/values: `PAYMENT_CATEGORIES`, `identifierMeta`, `BUCKETS`, `fmtDateTime`, `WEEKDAY_SHORT`, `MONTH_SHORT`, `schedLabel`, `inputCls`, `postJson`, `groupBills`
 - `types.ts` — types: `PaymentAttachment`, `PaymentDueRow`, `PaymentSummary`, `MainTab`, `Bucket`, `BillGroup`
+
+### `components/chat/`
+- `api.ts` — functions/values: `onChannelsChanged`, `notifyChannelsChanged`, `chatListChanged`, `fetchChannels`, `fetchChannelMessages`
+
+### `components/debtors-tracker/`
+- `DashboardModals.tsx` — types: `DashboardModalsProps`
 
 ### `components/debtors-tracker/tabs/ageing-tab/`
 - `PromiseBadge.tsx` — components: `PromiseBadge`
@@ -66,7 +72,15 @@ Shared kits: `@/components/ui` (Badge, Card, KpiCard, Skeleton, EmptyState/Error
 - `types.ts` — types: `FileItem`, `MetricField`, `TaskItem`, `UnscheduledItem`, `RosterRow`, `TemplateRow`, `FreqStat`, `DashData`, `DigitalMarketingView`, `PatternKey`
 
 ### `components/enquiry-detail/`
+- `AddItemsModal.tsx` — —
+- `DetailHeader.tsx` — —
 - `types.ts` — types: `EnquiryDetailProps`
+
+### `components/enquiry-modal/`
+- `source-picker.tsx` — components: `MARKETING_CHANNELS`, `SOURCE_OPTIONS`; functions/values: `isMarketingChannel`
+
+### `components/enquiry-tracker/`
+- `LiveToast.tsx` — types: `LiveToastKind`, `LiveToastData`
 
 ### `components/field-staff-panel/`
 - `CheckInBar.tsx` — components: `CheckInBar`
@@ -79,6 +93,10 @@ Shared kits: `@/components/ui` (Badge, Card, KpiCard, Skeleton, EmptyState/Error
 - `VisitCard.tsx` — components: `VisitCard`
 - `helpers.ts` — functions/values: `inputCls`
 
+### `components/human-resources/`
+- `OrgPositionPicker.tsx` — —
+- `OrganizationTab.tsx` — —
+
 ### `components/layout/sidebar/`
 - `helpers.ts` — functions/values: `DASH_ICONS`
 - `types.ts` — types: `SidebarRow`, `SidebarProps`
@@ -89,10 +107,6 @@ Shared kits: `@/components/ui` (Badge, Card, KpiCard, Skeleton, EmptyState/Error
 ### `components/management-review/`
 - `PageJumper.tsx` — components: `PageJumper`
 - `helpers.ts` — functions/values: `isManagementPending`, `pageWindow`
-
-### `components/manual-calls-panel/`
-- `helpers.ts` — functions/values: `DAY_RE`, `istToday`, `monthRange`, `shiftMonth`
-- `types.ts` — types: `Agent`, `Entry`, `Payload`
 
 ### `components/master-data/customer-drawer/`
 - `ChipRow.tsx` — components: `ChipRow`
@@ -124,8 +138,6 @@ Shared kits: `@/components/ui` (Badge, Card, KpiCard, Skeleton, EmptyState/Error
 ### `components/sales-controller-panel/`
 - `ExportDataSection.tsx` — components: `ExportDataSection`
 - `HistoryResetSection.tsx` — components: `HistoryResetSection`
-- `RosterEditModal.tsx` — components: `RosterEditModal`
-- `RosterSection.tsx` — components: `RosterSection`
 - `UnmappedSection.tsx` — components: `UnmappedSection`
 - `helpers.ts` — functions/values: `TELECALLING_EVENTS`, `hasSalesManagerAccess`, `downloadCsv`, `EXPORT_PERIODS`
 
@@ -151,10 +163,23 @@ Shared kits: `@/components/ui` (Badge, Card, KpiCard, Skeleton, EmptyState/Error
 - `helpers.ts` — functions/values: `CALL_TAG_META`, `localIsoDay`, `kraStatus`, `regionKey`, `regionQuery`, `adaptLeaderRow`, `adaptBoardStaff`, `adaptDashData`, `adaptAgentView`, `TELECALLING_EVENTS`, `TABS`, `fmtTalk`, `fmtNum`, `fmtLakh`, `convTier`, `LIGHT_TEXT`, `LIGHT_BG`, `LIGHT_CHIP`, `worst`, `OVERALL_LABEL`
 - `types.ts` — types: `LeaderRow`, `RiskRow`, `RegionInfo`, `BoardClosedItemLite`, `UnmappedItem`, `UnmappedAcceptedItem`, `DashData`, `DailyRow`, `FollowUp`, `CallTagValue`, `CallTagDelta`, `AgentViewData`, `RosterRow`, `View`, `TrafficLight`
 
+### `components/telecalling/auto-dialer/`
+- `AppDownload.tsx` — components: `AppDownload`
+- `AutoDialerSection.tsx` — —
+- `DialerSettings.tsx` — components: `DialerSettings`
+- `HourlyReport.tsx` — components: `HourlyReport`
+- `LiveBoard.tsx` — components: `LiveBoard`
+- `PairRequests.tsx` — components: `PairRequests`; types: `AgentOption`
+- `Recordings.tsx` — components: `Recordings`
+
 ### `components/telecalling/neo-dove-campaign-section/`
 - `AgentUrlRow.tsx` — components: `AgentUrlRow`
 - `helpers.ts` — functions/values: `jsonFetch`
 - `types.ts` — types: `Props`
+
+### `components/ui/`
+- `Button.tsx` — components: `Button`; functions/values: `buttonClass`; types: `ButtonVariant`, `ButtonSize`
+- `motion.tsx` — components: `MotionStyle`, `TabPanel`, `LazySection`, `Skeleton`, `ProgressRing`
 
 ### `components/user-admin/`
 - `helpers.ts` — functions/values: `fmtDate`
@@ -184,15 +209,15 @@ Shared kits: `@/components/ui` (Badge, Card, KpiCard, Skeleton, EmptyState/Error
 - `helpers.ts` — functions/values: `uploadProofFile`, `dateLabel`, `fullDateLabel`, `regionName`, `ageLabel`, `isPhotoFile`, `isPdfFile`, `proofFileFromId`
 - `types.ts` — types: `PanelMode`
 
-## Backend (72 files)
+## Backend (76 files)
 
 ### `automations/accounts/seed-tasks-parts/`
 - `pure.ts` — functions/values: `SEED_TASKS`
 - `types.ts` — types: `AccountsSeedTask`
 
 ### `automations/accounts/service-parts/`
-- `io.ts` — functions/values: `ensureSeedTemplates`, `ensureInstances`, `splitSharedMains`, `flagOverdue`, `getCarriedOverdue`, `runDailyRollover`, `invalidateAccountsCache`, `computeDashboard`, `getAccountsDashboardData`, `getAccountsExport`, `resolveSelfAccountant`, `listAccountants`, `createAccountant`, `updateAccountant`, `listTemplates`, `createTemplate`, `updateTemplate`, `logTask`, `getPaymentTemplates`, `paymentAttachmentsByLog`, `getPaymentDues`, `getPaymentHistory`, `ensurePaymentInstance`, `payDue`, `createAttachmentRecord`, `getAttachment`, `deleteAttachmentRecord`, `computeTeam`
-- `pure.ts` — functions/values: `FREQUENCIES`, `OWNER_ROLES`, `PAYMENT_CATEGORIES`, `LOG_STATUSES`, `DATA_TTL_MS`, `DATA_CACHE_PREFIX`, `SLOT_MAIN`, `SLOT_SENIOR`, `SLOT_JUNIOR`, `LANE_SLOTS`, `slotsFor`, `slotKey`, `istDateStr`, `parseDay`, `fmtDay`, `daysInMonth`, `MONTH_NUM`, `WEEKDAY_NUM`, `UNSCHEDULED_RULES`, `monthNum`, `occurrenceMatch`, `evalRule`, `parseRule`, `dueDateForStatement`, `isOffsetDueOn`, `legacyDueOn`, `isDueOn`, `WINDOW_RULES`, `windowMatchToday`, `windowGraceStart`, `missStreak`, `fmtMins`, `addDays`, `diffDays`, `ISO_DAY`, `normId`, `cleanTemplateInput`, `parseRemindDays`, `statementDateFor`, `toPaymentRow`, `toPaymentAttachment`, `summarizePayments`, `toAttachmentJson`, `normName`, `mondayOf`
+- `io.ts` — functions/values: `ensureSeedTemplates`, `ensureInstances`, `splitSharedMains`, `flagOverdue`, `getCarriedOverdue`, `runDailyRollover`, `invalidateAccountsCache`, `computeDashboard`, `getAccountsDashboardData`, `getAccountsExport`, `resolveSelfAccountant`, `listAccountants`, `createAccountant`, `updateAccountant`, `listTemplates`, `createTemplate`, `updateTemplate`, `logTask`, `getPaymentTemplates`, `paymentAttachmentsByLog`, `getPaymentDues`, `syncDueReceiptMirror`, `getPaymentHistory`, `ensurePaymentInstance`, `payDue`, `createAttachmentRecord`, `getAttachment`, `deleteAttachmentRecord`, `computeTeam`
+- `pure.ts` — functions/values: `FREQUENCIES`, `OWNER_ROLES`, `PAYMENT_CATEGORIES`, `LOG_STATUSES`, `DATA_TTL_MS`, `DATA_CACHE_PREFIX`, `DUES_SIG_KEY`, `DUE_SYNC_TTL_MS`, `SLOT_MAIN`, `SLOT_SENIOR`, `SLOT_JUNIOR`, `LANE_SLOTS`, `slotsFor`, `slotKey`, `istDateStr`, `parseDay`, `fmtDay`, `daysInMonth`, `MONTH_NUM`, `WEEKDAY_NUM`, `UNSCHEDULED_RULES`, `monthNum`, `occurrenceMatch`, `evalRule`, `parseRule`, `dueDateForStatement`, `isOffsetDueOn`, `legacyDueOn`, `isDueOn`, `WINDOW_RULES`, `windowMatchToday`, `windowGraceStart`, `missStreak`, `fmtMins`, `addDays`, `diffDays`, `ISO_DAY`, `normId`, `cleanTemplateInput`, `parseRemindDays`, `statementDateFor`, `toPaymentRow`, `toPaymentAttachment`, `summarizePayments`, `toAttachmentJson`, `normName`, `mondayOf`
 - `types.ts` — types: `LaneScope`, `PaymentBucket`, `PaymentAttachment`, `PaymentDueRow`, `PaymentSummary`
 
 ### `automations/debtors-tracker/imports-parts/`
@@ -202,11 +227,11 @@ Shared kits: `@/components/ui` (Badge, Card, KpiCard, Skeleton, EmptyState/Error
 
 ### `automations/debtors-tracker/types-parts/`
 - `pure.ts` — functions/values: `DEBTOR_COLUMNS_LEGEND`, `COLLECTION_COLUMNS_LEGEND`, `BUCKETS`, `BUCKET_LABELS`, `bucketFromPastedLabel`, `normalizeCustomerName`, `normalizeCustomerKey`, `normalizeInvoiceNo`
-- `types.ts` — types: `DebtorRow`, `CollectionRow`, `InvoiceNoConflict`, `ImportConflict`, `DebtorImportReport`, `CollectionImportReport`, `DebtorsTrackerPayload`, `CustomerAgeingRow`, `LiveInvoice`, `Bucket`, `ReceiptBucketKey`, `ReceiptBucketCell`, `ReceiptBucketWindow`, `ReceiptAgeingSplit`, `LiveCollection`, `CustomerLedgerEntryType`, `CustomerLedgerEntry`, `CustomerLedgerTotals`, `CustomerLedger`, `LiveReminder`
+- `types.ts` — types: `DebtorRow`, `CollectionRow`, `InvoiceNoConflict`, `ImportConflict`, `DebtorImportReport`, `CollectionImportReport`, `DebtorsTrackerPayload`, `CustomerAgeingRow`, `LiveInvoice`, `Bucket`, `ReceiptBucketKey`, `ReceiptBucketCell`, `ReceiptBucketWindow`, `ReceiptAgeingSplit`, `LiveCollection`, `CustomerLedgerEntryType`, `CustomerLedgerEntry`, `CustomerLedgerTotals`, `TopPick`, `CustomerLedger`, `LiveReminder`
 
 ### `automations/human-resources/service-parts/`
 - `io.ts` — functions/values: `resolveSelfHumanResourcesMember`, `computeDashboard`, `getHumanResourcesDashboardData`, `listMembers`, `createMember`, `updateMember`, `ensureAssignableMember`, `createTask`, `updateTask`, `deleteTask`, `createExpense`, `updateExpense`, `deleteExpense`, `createFundTxn`, `updateFundTxn`, `deleteFundTxn`
-- `pure.ts` — functions/values: `normId`, `emailTokens`, `expenseJson`, `fundTxnJson`
+- `pure.ts` — functions/values: `normId`, `emailTokens`, `expenseJson`, `fundTxnJson`, `splitTaskBuckets`
 
 ### `automations/neodove-refresh-parts/`
 - `io.ts` — functions/values: `fetchLeadsGenerated`, `fetchRosterUserIds`, `probeNeodoveDirectory`, `refreshNeodoveReport`
@@ -229,7 +254,7 @@ Shared kits: `@/components/ui` (Badge, Card, KpiCard, Skeleton, EmptyState/Error
 
 ### `automations/telecalling/client-segments-parts/`
 - `io.ts` — functions/values: `loadTypeRules`, `loadManuals`, `loadMasterEntries`, `classifyClients`, `loadClientQueue`, `setTypeRule`, `setManualSegment`
-- `pure.ts` — functions/values: `LEGAL_RE`, `normalizeClientKey`, `tokensOf`, `defaultSegmentFor`, `isValidSegment`, `buildMasterIndex`, `toCandidate`
+- `pure.ts` — functions/values: `LEGAL_RE`, `normalizeClientKey`, `tokensOf`, `pickWritebackRegion`, `defaultSegmentFor`, `isValidSegment`, `buildMasterIndex`, `toCandidate`
 - `types.ts` — types: `ClientSegmentKind`, `ClientCandidate`, `ClientClass`, `ClientQueueRow`, `MasterEntry`, `MasterIndex`
 
 ### `automations/telecalling/service-parts/`
@@ -239,7 +264,7 @@ Shared kits: `@/components/ui` (Badge, Card, KpiCard, Skeleton, EmptyState/Error
 
 ### `copilot/engine-parts/`
 - `io.ts` — functions/values: `gatewayReady`, `bumpCount`, `defaultToolDefs`, `runTool`, `logUsage`, `readChatUsage`, `checkHourlyLimit`, `runTurn`
-- `pure.ts` — functions/values: `MAX_STEPS`, `COUNT_TTL_MS`, `BUSY_REPLY`, `CHAT_PROVIDER`, `chatLegParams`, `CHAT_MAX_TOKENS`, `CUT_RESUME`, `MAX_CUT_RESUMES`, `parseArgs`, `toolSig`, `seedToolSigs`, `repeatNudge`, `blockedOut`, `startLabel`, `is429Like`, `MAX_HUMAN_TURNS`, `LIMIT_REPLY`, `THINK_BRIEF`, `RATE_WINDOW_MS`, `rateWho`, `USAGE_TTL_MS`, `usageKey`
+- `pure.ts` — functions/values: `MAX_STEPS`, `COUNT_TTL_MS`, `BUSY_REPLY`, `CHAT_MAX_TOKENS`, `CUT_RESUME`, `MAX_CUT_RESUMES`, `parseArgs`, `toolSig`, `seedToolSigs`, `repeatNudge`, `blockedOut`, `startLabel`, `is429Like`, `MAX_HUMAN_TURNS`, `LIMIT_REPLY`, `THINK_BRIEF`, `RATE_WINDOW_MS`, `rateWho`, `USAGE_TTL_MS`, `usageKey`
 
 ### `modules/ai/service-parts/`
 - `io.ts` — functions/values: `AIService`
@@ -247,13 +272,13 @@ Shared kits: `@/components/ui` (Badge, Card, KpiCard, Skeleton, EmptyState/Error
 - `types.ts` — types: `SummaryOutput`
 
 ### `modules/auth/routes-parts/`
-- `io.ts` — functions/values: `authLogin`, `authCallback`, `authMe`, `authLogout`, `asRoot`, `asUserManager`, `authListUsers`, `authListScopes`, `authCreateScope`, `authDeleteScope`, `authSetUserScopes`, `authListRoles`, `authCreateRole`, `authDeleteRole`, `authSetUserRoles`, `authSetUserProfile`, `authDeleteUser`
+- `io.ts` — functions/values: `authLogin`, `authCallback`, `authMe`, `authLogout`, `asRoot`, `asUserManager`, `authListUsers`, `authListScopes`, `authCreateScope`, `authDeleteScope`, `authSetUserScopes`, `authListRoles`, `authCreateRole`, `authUpdateRole`, `authDeleteRole`, `authSetUserRoles`, `authSetUserProfile`, `authDeleteUser`
 - `pure.ts` — functions/values: `json`, `redirect`, `isRoot`, `isTargetRoot`
 - `types.ts` — types: `AuthResult`
 
 ### `modules/auth/store-parts/`
 - `io.ts` — functions/values: `MemoryAuthStore`, `D1AuthStore`
-- `pure.ts` — functions/values: `newId`
+- `pure.ts` — functions/values: `newId`, `cleanPosition`
 - `types.ts` — types: `AuthStore`
 
 ### `modules/chat/store-parts/`
@@ -262,11 +287,12 @@ Shared kits: `@/components/ui` (Badge, Card, KpiCard, Skeleton, EmptyState/Error
 - `types.ts` — types: `ChatUser`, `ChatChannel`, `ChatAttachment`, `ChatMessage`, `ChatReaction`, `ChatStore`
 
 ### `modules/crm/scheduling-parts/`
-- `pure.ts` — functions/values: `effectiveQty`, `isRemovedItem`, `isCancelledOrder`, `deriveLifecycle`, `isOverdueItem`, `isDueTodayItem`, `isOrderOverdue`, `countDueToday`, `ok`, `fail`, `str3`, `validateReason`, `validateSchedule`, `validateReschedule`, `validateDispatch`, `resolveDispatchQty`, `validateAmend`, `validateLocalCancel`
+- `pure.ts` — functions/values: `effectiveQty`, `isRemovedItem`, `isCancelledOrder`, `deriveLifecycle`, `isOverdueItem`, `isDueTodayItem`, `isOrderOverdue`, `countDueToday`, `ok`, `fail`, `str3`, `validateReason`, `validateSchedule`, `validateReschedule`, `validateDispatch`, `resolveDispatchQty`, `validateAmend`, `validateCancelItems`, `validateLocalCancel`
 - `types.ts` — types: `ItemLike`, `OrderLike`, `ValidationOk`, `ValidationFail`, `Validation`, `ScheduleEntry`, `ScheduleArgs`, `RescheduleEntry`, `RescheduleArgs`, `DispatchEntry`, `DispatchProof`, `DispatchArgs`, `AmendQtyChange`, `AmendRemove`, `AmendAdd`, `AmendArgs`, `LocalCancelArgs`
 
 ### `modules/crm/store-parts/`
-- `io.ts` — functions/values: `mirrorOrderTouch`, `withFlags`, `itemsForOrders`, `listOrders`, `sortNewestFirst`, `matchesView`, `orderRegion`, `getOrder`, `proofsForOrder`, `verifyDispatchProof`, `syncState`, `loadRawOrder`, `loadRawItems`, `writeEvent`, `refreshLifecycle`, `scheduleOrder`, `rescheduleOrder`, `dispatchOrder`, `attachProofDocs`, `attachProofPhotos`, `hasDispatchCredit`, `creditDispatch`, `confirmSourceDeletion`, `updateAddresses`, `amendOrderItems`, `cancelOrderLocal`, `reopenOrderLocal`, `loadEstimateRegionIndex`, `syncOrders`, `insertOrders`, `insertItems`, `upsertItems`, `recomputeLifecyclesById`, `dispatchSummary`
+- `cache.ts` — functions/values: `CRM_FLOOR_ROWS_KEY`, `CRM_FLOOR_TTL_MS`, `CRM_SUMMARY_TTL_MS`, `cachedFloorRows`, `cachedFloorSummary`, `invalidateCrmFloorCache`; types: `FloorScan`
+- `io.ts` — functions/values: `mirrorOrderTouch`, `withFlags`, `itemsForOrders`, `proofDocsForOrders`, `listOrders`, `sortNewestFirst`, `matchesView`, `orderRegion`, `getOrder`, `proofsForOrder`, `verifyDispatchProof`, `syncState`, `loadRawOrder`, `loadRawItems`, `writeEvent`, `refreshLifecycle`, `scheduleOrder`, `rescheduleOrder`, `dispatchOrder`, `attachProofDocs`, `attachProofPhotos`, `hasDispatchCredit`, `creditDispatch`, `confirmSourceDeletion`, `updateAddresses`, `amendOrderItems`, `cancelOrderItems`, `cancelOrderLocal`, `reopenOrderLocal`, `loadEstimateRegionIndex`, `syncOrders`, `insertOrders`, `insertItems`, `upsertItems`, `recomputeLifecyclesById`, `dispatchSummary`
 - `pure.ts` — functions/values: `iso`, `num`, `str`, `toItemView`, `toOrderView`, `ITEM_BATCH`, `proofFile`, `isPdfFile`, `isImageFile`, `CrmError`, `assertWorkable`, `PROOF_DOC_RULES`, `PROOF_DOC_SLOTS`, `SCORE_STAGES`, `STAGE_DEPT`, `STAGE_COMPLETION`, `orderStage`, `FLOOR_WINDOW_DAYS`, `dayAdd`, `isCompleteInZoho`, `lineKeyFor`, `REGION_LOOKUP_BATCH`, `ORDER_COLS`, `sqlValue`, `ITEM_COLS`, `CHARGE_LINES`, `normalizeLine`, `isChargeLine`
 - `types.ts` — types: `ListArgs`, `ProofFile`, `ActionResult`, `ProofDocSlot`, `SyncedOrder`, `SyncVerify`, `SyncResult`, `ScoreStage`
 
@@ -288,24 +314,29 @@ Shared kits: `@/components/ui` (Badge, Card, KpiCard, Skeleton, EmptyState/Error
 - `types.ts` — types: `ItemWriteCtx`, `RateWriteCtx`
 
 ### `modules/enquiries/vision-intake-parts/`
-- `io.ts` — functions/values: `loadLiveCatalog`, `runAgnesVisionIntake`
+- `io.ts` — functions/values: `loadLiveCatalog`, `runVisionIntake`
 - `pure.ts` — functions/values: `ROUTER_SYSTEM`, `normTok`, `lookupDeterministic`, `lookupToken`, `buildLookupList`, `LOOKUP_FALLBACK_SYSTEM`, `SPEC_CHECK_SYSTEM`, `isRateLimited`
 - `types.ts` — types: `KypKey`, `LiveCatalog`
 
+### `modules/estimates/movement-parts/`
+- `pure.ts` — functions/values: `bucketOf`, `normalizeRegionParam`, `normalizeMovementRange`, `aggregateSalesOrderMovement`; types: `RegionBucket`, `MovementOrderRow`, `MovementParams`, `MovementRegionTotal`, `MovementResult`
+
 ### `modules/neodove-campaign/service-parts/`
-- `io.ts` — functions/values: `resolveAgents`, `resolveTeamLeads`, `teamLeadCoverage`, `setAgentCampaignUrl`, `getCampaignStates`, `getCampaignPreview`, `getCampaignBatches`, `getCampaignTypes`, `createPush`, `sendOne`, `talliesFor`, `runBatchChunk`, `failedView`, `drainPendingPushes`
-- `pure.ts` — functions/values: `REGIONS`, `DEFAULT_CHUNK`, `MAX_CHUNK`, `CONCURRENCY`, `FETCH_TIMEOUT_MS`, `AGENT_SECRET_RE`, `CampaignError`, `normalizeRegion`, `normalizeState`, `normalizeDistribution`, `normalizeClientType`, `normalizeCampaignUrl`, `urlFromSecret`, `extractUrlFromPaste`, `validateAgentUrl`, `liveEnabled`, `participantsFor`, `hostOf`, `newId`
+- `io.ts` — functions/values: `resolveAgents`, `resolveTeamLeads`, `teamLeadCoverage`, `setAgentCampaignUrl`, `getCampaignStates`, `getCampaignDistricts`, `getCampaignPreview`, `getCampaignBatches`, `getCampaignTypes`, `createPush`, `sendOne`, `talliesFor`, `runBatchChunk`, `failedView`, `drainPendingPushes`
+- `pure.ts` — functions/values: `REGIONS`, `DEFAULT_CHUNK`, `MAX_CHUNK`, `CONCURRENCY`, `FETCH_TIMEOUT_MS`, `AGENT_SECRET_RE`, `CampaignError`, `normalizeRegion`, `normalizeState`, `normalizeDistrict`, `normalizeDistribution`, `normalizeClientType`, `normalizeCampaignUrl`, `urlFromSecret`, `extractUrlFromPaste`, `validateAgentUrl`, `liveEnabled`, `participantsFor`, `hostOf`, `newId`
+- `targets.ts` — functions/values: `normalizeTarget`, `resolveDialerTargets`, `deliverToDialer`
 - `types.ts` — types: `ResolvedAgent`, `SendOutcome`
 
 ### `modules/neodove-campaign/store-parts/`
-- `io.ts` — functions/values: `campaignDb`, `listAgents`, `listTeamLeads`, `getAgentRow`, `setAgentUrl`, `agentTallies`, `listCustomersByState`, `listStateCounts`, `listTypeCounts`, `lastLivePushes`, `insertBatch`, `getBatch`, `updateBatch`, `recountBatch`, `listBatches`, `insertLeadRows`, `recoverStuckClaims`, `claimPending`, `markOutcomes`, `listFailedLeads`, `batchesWithPending`
-- `pure.ts` — functions/values: `AGENT_COLUMNS`, `CUSTOMER_COLUMNS`, `BATCH_COLUMNS`, `toBatch`, `PATCHABLE`, `LEAD_COLUMNS`, `INSERT_CHUNK`
+- `dialer-target.ts` — functions/values: `listDialerAgents`, `listDialerTeamLeads`, `markSkippedLeads`
+- `io.ts` — functions/values: `campaignDb`, `listAgents`, `listTeamLeads`, `getAgentRow`, `setAgentUrl`, `agentTallies`, `listCustomersByState`, `listStateCounts`, `listDistrictCounts`, `listTypeCounts`, `lastLivePushes`, `lastDistrictPushes`, `insertBatch`, `getBatch`, `updateBatch`, `recountBatch`, `listBatches`, `insertLeadRows`, `recoverStuckClaims`, `claimPending`, `markOutcomes`, `listFailedLeads`, `batchesWithPending`
+- `pure.ts` — functions/values: `AGENT_COLUMNS`, `LIVE_CUSTOMER_WHERE`, `CUSTOMER_COLUMNS`, `BATCH_COLUMNS`, `BATCH_COLUMNS_PRE_TARGET`, `toBatch`, `PATCHABLE`, `LEAD_COLUMNS`, `INSERT_CHUNK`
 - `types.ts` — types: `LeadOutcome`
 
 ### `shared/ai-gateway-parts/`
 - `io.ts` — functions/values: `logGatewayUsage`, `readGatewayUsage`, `modelFlagged`, `flagModelDown`, `AiGateway`
-- `pure.ts` — functions/values: `GATEWAY_USAGE_TTL_MS`, `GATEWAY_USAGE_PREFIX`, `gatewayUsageKey`, `hashAI`, `FALLBACK_MODEL`, `MODEL_DOWN_TTL_MS`, `OPENROUTER_TEXT_MODEL`, `OPENROUTER_VISION_MODEL`, `PAID_CHAT_ROUTING`, `PROVIDERS`, `AiGatewayError`, `detectProvider`, `KeyPool`, `sleep`, `RELAY_ACTIVE_KEY`, `RELAY_TTL_MS`, `RELAY_COOLDOWN_KEY`, `RELAY_COOLDOWN_MS`, `RELAY_POISONED_KEY`, `RELAY_POISONED_TTL_MS`, `RELAY_ACTIVE_KEY_BAK`, `RELAY_POISONED_KEY_BAK`, `RELAY_MEMO_MS`, `extractJson`, `buildVisionUserContent`
-- `types.ts` — types: `ProviderConfig`, `AiKey`, `KeyHealth`, `TextPart`, `ImagePart`, `MessageContent`, `ChatMessage`, `ToolDefinition`, `ToolCall`, `CompletionRequest`, `CompletionResult`, `ProxyLane`
+- `pure.ts` — functions/values: `GATEWAY_USAGE_TTL_MS`, `GATEWAY_USAGE_PREFIX`, `gatewayUsageKey`, `hashAI`, `FALLBACK_MODEL`, `MODEL_DOWN_TTL_MS`, `OPENROUTER_TEXT_MODEL`, `OPENROUTER_VISION_MODEL`, `PAID_CHAT_ROUTING`, `PROVIDERS`, `AiGatewayError`, `detectProvider`, `KeyPool`, `sleep`, `extractJson`, `buildVisionUserContent`; types: `AiStrategy`
+- `types.ts` — types: `ProviderConfig`, `AiKey`, `KeyHealth`, `TextPart`, `ImagePart`, `MessageContent`, `ChatMessage`, `ToolDefinition`, `ToolCall`, `CompletionRequest`, `CompletionResult`
 
 ### `storage/d1-provider-parts/`
 - `io.ts` — functions/values: `D1StorageProvider`

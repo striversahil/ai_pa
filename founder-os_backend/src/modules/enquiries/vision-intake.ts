@@ -1,9 +1,8 @@
 /**
  * vision-intake.ts — Worker-native vision intake (no GH Actions).
  *
- * Awaited inline by the write routes (no waitUntil, no sweeper), paid DeepSeek lane primary
- * (deepseek-v4.1-flash for text; the lane's vision model for photo passes),
- * Agnes → OpenRouter free as fallbacks.
+ * Awaited inline by the write routes (no waitUntil, no sweeper) over the
+ * single AI gateway chain (Setting `ai:providers` order).
  *   Call 1 SEGMENT (vision+text, NO catalogue): splits unstructured text +
  *   enquiry/item images into verbatim line items. The model never sees KYP
  *   so it cannot hallucinate catalogue names or drop lines to fit them.
@@ -31,6 +30,6 @@
 
 
 // Pieces split into ./vision-intake-parts/ (importable on their own); re-exported for compat.
-export { runAgnesVisionIntake } from "./vision-intake-parts/io";
+export { runVisionIntake } from "./vision-intake-parts/io";
 
 

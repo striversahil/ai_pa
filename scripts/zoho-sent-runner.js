@@ -28,7 +28,7 @@
  *  8. AI classification + lead-details (sent + just-transitioned only).
  *  9. Watermark + fingerprint on a fully-complete pass.
  *
- * Env: WORKER_URL, SHARED_SECRET, AI_KEYS (unified gateway: Agnes primary).
+ * Env: WORKER_URL, SHARED_SECRET, AI_KEYS (single gateway: Setting order, env appended).
  * Zoho credentials are inferred from the curl export at
  * founder-os_backend/zoho_sent/sent_estimates.txt (list scope derived programmatically).
  * SO_ONLY=1: manual lightweight tick — sales-orders-today only, then exit.
@@ -45,9 +45,9 @@ const analyze = require('./zoho-sync/analyze');
 const missing = [];
 if (!process.env.WORKER_URL) missing.push('WORKER_URL');
 if (!process.env.SHARED_SECRET) missing.push('SHARED_SECRET');
-// SO_ONLY=1 (manual sales-orders-today tick) needs no LLM keys. Now Agnes primary — accept AGNES_API_KEY(S) or AI_KEYS (agnes:...) as LLM source.
-const hasLLM = (process.env.GROQ_API_KEYS || process.env.AGNES_API_KEY || process.env.AGNES_API_KEYS || process.env.AI_KEYS || process.env.REQUESTLY_API_KEY);
-if (process.env.SO_ONLY !== '1' && !hasLLM) missing.push('GROQ_API_KEYS or AGNES_API_KEY/AI_KEYS');
+// SO_ONLY=1 (manual sales-orders-today tick) needs no LLM keys. Otherwise any AI key works (AI_KEYS or legacy per-provider vars).
+const hasLLM = (process.env.AI_KEYS || process.env.REQUESTLY_API_KEY || process.env.OPENROUTER_PAID_API_KEY || process.env.OPENROUTER_API_KEYS);
+if (process.env.SO_ONLY !== '1' && !hasLLM) missing.push('AI_KEYS (or any provider key)');
 if (missing.length) {
   console.error(`Missing required env vars: ${missing.join(', ')}`);
   process.exit(1);

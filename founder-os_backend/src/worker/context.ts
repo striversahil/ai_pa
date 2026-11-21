@@ -516,6 +516,7 @@ export function createApp(): Hono<{ Bindings: Bindings }> {
     '/api/token/',     // token store — not dashboard data
     '/api/chat/typing',// high-frequency ephemeral signal
     '/api/chat/files', // attachment store — frontend handles refetch
+    '/api/ai/', // gateway completions — high-frequency, not dashboard data
     '/api/enquiries/files', // enquiry attachment store — the owning save broadcasts; a bare upload must not storm the list (would merge a media-stripped row over the just-hydrated photo)
     '/api/whatsapp/events', // SSE stream
     '/api/events',     // WebSocket upgrade
@@ -536,7 +537,6 @@ export function createApp(): Hono<{ Bindings: Bindings }> {
     //   POST /api/runner/estimates/bulk-assign → {retired:true} no-op
     //   POST /api/runner/telecalling/effort-sync → {retired:true} no-op
     //   POST /api/runner/enquiry-intake/claim → Setting claim-lock rows
-    //   POST /api/runner/relay/register       → relay registry state
     // Those run on the 5/10/15/30-min cron slots, so without this the whole app
     // refetched every dashboard every few minutes for a no-op. A NEW runner path
     // that changes dashboard data must broadcast typed — that is the contract.

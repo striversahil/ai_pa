@@ -268,20 +268,26 @@ export default function ManagementReview() {
     }
     return queueUnprocessed;
   }, [searchActive, searchRows, queueUnprocessed]);
-  // Pending split (frontend-only partition of the Unprocessed set — no
-  // server change: the cached scan already ships every open row):
-  //  - Pending from Sales: an open spec flag holds the row (procurement
-  //    flagged incorrect spec, sales must fix). Ball with SALES.
+  // Pending split (frontend-only lenses over the Unprocessed set — no server
+  // change: the cached scan already ships every open row):
+  //  - Pending from Sales: procurement flagged ANY item (open spec flag =
+  //    ball with SALES to fix) or asked about it (open sales thread waiting
+  //    on management), still draft (unprocessed = not concluded). Mixed rows
+  //    intentionally double-list with Active — the tabs are lenses (who owes
+  //    action), not a partition.
   //  - Pending from Procurement: everything else open-but-not-actionable
   //    (unquoted / rates-requested-unanswered — procurement still quoting).
   //    Ball with PROCUREMENT. The fallback bucket (no flag) keeps every row
   //    visible — no row can fall between the tabs.
-  // Active rows are excluded from BOTH (owned by the Active tab, held count
-  // shown there) so no enquiry ever double-lists.
   const hasOpenFlag = (e: Enquiry): boolean => (e.items ?? []).some((it) => isOpenSpecFlag(it));
+  // Open sales→management threads waiting on management also hold the row
+  // here — threads never set loop flags, so `hasOpenFlag` can't see them.
+  const threadWaitingIds = useMemo(() => new Set(
+    inbox.open.filter((t) => t.channel === "sales" && t.status === "open" && t.waitingOn === "management").map((t) => t.enquiryId)
+  ), [inbox.open]);
   const salesBase = useMemo(
-    () => queueUnprocessed.filter((e) => !isManagementPendingEnquiry(e as any) && hasOpenFlag(e)),
-    [queueUnprocessed],
+    () => queueUnprocessed.filter((e) => hasOpenFlag(e) || threadWaitingIds.has(e.id)),
+    [queueUnprocessed, threadWaitingIds],
   );
   const procurementBase = useMemo(
     () => queueUnprocessed.filter((e) => !isManagementPendingEnquiry(e as any) && !hasOpenFlag(e)),
@@ -289,13 +295,13 @@ export default function ManagementReview() {
   );
   const salesBucket: Enquiry[] = useMemo(() => {
     if (searchActive) {
-      return searchRows.filter((e) => !isManagementHistoryEnquiry(e as any) && (e.items ?? []).length > 0 && !isManagementPendingEnquiry(e as any) && hasOpenFlag(e)).sort(byActivity);
+      return searchRows.filter((e) => !isManagementHistoryEnquiry(e as any) && (e.items ?? []).length > 0 && (hasOpenFlag(e) || threadWaitingIds.has(e.id))).sort(byActivity);
     }
     const q = searchQuery.trim();
     if (!q) return salesBase;
     return salesBase.filter((e) => matchesEnquiryQuery(e, q, [agentNameOf((e as any).assignedAgentId)]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchActive, searchRows, salesBase, searchQuery]);
+  }, [searchActive, searchRows, salesBase, searchQuery, threadWaitingIds]);
   const procurementBucket: Enquiry[] = useMemo(() => {
     if (searchActive) {
       return searchRows.filter((e) => !isManagementHistoryEnquiry(e as any) && (e.items ?? []).length > 0 && !isManagementPendingEnquiry(e as any) && !hasOpenFlag(e)).sort(byActivity);

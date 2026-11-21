@@ -489,36 +489,37 @@ gateway** (`scripts/ai-gateway.js`, port of `src/shared/ai-gateway.ts` — the e
 TS module used by the Worker enquiry extractor and Express `AIService`, so all four
 former LLM paths now share one contract).
 
-Gateway design (one place, both runtimes):
+Gateway design (one place, one chain, direct egress):
 - **Key pool**: `KeyPool` in the gateway owns every key with per-key health
   (`failures`, `cooldownUntil`, `enabled`, `successCount`, `lastError`).
-- **Key config**: single `AI_KEYS` env — `provider:key:label,...`
-  (`groq`/`openrouter`/`deepseek`/`together`/`openai`/`omniroute`; provider
-  auto-detected from key prefix when omitted; labels are optional). Legacy
-  `GROQ_API_KEYS` / `OPENROUTER_API_KEYS` / `DEEPSEEK_API_KEYS` / `LLM_API_KEY` /
-  `OMNIROUTE_*` vars are still merged for backwards compat, and obvious
-  placeholders (`your_api_key_here` etc.) are ignored. Deduped.
-  Plus Setting `ai:providers` BYOK JSON (root-only Settings UI, 20 providers ×
-  10 keys max, OpenAI-compatible `{id,baseUrl,model,keys}`; never echoed —
-  GET/PUT redact to ids + counts). Custom ids register into `PROVIDERS` at
-  runtime (TS + JS port).
-- **Selection**: global `ai:strategy` (`least-used-first` default: random inside
-  the least-failures tier; `round-robin`: cycles the healthy tier). `sessionKey`
-  still sticky-pins while healthy.
+- **Key config**: Setting `ai:providers` BYOK JSON first (root-only Settings UI,
+  20 providers × 10 keys max, OpenAI-compatible `{id,baseUrl,model,keys}`;
+  never echoed — GET/PUT redact to ids + counts). Env `AI_KEYS` +
+  legacy per-provider vars append as fallback. Placeholders ignored. Deduped.
+- **Chain**: `resolveAiChain()` — Setting list order, then env-only providers;
+  every caller (copilot chat, enquiry extraction, vision intake, catalogue
+  lookup, runners via `POST /api/ai/complete`) walks the same legs with the
+  same sticky `sessionKey`. No per-task providers, no relay, no paid lane.
+- **Selection**: global `ai:strategy` (`least-used-first` default: random
+  inside the least-failures tier; `round-robin`: cycles the healthy tier).
+  `sessionKey` still sticky-pins while healthy.
 - **Failure handling**: 401/403 → key disabled permanently; 429 → cooldown
-  (exponential backoff, honors `retry-after`); 402/quota → 5-min cooldown;
-  5xx/network → short cooldown + rotate immediately; attempts = pool size (min 3).
-- **Providers** (all OpenAI `/chat/completions` wire format): Groq
-  (`reasoning_effort` supported, default `openai/gpt-oss-120b`), OpenRouter,
-  DeepSeek, Together, OpenAI, and legacy Omniroute as the last-resort fallback.
-  Adding a vendor = one line in `PROVIDERS`.
-- **Surface**: `complete({ messages, temperature, json, model, reasoningEffort,
-  provider })` → `{ content, provider, keyId, usage }`; `completeJson()` parses.
-  `scripts/runner-lib.js` exposes the same `groq()`/`groqJson()`/
-  `agnesText()` names as thin wrappers — they prefer single endpoint
-  `POST /api/ai/complete` (viewer session OR `SHARED_SECRET`; `GET /api/ai/health`
-  shows strategy + per-provider usable counts, no keys) with local-gateway
-  fallback, so existing runners needed zero call-site changes.
+  (exponential backoff, honors `retry-after`; 1015 cools briefly + rotates);
+  402/quota → 5-min cooldown; 5xx/network → short cooldown + rotate immediately;
+  attempts = pool size (min 3).
+- **Providers** (all OpenAI `/chat/completions` wire format): whatever the
+  Setting list + env pool holds — OpenRouter, Requestly, DeepSeek, custom free
+  tiers. Each leg serves its own configured model (Setting `model`, else the
+  provider default). Adding a vendor = one Settings card, no code.
+- **Surface**: `POST /api/ai/complete` (`{messages, temperature, maxTokens,
+  model?, provider?, json?, sessionKey?, timeoutMs?}` → `{content, provider,
+  model, usage}`; viewer session OR `SHARED_SECRET`) is the single endpoint;
+  `gateway.complete()/completeJson()` is the same pool in-process.
+  `scripts/runner-lib.js` `groq()/groqJson()/aiText()` are thin wrappers
+  over the endpoint (local-gateway fallback), so existing runners needed zero
+  call-site changes. `GET /api/ai/health` shows strategy + per-provider
+  usable/total (no keys); `POST /api/ai/providers` manages the list
+  merge-safely (root only, redacted responses).
 
 **Omniroute is NOT the production AI path** — it's the final fallback inside the pool.
 

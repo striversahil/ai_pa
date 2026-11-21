@@ -57,6 +57,7 @@ import { registerWorkRoutes } from './worker/routes/work';
 import { registerOrgRoutes } from './worker/routes/org';
 import { registerDashboardRoutes } from './worker/routes/dashboards';
 import { registerLeadRoutes } from './worker/routes/leads';
+import { registerAiRoutes } from './worker/routes/ai';
 import { scheduled } from './worker/cron';
 
 const app = createApp();
@@ -105,6 +106,7 @@ registerWorkRoutes(app);
 registerOrgRoutes(app);
 registerDashboardRoutes(app);
 registerLeadRoutes(app);
+registerAiRoutes(app);
 
 export default {
   fetch: app.fetch,

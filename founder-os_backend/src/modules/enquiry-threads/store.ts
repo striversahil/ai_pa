@@ -71,7 +71,7 @@ export async function getThread(db: D1, id: string): Promise<EnquiryThread | nul
 /** Item name snapshot without loading the (multi-MB) items blob. */
 export async function readItemName(db: D1, enquiryId: string, itemIndex: number): Promise<{ exists: boolean; name: string }> {
   const r = await db
-    .prepare(`SELECT id, json_extract(items, '$[' || ? || '].name') AS name FROM Enquiry WHERE id = ?`)
+    .prepare(`SELECT id, json_extract(items, '$[' || CAST(? AS INTEGER) || '].name') AS name FROM Enquiry WHERE id = ?`)
     .bind(Math.max(0, Math.floor(itemIndex)), enquiryId).first();
   return { exists: !!r, name: String(r?.name ?? '') };
 }

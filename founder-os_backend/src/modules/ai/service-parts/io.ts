@@ -26,8 +26,9 @@ export class AIService {
    * LLM dispatcher backed by the unified AiGateway (src/shared/ai-gateway.ts).
    * The apiCall callback keeps its OpenAI-compatible signature, so all 12
    * call sites work unchanged: they receive a shim whose
-   * chat.completions.create() routes through the gateway's key pool (rotation,
-   * retry, rate-limit cooldowns, multi-provider).
+   * chat.completions.create() routes through the single gateway chain
+   * (Setting `ai:providers` order, global strategy). No model is pinned —
+   * each provider serves its own configured model.
    */
   private static async callLLM<T>(apiCall: (openai: OpenAI, model: string) => Promise<T>): Promise<T> {
     const gw = getGateway({
@@ -36,10 +37,17 @@ export class AIService {
       LLM_BASE_URL: config.LLM_BASE_URL,
       LLM_MODEL: config.LLM_MODEL,
     });
+    // Setting providers (BYOK list) merge into the pool — without this the
+    // shim would only ever serve env keys. Loaded before the empty check
+    // so a Settings-only pool counts as configured.
+    try {
+      const { getAppSettings } = await import('../../../shared/app-settings');
+      const s = await getAppSettings().catch(() => null);
+      if (s) gw.configureFromSettings(s as any);
+    } catch { /* env pool only */ }
     if (isMockLLM || gw.keyCount === 0) {
       throw new Error('LLM is mocked or API key is missing');
     }
-    const model = config.LLM_MODEL || '';
     this.metrics.totalCalls++;
     try {
       const shim = {
@@ -50,14 +58,13 @@ export class AIService {
                 messages: params.messages,
                 temperature: params.temperature ?? 0.2,
                 ...(params.max_tokens ? { maxTokens: params.max_tokens } : {}),
-                model: params.model || model || undefined,
               });
               return { choices: [{ message: { content: res.content } }] };
             },
           },
         },
       };
-      return await apiCall(shim as unknown as OpenAI, model);
+      return await apiCall(shim as unknown as OpenAI, '');
     } catch (err: any) {
       this.metrics.failedCalls++;
       logger.error({ error: err.message }, 'AIService: LLM call failed (all gateway keys exhausted)');

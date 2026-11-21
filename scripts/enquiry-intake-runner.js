@@ -21,9 +21,8 @@
  *   POST /api/runner/enquiry-intake/result applies fill-empty-only updates +
  *     KV suggestions for the sales UI.
  *
- * Env: WORKER_URL, SHARED_SECRET, AGNES_API_KEYS (primary pool) /
- *   OPENROUTER_PAID_API_KEY (fallback leg only; Groq/free keys never used),
- *   HF_API_KEY, PINECONE_HOST, PINECONE_API_KEY.
+ * Env: WORKER_URL, SHARED_SECRET, AI_KEYS (single gateway pool —
+ *   Setting `ai:providers` order applies server-side; env keys append).
  *   VISION_MODEL override supported by the gateway.
  * Flags: --limit N (cap enquiries per run), --dry-run (no result POSTs).
  */
@@ -40,11 +39,10 @@ const CAP = limitArg ? Math.max(1, parseInt(limitArg.split('=')[1], 10)) : 25;
 const missing = [];
 if (!process.env.WORKER_URL) missing.push('WORKER_URL');
 if (!process.env.SHARED_SECRET) missing.push('SHARED_SECRET');
-// Enquiry vision runs Agnes-pool first, paid OpenRouter fallback only
-// (resolveIntakeChain — free leg dropped for determinism). Groq is never
-// used in this workflow.
-if (!process.env.AGNES_API_KEYS && !process.env.AGNES_API_KEY && !process.env.OPENROUTER_PAID_API_KEY && !process.env.OPENROUTER_API_KEYS && !process.env.OPENROUTER_API_KEY) {
-  missing.push('AGNES_API_KEYS (or OPENROUTER_PAID_API_KEY — Groq is not used here)');
+// Intake runs over the single gateway pool (Setting order, env keys append).
+// Groq is never used in this workflow.
+if (!process.env.AGNES_API_KEYS && !process.env.AGNES_API_KEY && !process.env.OPENROUTER_PAID_API_KEY && !process.env.OPENROUTER_API_KEYS && !process.env.OPENROUTER_API_KEY && !process.env.AI_KEYS) {
+  missing.push('AI_KEYS (or any provider key — Groq is not used here)');
 }
 if (missing.length) {
   console.error(`Missing required env vars: ${missing.join(', ')}`);
@@ -252,8 +250,8 @@ async function processEnquiry(gateway, chain, eq) {
   if (_poolNote.length + images.length > 0 && attachedImgs === 0) {
     console.log(`- ${eq.id}: WARNING ${ _poolNote.length + images.length} image(s) present but none attached to vision call`);
   }
-  // Segment call across the intake chain (Agnes → paid fallback): each leg
-  // is pinned, first success wins — no same-provider sleep-retry loops.
+  // Segment call across the single gateway chain: each leg is tried in
+  // order, first success wins — no same-provider sleep-retry loops.
   let routed;
   let lastErr = null;
   try {
@@ -352,11 +350,10 @@ async function processEnquiry(gateway, chain, eq) {
 async function main() {
   const gateway = getGateway(process.env);
   if (gateway.keyCount === 0) { console.error('No AI keys configured'); process.exit(1); }
-  // Intake chain: Agnes-pool first, paid OpenRouter fallback only — refuse
-  // to run on Groq/free keys.
+  // Single gateway chain — refuse to run with an empty pool.
   const chain = resolveIntakeChain(process.env);
   if (chain.length === 0) {
-    console.error('No Agnes/paid key in pool — refusing to run on Groq/free keys');
+    console.error('No AI key in pool — refusing to run');
     process.exit(1);
   }
   console.log(`intake chain: ${chain.join(' → ')}`);

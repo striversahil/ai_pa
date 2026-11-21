@@ -87,7 +87,7 @@ export default function AiUsageDashboard() {
 
   const usage = data?.usage;
   const maxDay = Math.max(1, ...(usage?.byDay.map((d) => d.turns) ?? [1]));
-  const paid = data?.keys.find((k) => k.provider === "openrouter-paid");
+  const keys = data?.keys ?? [];
   const now = Date.now();
   const cooling = data?.keys.filter((k) => k.cooldownUntil > now).length ?? 0;
 
@@ -131,7 +131,7 @@ export default function AiUsageDashboard() {
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <Stat label={`Turns · last ${data.usageDays}d`} value={String(usage.total)} sub={`${(usage.total / Math.max(1, data.usageDays)).toFixed(1)}/day avg`} />
             <Stat label="Active members" value={String(usage.users.length)} sub={usage.users[0] ? `top: ${usage.users[0].id}` : "no usage yet"} />
-            <Stat label="Paid lane" value={paid ? (paid.enabled ? "Live" : "Disabled") : "Missing"} sub={paid ? `deepseek · ${paid.successCount} served` : "OPENROUTER_PAID_API_KEY unset"} />
+            <Stat label="Providers live" value={String(new Set(keys.filter((k) => k.enabled).map((k) => k.provider)).size)} sub={`${keys.filter((k) => k.enabled).length}/${keys.length} keys usable`} />
             <Stat label="Pool state" value={data.storm ? "Throttled" : cooling > 0 ? `${cooling} cooling` : "Healthy"} sub={`${data.count} keys loaded`} />
           </div>
 

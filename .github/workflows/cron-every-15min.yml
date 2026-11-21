@@ -91,7 +91,7 @@ jobs:
           echo "skip=$skip" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         if: steps.gate.outputs.skip != 'true'
-      - name: zoho-sent-analyzer (full sync + AI on runner) — agnes primary (agnes-2.5-flash) → groq/requestly fallback
+      - name: zoho-sent-analyzer (full sync + AI on runner) — single gateway chain
         if: steps.gate.outputs.skip != 'true'
         env:
           WORKER_URL: ${{ secrets.WORKER_URL }}

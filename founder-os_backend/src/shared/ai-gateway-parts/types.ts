@@ -89,8 +89,8 @@ export interface CompletionRequest {
   /** Probe cap for the pre-fallback primary model only (ms). Lets callers
    *  sample an advanced-but-flaky model cheaply: the FIRST attempt(s) on the
    *  requested model abort fast, while post-fallback attempts use timeoutMs.
-   *  E.g. { model: 'agnes-3.0-flash', probeTimeoutMs: 8000, timeoutMs: 20000 }
-   *  tests 3.0 for 8s, then serves from 2.5 with a 20s budget. */
+   *  E.g. { model: 'large-model', probeTimeoutMs: 8000, timeoutMs: 20000 }
+   *  tests the primary for 8s, then serves from the fallback with a 20s budget. */
   probeTimeoutMs?: number;
   json?: boolean;
    model?: string;
@@ -107,20 +107,6 @@ export interface CompletionRequest {
   /** OpenAI-style function tools (passed through verbatim). */
   tools?: ToolDefinition[];
   toolChoice?: 'auto' | 'none' | { type: 'function'; function: { name: string } };
-  /** Agnes relay-only (intake): use the existing GH-runner relay lane when
-   *  warm, but NEVER attempt direct Cloudflare egress for Agnes — it is
-   *  1015-throttled to ~100% failure (5 aborts × 20s per call). With no lane
-   *  up, fail fast so the caller's provider chain falls through to OpenRouter
-   *  instead of burning two minutes on doomed direct attempts. No new infra —
-   *  this only gates the already-built lane vs direct choice per request. */
-  agnesRelayOnly?: boolean;
-  /** Strict provider pin: when set with `provider`, key selection returns
-   *  null unless a HEALTHY key of that exact provider exists — never a random
-   *  cross-provider fallback. Intake sets this so paid-lane exhaustion fails
-   *  over to the next chain leg explicitly instead of serving a weak model
-   *  disguised as the pinned provider. Default (unset) keeps the loose
-   *  degrade-through-pool contract chat/copilot rely on. */
-  strictProvider?: boolean;
 }
 
 export interface CompletionResult {
@@ -136,19 +122,4 @@ export interface CompletionResult {
   /** Provider stop reason (`choices[0].finish_reason`) — lets callers tell
    *  "model chose silence" apart from "cut off by max_tokens" (length). */
   finishReason?: string;
-}
-
-/** One egress lane: its own tunnel URL, secret, KV lifecycle flag, and
- *  health state. Primary + backup run as independent GH runs so a poisoned
- *  lane is replaceable without touching the other. */
-export interface ProxyLane {
-  name: string;
-  url: string;
-  secret: string;
-  activeKey: string;
-  poisonedKey: string;
-  failStreak: number;
-  skipUntil: number;
-  memoVal: boolean;
-  memoUntil: number;
 }

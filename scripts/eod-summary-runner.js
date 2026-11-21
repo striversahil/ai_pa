@@ -8,7 +8,7 @@
  * the engines produce → LLM generate the EOD summary → persist as a founder
  * note. IST-aware for the "created today" task boundary.
  *
- * Env: WORKER_URL, SHARED_SECRET, AI_KEYS (unified gateway: Agnes primary;
+ * Env: WORKER_URL, SHARED_SECRET, AI_KEYS (single gateway: Setting order, env appended;
  * legacy GROQ/OPENROUTER/REQUESTLY vars still merged) — all via runner-lib.
  */
 

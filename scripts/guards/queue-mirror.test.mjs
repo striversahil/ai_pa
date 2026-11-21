@@ -72,6 +72,9 @@ const ENQUIRIES = [
   { procurementSubmittedAt: '  ', items: [] },                                         // blank handoff
   { sentRevisionAt: '2026-09-04T10:00:00+05:30', items: [] },
   { rateStatus: 'finalized', items: [{ rates: [rate()], finalRate: 100 }] },
+  // Decided everywhere except one open spec flag: held out of History on both
+  // sides (Pending from Sales) even though every non-held item is decided.
+  { rateStatus: 'rates_received', items: [{ rates: [rate()], finalRate: 100 }, { loops: [loop({ kind: 'spec', openedBy: 'procurement', holder: 'sales', text: 'missing size' })] }] },
   {
     items: [{ loops: [answeredLoop({ kind: 'note', openedBy: 'sales', holder: 'sales', text: 'called' })], rates: [], comments: [{ content: 'x', visibility: 'sales' }] }],
   },

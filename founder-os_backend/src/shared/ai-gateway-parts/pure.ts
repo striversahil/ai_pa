@@ -25,9 +25,7 @@ export function hashAI(s: string): string {
 // cross-isolate KV flag (`ai:modeldown:<model>`, 10 min) so later calls skip
 // the dead model outright instead of re-paying the timeout. One level only,
 // generic across providers (add future pairs here).
-export const FALLBACK_MODEL: Record<string, string> = {
-  'agnes-3.0-flash': 'agnes-2.5-flash',
-};
+export const FALLBACK_MODEL: Record<string, string> = {};
 
 export const MODEL_DOWN_TTL_MS = 10 * 60_000;
 
@@ -35,23 +33,12 @@ export const OPENROUTER_TEXT_MODEL = 'inclusionai/ling-3.0-flash-sante:free';
 
 export const OPENROUTER_VISION_MODEL = 'dots-studio/dots-3-note-preview:free';
 
-/** Default OpenRouter routing for the paid chat lane (founder-pinned):
- *  streamlake/fp8 first, deepinfra/fp8 second, OpenRouter reroute after that.
- *  `order` (not `only`) so a throttled/outed first choice spills forward
- *  instead of failing the turn. Lives on the provider entry so EVERY caller
- *  (chat, intake, extraction) inherits it; per-request `extraParams` still
- *  overrides. */
+/** Default OpenRouter routing for the paid lane: `order` (not `only`) so
+ *  a throttled/outed first choice spills forward instead of failing. Lives
+ *  on the provider entry so every paid-leg caller inherits it. */
 export const PAID_CHAT_ROUTING = { provider: { order: ['streamlake/fp8', 'deepinfra/fp8'], allow_fallbacks: true } };
 
 export const PROVIDERS: Record<string, ProviderConfig> = {
-  agnes: {
-    id: 'agnes',
-    baseURL: 'https://apihub.agnes-ai.com/v1/chat/completions',
-    supportsReasoning: true,
-    jsonMode: { type: 'json_object' },
-    defaultModel: 'agnes-3.0-flash',
-    visionModel: 'agnes-3.0-flash',
-  },
   groq: {
     id: 'groq',
     baseURL: 'https://api.groq.com/openai/v1/chat/completions',
@@ -84,13 +71,9 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
     defaultModel: 'nvidia/nemotron-3-ultra-550b-a55b',
     visionModel: 'nvidia/nemotron-3-ultra-550b-a55b',
   },
-  // Paid OpenRouter lane — PRIMARY for dashboard chat copilots (2026-10-06).
-  // Same endpoint as `openrouter`, but keys come only from
-  // OPENROUTER_PAID_API_KEY (chat pins provider 'openrouter-paid' so free-tier
-  // keys can never serve a turn). defaultModel is the founder-pinned
-  // deepseek/deepseek-v4.1-flash; per-request `extraParams.provider` carries
-  // the streamlake/fp8 preference. GH relay lanes serve this provider as the
-  // 1015/blockage fallback (relay routes /api/* paths to openrouter.ai).
+  // Paid OpenRouter lane: same endpoint as `openrouter`, but keys come only
+  // from OPENROUTER_PAID_API_KEY. defaultModel is deepseek/deepseek-v4.1-flash;
+  // per-request `extraParams.provider` carries the streamlake/fp8 preference.
   'openrouter-paid': {
     id: 'openrouter-paid',
     baseURL: 'https://openrouter.ai/api/v1/chat/completions',
@@ -118,19 +101,48 @@ export class AiGatewayError extends Error {
 export function detectProvider(key: string): string {
   const k = key.trim();
   if (k.startsWith('gsk_')) return 'groq';
-  if (k.startsWith('sk-') && !k.startsWith('sk-or-')) {
-    // Agnes keys are `sk-...` (checked 2026-09-20, e.g. sk-6SYPqZN...). OpenRouter uses `sk-or-`.
-    // Without explicit `agnes:` prefix, treat generic `sk-` as Agnes primary.
-    return 'agnes';
-  }
   if (k.startsWith('sk-or-') || k.startsWith('sk-or-v1-')) return 'openrouter';
-  return 'agnes'; // default primary is Agnes
+  return 'openrouter';
 }
+
+export type AiStrategy = 'least-used-first' | 'round-robin';
 
 // ── Key pool ─────────────────────────────────────────────────────────────────
 export class KeyPool {
   private keys: AiKey[] = [];
   private omnirouteBaseURL = '';
+  private strategy: AiStrategy = 'least-used-first';
+  private rrCursor = 0;
+
+  /** Global selection strategy (Setting `ai:strategy`). */
+  setStrategy(s: unknown): void {
+    this.strategy = s === 'round-robin' ? 'round-robin' : 'least-used-first';
+  }
+
+  getStrategy(): AiStrategy { return this.strategy; }
+
+  /** Register a Setting-defined OpenAI-compatible provider + its keys. */
+  registerProvider(id: string, baseURL: string, model: string, keys: Array<{ key: string; label?: string }>): void {
+    const pid = String(id ?? '').trim();
+    const url = String(baseURL ?? '').trim().replace(/\/+$/, '');
+    if (!pid || !url) return;
+    if (!PROVIDERS[pid]) {
+      PROVIDERS[pid] = {
+        id: pid,
+        baseURL: url + '/chat/completions',
+        supportsReasoning: false,
+        reasoningObject: true,
+        defaultModel: String(model || '').trim() || 'default',
+      };
+    }
+    const seen = new Set<string>(this.keys.map((k) => k.key));
+    for (const k of keys ?? []) {
+      const kv = String((k as any)?.key ?? '').trim();
+      if (!kv || seen.has(kv)) continue;
+      seen.add(kv);
+      this.keys.push(this.makeKey(pid, kv, String((k as any)?.label ?? '').trim() || undefined));
+    }
+  }
 
   loadFromEnv(env: Record<string, unknown>): void {
     const raw = (v: unknown) => (typeof v === 'string' ? v : '');
@@ -174,13 +186,11 @@ export class KeyPool {
         }
       }
     }
-    // 2. Legacy per-provider env vars (backwards compat) — Agnes primary.
-    for (const key of raw((env as any).AGNES_API_KEY).split(',')) add('agnes', key);
-    for (const key of raw((env as any).AGNES_API_KEYS).split(',')) add('agnes', key);
+    // 2. Legacy per-provider env vars (backwards compat).
     for (const key of raw(env.GROQ_API_KEYS).split(',')) add('groq', key);
     for (const key of raw(env.OPENROUTER_API_KEYS).split(',')) add('openrouter', key);
     for (const key of raw(env.OPENROUTER_API_KEY).split(',')) add('openrouter', key);
-    // Paid lane (chat primary): separate provider id so chat pins paid-only.
+    // Paid lane: separate provider id so paid keys stay identifiable in health.
     for (const key of raw((env as any).OPENROUTER_PAID_API_KEY).split(',')) add('openrouter-paid', key, 'paid');
     for (const key of raw(env.REQUESTLY_API_KEY).split(',')) add('requestly', key);
     for (const key of raw((env as any).REQUESTLY_API_KEYS).split(',')) add('requestly', key);
@@ -223,17 +233,11 @@ export class KeyPool {
    *    tier: statistical load-spreading with zero cross-isolate coordination
    *    (per-isolate LRU alone would hammer key #0 on every cold start).
    */
-  select(provider?: string, sessionKey?: string, strictPin = false): AiKey | null {
+  select(provider?: string, sessionKey?: string): AiKey | null {
     const now = Date.now();
     let pool = this.keys.filter((k) => k.enabled && k.cooldownUntil <= now);
     if (provider) {
       const filtered = pool.filter((k) => k.provider === provider);
-      // Strict pin (intake): a pinned provider with zero healthy keys must
-      // FAIL FAST, never silently roll a random cross-provider key — that
-      // fallback served weak free-tier models as paid wins and persisted
-      // names-only splits (Oct 2026). Default stays loose: pinned 'groq' and
-      // chat/copilot callers degrade through the whole pool by design.
-      if (strictPin && filtered.length === 0) return null;
       if (filtered.length > 0) pool = filtered;
     }
     if (pool.length === 0) return null;
@@ -244,6 +248,13 @@ export class KeyPool {
     if (sessionKey) {
       const start = parseInt(hashAI(`sess:${sessionKey}`), 36) % tier.length;
       return tier[start];
+    }
+    // Global strategy (Setting `ai:strategy`): round-robin cycles the healthy
+    // tier evenly; least-used-first (default) spreads randomly inside the
+    // least-failures tier (stateless load-spreading across isolates).
+    if (this.strategy === 'round-robin') {
+      const idx = this.rrCursor++ % tier.length;
+      return tier[idx];
     }
     return tier.length === 1 ? tier[0] : tier[Math.floor(Math.random() * tier.length)];
   }
@@ -327,28 +338,6 @@ export class KeyPool {
 
 // ── Gateway ──────────────────────────────────────────────────────────────────
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-// On-demand GH relay KV contract (runner.ts + cron.ts import these — keep in sync).
-export const RELAY_ACTIVE_KEY = 'ai:relay:active';
-
-export const RELAY_TTL_MS = 6 * 60 * 60_000;
-
-export const RELAY_COOLDOWN_KEY = 'ai:relay:cooldown';
-
-export const RELAY_COOLDOWN_MS = 30 * 60_000;
-
-// Set when a 1015 arrives THROUGH the relay leg (Azure egress itself
-// throttled) — cron replaces the run (new runner ≈ new IP). TTL bounds it.
-export const RELAY_POISONED_KEY = 'ai:relay:poisoned';
-
-export const RELAY_POISONED_TTL_MS = 30 * 60_000;
-
-// Backup lane keys (second tunnel/runner — hot standby, independent lifecycle).
-export const RELAY_ACTIVE_KEY_BAK = 'ai:relay:active:bak';
-
-export const RELAY_POISONED_KEY_BAK = 'ai:relay:poisoned:bak';
-
-export const RELAY_MEMO_MS = 60_000;
 
 /** Extract the first JSON object/array from model prose (fenced block or
  *  balanced-brace scan). Returns null when nothing parses. */

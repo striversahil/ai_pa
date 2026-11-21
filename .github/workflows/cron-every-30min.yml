@@ -21,13 +21,13 @@ jobs:
           SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
         run: node scripts/email-brain-index-runner.js
 
-  # DISABLED: intake now Worker-native via Agnes vision (vision-intake.ts) — GH backstop removed, Worker waitUntil is instant.
+  # DISABLED: intake now Worker-native via vision intake (vision-intake.ts) — GH backstop removed, Worker waitUntil is instant.
   enquiry-intake-backstop:
     if: false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: enquiry-intake backstop — DISABLED (Worker-native Agnes)
+      - name: enquiry-intake backstop — DISABLED (Worker-native)
         env:
           WORKER_URL: ${{ secrets.WORKER_URL }}
           SHARED_SECRET: ${{ secrets.SHARED_SECRET }}

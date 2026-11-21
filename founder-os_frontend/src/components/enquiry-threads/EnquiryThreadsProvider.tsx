@@ -20,7 +20,7 @@ export function useItemThreadsCtx(): Ctx | null {
 }
 
 export default function EnquiryThreadsProvider({ desk, enquiryId, children }: { desk: ThreadDesk; enquiryId: string; children: React.ReactNode }) {
-  const { threads, refresh } = useEnquiryThreads(desk, enquiryId);
-  const act = useThreadActions(desk, refresh);
+  const { threads, refresh, patch } = useEnquiryThreads(desk, enquiryId);
+  const act = useThreadActions(desk, refresh, patch);
   return <EnquiryThreadsCtx.Provider value={{ desk, enquiryId, threads, act }}>{children}</EnquiryThreadsCtx.Provider>;
 }

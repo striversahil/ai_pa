@@ -8,18 +8,17 @@ import { WEB_SEARCH_TOOL, webSearchToolDef, execWebSearch, webSearchActivity } f
 import { FETCH_PAGE_TOOL, fetchPageToolDef, execFetchPage, fetchPageActivity } from "../../shared/fetch-page";
 import { CALCULATE_TOOL, calculateToolDef, execCalculate, calculateActivity } from "../../shared/calculator";
 import { loadHistory, loadToolTrace, loadReasoning, readEpoch, saveUserTurn, saveToolTrace, saveAssistantReply, saveReasoning, markStorm, capReason } from "../session";
-import { getAppSetting } from "../../shared/app-settings";
-import { resolveChatChain } from "../../shared/intake-chain";
-import { CHAT_PROVIDER, COUNT_TTL_MS, rateWho, usageKey, USAGE_TTL_MS, RATE_WINDOW_MS, BUSY_REPLY, MAX_HUMAN_TURNS, LIMIT_REPLY, THINK_BRIEF, seedToolSigs, MAX_STEPS, CHAT_MAX_TOKENS, chatLegParams, is429Like, parseArgs, toolSig, blockedOut, repeatNudge, MAX_CUT_RESUMES, CUT_RESUME, startLabel } from "./pure";
+import { resolveAiChain } from "../../shared/intake-chain";
+import { COUNT_TTL_MS, rateWho, usageKey, USAGE_TTL_MS, RATE_WINDOW_MS, BUSY_REPLY, MAX_HUMAN_TURNS, LIMIT_REPLY, THINK_BRIEF, seedToolSigs, MAX_STEPS, CHAT_MAX_TOKENS, is429Like, parseArgs, toolSig, blockedOut, repeatNudge, MAX_CUT_RESUMES, CUT_RESUME, startLabel } from "./pure";
 
 export async function gatewayReady(env: Record<string, unknown>): Promise<{ ok: boolean; busy: boolean }> {
   const gateway = getGateway(env);
-  const usable = (p: string) => gateway.health().some((h) => h.provider === p && h.enabled && h.cooldownUntil <= Date.now());
-  const hasAnyKey = gateway.health().some((h) => h.provider === CHAT_PROVIDER);
-  if (!hasAnyKey) return { ok: false, busy: false };
+  const now = Date.now();
+  const healthy = gateway.health().some((h) => h.enabled && h.cooldownUntil <= now);
+  if (!healthy && gateway.keyCount === 0) return { ok: false, busy: false };
   let storm = false;
   try { storm = !!(await cacheGet('ai:storm:chat', 120_000)); } catch { /* ignore */ }
-  if (storm || !usable(CHAT_PROVIDER)) return { ok: false, busy: true };
+  if (storm || !healthy) return { ok: false, busy: true };
   return { ok: true, busy: false };
 }
 
@@ -168,7 +167,7 @@ export async function runTurn<T>(
   const ready = await gatewayReady(env);
   if (!ready.ok) {
     return {
-      reply: ready.busy ? BUSY_REPLY : 'AI chat is not configured (no paid OpenRouter key).',
+      reply: ready.busy ? BUSY_REPLY : 'AI chat is not configured (no AI provider).',
       proposals: [], activity: [],
     };
   }
@@ -207,17 +206,9 @@ export async function runTurn<T>(
   let reply = '';
   let autoCuts = 0;
   let lastReasoning = '';
-  // Chat chain resolved once per turn (Agnes relay-only first, paid
-  // fallback — resolveChatChain): every step walks the same legs with the
-  // same sticky sessionKey. Primary + Agnes model are root-controlled
-  // Settings (fail-open to compiled defaults).
-  const chatPrimary = await getAppSetting('chat:primary_provider').catch(() => 'agnes');
-  const chatAgnesModel = await getAppSetting('chat:agnes_model').catch(() => '');
-  const chatOpenrouterModel = await getAppSetting('chat:openrouter_model').catch(() => '');
-  const chatPaidRoute = await getAppSetting('chat:paid_route').catch(() => '');
-  const chatPaidRouteMode = await getAppSetting('chat:paid_route_mode').catch(() => 'prefer');
-  const chatModels = { agnesModel: chatAgnesModel, openrouterModel: chatOpenrouterModel, paidRoute: chatPaidRoute, paidRouteMode: chatPaidRouteMode };
-  const chatChain = resolveChatChain(env, { primary: chatPrimary });
+  // Single gateway chain resolved once per turn (Setting `ai:providers`
+  // order): every step walks the same legs with the same sticky sessionKey.
+  const chatChain = await resolveAiChain(env);
   // Same-tool loop ledger, seeded from history so a continued hop can't
   // restart a loop the previous hop already ran (see breaker above).
   const toolSigs = seedToolSigs(hist.messages);
@@ -240,7 +231,7 @@ export async function runTurn<T>(
     // single-provider behavior).
     if (chatChain.length === 0) {
       await flushTrace();
-      throw new Error('No Agnes/paid AI key configured — chat unavailable');
+      throw new Error('No AI provider configured — add one in Settings → AI gateway');
     }
     let res: any;
     let legErr: any = null;
@@ -248,7 +239,7 @@ export async function runTurn<T>(
       try {
         res = await gateway.complete({
           messages, temperature: 0.2, maxTokens: CHAT_MAX_TOKENS,
-          ...chatLegParams(leg, def, env, chatModels),
+          provider: leg.provider, ...(leg.model ? { model: leg.model } : {}),
           tools, toolChoice: 'auto',
           sessionKey: key,
           // No time constraint (founder order) — see CHAT note above.
@@ -343,7 +334,7 @@ export async function* streamTurn<T>(
   const ready = await gatewayReady(env);
   if (!ready.ok) {
     const r: CopilotReply = {
-      reply: ready.busy ? BUSY_REPLY : 'AI chat is not configured (no paid OpenRouter key).',
+      reply: ready.busy ? BUSY_REPLY : 'AI chat is not configured (no AI provider).',
       proposals: [], activity: [],
     };
     yield { type: 'done', data: r };
@@ -386,14 +377,8 @@ export async function* streamTurn<T>(
   let autoCuts = 0;
   let lastReasoning = '';
   let turnText = '';
-  // Chat chain resolved once per turn (same legs + sticky key every step).
-  const chatPrimaryS = await getAppSetting('chat:primary_provider').catch(() => 'agnes');
-  const chatAgnesModelS = await getAppSetting('chat:agnes_model').catch(() => '');
-  const chatOpenrouterModelS = await getAppSetting('chat:openrouter_model').catch(() => '');
-  const chatPaidRouteS = await getAppSetting('chat:paid_route').catch(() => '');
-  const chatPaidRouteModeS = await getAppSetting('chat:paid_route_mode').catch(() => 'prefer');
-  const chatModelsS = { agnesModel: chatAgnesModelS, openrouterModel: chatOpenrouterModelS, paidRoute: chatPaidRouteS, paidRouteMode: chatPaidRouteModeS };
-  const chatChainS = resolveChatChain(env, { primary: chatPrimaryS });
+  // Single gateway chain resolved once per turn (same legs + sticky key).
+  const chatChainS = await resolveAiChain(env);
   // Same-tool loop ledger (seeded from history — see runTurn).
   const toolSigsS = seedToolSigs(hist.messages);
   // Transport budget, same as runTurn: yield before the edge guillotine.
@@ -421,7 +406,7 @@ export async function* streamTurn<T>(
     // chain below. Same BUSY/throw contract as runTurn above.
     if (chatChainS.length === 0) {
       await flushTrace();
-      throw new Error('No Agnes/paid AI key configured — chat unavailable');
+      throw new Error('No AI provider configured — add one in Settings → AI gateway');
     }
     try {
       let streamed = false;
@@ -429,7 +414,7 @@ export async function* streamTurn<T>(
         try {
           for await (const chunk of gateway.stream({
             messages, temperature: 0.2, maxTokens: CHAT_MAX_TOKENS,
-            ...chatLegParams(leg, def, env, chatModelsS),
+            provider: leg.provider, ...(leg.model ? { model: leg.model } : {}),
             tools, toolChoice: 'auto',
             sessionKey: key,
             timeoutMs: undefined, probeTimeoutMs: undefined,
@@ -481,7 +466,7 @@ export async function* streamTurn<T>(
         try {
           res = await gateway.complete({
             messages, temperature: 0.2, maxTokens: CHAT_MAX_TOKENS,
-            ...chatLegParams(leg, def, env, chatModelsS),
+            provider: leg.provider, ...(leg.model ? { model: leg.model } : {}),
             tools, toolChoice: 'auto',
             sessionKey: key,
             timeoutMs: undefined, probeTimeoutMs: undefined,

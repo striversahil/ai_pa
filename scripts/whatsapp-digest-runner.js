@@ -8,7 +8,7 @@
  * summarize each chat (full or incremental via previous digest) → persist
  * digests, tasks and pending items → mark messages processed.
  *
- * Env: WORKER_URL, SHARED_SECRET, AI_KEYS (unified gateway: Agnes primary;
+ * Env: WORKER_URL, SHARED_SECRET, AI_KEYS (single gateway: Setting order, env appended;
  * legacy GROQ/OPENROUTER/REQUESTLY vars still merged) — all via runner-lib.
  */
 

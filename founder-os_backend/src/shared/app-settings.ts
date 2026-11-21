@@ -12,8 +12,9 @@ export interface AppSettingSpec {
   label: string;
   hint: string;
   /** enum → segmented/dropdown control; text → free model-id input;
-   *  textlist → comma-separated provider slugs (empty = compiled default). */
-  kind: 'enum' | 'text' | 'textlist' | 'json';
+   *  textlist → comma-separated provider slugs (empty = compiled default).
+   *  json → small JSON blob (≤500 chars); jsonlarge → large JSON blob (≤20k). */
+  kind: 'enum' | 'text' | 'textlist' | 'json' | 'jsonlarge';
   options: string[];
   default: string;
 }
@@ -34,6 +35,10 @@ export function isValidSettingValue(spec: AppSettingSpec, v: string): boolean {
   }
   if (!s) return false;
   if (spec.kind === 'enum') return spec.options.includes(s);
+  if (spec.kind === 'jsonlarge') {
+    if (s.length > 20000) return false;
+    try { JSON.parse(s); return true; } catch { return false; }
+  }
   if (spec.kind === 'json') {
     if (s.length > 500) return false;
     try { JSON.parse(s); return true; } catch { return false; }
@@ -50,61 +55,21 @@ export const APP_SETTINGS: Record<string, AppSettingSpec> = {
     options: [],
     default: '',
   },
-  'chat:primary_provider': {
-    key: 'chat:primary_provider',
-    label: 'AI chat primary provider',
-    hint: 'Agnes pool serves first via the GH relay lane; paid OpenRouter is fallback only.',
+  'ai:strategy': {
+    key: 'ai:strategy',
+    label: 'AI gateway strategy',
+    hint: 'Global key selection: round-robin cycles keys evenly; least-used-first prefers lowest usage.',
     kind: 'enum',
-    options: ['agnes', 'openrouter-paid'],
-    default: 'agnes',
+    options: ['least-used-first', 'round-robin'],
+    default: 'least-used-first',
   },
-  'chat:agnes_model': {
-    key: 'chat:agnes_model',
-    label: 'AI chat Agnes model',
-    hint: 'Model id for the Agnes leg.',
-    kind: 'enum',
-    options: ['agnes-3.0-flash', 'agnes-2.5-flash'],
-    default: 'agnes-3.0-flash',
-  },
-  'chat:openrouter_model': {
-    key: 'chat:openrouter_model',
-    label: 'AI chat paid model',
-    hint: 'OpenRouter model id for the paid leg (e.g. deepseek/deepseek-v4.1-flash).',
-    kind: 'text',
-    options: [],
-    default: 'deepseek/deepseek-v4.1-flash',
-  },
-  'chat:paid_route': {
-    key: 'chat:paid_route',
-    label: 'Paid provider routing',
-    hint: 'Comma-separated OpenRouter provider slugs serving the paid leg (e.g. inference-net). Empty = default StreamLake/FP8 preference.',
-    kind: 'textlist',
+  'ai:providers': {
+    key: 'ai:providers',
+    label: 'AI providers (BYOK)',
+    hint: 'JSON: {"providers":[{"id,baseUrl,model,keys:[{key,label}]}]}. OpenAI-compatible endpoints only. Keys stay server-side.',
+    kind: 'jsonlarge',
     options: [],
     default: '',
-  },
-  'chat:paid_route_mode': {
-    key: 'chat:paid_route_mode',
-    label: 'Paid routing mode',
-    hint: 'Prefer = try listed providers first, fall back freely. Only = serve EXCLUSIVELY from them (fails when all are down).',
-    kind: 'enum',
-    options: ['prefer', 'only'],
-    default: 'prefer',
-  },
-  'intake:primary_provider': {
-    key: 'intake:primary_provider',
-    label: 'Enquiry intake primary provider',
-    hint: 'Add-via-AI / new-items intake serves this pool first; the other leg is fallback.',
-    kind: 'enum',
-    options: ['agnes', 'openrouter-paid'],
-    default: 'agnes',
-  },
-  'intake:openrouter_model': {
-    key: 'intake:openrouter_model',
-    label: 'Enquiry intake paid model',
-    hint: 'OpenRouter model id for the paid leg (Agnes leg uses its default model).',
-    kind: 'text',
-    options: [],
-    default: 'deepseek/deepseek-v4.1-flash',
   },
 };
 
@@ -137,9 +102,73 @@ export async function setAppSetting(key: string, value: string): Promise<void> {
       ? `invalid value for ${key}: must be one of ${spec.options.join(', ')}`
       : `invalid value for ${key}: must be an OpenRouter model id like org/model (≤120 chars)`);
   }
+  if (key === 'ai:providers' && v) validateAiProvidersJson(v);
   await prisma.setting.upsert({
     where: { key },
     update: { value: v },
     create: { key, value: v },
   });
+}
+
+// ── AI providers (BYOK) — Setting JSON shape ──────────────────────────────
+// mirror: scripts/ai-gateway.js (validateAiProvidersJson port)
+export interface AiProviderKeyCfg { key: string; label?: string }
+export interface AiProviderCfg {
+  id: string;
+  baseUrl: string;
+  model: string;
+  keys: AiProviderKeyCfg[];
+}
+export interface AiProvidersCfg {
+  strategy?: string;
+  providers: AiProviderCfg[];
+}
+
+const AI_PROVIDER_ID_RE = /^[a-z0-9][a-z0-9._\-]{0,40}$/i;
+
+export function validateAiProvidersJson(raw: string): AiProvidersCfg {
+  let parsed: any;
+  try { parsed = JSON.parse(raw); } catch { throw new Error('ai:providers must be valid JSON'); }
+  const list = Array.isArray(parsed) ? parsed : parsed?.providers;
+  if (!Array.isArray(list)) throw new Error('ai:providers must be {"providers":[...]}');
+  if (list.length > 20) throw new Error('ai:providers: max 20 providers');
+  const out: AiProviderCfg[] = [];
+  const seen = new Set<string>();
+  for (const p of list) {
+    const id = String(p?.id ?? '').trim();
+    const baseUrl = String(p?.baseUrl ?? p?.baseURL ?? '').trim().replace(/\/+$/, '');
+    const model = String(p?.model ?? '').trim();
+    if (!id || !AI_PROVIDER_ID_RE.test(id)) throw new Error(`ai:providers: bad provider id "${id}"`);
+    if (seen.has(id.toLowerCase())) throw new Error(`ai:providers: duplicate provider "${id}"`);
+    seen.add(id.toLowerCase());
+    if (!/^https?:\/\/.{3,}/i.test(baseUrl)) throw new Error(`ai:providers: bad baseUrl for "${id}"`);
+    if (baseUrl.length > 200) throw new Error(`ai:providers: baseUrl too long for "${id}"`);
+    if (!model || model.length > 120) throw new Error(`ai:providers: bad model for "${id}"`);
+    const keys = Array.isArray(p?.keys) ? p.keys : [];
+    // 0 keys allowed (provider created first, keys appended after) — the
+    // chain only serves providers that actually have healthy keys.
+    if (keys.length > 10) throw new Error(`ai:providers: "${id}" max 10 keys`);
+    const kout: AiProviderKeyCfg[] = [];
+    const kseen = new Set<string>();
+    for (const k of keys) {
+      const kv = String((k as any)?.key ?? k ?? '').trim();
+      if (kv.length < 8 || kv.length > 500) throw new Error(`ai:providers: bad key for "${id}"`);
+      if (kseen.has(kv)) continue;
+      kseen.add(kv);
+      kout.push({ key: kv, label: String((k as any)?.label ?? '').trim().slice(0, 40) || undefined });
+    }
+    out.push({ id, baseUrl, model, keys: kout });
+  }
+  const strategy = String((parsed as any)?.strategy ?? '').trim();
+  if (strategy && !['round-robin', 'least-used-first'].includes(strategy)) {
+    throw new Error('ai:providers.strategy must be round-robin or least-used-first');
+  }
+  return { strategy: strategy || undefined, providers: out };
+}
+
+export function parseAiProvidersJson(raw: string): AiProvidersCfg | null {
+  try {
+    if (!String(raw ?? '').trim()) return null;
+    return validateAiProvidersJson(raw);
+  } catch { return null; }
 }

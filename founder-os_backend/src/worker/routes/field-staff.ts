@@ -217,8 +217,8 @@ export function registerFieldStaffRoutes(app: Hono<{ Bindings: Bindings }>): voi
               } catch {}
               try {
                 const store = createEnquiryStore(c.env);
-                const { runAgnesVisionIntake } = await import('../../modules/enquiries/vision-intake');
-                await runAgnesVisionIntake(c.env as any, store, eid).catch(() => null);
+                const { runVisionIntake } = await import('../../modules/enquiries/vision-intake');
+                await runVisionIntake(c.env as any, store, eid).catch(() => null);
               } catch {}
               try { const { cacheDel } = await import('../../shared/cache'); await cacheDel(`enquiry:redacted:${eid}`); } catch {}
             })();

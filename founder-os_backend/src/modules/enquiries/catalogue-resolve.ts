@@ -4,7 +4,7 @@
 // share one matcher instead of each owning one: deterministic tiers
 // (lookupDeterministic / lookupToken from vision-intake-parts/pure) first,
 // then ONE LLM fallback for the miss — same prompt (LOOKUP_FALLBACK_SYSTEM +
-// buildLookupList), same provider order (resolveIntakeChain + resolveLegModel),
+// buildLookupList), same provider order (single AI gateway chain),
 // same 0.65 confidence gate, same forgiving resolve-back. Text only
 // (name + spec + qty + dims) — no photos, same inputs the intake lookup uses.
 // Resolves are KV-cached per normalized item text so repeat expands of the
@@ -13,8 +13,7 @@
 // Never throws: no keys / LLM failure / unparseable answer all resolve to
 // { product: null } and the caller falls back (fuzzy candidates / manual).
 import { getGateway } from '../../shared/ai-gateway';
-import { resolveIntakeChain, resolveLegModel } from '../../shared/intake-chain';
-import { getAppSetting } from '../../shared/app-settings';
+import { resolveAiChain } from '../../shared/intake-chain';
 import { cached } from '../../shared/cache';
 import { loadLiveCatalog } from './vision-intake-parts/io';
 import {
@@ -88,9 +87,7 @@ export async function resolveCatalogueItem(
     // numbered live catalogue in the prompt, strict JSON, resolve-back.
     try {
       const gateway = getGateway(env as any);
-      const primary = await getAppSetting('intake:primary_provider').catch(() => 'agnes');
-      const openrouterModel = await getAppSetting('intake:openrouter_model').catch(() => '');
-      const chain = resolveIntakeChain(env as any, undefined, { primary: String(primary || 'agnes') });
+      const chain = await resolveAiChain(env as any);
       if (chain.length === 0) return { product: null, confidence: 0, source: null };
 
       const cats: string[] = (catalog as any)?.cats ?? [];
@@ -108,9 +105,9 @@ export async function resolveCatalogueItem(
                 { role: 'user', content: `Match each line:\n${line}` },
               ],
               temperature: 0, json: true, maxTokens: 2000,
-              provider: leg, model: resolveLegModel(leg, { openrouterModel: String(openrouterModel || '') }),
+              provider: leg.provider, ...(leg.model ? { model: leg.model } : {}),
               signal: ac.signal as any,
-              agnesRelayOnly: true, strictProvider: true, reasoningOff: true,
+              reasoningOff: true,
             });
           } finally { clearTimeout(t); }
         } catch { continue; }

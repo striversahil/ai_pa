@@ -7,7 +7,7 @@ import { chatTurn, clearSalesChat, executeProposal } from '../../modules/enquiri
 import { cacheDel } from '../../shared/cache';
 import { getGateway } from '../../shared/ai-gateway';
 import { runEnquiryExtraction } from '../../modules/enquiries/enrichment';
-import { runAgnesVisionIntake } from '../../modules/enquiries/vision-intake';
+import { runVisionIntake } from '../../modules/enquiries/vision-intake';
 import { isZohoClosedStatus } from '../../modules/enquiries/queues';
 import { getManagementQueues, invalidateManagementQueues } from '../../modules/enquiries/queues-cache';
 import { canManageRates, canSeeProcurementRequests } from '../../modules/enquiries/scopes';
@@ -51,7 +51,7 @@ async function runEnquiryAi(c: any, id: string, withIntake: boolean): Promise<vo
     }
     if (withIntake) {
       try {
-        await runAgnesVisionIntake(c.env as any, store, eid, onStage);
+        await runVisionIntake(c.env as any, store, eid, onStage);
       } catch (e: any) {
         console.error(`[enquiry-ai] ${eid}: intake failed (${String(e?.message ?? e).slice(0, 160)})`);
       }
@@ -610,7 +610,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const r = await EnquiryRoutes.enquiryIntake(me, c.req.param('id') ?? '');
     return c.json(r.body, r.status as any);
   });
-  // Per-enquiry copilot: agentic sidebar chat (Agnes-primary tools loop).
+  // Per-enquiry copilot: agentic sidebar chat (single-gateway tools loop).
   app.post('/api/enquiries/:id/chat', async (c) => {
     const me = await enquiryMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
@@ -643,7 +643,14 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
       const { readChatUsage } = await import('../../copilot/engine');
       const days = Math.min(30, Math.max(1, Number(c.req.query('days') ?? 7) || 7));
       const usage = await readChatUsage(days).catch(() => ({ total: 0, users: [], byDay: [] }));
-      return c.json({ keys: gw.health(), count: gw.keyCount, hasAgnes: gw.health().some((h: any) => h.provider === 'agnes'), storm, usageDays: days, usage, kvCache: hasKvCache() });
+      const health = gw.health();
+      const now = Date.now();
+      const providers = [...new Set(health.map((h: any) => h.provider))].map((p) => ({
+        provider: p,
+        total: health.filter((h: any) => h.provider === p).length,
+        usable: health.filter((h: any) => h.provider === p && h.enabled && h.cooldownUntil <= now).length,
+      }));
+      return c.json({ keys: health, count: gw.keyCount, strategy: gw.strategy(), providers, storm, usageDays: days, usage, kvCache: hasKvCache() });
     } catch (e: any) {
       return c.json({ error: String(e?.message ?? e) }, 500);
     }
@@ -653,7 +660,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const msg = String(body?.message ?? 'ping').slice(0, 500);
     try {
       const gw = getGateway(c.env as any);
-      const res = await gw.complete({ messages: [{ role: 'user', content: msg }], model: 'agnes-3.0-flash', maxTokens: 200 });
+      const res = await gw.complete({ messages: [{ role: 'user', content: msg }], maxTokens: 200 });
       return c.json({ ok: true, provider: res.provider, model: res.model, content: res.content.slice(0, 500), usage: res.usage });
     } catch (e: any) {
       return c.json({ ok: false, error: String(e?.message ?? e).slice(0, 1000) }, 500);
@@ -661,9 +668,9 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
   });
   app.get('/api/debug/chat-test', async (c) => {
     const msg = String(c.req.query('message') ?? 'ping').slice(0, 500);
-    // ?provider=groq|openrouter|agnes&model=... — per-provider health/latency probe (owner testing).
+    // ?provider=…&model=… — per-provider health/latency probe (owner testing).
     const provider = String(c.req.query('provider') ?? '').trim() || undefined;
-    const model = String(c.req.query('model') ?? '').trim() || (provider === 'agnes' || !provider ? 'agnes-3.0-flash' : undefined);
+    const model = String(c.req.query('model') ?? '').trim() || undefined;
     const start = Date.now();
     try {
       const gw = getGateway(c.env as any);
@@ -673,7 +680,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
       return c.json({ ok: false, provider, ms: Date.now() - start, error: String(e?.message ?? e).slice(0, 1000), stack: String(e?.stack ?? '').slice(0, 500) }, 500);
     }
   });
-  // Debug: Worker egress identity (proves which source IP Agnes's WAF sees).
+  // Debug: worker egress identity.
   app.get('/api/debug/egress', async (c) => {
     try {
       const r = await fetch('https://www.cloudflare.com/cdn-cgi/trace', { signal: AbortSignal.timeout(10000) });
@@ -685,46 +692,15 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
       return c.json({ ok: false, error: String(e?.message ?? e).slice(0, 300) }, 500);
     }
   });
-  app.get('/api/debug/direct-agnes', async (c) => {    const key = String((c.env as any)?.AGNES_API_KEY ?? '').slice(0, 10);
-    const hasKey = !!String((c.env as any)?.AGNES_API_KEY ?? '').trim();
-    const start = Date.now();
-    try {
-      const r = await fetch('https://apihub.agnes-ai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${String((c.env as any)?.AGNES_API_KEY ?? '').trim()}` },
-        body: JSON.stringify({ model: 'agnes-3.0-flash', messages: [{ role: 'user', content: 'ping' }], max_tokens: 10 }),
-        signal: AbortSignal.timeout(15000),
-      });
-      const t = Date.now() - start;
-      const text = await r.text().catch(() => '');
-      let j: any = {};
-      try { j = JSON.parse(text); } catch {}
-      const hdrs: Record<string, string> = {};
-      r.headers.forEach((v, k) => { hdrs[k] = v; });
-      return c.json({ ok: r.ok, status: r.status, hasKey, keyPrefix: key, ms: t, body: text.slice(0, 800), headers: hdrs });
-    } catch (e: any) {
-      return c.json({ ok: false, hasKey, keyPrefix: key, ms: Date.now() - start, error: String(e?.message ?? e).slice(0, 1000) }, 500);
-    }
-  });
-  // Debug: worker→home-proxy leg (proves the 1015 fallback lane is reachable
-  // from the Worker; hostname only, never leaks secrets).
-  app.get('/api/debug/proxy-health', async (c) => {
-    try {
-      const gw = getGateway(c.env as any);
-      return c.json({ ok: true, ...(await gw.proxyStatus()) });
-    } catch (e: any) {
-      return c.json({ ok: false, error: String(e?.message ?? e).slice(0, 300) }, 500);
-    }
-  });
-  // Debug: Agnes vision intake without auth (owner testing — parses image+text via agnes-3.0-flash, no GH Actions)
+  // Debug: vision intake without auth (owner testing — parses image+text, no GH Actions)
   app.post('/api/debug/vision-intake/:id', async (c) => {
     const id = c.req.param('id') ?? '';
-    // ?provider=agnes pins the Agnes lane (bulk backfills — no paid spend).
+    // ?provider= pins one chain leg (bulk backfills — no failover).
     const forceProvider = (c.req.query('provider') ?? '').trim() || undefined;
     try {
       const store = createEnquiryStore(c.env);
-      const { runAgnesVisionIntake } = await import('../../modules/enquiries/vision-intake');
-      const result = await runAgnesVisionIntake(c.env as any, store, id, undefined, forceProvider);
+      const { runVisionIntake } = await import('../../modules/enquiries/vision-intake');
+      const result = await runVisionIntake(c.env as any, store, id, undefined, forceProvider);
       const enq: any = await store.getEnquiry(id).catch(() => null);
       return c.json({ ok: true, enquiryId: id, items: enq?.items ?? [], intake: await (await import('../../shared/cache')).cacheGet(`enquiry:intake:${id}`, 7*24*60*60*1000).catch(() => null), routerLines: result?.lines ?? null, routerProvider: result?.provider ?? null });
     } catch (e: any) {

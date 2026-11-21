@@ -4,8 +4,7 @@ import { getProductIndex, getProductDetail } from "../../../automations/product-
 import type { MatchProduct } from "../../../automations/product-line/match";
 import type { EnquiryStore } from "../store";
 import { getGateway, buildVisionUserContent } from "../../../shared/ai-gateway";
-import { getAppSetting } from "../../../shared/app-settings";
-import { resolveIntakeChain, resolveLegModel } from "../../../shared/intake-chain";
+import { resolveAiChain } from "../../../shared/intake-chain";
 import { cacheSet } from "../../../shared/cache";
 import { matchGradeRule } from "../intake-grade-rules";
 import type { LiveCatalog, KypKey } from "./types";
@@ -33,12 +32,12 @@ export async function loadLiveCatalog(): Promise<LiveCatalog> {
   return { products, cats, itemsByCat, index };
 }
 
-export async function runAgnesVisionIntake(
+export async function runVisionIntake(
   env: Record<string, unknown>,
   store: EnquiryStore,
   id: string,
   onStage?: (stage: 'split' | 'classified') => void | Promise<void>,
-  /** Force a single provider leg ('agnes' for bulk backfills — skips paid). */
+  /** Force a single provider leg (bulk backfills — skips the rest of the chain). */
   forceProvider?: string,
 ): Promise<{ lines: any[]; provider: string } | null> {
   let enquiry: any;
@@ -54,16 +53,11 @@ export async function runAgnesVisionIntake(
   }
 
   const gateway = getGateway(env as any);
-  // Intake chain (resolveIntakeChain): primary pool first (root-controlled
-  // `intake:primary_provider` Setting, default Agnes), the other leg as
-  // fallback — free leg dropped for determinism. forceProvider pins one
-  // leg (bulk backfills — no failover, no paid spend).
-  const intakePrimary = await getAppSetting('intake:primary_provider').catch(() => 'agnes');
-  const intakeOpenrouterModel = await getAppSetting('intake:openrouter_model').catch(() => '');
-  const intakeModels = { openrouterModel: intakeOpenrouterModel };
-  const chain = resolveIntakeChain(env as any, forceProvider, { primary: intakePrimary });
+  // Single AI gateway chain (Setting `ai:providers` order). forceProvider
+  // pins one leg (bulk backfills — no failover).
+  const chain = await resolveAiChain(env as any, forceProvider);
   if (chain.length === 0) {
-    console.warn(`[vision-intake] no Agnes/paid key${forceProvider ? ` (forced '${forceProvider}' has no key)` : ''} — skipping`);
+    console.warn(`[vision-intake] no AI provider configured${forceProvider ? ` (forced '${forceProvider}' has no key)` : ''} — skipping`);
     return null;
   }
 
@@ -102,7 +96,7 @@ export async function runAgnesVisionIntake(
 
   let routed: any = null;
   let lastErr: any = null;
-  let successProvider = chain[0] ?? 'agnes';
+  let successLeg = chain[0];
   // Content-drop gate (Oct 2026: ~half of runs across 3 days persisted
   // names-only lines — client-written sizes/quantities never reached any
   // dashboard). A weak provider sometimes "splits" names while dropping every
@@ -130,8 +124,8 @@ export async function runAgnesVisionIntake(
   let bestDropped = Number.POSITIVE_INFINITY;
   let bestTotal = 0;
   let acceptedDropped = 0;
-  // Try each provider in chain until one succeeds (handles Agnes 1015 WAF without empty poison)
-  outer: for (const prov of chain) {
+  // Try each provider in chain until one succeeds.
+  outer: for (const leg of chain) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const ac = new AbortController();
@@ -139,13 +133,7 @@ export async function runAgnesVisionIntake(
         try {
           routed = await gateway.completeJson<any>({
             messages: [{ role: 'system', content: ROUTER_SYSTEM }, { role: 'user', content }],
-            temperature: 0, json: true, maxTokens: 24000, provider: prov, model: resolveLegModel(prov, intakeModels), signal: ac.signal as any,
-            // Never burn 100s on doomed direct-Agnes attempts: relay lane if
-            // warm, else fail fast to the next provider (OpenRouter).
-            agnesRelayOnly: true,
-            // Strict pin: a starved provider fails over to the next chain leg
-            // explicitly — never a silent weak-model substitution.
-            strictProvider: true,
+            temperature: 0, json: true, maxTokens: 24000, provider: leg.provider, ...(leg.model ? { model: leg.model } : {}), signal: ac.signal as any,
             // Splitting lines needs no chain-of-thought — thinking tokens are
             // billed output with zero UI use on this path.
             reasoningOff: true,
@@ -153,9 +141,9 @@ export async function runAgnesVisionIntake(
         } finally { clearTimeout(t); }
         const gate = countDroppedLines((routed as any)?.lines);
         if (gate.total > 0 && gate.dropped > 0 && gate.dropped / gate.total >= 0.5) {
-          console.log(`[vision-intake] ${id}: provider=${prov} attempt ${attempt + 1}/2 dropped content (${gate.dropped}/${gate.total} lines names-only) — trying next provider`);
+          console.log(`[vision-intake] ${id}: provider=${leg.provider} attempt ${attempt + 1}/2 dropped content (${gate.dropped}/${gate.total} lines names-only) — trying next provider`);
           if (!bestRouted || gate.dropped < bestDropped || (gate.dropped === bestDropped && gate.total > bestTotal)) {
-            bestRouted = routed; bestProvider = prov; bestDropped = gate.dropped; bestTotal = gate.total;
+            bestRouted = routed; bestProvider = leg.provider; bestDropped = gate.dropped; bestTotal = gate.total;
           }
           routed = null;
           lastErr = new Error('router-dropped-content');
@@ -163,16 +151,15 @@ export async function runAgnesVisionIntake(
         }
         acceptedDropped = gate.dropped;
         lastErr = null;
-        successProvider = prov;
+        successLeg = leg;
         break outer;
       } catch (e: any) {
         lastErr = e;
         const msg = String(e?.message ?? e);
         const is429 = isRateLimited(e);
-        const is1015 = /1015/i.test(msg);
-        console.log(`[vision-intake] ${id}: provider=${prov} attempt ${attempt + 1}/2 failed (${msg.slice(0, 120)})${is1015 ? ' [1015 WAF]' : ''}`);
+        console.log(`[vision-intake] ${id}: provider=${leg.provider} attempt ${attempt + 1}/2 failed (${msg.slice(0, 120)})`);
         if (is429) {
-          // For 1015/429, try next provider immediately (don't hammer same provider)
+          // For 429, try next provider immediately (don't hammer same provider)
           break;
         }
         if (attempt === 0) await new Promise((r) => setTimeout(r, 800));
@@ -184,7 +171,8 @@ export async function runAgnesVisionIntake(
   // re-runs intake cleanly). Logged so dropped runs stay visible in tail.
   if (!routed && bestRouted) {
     routed = bestRouted;
-    successProvider = bestProvider;
+    const best = chain.find((l) => l.provider === bestProvider) ?? chain[0];
+    if (best) successLeg = best;
     acceptedDropped = bestDropped;
     lastErr = null;
     console.warn(`[vision-intake] ${id}: all providers dropped content — persisting best attempt (${bestProvider}, ${bestDropped}/${bestTotal} lines names-only)`);
@@ -192,7 +180,7 @@ export async function runAgnesVisionIntake(
   if (lastErr && !routed) {
     const is429 = isRateLimited(lastErr);
     if (is429) {
-      console.warn(`[vision-intake] ${id}: all providers rate-limited (${chain.join('→')}) — writing empty intake so UI unsticks; flags stay set so the next edit or the 15-min intake-sweep retries`);
+      console.warn(`[vision-intake] ${id}: all providers rate-limited (${chain.map((l) => l.provider).join('→')}) — writing empty intake so UI unsticks; flags stay set so the next edit or the 15-min intake-sweep retries`);
       try {
         await cacheSet(`enquiry:intake:${id}`, { at: new Date().toISOString(), suggestions: [], missing: [], candidates: [] }, 7 * 24 * 60 * 60 * 1000);
         try {
@@ -370,9 +358,7 @@ export async function runAgnesVisionIntake(
               { role: 'system', content: `${LOOKUP_FALLBACK_SYSTEM}\nCatalogue (category NUMBER. Category: Item[aliases]; ...):\n${buildLookupList(liveCats, liveProducts)}` },
               { role: 'user', content: `Match each line:\n${input}` },
             ],
-            temperature: 0, json: true, maxTokens: 24000, provider: successProvider, model: resolveLegModel(successProvider, intakeModels), signal: ac2.signal as any,
-            agnesRelayOnly: true,
-            strictProvider: true,
+            temperature: 0, json: true, maxTokens: 24000, provider: successLeg.provider, ...(successLeg.model ? { model: successLeg.model } : {}), signal: ac2.signal as any,
             reasoningOff: true,
           });
       } finally { clearTimeout(t2); }
@@ -475,9 +461,7 @@ export async function runAgnesVisionIntake(
             { role: 'system', content: SPEC_CHECK_SYSTEM },
             { role: 'user', content: checksInput },
           ],
-          temperature: 0, json: true, maxTokens: 24000, provider: successProvider, model: resolveLegModel(successProvider, intakeModels), signal: ac3.signal as any,
-          agnesRelayOnly: true,
-          strictProvider: true,
+          temperature: 0, json: true, maxTokens: 24000, provider: successLeg.provider, ...(successLeg.model ? { model: successLeg.model } : {}), signal: ac3.signal as any,
           reasoningOff: true,
         });
       } finally { clearTimeout(t3); }
@@ -682,7 +666,7 @@ export async function runAgnesVisionIntake(
       ]);
     }
   } catch {}
-  console.log(`[vision-intake] ${id}: provider=${successProvider} items=${lines.length} dropped=${acceptedDropped} fields=${Object.keys(fields).join(',') || 'none'} fallbackChain=${chain.join('→')}`);
+  console.log(`[vision-intake] ${id}: provider=${successLeg.provider} items=${lines.length} dropped=${acceptedDropped} fields=${Object.keys(fields).join(',') || 'none'} fallbackChain=${chain.map((l) => l.provider).join('→')}`);
   // Returned for diagnostics (debug endpoint) — callers otherwise ignore it.
-  return { lines, provider: successProvider };
+  return { lines, provider: successLeg.provider };
 }

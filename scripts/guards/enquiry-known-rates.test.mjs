@@ -50,7 +50,7 @@ describe('backend: privileged read-only lookup', () => {
   it('misses route through the shared AI resolver (no second prompt/chain)', () => {
     assert.ok(resolver.includes('lookupDeterministic') && resolver.includes('lookupToken'), 'must reuse the intake deterministic tiers');
     assert.ok(resolver.includes('LOOKUP_FALLBACK_SYSTEM') && resolver.includes('buildLookupList'), 'must reuse the intake fallback prompt + catalogue list');
-    assert.ok(resolver.includes('resolveIntakeChain') && resolver.includes('resolveLegModel'), 'must reuse the intake provider order + leg models');
+    assert.ok(resolver.includes('resolveAiChain'), 'must reuse the single AI gateway chain');
     assert.ok(resolver.includes('RESOLVE_CONFIDENCE_MIN') && resolver.includes('0.65'), '0.65 confidence gate must be present');
     assert.ok(resolver.includes('cached') && resolver.includes('RESOLVE_TTL_MS'), 'resolves must be KV-cached per item text (no re-burn)');
     assert.ok(mod.includes('resolveCatalogueItem'), 'product-rates must delegate misses to the shared resolver');

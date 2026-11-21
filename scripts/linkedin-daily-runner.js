@@ -11,9 +11,9 @@
  * The old research→draft→edit pipeline (linkedin-research.js,
  * linkedin-visual.js, linkedin-format.js, linkedin-topics.js) was
  * DISCARDED as a generation path and deleted 2026-10-05 — nothing
- * imported them. Text via the unified AI gateway
- * (agnes-3.0-flash default); images via kie.ai GPT-Image-2.5 Flare
- * (scripts/kie-image.js, KIE_API_KEY), Agnes image lane as fallback.
+ * imported them. Text via the single AI gateway (Setting provider order);
+ * images via kie.ai GPT-Image-2.5 Flare
+ * (scripts/kie-image.js, KIE_API_KEY).
  * No auto-posting: the batch lands as status=draft for dashboard review.
  *
  * Env: WORKER_URL, SHARED_SECRET, AI_KEYS (or AGNES_API_KEY(S)).
@@ -24,7 +24,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { workerRequest, agnesText, agnesImage } = require('./runner-lib');
+const { workerRequest, aiText, aiImage } = require('./runner-lib');
 const { kieImage } = require('./kie-image');
 const { API } = require('../founder-os_backend/src/shared/sync-core/contract');
 
@@ -93,7 +93,7 @@ async function runIdea(idea) {
   console.log(`linkedin: [${idea.id}] write…`);
   let out;
   for (let attempt = 1; attempt <= 2; attempt++) {
-    const text = await agnesText(SYS,
+    const text = await aiText(SYS,
       ideaInput(idea) + (attempt > 1 ? '\n\nReply with ONE valid JSON object and NOTHING else.' : ''),
       { temperature: 0.7, maxTokens: 1500, sessionKey: `linkedin:${idea.id}` });
     try {
@@ -176,26 +176,16 @@ async function main() {
 
   // Images IN PARALLEL across the whole batch (settled individually so one
   // failure never sinks the text batch). kie.ai GPT-Image-2.5 when keyed;
-  // kie 401/402 (bad key / out of credits) falls back to Agnes per post.
+  // without KIE_API_KEY posts ship imageless (text batch continues).
   const useKie = !!process.env.KIE_API_KEY;
-  console.log(`linkedin: images ×${posts.length} (parallel, via ${useKie ? 'kie.ai gpt-image-2.5' : 'agnes fallback'})…`);
+  if (!useKie) console.log('linkedin: no KIE_API_KEY — posts will ship imageless');
+  console.log(`linkedin: images ×${posts.length} (parallel${useKie ? ', via kie.ai gpt-image-2.5' : ''})…`);
   await Promise.allSettled(posts.map(async (p) => {
-    if (!p.imagePrompt) return;
+    if (!p.imagePrompt || !useKie) return;
     try {
-      p.imageB64 = await (useKie ? kieImage(p.imagePrompt) : agnesImage(p.imagePrompt));
+      p.imageB64 = await aiImage(p.imagePrompt);
       console.log(`linkedin: [${p.topic}] image ok (${Math.round(p.imageB64.length / 1024)}KB b64)`);
     } catch (e) {
-      if (useKie) {
-        // Any kie failure (401/402/network) → Agnes fallback per post.
-        try {
-          p.imageB64 = await agnesImage(p.imagePrompt);
-          console.log(`linkedin: [${p.topic}] image ok via agnes fallback (${Math.round(p.imageB64.length / 1024)}KB b64)`);
-          return;
-        } catch (e2) {
-          console.warn(`linkedin: [${p.topic}] image failed incl. fallback: ${e2.message}`);
-          return;
-        }
-      }
       console.warn(`linkedin: [${p.topic}] image failed (text batch continues): ${e.message}`);
     }
   }));

@@ -1,7 +1,7 @@
 // chat.ts — per-enquiry sidebar copilot (edge-safe: fetch only, no Node deps).
 //
 // Sales department definition on the shared copilot engine (src/copilot):
-// the agentic loop (Agnes-primary, max 6 steps) is reused verbatim — this
+// the agentic loop (single AI gateway chain, max 6 steps) is reused verbatim — this
 // module owns ONLY the sales def glue (prompt + registration + turn wrappers).
 // Split (Phase-1): types → chat-types.ts · price session + spec helpers →
 // chat-prices.ts · tool schemas + read/propose impls + router → chat-tools.ts
@@ -127,7 +127,7 @@ export const salesCopilotDef: CopilotDef<SalesCtx> = {
   emptyHint: 'I can’t help with that — try asking about items, specs, missing details, or an AI price.',
 };
 
-/** Run one chat turn. Agnes-primary; returns a config notice without keys. */
+/** Run one chat turn. Returns a config notice without keys when unconfigured. */
 export async function chatTurn(
   env: Record<string, unknown>,
   store: EnquiryStore,

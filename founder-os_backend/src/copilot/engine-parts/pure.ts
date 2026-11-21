@@ -1,42 +1,16 @@
 // Extracted verbatim from engine.ts by scripts/refactor/split-module.mjs.
 // engine.ts re-exports everything public here, so existing imports keep working.
 import type { CopilotDef, CopilotProposal } from "../types";
-import { resolveChatModel, paidRouteParams } from "../../shared/intake-chain";
 import { ROOT_EMAIL } from "../../modules/auth/types";
 
 export const MAX_STEPS = 6;
 
 export const COUNT_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
-// Chat primary (2026-10-06 paid lane → 2026-10-13 Agnes-first): the chain in
-// shared/intake-chain.ts serves agnes-3.0-flash via the GH relay lane ONLY,
-// with the paid OpenRouter lane (deepseek/deepseek-v4.1-flash,
-// streamlake/fp8 preferred, OpenRouter fallback allowed) as fallback.
-// Direct Cloudflare egress is never attempted for Agnes (WAF-blocked).
-// A fully-exhausted chain answers "busy" instead of guessing from a
-// hallucinating fallback model.
+// Chat turns walk the single AI gateway chain (Setting `ai:providers` order,
+// global `ai:strategy`) with the same sticky sessionKey. A dead leg fails
+// over to the next; a fully-exhausted chain answers "busy".
 export const BUSY_REPLY = 'The AI is busy (rate-limited) — please retry in a minute.';
-
-/** Legacy single-provider pin (kept exported for compat — the loop now walks
- *  resolveChatChain instead). Paid-only keys; free-tier keys never serve chat. */
-export const CHAT_PROVIDER = 'openrouter-paid';
-
-/** Paid-leg routing is root-controlled (`chat:paid_route` + mode) via
- *  paidRouteParams() — empty route reproduces the compiled StreamLake/FP8
- *  default. Passed explicitly so the intent stays visible at the call site. */
-/** Per-leg request params for one chat step: Agnes legs run relay-only with
- *  brief thinking (THINK_BRIEF parity at minimal token cost); the paid leg
- *  keeps the existing routing params. Every leg is strictly pinned with the
- *  same sticky sessionKey — no mid-chat key hopping. */
-export function chatLegParams(leg: string, def: CopilotDef<any>, env: any, models?: { agnesModel?: string; openrouterModel?: string; paidRoute?: string; paidRouteMode?: string }) {
-  return {
-    provider: leg,
-    model: resolveChatModel(def, env, leg, models),
-    extraParams: leg === 'openrouter-paid' ? paidRouteParams(models?.paidRoute ?? '', models?.paidRouteMode) : undefined,
-    strictProvider: true,
-    ...(leg === 'agnes' ? { agnesRelayOnly: true, reasoningEffort: 'low' as const } : {}),
-  };
-}
 
 // Reasoning models burn completion tokens on chain-of-thought (reasoning
 // counts against max_tokens) — big blobs think for thousands of tokens

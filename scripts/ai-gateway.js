@@ -6,32 +6,23 @@
  * exactly so both runtimes share one key-management contract:
  *
  * Key sources (single contract, both runtimes):
- *   env.AGNES_API_KEY / env.AGNES_API_KEYS = Agnes keys (primary, sk-...)
+ *   env.AI_KEYS = "provider:key:label,..." (explicit provider prefixes;
+ *     provider auto-detected when omitted: gsk_→groq, sk-or-*→openrouter)
  *   env.GROQ_API_KEYS = Groq keys (NEVER loaded — founder rule, same gate as TS)
  *   env.OPENROUTER_API_KEYS / env.OPENROUTER_API_KEY = OpenRouter keys
- *   env.OPENROUTER_PAID_API_KEY = paid-lane keys (provider `openrouter-paid`)
+ *   env.OPENROUTER_PAID_API_KEY = paid keys (provider `openrouter-paid`)
  *   env.REQUESTLY_API_KEY(S) = Requestly keys
- *   env.AI_KEYS = "provider:key:label,..." (e.g. "agnes:sk-...:primary";
- *     provider auto-detected when omitted: gsk_→groq, sk-or-*→openrouter,
- *     else agnes — same detectProvider as TS)
- * Agnes primary via https://apihub.agnes-ai.com/v1 (agnes-3.0-flash, 512K;
- * 2.5-flash is the automatic fallback),
- * reasoning via chat_template_kwargs.enable_thinking (mapped from reasoningEffort;
- * reasoningOff suppresses it — canonical TS flag, `noReasoning` kept as alias).
- * Rotation: one fresh key per attempt (bounded, ≤5) — plain Agnes 429 cools
- * that key and rotates; Cloudflare 1015 cools briefly and also rotates. Optional
- * req.sessionKey pins a conversation to one key via consistent hashing
- * (cache affinity, no mid-chat hopping); one-shots spread randomly.
- * req.strictProvider fails fast on pinned-provider exhaustion (mirror of TS
- * strictProvider — never a silent cross-provider fallback).
+ * reasoning via reasoning_effort / reasoning objects per provider
+ * (reasoningOff suppresses it). Rotation: one fresh key per attempt
+ * (bounded, ≤5) — per-key 429 cools (escalating) and rotates; Cloudflare
+ * 1015 cools briefly and also rotates. Optional req.sessionKey pins a
+ * conversation to one key via consistent hashing (cache affinity, no
+ * mid-chat hopping); one-shots spread randomly.
  * req.timeoutMs caps the whole call (runner batch semantic — no first-token
  * probe like the worker path).
  * Deliberate divergences from TS (runner batch design, not drift): no
  * stream(), no KV response cache (in-process model flags only), direct egress
- * only (no relay lanes — GH relay remains Worker-side).
- * Home-egress (home tunnel) DISABLED 2026-09-22 — GH relay
- * (agnes-relay.yml / agnes-relay-bak.yml) remains for Worker only; runner
- * is direct egress (no proxy).
+ * only.
  */
 
 // ── Provider registry (mirror of TS) ─────────────────────────────────────────
@@ -42,14 +33,6 @@ const OPENROUTER_VISION_MODEL = 'dots-studio/dots-3-note-preview:free';
  *  spills forward instead of failing. */
 const PAID_CHAT_ROUTING = { provider: { order: ['streamlake/fp8', 'deepinfra/fp8'], allow_fallbacks: true } };
 const PROVIDERS = {
-  agnes: {
-    id: 'agnes',
-    baseURL: 'https://apihub.agnes-ai.com/v1/chat/completions',
-    supportsReasoning: true,
-    jsonMode: { type: 'json_object' },
-    defaultModel: 'agnes-3.0-flash',
-    visionModel: 'agnes-3.0-flash',
-  },
   groq: {
     id: 'groq',
     baseURL: 'https://api.groq.com/openai/v1/chat/completions',
@@ -77,11 +60,9 @@ const PROVIDERS = {
     defaultModel: 'nvidia/nemotron-3-ultra-550b-a55b',
     visionModel: 'nvidia/nemotron-3-ultra-550b-a55b',
   },
-  // Paid OpenRouter lane (mirror of TS `openrouter-paid`): same endpoint as
-  // `openrouter`, but keys come only from OPENROUTER_PAID_API_KEY (callers pin
-  // provider 'openrouter-paid' so free-tier keys can never serve the turn).
-  // Without this entry, `openrouter-paid:` AI_KEYS entries fell through to
-  // the groq baseURL with an OpenRouter key (auth failure).
+  // Paid OpenRouter lane: same endpoint as `openrouter`, keys from
+  // OPENROUTER_PAID_API_KEY. Without this entry, `openrouter-paid:` AI_KEYS
+  // entries would fall through to the wrong baseURL (auth failure).
   'openrouter-paid': {
     id: 'openrouter-paid',
     baseURL: 'https://openrouter.ai/api/v1/chat/completions',
@@ -150,7 +131,7 @@ function buildVisionUserContent(text, imageUrls, maxImages) {
 // ── Model fallback ───────────────────────────────────────────────────────────
 // Advanced model first, safe model on hang (mirror of TS contract). Runners
 // are short-lived, so the outage flag lives in-process instead of KV.
-const FALLBACK_MODEL = { 'agnes-3.0-flash': 'agnes-2.5-flash' };
+const FALLBACK_MODEL = {};
 const MODEL_DOWN_TTL_MS = 10 * 60 * 1000;
 const modelDown = new Map();
 function modelFlagged(m) {
@@ -178,20 +159,50 @@ function hashAI(s) {
 }
 
 // detectProvider: infer provider from key prefix when an AI_KEYS entry omits
-// the explicit provider (mirror of TS). ORDER MATTERS: `sk-or-*` starts with
-// `sk-` — check OpenRouter first or those keys misclassify as Agnes (wrong
-// baseURL → auth failure on every call).
+// the explicit provider (mirror of TS).
 function detectProvider(key) {
   const k = String(key || '').trim();
   if (k.startsWith('gsk_')) return 'groq';
   if (k.startsWith('sk-or-') || k.startsWith('sk-or-v1-')) return 'openrouter';
-  return 'agnes';
+  return 'openrouter';
 }
 
 // ── Key pool ─────────────────────────────────────────────────────────────────
 class KeyPool {
   constructor() {
     this.keys = [];
+    this.strategy = 'least-used-first';
+    this.rrCursor = 0;
+  }
+
+  /** Global selection strategy (Setting `ai:strategy`). TS parity. */
+  setStrategy(s) {
+    this.strategy = s === 'round-robin' ? 'round-robin' : 'least-used-first';
+  }
+
+  getStrategy() { return this.strategy; }
+
+  /** Register a Setting-defined OpenAI-compatible provider + its keys. TS parity. */
+  registerProvider(id, baseURL, model, keys) {
+    const pid = String(id ?? '').trim();
+    const url = String(baseURL ?? '').trim().replace(/\/+$/, '');
+    if (!pid || !url) return;
+    if (!PROVIDERS[pid]) {
+      PROVIDERS[pid] = {
+        id: pid,
+        baseURL: url + '/chat/completions',
+        supportsReasoning: false,
+        reasoningObject: true,
+        defaultModel: String(model || '').trim() || 'default',
+      };
+    }
+    const seen = new Set(this.keys.map((k) => k.key));
+    for (const k of keys ?? []) {
+      const kv = String((k && k.key) ?? '').trim();
+      if (!kv || seen.has(kv)) continue;
+      seen.add(kv);
+      this.keys.push(this.makeKey(pid, kv, String((k && k.label) ?? '').trim() || undefined));
+    }
   }
 
   loadFromEnv(env) {
@@ -210,8 +221,6 @@ class KeyPool {
     };
 
     // Key sources: AGNES_API_KEY(S) (primary) + GROQ etc (fallback). AI_KEYS "provider:key:label" honored too.
-    for (const key of raw(env && env.AGNES_API_KEY).split(',')) add('agnes', key);
-    for (const key of raw(env && env.AGNES_API_KEYS).split(',')) add('agnes', key);
     for (const key of raw(env && env.GROQ_API_KEYS).split(',')) add('groq', key);
     for (const key of raw(env && env.OPENROUTER_API_KEYS).split(',')) add('openrouter', key);
     for (const key of raw(env && env.OPENROUTER_API_KEY).split(',')) add('openrouter', key);
@@ -264,19 +273,14 @@ class KeyPool {
    *  - `sessionKey` set → consistent-hash pin: same conversation lands on the
    *    same key while healthy (cache affinity; no mid-chat hopping). A
    *    cooled/failed pin drops out and traffic shifts automatically.
-   *  - `sessionKey` absent → uniform random pick inside the least-failures
-   *    tier: statistical load-spreading, no coordination needed.
-   *  - `strictPin` (mirror of TS strictProvider): a pinned provider with zero
-   *    healthy keys returns null instead of silently rolling a random
-   *    cross-provider key — exhaustion must fail over explicitly, never serve
-   *    a weak model disguised as the pinned provider.
+   *  - Otherwise the global strategy applies (least-used-first random spread
+   *    or round-robin cycle) inside the least-failures tier.
    */
-  select(provider, sessionKey, strictPin = false) {
+  select(provider, sessionKey) {
     const now = Date.now();
     let pool = this.keys.filter((k) => k.enabled && k.cooldownUntil <= now);
     if (provider) {
       const f = pool.filter((k) => k.provider === provider);
-      if (strictPin && f.length === 0) return null;
       if (f.length > 0) pool = f;
     }
     if (pool.length === 0) return null;
@@ -286,6 +290,10 @@ class KeyPool {
     if (sessionKey) {
       const start = parseInt(hashAI(`sess:${sessionKey}`), 36) % tier.length;
       return tier[start];
+    }
+    if (this.strategy === 'round-robin') {
+      const idx = this.rrCursor++ % tier.length;
+      return tier[idx];
     }
     return tier.length === 1 ? tier[0] : tier[Math.floor(Math.random() * tier.length)];
   }
@@ -418,7 +426,6 @@ class AiGateway {
   }
 
   async complete(req) {
-    if (!req.provider && req.model && req.model.startsWith('agnes-')) req = { ...req, provider: 'agnes' };
     // Standardized: fail fast on 429, no 50× hammer. Heavy app queues at caller.
     const MIN_ATTEMPTS = 3;
     const ROTATE_EVERY = 5;
@@ -435,11 +442,9 @@ class AiGateway {
       fellBack = true;
     }
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      // strictProvider (mirror of TS): pinned-provider exhaustion fails fast
-      // (null) instead of serving a cross-provider fallback.
       const key = req.keyId
-        ? (this.pool.keys.find((k) => k.id === req.keyId) || this.pool.select(req.provider, req.sessionKey, req.strictProvider))
-        : this.pool.select(req.provider, req.sessionKey, req.strictProvider);
+        ? (this.pool.keys.find((k) => k.id === req.keyId) || this.pool.select(req.provider, req.sessionKey))
+        : this.pool.select(req.provider, req.sessionKey);
       if (!key) {
         const waitMs = this.pool.earliestCooldownMs();
         const retryAfter = waitMs > 0 ? Math.min(waitMs, 60000) : 60000;
@@ -467,36 +472,24 @@ class AiGateway {
         }
         const status = this.pool.extractStatus(err);
         if (status === 429) {
-          if (provider.id === 'agnes') {
-            const msg = String((err && err.message) || '');
-            const isCf1015 = /1015|error code: 1015/i.test(msg);
-            if (isCf1015) {
-              const retryAfter = err && err.retryAfter;
-              const rawCd = typeof retryAfter === 'number' ? retryAfter : 72000;
-              const cd = Math.min(rawCd, 60000);
-              key.cooldownUntil = Date.now() + cd;
-              key.failures++;
-              key.lastFailureAt = Date.now();
-              key.lastError = `429 Cloudflare 1015`;
-              console.warn(`[AiGateway] 429 Cloudflare 1015 on ${key.id} — cooling ${Math.round(cd/1000)}s (raw ${Math.round(rawCd/1000)}s), rotating to next key (attempt ${attempt + 1}/${maxAttempts})`);
-              if (attempt >= maxAttempts - 1) {
-                const e2 = new Error(`HTTP 429: Rate-limited (Cloudflare 1015, retry after ${Math.round(cd/1000)}s)`);
-                e2.status = 429; e2.retryAfter = cd; throw e2;
-              }
-              continue;
-            }
+          const msg = String((err && err.message) || '');
+          const isCf1015 = /1015|error code: 1015/i.test(msg);
+          if (isCf1015) {
             const retryAfter = err && err.retryAfter;
-            const rawCd = typeof retryAfter === 'number' ? retryAfter : 60000;
+            const rawCd = typeof retryAfter === 'number' ? retryAfter : 72000;
+            const cd = Math.min(rawCd, 60000);
+            key.cooldownUntil = Date.now() + cd;
             key.failures++;
             key.lastFailureAt = Date.now();
-            // Escalate while the key keeps failing (60s→120s→240s→480s, cap
-            // 10min) so chronic-429 keys stop burning seconds on every rejoin.
-            const cd = Math.min(rawCd, 60000 * Math.pow(2, Math.min(key.failures - 1, 3)), 600000);
-            key.cooldownUntil = Date.now() + cd;
-            key.lastError = `429 rate-limited`;
-            console.warn(`[AiGateway] 429 on ${key.id} (agnes) — cooling ${Math.round(cd/1000)}s, rotating to next key (attempt ${attempt + 1}/${maxAttempts})`);
+            key.lastError = `429 Cloudflare 1015`;
+            console.warn(`[AiGateway] 429 Cloudflare 1015 on ${key.id} — cooling ${Math.round(cd/1000)}s (raw ${Math.round(rawCd/1000)}s), rotating to next key (attempt ${attempt + 1}/${maxAttempts})`);
+            if (attempt >= maxAttempts - 1) {
+              const e2 = new Error(`HTTP 429: Rate-limited (Cloudflare 1015, retry after ${Math.round(cd/1000)}s)`);
+              e2.status = 429; e2.retryAfter = cd; throw e2;
+            }
             continue;
           }
+          // Per-key quota: escalating cooldown + rotate to the next key.
           streak429++;
           if (
             !req.model && !wantsVision && provider.id === 'openrouter' &&
@@ -506,20 +499,24 @@ class AiGateway {
             rotatedModel = this.openrouterModels[this.modelIdx];
             console.warn(`[AiGateway] 429 streak x${streak429} — rotating OpenRouter model to ${rotatedModel}`);
           }
+          const retryAfter = err && err.retryAfter;
+          const rawCd = typeof retryAfter === 'number' ? retryAfter : 60000;
           key.failures++;
           key.lastFailureAt = Date.now();
-          key.cooldownUntil = 0;
-          key.lastError = `429 retry ${attempt + 1}/${maxAttempts}${rotatedModel ? ` (${rotatedModel})` : ''}`;
+          // Escalate while the key keeps failing (60s→120s→240s→480s, cap
+          // 10min) so chronic-429 keys stop burning seconds on every rejoin.
+          const cd = Math.min(rawCd, 60000 * Math.pow(2, Math.min(key.failures - 1, 3)), 600000);
+          key.cooldownUntil = Date.now() + cd;
+          key.lastError = `429 rate-limited`;
+          console.warn(`[AiGateway] 429 on ${key.id} — cooling ${Math.round(cd/1000)}s, rotating to next key (attempt ${attempt + 1}/${maxAttempts})`);
           if (attempt < maxAttempts - 1) {
-            const ra = err && err.retryAfter;
-            const backoff = Math.min(typeof ra === 'number' ? ra : 800 * Math.pow(2, attempt), 5000);
+            const backoff = Math.min(typeof retryAfter === 'number' ? retryAfter : 800 * Math.pow(2, attempt), 5000);
             console.warn(`[AiGateway] 429 on ${key.id}, retry ${attempt + 1}/${maxAttempts} after ${backoff}ms`);
             await sleep(backoff);
             continue;
           }
-          const ra2 = err && err.retryAfter;
-          const e4 = new Error(`HTTP 429: Rate-limited (retry after ${Math.round((typeof ra2 === 'number' ? ra2 : 60000)/1000)}s)`);
-          e4.status = 429; e4.retryAfter = typeof ra2 === 'number' ? ra2 : 60000;
+          const e4 = new Error(`HTTP 429: Rate-limited (retry after ${Math.round((typeof retryAfter === 'number' ? retryAfter : 60000)/1000)}s)`);
+          e4.status = 429; e4.retryAfter = typeof retryAfter === 'number' ? retryAfter : 60000;
           throw e4;
         }
         const cooldown = this.pool.reportFailure(key, err, err && err.retryAfter);
@@ -564,8 +561,7 @@ class AiGateway {
     if (req.json && provider.jsonMode) body.response_format = provider.jsonMode;
     // reasoningOff is canonical (TS); noReasoning kept as a legacy alias.
     const thinkingOff = req.reasoningOff || req.noReasoning;
-    if (provider.id === 'agnes' && req.reasoningEffort && !thinkingOff) body.chat_template_kwargs = { enable_thinking: true };
-    else if (provider.reasoningObject && !thinkingOff) body.reasoning = { enabled: true };
+    if (provider.reasoningObject && !thinkingOff) body.reasoning = { enabled: true };
     else if (provider.supportsReasoning && req.reasoningEffort && !thinkingOff) body.reasoning_effort = req.reasoningEffort;
 
     const res = await fetch(provider.baseURL, {
@@ -607,55 +603,6 @@ class AiGateway {
     const secs = Number(v);
     return Number.isFinite(secs) ? secs * 1000 : undefined;
   }
-
-  // ── Image generation (Agnes images endpoint, same key pool) ──────────────
-  // Text models can't paint — agnes-3.0-flash writes the words; the EXPLAINER
-  // visual comes from the images endpoint with the SAME agnes keys (rotation
-  // + cooldown semantics mirror complete(): 429 cools the key and rotates).
-  // Returns { b64, url } (whichever the provider supplies first).
-  async generateImage({ prompt, size = '1024x1024', model = 'agnes-image-2.5-flash', sessionKey = '' } = {}) {
-    const maxAttempts = Math.max(2, Math.min(this.pool.size || 2, 4));
-    let lastErr = null;
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const key = this.pool.select('agnes', sessionKey);
-      if (!key) throw new Error('All AI keys exhausted (no healthy agnes key for image generation)');
-      const endpoint = 'https://apihub.agnes-ai.com/v1/images/generations';
-      try {
-        const res = await fetch(endpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${key.key}`,
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          },
-          body: JSON.stringify({ model, prompt, n: 1, size }),
-          signal: AbortSignal.timeout(180000),
-        });
-        if (res.status === 429) {
-          key.failures++;
-          key.lastFailureAt = Date.now();
-          key.cooldownUntil = Date.now() + 60000;
-          key.lastError = '429 image rate-limited';
-          console.warn(`[AiGateway] 429 on ${key.id} (image) — cooling 60s, rotating (attempt ${attempt + 1}/${maxAttempts})`);
-          continue;
-        }
-        if (!res.ok) {
-          const t = await res.text().catch(() => '');
-          throw new Error(`HTTP ${res.status}: ${t.slice(0, 200)}`);
-        }
-        const data = await res.json();
-        const item = (data && data.data && data.data[0]) || {};
-        this.pool.reportSuccess(key);
-        return { b64: item.b64_json || null, url: item.url || null };
-      } catch (err) {
-        lastErr = err;
-        if (/429/.test(String((err && err.message) || ''))) continue;
-        this.pool.reportFailure(key, err, 0);
-        console.warn(`[AiGateway] image attempt ${attempt + 1}/${maxAttempts} failed on ${key.id}: ${err && err.message ? err.message : err}`);
-      }
-    }
-    throw new Error(`Image generation failed after ${maxAttempts} attempts: ${lastErr?.message || lastErr}`);
-  }
 }
 
 let _gateway = null;
@@ -668,38 +615,35 @@ function getGateway(env) {
   return _gateway;
 }
 
-// resolveIntakeChain(env, forceProvider?, opts?) — JS mirror of
-// founder-os_backend/src/shared/intake-chain.ts (same order, same pin
-// semantics): primary pool first (`opts.primary` or INTAKE_PRIMARY_PROVIDER
-// env, default Agnes), the other leg as fallback. Free leg dropped for
-// intake determinism (free-model variance caused names-only content drops).
-// GH runners have clean egress so both legs run direct.
+// resolveAiChain(env, forceProvider?) — JS mirror of
+// founder-os_backend/src/shared/intake-chain.ts: every healthy pool key is a
+// leg, Setting order first (pool order here). forceProvider pins one leg.
 function resolveIntakeChain(env, forceProvider, opts) {
+  void opts;
   let health = [];
   try { health = getGateway(env).health(); } catch { return []; }
-  const has = (p) => health.some((h) => h && h.provider === p);
-  if (forceProvider) return has(forceProvider) ? [forceProvider] : [];
-  const legs = ['agnes', 'openrouter-paid'];
-  const want = (opts && opts.primary) || ((env && env.INTAKE_PRIMARY_PROVIDER) || '').trim();
-  const first = legs.includes(want) ? want : legs[0];
-  return [first, ...legs.filter((l) => l !== first)].filter((l) => has(l));
+  const now = Date.now();
+  const usable = health.filter((h) => h && h.provider && h.enabled !== false && (h.cooldownUntil || 0) <= now)
+    .map((h) => String(h.provider));
+  if (usable.length === 0) return [];
+  if (forceProvider) return usable.includes(String(forceProvider)) ? [String(forceProvider)] : [];
+  return [...new Set(usable)].sort();
 }
 
-// completeJsonChain(gateway, req, chain) — one JSON turn across the intake
-// chain: tries each leg pinned (strictProvider — never a silent cross-provider
-// substitution), first success wins. Throws the last leg's error when every
-// leg fails so callers keep their existing retry/result handling.
+// completeJsonChain(gateway, req, chain) — one JSON turn across the chain:
+// first success wins. Throws the last leg's error when every leg fails so
+// callers keep their existing retry/result handling.
 async function completeJsonChain(gateway, req, chain) {
   let lastErr = null;
   for (const provider of (Array.isArray(chain) ? chain : [])) {
     try {
-      return await gateway.completeJson({ ...req, provider, strictProvider: true });
+      return await gateway.completeJson({ ...req, provider });
     } catch (e) {
       lastErr = e;
-      console.warn(`[AiGateway] intake leg=${provider} failed (${String((e && e.message) || e).slice(0, 120)}) — trying next leg`);
+      console.warn(`[AiGateway] leg=${provider} failed (${String((e && e.message) || e).slice(0, 120)}) — trying next leg`);
     }
   }
-  throw lastErr || new Error('empty intake chain');
+  throw lastErr || new Error('empty chain');
 }
 
 module.exports = {

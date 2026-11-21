@@ -28,8 +28,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { bootstrapEnv, refreshNeodoveReport, neodoveTodayIst, type Bindings } from './context';
 import { getTelecallingDashboardData } from '../automations/telecalling/service';
-import { cacheGet, cacheSet, cacheDel } from '../shared/cache';
-import { RELAY_ACTIVE_KEY, RELAY_ACTIVE_KEY_BAK, RELAY_TTL_MS, RELAY_COOLDOWN_KEY, RELAY_COOLDOWN_MS, RELAY_POISONED_KEY, RELAY_POISONED_KEY_BAK, RELAY_POISONED_TTL_MS } from '../shared/ai-gateway';
 
 const GITHUB_REPO = 'striversahil/ai_pa';
 const GITHUB_REF = 'main';
@@ -195,7 +193,7 @@ async function sweepStuckIntake(env: Bindings): Promise<void> {
     }
     if (todo.length === 0) return;
     const { createEnquiryStore } = await import('../modules/enquiries/store');
-    const { runAgnesVisionIntake } = await import('../modules/enquiries/vision-intake');
+    const { runVisionIntake } = await import('../modules/enquiries/vision-intake');
     const store = createEnquiryStore(env as any);
     let ran = 0;
     let checked = 0;
@@ -217,7 +215,7 @@ async function sweepStuckIntake(env: Bindings): Promise<void> {
       } catch { continue; }
       ran++;
       try {
-        await runAgnesVisionIntake(env as any, store, r.id);
+        await runVisionIntake(env as any, store, r.id);
         console.log(`[cron] intake-sweep ${r.id}: attempted`);
       } catch (e: any) {
         console.error(`[cron] intake-sweep ${r.id} failed: ${String(e?.message ?? e).slice(0, 160)}`);
@@ -404,80 +402,6 @@ async function runScheduled(event: { cron?: string; scheduledTime?: number }, en
   }
   if (runs.length > 0) {
     ctx.waitUntil(Promise.all(runs));
-  }
-
-  // Egress-blockage storm → on-demand GH relay lanes (primary + hot-standby
-  // backup). copilot engine sets ai:storm:chat (120s TTL) on throttles; each relay
-  // run registers its own ai:relay:active[:bak] flag and heartbeats it.
-  // Cooldown prevents dispatch flapping; relay TTLs bound cost (~6h/run max).
-  // Best-effort — never fails the tick.
-  ctx.waitUntil((async () => {
-    try {
-      const LANES = [
-        { name: 'primary', poisonedKey: RELAY_POISONED_KEY, activeKey: RELAY_ACTIVE_KEY, workflow: 'agnes-relay.yml' },
-        { name: 'bak', poisonedKey: RELAY_POISONED_KEY_BAK, activeKey: RELAY_ACTIVE_KEY_BAK, workflow: 'agnes-relay-bak.yml' },
-      ];
-      // 1. Poisoned lane: a 1015 arrived THROUGH that lane's own egress.
-      //    Cancel the poisoned run, clear its flag, dispatch a fresh one
-      //    (new runner ≈ new IP). Cooldown stops replace-loops when Azure
-      //    itself is widely throttled — then we sit on direct + BUSY.
-      for (const lane of LANES) {
-        const poisoned = await cacheGet(lane.poisonedKey, RELAY_POISONED_TTL_MS);
-        if (!poisoned) continue;
-        await cacheDel(lane.poisonedKey);
-        if (await cacheGet(RELAY_COOLDOWN_KEY, RELAY_COOLDOWN_MS)) continue;
-        const active: any = await cacheGet(lane.activeKey, RELAY_TTL_MS);
-        const runId = String(active?.runId ?? '');
-        if (runId) await cancelGitHubRun(runId, token);
-        await cacheDel(lane.activeKey);
-        await cacheSet(RELAY_COOLDOWN_KEY, { at: Date.now() }, RELAY_COOLDOWN_MS);
-        await dispatchGitHubWorkflow(lane.workflow, token, { duration_min: '330' });
-        console.log(`[cron] relay lane ${lane.name} poisoned (run ${runId || 'unknown'}) → replaced`);
-      }
-      // 2. Storm with a lane down: (re)dispatch whatever is missing so the
-      //    backup boots alongside primary — failover stays per-attempt.
-      const storm = await cacheGet('ai:storm:chat', 120_000);
-      if (!storm) return;
-      const primaryAlive = await cacheGet(RELAY_ACTIVE_KEY, RELAY_TTL_MS);
-      const bakAlive = await cacheGet(RELAY_ACTIVE_KEY_BAK, RELAY_TTL_MS);
-      if (primaryAlive && bakAlive) return;
-      if (await cacheGet(RELAY_COOLDOWN_KEY, RELAY_COOLDOWN_MS)) return;
-      await cacheSet(RELAY_COOLDOWN_KEY, { at: Date.now() }, RELAY_COOLDOWN_MS);
-      if (!primaryAlive) await dispatchGitHubWorkflow('agnes-relay.yml', token, { duration_min: '330' });
-      if (!bakAlive) await dispatchGitHubWorkflow('agnes-relay-bak.yml', token, { duration_min: '330' });
-      console.log('[cron] 1015 storm → dispatched relay lanes');
-    } catch (e: any) {
-      console.error('[cron] relay auto-dispatch failed:', e?.message);
-    }
-  })());
-
-  // Relay keepalive (AGNES_RELAY_KEEPALIVE=1): both lanes live 24/7 with
-  // rolling ~3h restarts. Redispatch a lane when its flag is missing or its
-  // run expires within 15 min — the new run boots (~3 min) and registers
-  // BEFORE the old run exits, so a lane is never dark. runId CAS in the
-  // register endpoint makes the overlap safe; the pending marker covers the
-  // boot window so ticks don't stack dispatches.
-  if (String((env as any)?.AGNES_RELAY_KEEPALIVE ?? '').trim() === '1') {
-    ctx.waitUntil((async () => {
-      try {
-        const LANES = [
-          { name: 'primary', activeKey: RELAY_ACTIVE_KEY, workflow: 'agnes-relay.yml' },
-          { name: 'bak', activeKey: RELAY_ACTIVE_KEY_BAK, workflow: 'agnes-relay-bak.yml' },
-        ];
-        for (const lane of LANES) {
-          const flag: any = await cacheGet(lane.activeKey, RELAY_TTL_MS);
-          const exp = Number(flag?.expiresAt ?? 0);
-          const alive = !!flag && exp > Date.now();
-          if (alive && exp - Date.now() > 15 * 60_000) continue;
-          if (await cacheGet(`ai:relay:pending:${lane.name}`, 20 * 60_000)) continue;
-          await cacheSet(`ai:relay:pending:${lane.name}`, { at: Date.now() }, 20 * 60_000);
-          await dispatchGitHubWorkflow(lane.workflow, token, { duration_min: '180' });
-          console.log(`[cron] relay keepalive → dispatched ${lane.workflow} (${!flag ? 'missing' : 'rolling restart'})`);
-        }
-      } catch (e: any) {
-        console.error('[cron] relay keepalive failed:', e?.message);
-      }
-    })());
   }
 }
 

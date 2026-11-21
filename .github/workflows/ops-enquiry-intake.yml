@@ -16,7 +16,7 @@ on:
 
 jobs:
   enquiry-intake:
-    if: false # DISABLED: intake now Worker-native via Agnes vision (src/modules/enquiries/vision-intake.ts), no GH Action — fast edge (<5s)
+    if: false # DISABLED: intake now Worker-native via vision intake (src/modules/enquiries/vision-intake.ts), no GH Action — fast edge (<5s)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

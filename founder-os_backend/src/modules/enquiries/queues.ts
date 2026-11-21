@@ -281,6 +281,11 @@ export function isManagementHistoryEnquiry(e: Pick<Enquiry, "items" | "rateStatu
     if (sent || (zs && zs !== 'draft')) return true;
   }
   if (items.length === 0) return false;
+  // Open spec flags hold a draft row out of History: sales still owes fixes
+  // (Pending from Sales), even when every non-held item is already decided.
+  // Sent / Zoho-terminal rows returned above — concluded estimates never
+  // reopen on stale flags.
+  if (items.some((it: any) => openItemLoops(it, 'spec').length > 0)) return false;
   const relevant = items.filter((it: any) => openItemLoops(it, 'spec').length === 0 && openItemLoops(it, 'not_available').length === 0);
   if (relevant.length === 0) return false;
   // Every non-held item must be accounted for — either rate-available / not-available or

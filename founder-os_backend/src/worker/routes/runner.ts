@@ -9,47 +9,9 @@ import { deps, requireSecret, notifyLive, broadcastLive, LiveEvent, createEnquir
 import { prisma } from '../../shared/prisma';
 import { logger } from '../../shared/logger';
 import { cacheGet, cacheSet, cacheDel } from '../../shared/cache';
-import { RELAY_ACTIVE_KEY, RELAY_ACTIVE_KEY_BAK, RELAY_TTL_MS } from '../../shared/ai-gateway';
 import { readBody } from '../http';
 
 export function registerRunnerRoutes(app: Hono<{ Bindings: Bindings }>): void {
-  // ── agnes-relay lane (on-demand GH egress for Agnes 1015 storms) ──────────
-  // The relay run registers itself here on boot and heartbeats; the gateway
-  // routes Agnes traffic via AGNES_PROXY_URL only while this KV flag is
-  // fresh. TTL-bounded, so a killed run stops attracting traffic on its own.
-  app.post('/api/runner/relay/register', async (c) => {
-    if (!requireSecret(c)) return c.text('Unauthorized', 401);
-    const body = await readBody(c);
-    const lane = String(body?.lane ?? 'primary') === 'bak' ? 'bak' : 'primary';
-    const key = lane === 'bak' ? RELAY_ACTIVE_KEY_BAK : RELAY_ACTIVE_KEY;
-    const runId = String(body?.runId ?? '');
-    const now = Date.now();
-    // runId-aware compare-and-set: during rolling restarts two runs of one
-    // lane briefly overlap — the old run must neither steal the flag back
-    // nor deregister under the live new run.
-    const cur: any = await cacheGet(key, RELAY_TTL_MS).catch(() => null);
-    if (body?.active === false) {
-      if (cur && cur.runId && runId && cur.runId !== runId) {
-        return c.json({ ok: true, active: false, lane, cleared: false, reason: 'not-owner' });
-      }
-      await cacheDel(key);
-      return c.json({ ok: true, active: false, lane, cleared: true });
-    }
-    const durationMin = Math.max(10, Math.min(Number(body?.durationMin ?? 180), 350));
-    if (cur && cur.runId && runId && cur.runId !== runId) {
-      // Superseded: a newer run already owns this lane — old run exits early.
-      return c.json({ ok: false, active: true, lane, reason: 'superseded', owner: String(cur.runId).slice(0, 8) }, 409);
-    }
-    const startedAt = Number(cur?.startedAt) > 0 && cur?.runId === runId ? Number(cur.startedAt) : now;
-    const ttlSec = Math.max(60, Math.min(Number(body?.ttlSec ?? RELAY_TTL_MS / 1000), RELAY_TTL_MS / 1000));
-    const expiresAt = startedAt + durationMin * 60_000;
-    try {
-      await cacheSet(key, { at: new Date().toISOString(), runId, lane, startedAt, expiresAt }, ttlSec * 1000);
-    } catch (e: any) {
-      return c.json({ ok: false, error: String(e?.message ?? e).slice(0, 200) }, 500);
-    }
-    return c.json({ ok: true, active: true, lane, ttlSec, startedAt, expiresAt });
-  });
   // ── whatsapp-digest runner ───────────────────────────────────────────────────
   app.get('/api/runner/messages/unprocessed', async (c) => {
     if (!requireSecret(c)) return c.text('Unauthorized', 401);

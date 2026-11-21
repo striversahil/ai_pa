@@ -1,7 +1,8 @@
 # Copilot engine (shared agentic loop)
 
 One loop reused verbatim by every department copilot (sales enquiries,
-product-line knowledge, product-line intake): Agnes-only, max 6 tool steps
+product-line knowledge, product-line intake): single AI gateway chain, max 6
+tool steps
 per turn, max 25 human turns per chat (the 26th message is refused with
 "Limit reached (25 chats) — open a new chat to continue"; new chat resets it),
 return data (departments add proposals; writes happen only via confirmed

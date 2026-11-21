@@ -4,7 +4,7 @@
 // (see gateway-pool.test.mjs for the TS side). Codegen was rejected (CF-only
 // branches would ride along); instead this test locks the SHARED semantics on
 // both implementations: provider detection, groq exclusion, sticky pin,
-// strict fail-fast, 429 escalation, 401 disable, 10-min forgiveness.
+// strategy rotation, 429 escalation, 401 disable, 10-min forgiveness.
 // A behavior added to one side without the other fails here.
 //
 // Run: `node --test "scripts/guards/*.test.mjs"`
@@ -19,8 +19,8 @@ const require = createRequire(import.meta.url);
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const { KeyPool } = require(join(ROOT, 'scripts', 'ai-gateway.js'));
 
-const AGNES_A = 'sk-agnes-key-aaaa-0001';
-const AGNES_B = 'sk-agnes-key-bbbb-0002';
+const FREE_A = 'sk-free-key-aaaa-0001';
+const FREE_B = 'sk-free-key-bbbb-0002';
 const OPENROUTER_A = 'sk-or-v1-openrouter-key-0003';
 
 function poolWith(env) {
@@ -32,25 +32,24 @@ function poolWith(env) {
 describe('gateway-js-parity', () => {
   it('detects providers (gsk_/sk-or-*/sk-) and never loads groq', () => {
     const p = poolWith({
-      AI_KEYS: `agnes:${AGNES_A}:primary,groq:gsk_drop_me,:${OPENROUTER_A}:auto,openrouter-paid:sk-or-paid-key-0004:paid`,
+      AI_KEYS: `free1:${FREE_A}:primary,groq:gsk_drop_me,:${OPENROUTER_A}:auto,openrouter-paid:sk-or-paid-key-0004:paid`,
       GROQ_API_KEYS: 'gsk_legacy_drop_me',
     });
     const byProvider = {};
     for (const k of p.health()) byProvider[k.provider] = (byProvider[k.provider] || 0) + 1;
-    assert.deepEqual(byProvider, { agnes: 1, openrouter: 1, 'openrouter-paid': 1 });
+    assert.deepEqual(byProvider, { free1: 1, openrouter: 1, 'openrouter-paid': 1 });
   });
 
-  it('pins sessionKey deterministically and fails fast on strictPin exhaustion', () => {
-    const p = poolWith({ AI_KEYS: `agnes:${AGNES_A}:a,agnes:${AGNES_B}:b` });
-    const first = p.select('agnes', 'enquiry:chat:123:user@x');
-    assert.equal(p.select('agnes', 'enquiry:chat:123:user@x').id, first.id);
+  it('pins sessionKey deterministically; unknown provider degrades across pool', () => {
+    const p = poolWith({ AI_KEYS: `free1:${FREE_A}:a,free1:${FREE_B}:b` });
+    const first = p.select('free1', 'enquiry:chat:123:user@x');
+    assert.equal(p.select('free1', 'enquiry:chat:123:user@x').id, first.id);
     const or = poolWith({ OPENROUTER_API_KEYS: OPENROUTER_A });
-    assert.equal(or.select('agnes', undefined, true), null);
-    assert.equal(or.select('agnes').provider, 'openrouter');
+    assert.equal(or.select('free1').provider, 'openrouter');
   });
 
   it('disables on 401, escalates 429 cooldowns (120s→240s), rotates', () => {
-    const p = poolWith({ AI_KEYS: `agnes:${AGNES_A}:a,agnes:${AGNES_B}:b` });
+    const p = poolWith({ AI_KEYS: `free1:${FREE_A}:a,free1:${FREE_B}:b` });
     const k = p.select();
     assert.equal(p.reportFailure(k, Object.assign(new Error('HTTP 401'), { status: 401 })), 0);
     assert.equal(k.enabled, false);
@@ -62,7 +61,7 @@ describe('gateway-js-parity', () => {
   });
 
   it('forgives >10min-old failures and resets on success', () => {
-    const p = poolWith({ AI_KEYS: `agnes:${AGNES_A}:a,agnes:${AGNES_B}:b` });
+    const p = poolWith({ AI_KEYS: `free1:${FREE_A}:a,free1:${FREE_B}:b` });
     p.keys[0].failures = 3;
     p.keys[0].lastFailureAt = Date.now() - 11 * 60 * 1000;
     p.keys[1].failures = 1;
@@ -74,7 +73,7 @@ describe('gateway-js-parity', () => {
   });
 
   it('skips cooling/disabled keys and tracks earliestCooldownMs', () => {
-    const p = poolWith({ AI_KEYS: `agnes:${AGNES_A}:a,agnes:${AGNES_B}:b` });
+    const p = poolWith({ AI_KEYS: `free1:${FREE_A}:a,free1:${FREE_B}:b` });
     p.keys[0].cooldownUntil = Date.now() + 60000;
     p.keys[1].enabled = false;
     assert.equal(p.select(), null);

@@ -5,8 +5,7 @@
  * extraction prompt + response shaping; the gateway owns the wire call.
  */
 import { getGateway } from '../../shared/ai-gateway';
-import { resolveIntakeChain, resolveLegModel } from '../../shared/intake-chain';
-import { getAppSetting } from '../../shared/app-settings';
+import { resolveAiChain } from '../../shared/intake-chain';
 
 export interface RedactedComment {
   id: string;
@@ -43,9 +42,9 @@ export interface EnquiryAgentRef {
   name: string;
 }
 
-/** Intake provider order lives in shared/intake-chain.ts: Agnes-pool first,
- *  paid DeepSeek lane (deepseek-v4.1-flash) fallback only — direct Worker, no
- *  GH Actions. With no key at all it skips (returns null). */
+/** Intake provider order lives in shared/intake-chain.ts: single AI gateway
+ * chain (Setting `ai:providers` order), walked leg by leg until one serves.
+ * Direct Worker, no GH Actions. With no key at all it skips (returns null). */
 
 /** AI line-item splitting is KEPT but OFF: sales agents enter items manually
  *  in the modal (Add Item + per-item documents), so the enrichment must never
@@ -236,15 +235,13 @@ export async function extractEnquiryFieldsRobust(
     return null;
   }
   try {
-    const intakePrimary = await getAppSetting('intake:primary_provider').catch(() => 'agnes');
-    const intakeOpenrouterModel = await getAppSetting('intake:openrouter_model').catch(() => '');
-    const chain = resolveIntakeChain(env, undefined, { primary: intakePrimary });
+    const chain = await resolveAiChain(env);
     if (chain.length === 0) {
-      console.warn('[extract] no Agnes/paid key configured — skipping extraction');
+      console.warn('[extract] no AI provider configured — skipping extraction');
       return null;
     }
     let parsed: any = null;
-    for (const provider of chain) {
+    for (const leg of chain) {
       try {
         parsed = await gateway.completeJson<any>({
           messages: [
@@ -252,8 +249,8 @@ export async function extractEnquiryFieldsRobust(
             { role: 'user', content: buildPrompt(input) },
           ],
           temperature: 0,
-          provider,
-          model: resolveLegModel(provider, { openrouterModel: intakeOpenrouterModel }),
+          provider: leg.provider,
+          ...(leg.model ? { model: leg.model } : {}),
           json: true,
           // Field extraction needs no chain-of-thought — thinking tokens are
           // billed output with zero UI use on this path.
@@ -261,7 +258,7 @@ export async function extractEnquiryFieldsRobust(
         });
         break;
       } catch (e) {
-        console.warn(`[extract] provider=${provider} failed (${String((e as any)?.message ?? e).slice(0, 120)}) — trying next leg`);
+        console.warn(`[extract] provider=${leg.provider} failed (${String((e as any)?.message ?? e).slice(0, 120)}) — trying next leg`);
       }
     }
     if (!parsed) {

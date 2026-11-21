@@ -2,8 +2,7 @@
 // Model: gpt-image-2-5-flare-text-to-image (pure text input — no source
 // image needed; the flare IMAGE-TO-IMAGE sibling requires input_urls and
 // is for restyling existing photos, a different mode).
-// kieImage(prompt) → base64 PNG (no data-URI prefix), same shape as
-// agnesImage() in runner-lib.js so callers can swap. Key via KIE_API_KEY.
+// kieImage(prompt) → base64 PNG (no data-URI prefix). Key via KIE_API_KEY.
 
 'use strict';
 

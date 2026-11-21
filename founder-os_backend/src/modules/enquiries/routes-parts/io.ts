@@ -328,9 +328,9 @@ export async function enquiryAddRequirement(store: EnquiryStore, me: MeResponse,
     spec: text.slice(0, 2000),
     media: parseItemMedia(mediaSrc),
     rates: [],
-    // Flagged aiPending so the Worker-native vision intake (kickAgnesIntake,
-    // relay lanes) splits this text into catalogue lines exactly like the
-    // detail-view "Add via AI" flow (see applyIntakeBulkResult).
+    // Flagged aiPending so the Worker-native vision intake splits this text
+    // into catalogue lines exactly like the detail-view "Add via AI" flow
+    // (see applyIntakeBulkResult).
     aiPending: true,
   };
   const patch: any = { items: [...((existing as any).items || []), newItem] };

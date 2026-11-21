@@ -1,7 +1,7 @@
 // test-gateway-pool.mjs — Guard 3: AI gateway KeyPool unit tests.
 //
 // Locks the documented pool contract (AGENTS.md): groq never loaded,
-// placeholders ignored, sticky sessionKey pin, strict-pin fail-fast,
+// placeholders ignored, sticky sessionKey pin, strategy rotation,
 // 429-cool + rotate (escalating), 401-disable, 10-min failure forgiveness.
 // Pure in-memory behavior — no keys, no network, no Cloudflare.
 //
@@ -53,8 +53,8 @@ after(() => {
   try { rmSync(bundleDir, { recursive: true, force: true }); } catch {}
 });
 
-const AGNES_A = 'sk-agnes-key-aaaa-0001';
-const AGNES_B = 'sk-agnes-key-bbbb-0002';
+const FREE_A = 'sk-free-key-aaaa-0001';
+const FREE_B = 'sk-free-key-bbbb-0002';
 const OPENROUTER_A = 'sk-or-v1-openrouter-key-0003';
 
 function poolWith(env) {
@@ -66,15 +66,15 @@ function poolWith(env) {
 describe('gateway-pool', () => {
   it('loads AI_KEYS + legacy vars, never groq, ignores placeholders, dedupes reloads', () => {
     const p = poolWith({
-      AI_KEYS: `agnes:${AGNES_A}:primary,groq:gsk_should_be_dropped,openrouter:${OPENROUTER_A}`,
+      AI_KEYS: `free1:${FREE_A}:primary,groq:gsk_should_be_dropped,openrouter:${OPENROUTER_A}`,
       GROQ_API_KEYS: 'gsk_legacy_drop_me',
-      AGNES_API_KEYS: `${AGNES_B},your_api_key_here,${AGNES_A}`,
+      REQUESTLY_API_KEYS: `${FREE_B},your_api_key_here,${FREE_A}`,
     });
     const providers = p.health().map((k) => k.provider).sort();
-    assert.deepEqual(providers, ['agnes', 'agnes', 'openrouter']);
+    assert.deepEqual(providers, ['free1', 'openrouter', 'requestly']);
     assert.ok(p.health().every((k) => k.enabled && k.failures === 0 && k.cooldownUntil === 0));
     const n = p.health().length;
-    p.loadFromEnv({ AI_KEYS: `agnes:${AGNES_A}:primary` });
+    p.loadFromEnv({ AI_KEYS: `free1:${FREE_A}:primary` });
     assert.equal(p.health().length, n, 'reload duplicated keys');
   });
 
@@ -83,21 +83,20 @@ describe('gateway-pool', () => {
   });
 
   it('pins a sessionKey deterministically (no mid-chat hopping)', () => {
-    const p = poolWith({ AI_KEYS: `agnes:${AGNES_A}:a,agnes:${AGNES_B}:b` });
-    const first = p.select('agnes', 'enquiry:chat:123:user@x');
-    const second = p.select('agnes', 'enquiry:chat:123:user@x');
+    const p = poolWith({ AI_KEYS: `free1:${FREE_A}:a,free1:${FREE_B}:b` });
+    const first = p.select('free1', 'enquiry:chat:123:user@x');
+    const second = p.select('free1', 'enquiry:chat:123:user@x');
     assert.ok(first && second && first.id === second.id);
   });
 
-  it('strictPin fails fast when the pinned provider has no healthy key', () => {
+  it('unknown provider degrades across the pool (no strict pin)', () => {
     const p = poolWith({ OPENROUTER_API_KEYS: OPENROUTER_A });
-    assert.equal(p.select('agnes', undefined, true), null);
-    const loose = p.select('agnes');
-    assert.ok(loose && loose.provider === 'openrouter', 'loose pin should degrade across pool');
+    const loose = p.select('free1');
+    assert.ok(loose && loose.provider === 'openrouter', 'unknown provider should degrade across pool');
   });
 
   it('skips cooling and disabled keys', () => {
-    const p = poolWith({ AI_KEYS: `agnes:${AGNES_A}:a,agnes:${AGNES_B}:b` });
+    const p = poolWith({ AI_KEYS: `free1:${FREE_A}:a,free1:${FREE_B}:b` });
     // NOTE: health() returns copies — mutate the live keys array directly.
     // (TS `private` is compile-time only.)
     p.keys[0].cooldownUntil = Date.now() + 60_000;
@@ -108,7 +107,7 @@ describe('gateway-pool', () => {
   });
 
   it('disables keys on 401 (no rotation for dead credentials)', () => {
-    const p = poolWith({ AI_KEYS: `agnes:${AGNES_A}:a` });
+    const p = poolWith({ AI_KEYS: `free1:${FREE_A}:a` });
     const k = p.select();
     const cd = p.reportFailure(k, Object.assign(new Error('HTTP 401: bad key'), { status: 401 }));
     assert.equal(cd, 0);
@@ -117,7 +116,7 @@ describe('gateway-pool', () => {
   });
 
   it('cools 429 keys with escalation (120s → 240s) and rotates', () => {
-    const p = poolWith({ AI_KEYS: `agnes:${AGNES_A}:a,agnes:${AGNES_B}:b` });
+    const p = poolWith({ AI_KEYS: `free1:${FREE_A}:a,free1:${FREE_B}:b` });
     const k = p.select();
     const cd1 = p.reportFailure(k, Object.assign(new Error('HTTP 429: slow down'), { status: 429 }));
     assert.equal(cd1, 120_000, 'failures=1 → 60s × 2^1');
@@ -131,7 +130,7 @@ describe('gateway-pool', () => {
   });
 
   it('cools quota/5xx/network failures without disabling', () => {
-    const p = poolWith({ AI_KEYS: `agnes:${AGNES_A}:a` });
+    const p = poolWith({ AI_KEYS: `free1:${FREE_A}:a` });
     const k = p.select();
     assert.equal(p.reportFailure(k, Object.assign(new Error('HTTP 402: quota'), { status: 402 })), 300_000);
     assert.equal(k.enabled, true);
@@ -142,7 +141,7 @@ describe('gateway-pool', () => {
   });
 
   it('forgives failures older than 10 minutes (transient 429s rejoin)', () => {
-    const p = poolWith({ AI_KEYS: `agnes:${AGNES_A}:a,agnes:${AGNES_B}:b` });
+    const p = poolWith({ AI_KEYS: `free1:${FREE_A}:a,free1:${FREE_B}:b` });
     const [ka, kb] = p.keys; // live refs — health() returns copies
     ka.failures = 3;
     ka.lastFailureAt = Date.now() - 11 * 60_000;
@@ -153,7 +152,7 @@ describe('gateway-pool', () => {
   });
 
   it('reportSuccess resets failures and earliestCooldownMs tracks the pool', () => {
-    const p = poolWith({ AI_KEYS: `agnes:${AGNES_A}:a` });
+    const p = poolWith({ AI_KEYS: `free1:${FREE_A}:a` });
     const k = p.select();
     p.reportFailure(k, Object.assign(new Error('HTTP 429'), { status: 429 }));
     assert.ok(p.earliestCooldownMs() > 0);
