@@ -7,14 +7,15 @@
 // so the panel never shows a stale lifecycle.
 import { useCallback, useState } from "react";
 import { useLiveDashboard } from "@/hooks/useLiveData";
-import { crmApi, type ListResponse, type ScheduleItemInput, type SummaryResponse } from "./api";
+import { usePagedQuery } from "@/hooks/usePagedQuery";
+import { crmApi, ORDERS_URL, type ListResponse, type ScheduleItemInput, type SummaryResponse } from "./api";
 import type { CrmOrder, View } from "./types";
 
-export function useCrmOrders(view: View, q: string, region = "") {
-  return useLiveDashboard<ListResponse>(
-    () => crmApi.list(view, q, region),
-    { events: ["crm"], deps: [view, q, region], pollMs: 180_000 },
-  );
+/** One tab of orders, 50 per page with a server total + search over every
+ *  order; live writes show the "N new changes" banner (never reload under
+ *  the user). Counters stay live via useCrmSummary. */
+export function useCrmOrders(view: View, region = "") {
+  return usePagedQuery<CrmOrder, ListResponse>(ORDERS_URL, { events: ["crm"], filters: { view, region } });
 }
 
 export function useCrmSummary(region = "") {

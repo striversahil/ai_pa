@@ -1,7 +1,8 @@
 // list-paging.test.mjs — founder paging standard (2026-11-21): page numbers,
 // 50 rows (max 100), whole-table server search, COUNT totals, change banner.
 // Locks the shared helpers (BE shared/paging.ts ↔ FE lib/paging.ts) and the
-// product-line rollout (no capped whole-table rate slice may come back).
+// product-line, Customer Master and Dispatch rollouts (no capped whole-table
+// slice may come back; today's dispatches stay unpaged).
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -73,6 +74,35 @@ describe('customer master is paged server-side', () => {
     assert.ok(view.includes('usePagedQuery') && !/getMasterData\b/.test(view), 'view pages via the shared hook');
     assert.ok(!/applyFilters|sortRows|summarizeRows|buildFilterOptions/.test(view + tab), 'no client-side filtering of the book');
     assert.ok(svc.includes('invalidateMasterSummaries'), 'writes must bust the cached summaries');
+  });
+});
+
+describe('dispatch tabs are paged; today\'s dispatches stay complete', () => {
+  const io = read(join(BE_SRC, 'modules', 'crm', 'store-parts', 'io.ts'));
+  const page = read(join(BE_SRC, 'modules', 'crm', 'list-page.ts'));
+  const route = read(join(BE_SRC, 'worker', 'routes', 'crm.ts'));
+  const hooks = read(join(FRONTEND_SRC, 'crm', 'hooks.ts'));
+  const floor = read(join(FRONTEND_SRC, 'components', 'CrmDashboard.tsx'));
+  const sales = read(join(FRONTEND_SRC, 'components', 'SalesDispatchPanel.tsx'));
+
+  it('floor scan is uncapped and shared by list + summary', () => {
+    assert.ok(!/crmSalesOrder\.findMany\(\{[^}]*take:\s*\d+\s*\}\)\)\s*as any\[\];\s*const bySo/.test(io), 'no capped floor scan');
+    assert.equal((io.match(/cachedFloorRows\(scanFloor\)/g) || []).length, 2, 'list + summary share scanFloor');
+  });
+
+  it('list route pages via the shared helper; dispatch-floor is never paged', () => {
+    const at = route.indexOf("app.get('/api/crm/orders'");
+    assert.ok(at >= 0 && route.slice(at, at + 500).includes('listOrdersPaged') && route.slice(at, at + 500).includes('parsePageQuery'));
+    assert.ok(/UNPAGED_VIEWS[^=]*=\s*new Set<View>\(\['dispatch-floor'\]\)/.test(page), 'today\'s dispatches + overdue stay complete');
+    assert.ok(page.includes('pageResult') && page.includes('withProofDocs'), 'proof docs only for the returned page');
+  });
+
+  it('both dispatch screens use the shared hook, pager and change banner', () => {
+    assert.ok(hooks.includes('usePagedQuery<CrmOrder, ListResponse>(ORDERS_URL'), 'useCrmOrders = usePagedQuery');
+    for (const [name, src] of [['CrmDashboard', floor], ['SalesDispatchPanel', sales]]) {
+      assert.ok(src.includes('<Pager') && src.includes('<ChangesBanner'), `${name} renders Pager + ChangesBanner`);
+      assert.ok(!/list\.data\?\.orders|useDebouncedValue/.test(src), `${name} has no whole-list read`);
+    }
   });
 });
 

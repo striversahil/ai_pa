@@ -31,8 +31,8 @@ import {
 import OrderPanel, { type PanelMode } from "@/crm/OrderPanel";
 import { MemoOrderCard } from "@/crm/OrderCard";
 import { istToday, useCrmOrders, useCrmSummary } from "@/crm/hooks";
-import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import type { CrmOrder, View } from "@/crm/types";
+import { ChangesBanner, Pager } from "@/components/ui";
 
 
 
@@ -49,15 +49,14 @@ const TABS: Array<{ key: View; label: string; icon: LucideIcon }> = [
 export default function CrmDashboard() {
   const today = istToday();
   const [view, setView] = useState<View>("dispatch-floor");
-  const [q, setQ] = useState("");
   const [panel, setPanel] = useState<{ order: CrmOrder; mode: PanelMode } | null>(null);
 
-  // Server-side search — debounce so typing fires one scan, not one per keystroke.
-  const debouncedQ = useDebouncedValue(q);
-  const list = useCrmOrders(view, debouncedQ);
+  // 50 per page + server search over every order (Today's Dispatches is
+  // never paged — the server returns all of it on page 1).
+  const list = useCrmOrders(view);
   const summary = useCrmSummary();
 
-  const orders = list.data?.orders ?? [];
+  const orders = list.rows;
   const counts = summary.data?.counts;
 
   const badges = useMemo<Record<View, number>>(
@@ -100,7 +99,7 @@ export default function CrmDashboard() {
             Live · {today}
           </div>
           <button
-            onClick={list.refresh}
+            onClick={() => { list.refresh(); summary.refresh(); }}
             className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-600 shadow-sm hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300 dark:hover:bg-zinc-800"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${list.loading ? "animate-spin" : ""}`} />
@@ -145,8 +144,8 @@ export default function CrmDashboard() {
         <div className="relative">
           <Search className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-zinc-400" />
           <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
+            value={list.q}
+            onChange={(e) => list.setQ(e.target.value)}
             placeholder="SO number, customer, salesperson…"
             className="w-64 rounded-lg border border-zinc-200 bg-white py-1.5 pl-8 pr-3 text-xs outline-none focus:border-indigo-500 dark:border-zinc-800 dark:bg-zinc-900/60"
           />
@@ -154,9 +153,11 @@ export default function CrmDashboard() {
       </div>
       {!!list.error && (
         <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-700 dark:text-rose-300">
-          Could not load the floor: {String((list.error as any)?.message || list.error)}
+          Could not load the floor: {list.error instanceof Error ? list.error.message : String(list.error)}
         </div>
       )}
+
+      <ChangesBanner count={list.changes} onRefresh={list.refresh} />
 
       {list.loading && orders.length === 0 && <SkeletonList />}
 
@@ -177,6 +178,10 @@ export default function CrmDashboard() {
           <MemoOrderCard key={order.id} order={order} today={today} view={view} onOpen={openPanel} />
         ))}
       </div>
+
+      {list.total > 0 && (
+        <Pager page={list.page} limit={list.limit} total={list.total} totalPages={list.totalPages} onPage={list.setPage} noun="orders" />
+      )}
 
       {panel && (
         <OrderPanel

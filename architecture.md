@@ -870,8 +870,12 @@ events out to every component via an in-process event bus — no per-dashboard s
   Customer Master (`/api/master-data/customers` paged + filtered + sorted in SQL, `/summary`
   KV-cached COUNT/GROUP BY for region tabs, KPI tiles and filter options — busted by every
   master write via `invalidateMasterSummaries`, `/duplicates` per region for the review tab
-  (12 groups/page), `/export` = all filtered rows for CSV; the old whole-book payload is gone).
-  Next Dispatch → Enquiries history → rest. Guard `list-paging`.
+  (12 groups/page), `/export` = all filtered rows for CSV; the old whole-book payload is gone);
+  Dispatch (`GET /api/crm/orders` → `modules/crm/list-page.ts#listOrdersPaged`: tab predicates
+  read per-item state, so they filter the ONE cached floor scan in memory — the scan is now
+  uncapped (`scanFloor`, shared with `dispatchSummary`), so search + totals cover every order;
+  proof-doc chips load for the returned page only; "dispatch-floor" = today's dispatches +
+  overdue returns everything on page 1). Next Enquiries history → rest. Guard `list-paging`.
 - Backend `src/live.ts` defines `LiveEvent` (canonical type names) and `broadcastLive(c, type,
   extra?)`, which `notifyLive` now delegates to. **Every data-write path calls `broadcastLive`**:
   runner writes (`/api/runner/digests`, `tasks`, `pending-items`, `messages/mark-processed`,

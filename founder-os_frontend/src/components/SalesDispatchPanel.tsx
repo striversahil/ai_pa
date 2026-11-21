@@ -27,11 +27,10 @@ import {
 import OrderPanel, { type PanelMode } from "@/crm/OrderPanel";
 import { MemoSalesOrderCard } from "@/crm/SalesOrderCard";
 import { istToday, useCrmOrders, useCrmSummary } from "@/crm/hooks";
-import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import type { CrmOrder, SalesBucket } from "@/crm/types";
 import { REGIONS } from "@/telecalling/regions";
-import { TabBar } from "@/components/ui";
-import { BTN, CARD, LABEL, NUM, PILL } from "@/components/telecalling/surface";
+import { ChangesBanner, Pager, TabBar } from "@/components/ui";
+import { BTN, CARD, LABEL, PILL } from "@/components/telecalling/surface";
 
 
 
@@ -41,19 +40,17 @@ export default function SalesDispatchPanel() {
   const today = istToday();
   const [bucket, setBucket] = useState<SalesBucket>("incomplete");
   const [region, setRegion] = useState("");
-  const [q, setQ] = useState("");
   const [panel, setPanel] = useState<{ order: CrmOrder; mode: PanelMode } | null>(null);
 
-  // Server-side search — debounce so typing fires one scan, not one per keystroke.
-  const debouncedQ = useDebouncedValue(q);
-  const list = useCrmOrders(bucket, debouncedQ, region);
+  // 50 per page; search runs on the server over every order in scope.
+  const list = useCrmOrders(bucket, region);
   const summary = useCrmSummary(region);
 
   const viewer = list.data?.viewer ?? summary.data?.viewer;
   const isManager = !!viewer?.isManager;
   const canPromise = !!viewer?.canPromise;
   const counts = summary.data?.counts;
-  const orders = list.data?.orders ?? [];
+  const orders = list.rows;
   const regionCounts = counts?.regions ?? {};
 
   const chips = useMemo<Array<{ key: string; label: string; count: number }>>(() => {
@@ -159,8 +156,8 @@ export default function SalesDispatchPanel() {
         <div className="relative">
           <Search className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-[var(--text-tertiary)]" />
           <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
+            value={list.q}
+            onChange={(e) => list.setQ(e.target.value)}
             placeholder="SO number, customer, EST no…"
             className="w-64 rounded-lg border border-[var(--border-card)] bg-[var(--bg-input)] py-1.5 pl-8 pr-3 text-xs text-[var(--text-primary)] outline-none focus:border-indigo-500"
           />
@@ -172,9 +169,11 @@ export default function SalesDispatchPanel() {
 
       {!!list.error && (
         <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-700 dark:text-rose-300">
-          Could not load dispatch: {String((list.error as any)?.message || list.error)}
+          Could not load dispatch: {list.error instanceof Error ? list.error.message : String(list.error)}
         </div>
       )}
+
+      <ChangesBanner count={list.changes} onRefresh={list.refresh} />
 
       {list.loading && orders.length === 0 && (
         <div className="space-y-2.5">
@@ -212,6 +211,10 @@ export default function SalesDispatchPanel() {
           />
         ))}
       </div>
+
+      {list.total > 0 && (
+        <Pager page={list.page} limit={list.limit} total={list.total} totalPages={list.totalPages} onPage={list.setPage} noun="orders" />
+      )}
 
       {panel && (
         <OrderPanel

@@ -27,7 +27,9 @@ export interface UsePagedQueryOptions {
 /** What a paged list component receives as a prop. */
 export type PagedQuery<T> = ReturnType<typeof usePagedQuery<T>>;
 
-export function usePagedQuery<T>(base: string, opts: UsePagedQueryOptions) {
+/** `R` = the full response when the endpoint adds fields beside the page
+ *  (e.g. dispatch's `viewer`); read them from `data`. */
+export function usePagedQuery<T, R extends Paged<T> = Paged<T>>(base: string, opts: UsePagedQueryOptions) {
   const { events, filters = {}, limit = PAGE_SIZE, enabled = true } = opts;
   const [page, setPage] = useState(1);
   const [q, setQ] = useState("");
@@ -49,8 +51,8 @@ export function usePagedQuery<T>(base: string, opts: UsePagedQueryOptions) {
   }
 
   const url = pagedUrl(base, { ...filters, page, limit, q: debouncedQ });
-  const query = useLiveQuery<Paged<T> | null>(
-    () => (enabled ? api.get<Paged<T>>(url) : Promise.resolve(null)),
+  const query = useLiveQuery<R | null>(
+    () => (enabled ? api.get<R>(url) : Promise.resolve(null)),
     { events: () => false, deps: [url, enabled] },
   );
 
@@ -69,6 +71,7 @@ export function usePagedQuery<T>(base: string, opts: UsePagedQueryOptions) {
 
   const data = query.data;
   return {
+    data: data ?? null,
     rows: data?.rows ?? [],
     total: data?.total ?? 0,
     totalPages: data?.totalPages ?? 1,
