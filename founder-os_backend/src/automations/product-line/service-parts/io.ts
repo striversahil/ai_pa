@@ -3,21 +3,28 @@
 import type { ProductLineData, GuideRow, ProductRow, RateRow, VendorRow, ProductDetail } from "../types";
 import { cached, cacheDel } from "../../../shared/cache";
 import { prisma } from "../../../shared/prisma";
-import { DATA_KEY, DATA_TTL_MS, parseCondition, parseAliases, parseAttrValues, parseMissingSpecs, INDEX_KEY, INDEX_TTL_MS, RATES_TTL_MS, VENDORS_KEY, VENDORS_TTL_MS, DETAIL_TTL_MS } from "./pure";
+import { getD1Database } from "../../../shared/prisma-d1";
+import { DATA_KEY, DATA_TTL_MS, parseCondition, parseAliases, toRateRow, INDEX_KEY, INDEX_TTL_MS, RATES_TTL_MS, VENDORS_KEY, VENDORS_TTL_MS, DETAIL_TTL_MS } from "./pure";
 import type { ProductIndexRow, VendorIndexRow } from "./types";
 
-/** Dashboard payload — full catalogue + guide + vendors + latest rates. */
+/** Dashboard payload — catalogue + guide + vendors + COUNTED rate totals.
+ *  Rates themselves are NOT in this payload: the Rates tab pages them via
+ *  `GET /api/product-line/rates` (listRatesPaged). Counts/best prices come
+ *  from GROUP BY over the whole table, so they stay exact at any size. */
 export async function getProductLineData(): Promise<ProductLineData> {
   return cached(DATA_KEY, DATA_TTL_MS, async () => {
-    const [products, guideRows, vendors, rates] = await Promise.all([
+    const db = getD1Database();
+    const [products, guideRows, vendors, byProduct, byVendor, totalRow] = await Promise.all([
       (prisma as any).productItem.findMany({ orderBy: [{ category: 'asc' }, { name: 'asc' }] }),
       (prisma as any).kypGuide.findMany({ orderBy: [{ productId: 'asc' }, { sortOrder: 'asc' }] }),
       (prisma as any).vendor.findMany({ orderBy: [{ name: 'asc' }] }),
-      // take 2000: the rates tab must show EVERYTHING (a 300-cap silently
-      // dropped older prices once the book passed 300 rows). ~10K rows is
-      // the KV/CPU ceiling — past that, paginate this payload per the note
-      // below instead of raising further.
-      (prisma as any).vendorRate.findMany({ orderBy: [{ quotedAt: 'desc' }], take: 2000 }),
+      db.prepare(
+        `SELECT productId, COUNT(*) AS n,
+                MIN(CASE WHEN active = 1 AND pricePerUnit IS NOT NULL THEN pricePerUnit END) AS best
+           FROM VendorRate WHERE productId IS NOT NULL GROUP BY productId`,
+      ).all(),
+      db.prepare(`SELECT vendorId, COUNT(*) AS n FROM VendorRate GROUP BY vendorId`).all(),
+      db.prepare(`SELECT COUNT(*) AS n FROM VendorRate`).first(),
     ]);
     const guideCount = new Map<string, number>();
     const guide: Record<string, GuideRow[]> = {};
@@ -37,56 +44,23 @@ export async function getProductLineData(): Promise<ProductLineData> {
       });
     }
     const rateCountByProduct = new Map<string, number>();
+    const bestByProduct = new Map<string, number>();
+    for (const r of ((byProduct as any)?.results ?? []) as any[]) {
+      rateCountByProduct.set(String(r.productId), Number(r.n) || 0);
+      if (r.best != null) bestByProduct.set(String(r.productId), Number(r.best));
+    }
     const rateCountByVendor = new Map<string, number>();
-    const vendorName = new Map<string, string>();
-    for (const v of (vendors as any[]) ?? []) vendorName.set(String(v.id), String(v.name ?? ''));
-    const vendorType = new Map<string, string>();
-    for (const v of (vendors as any[]) ?? []) vendorType.set(String(v.id), String((v as any).vendorType ?? ''));
-    const productName = new Map<string, string>();
-    const rows: ProductRow[] = ((products as any[]) ?? []).map((p) => {
-      productName.set(String(p.id), String(p.name ?? ''));
-      return {
-        id: String(p.id),
-        category: String(p.category ?? ''),
-        name: String(p.name ?? ''),
-        aliases: parseAliases(p.aliases),
-        active: p.active !== false && p.active !== 0,
-        guideCount: guideCount.get(String(p.id)) ?? 0,
-        rateCount: 0,
-      };
-    });
-    const rateRows: RateRow[] = ((rates as any[]) ?? []).map((r) => {
-      const pid = r.productId != null ? String(r.productId) : null;
-      if (pid) rateCountByProduct.set(pid, (rateCountByProduct.get(pid) ?? 0) + 1);
-      rateCountByVendor.set(String(r.vendorId), (rateCountByVendor.get(String(r.vendorId)) ?? 0) + 1);
-      return {
-        id: String(r.id),
-        vendorId: String(r.vendorId),
-        vendorName: vendorName.get(String(r.vendorId)) ?? null,
-        vendorType: vendorType.get(String(r.vendorId)) ?? null,
-        productId: pid,
-        productName: pid ? (productName.get(pid) ?? null) : null,
-        attrKey: String(r.attrKey ?? ''),
-        attrValues: parseAttrValues(r.attrValues),
-        pricePerUnit: r.pricePerUnit != null ? Number(r.pricePerUnit) : null,
-        unit: String(r.unit ?? ''),
-        discountPercent: r.discountPercent != null ? Number(r.discountPercent) : null,
-        baseRate: r.baseRate != null ? Number(r.baseRate) : null,
-        weightPerUnit: r.weightPerUnit != null ? Number(r.weightPerUnit) : null,
-        packageQty: r.packageQty != null ? String(r.packageQty) : null,
-        packageDims: r.packageDims != null ? String(r.packageDims) : null,
-        moq: r.moq != null ? String(r.moq) : null,
-        deliveryDays: r.deliveryDays != null ? Number(r.deliveryDays) : null,
-        imageUrl: r.imageUrl ? String(r.imageUrl) : null,
-        videoUrl: r.videoUrl ? String(r.videoUrl) : null,
-        quotedAt: String(r.quotedAt ?? ''),
-        enquiryRef: r.enquiryRef != null ? String(r.enquiryRef) : null,
-        notes: (r as any).notes ? String((r as any).notes) : null,
-        missingSpecs: parseMissingSpecs((r as any).missingSpecs),
-        active: r.active !== false && r.active !== 0,
-      };
-    });
-    for (const p of rows) p.rateCount = rateCountByProduct.get(p.id) ?? 0;
+    for (const r of ((byVendor as any)?.results ?? []) as any[]) rateCountByVendor.set(String(r.vendorId), Number(r.n) || 0);
+    const rows: ProductRow[] = ((products as any[]) ?? []).map((p) => ({
+      id: String(p.id),
+      category: String(p.category ?? ''),
+      name: String(p.name ?? ''),
+      aliases: parseAliases(p.aliases),
+      active: p.active !== false && p.active !== 0,
+      guideCount: guideCount.get(String(p.id)) ?? 0,
+      rateCount: rateCountByProduct.get(String(p.id)) ?? 0,
+      bestPrice: bestByProduct.get(String(p.id)) ?? null,
+    }));
     const vendorRows: VendorRow[] = ((vendors as any[]) ?? []).map((v) => ({
       id: String(v.id),
       name: String(v.name ?? ''),
@@ -100,7 +74,7 @@ export async function getProductLineData(): Promise<ProductLineData> {
       active: v.active !== false && v.active !== 0,
       rateCount: rateCountByVendor.get(String(v.id)) ?? 0,
     }));
-    return { products: rows, guide, vendors: vendorRows, rates: rateRows };
+    return { products: rows, guide, vendors: vendorRows, rateTotal: Number((totalRow as any)?.n ?? 0) };
   });
 }
 
@@ -144,31 +118,11 @@ export async function getRatesForProduct(productId: string): Promise<RateRow[]> 
     }
     const productName = await (prisma as any).productItem.findUnique({ where: { id: pid } })
       .then((p: any) => (p ? String(p.name ?? '') : '')).catch(() => '');
-    return list.map((r) => ({
-      id: String(r.id),
-      vendorId: String(r.vendorId),
+    return list.map((r) => toRateRow(r, {
       vendorName: vendorName.get(String(r.vendorId)) ?? null,
       vendorType: vendorType.get(String(r.vendorId)) ?? null,
       productId: pid,
       productName,
-      attrKey: String(r.attrKey ?? ''),
-      attrValues: parseAttrValues(r.attrValues),
-      pricePerUnit: r.pricePerUnit != null ? Number(r.pricePerUnit) : null,
-      unit: String(r.unit ?? ''),
-      discountPercent: r.discountPercent != null ? Number(r.discountPercent) : null,
-      baseRate: r.baseRate != null ? Number(r.baseRate) : null,
-      weightPerUnit: r.weightPerUnit != null ? Number(r.weightPerUnit) : null,
-      packageQty: r.packageQty != null ? String(r.packageQty) : null,
-      packageDims: r.packageDims != null ? String(r.packageDims) : null,
-      moq: r.moq != null ? String(r.moq) : null,
-      deliveryDays: r.deliveryDays != null ? Number(r.deliveryDays) : null,
-      imageUrl: r.imageUrl ? String(r.imageUrl) : null,
-      videoUrl: r.videoUrl ? String(r.videoUrl) : null,
-      quotedAt: String(r.quotedAt ?? ''),
-      enquiryRef: r.enquiryRef != null ? String(r.enquiryRef) : null,
-      notes: (r as any).notes ? String((r as any).notes) : null,
-      missingSpecs: parseMissingSpecs((r as any).missingSpecs),
-      active: r.active !== false && r.active !== 0,
     }));
   });
 }
@@ -189,32 +143,12 @@ export async function getRateById(id: string): Promise<RateRow | null> {
   const product = pid
     ? await (prisma as any).productItem.findUnique({ where: { id: pid } }).catch(() => null)
     : null;
-  return {
-    id: rid,
-    vendorId: String((r as any).vendorId ?? ''),
+  return toRateRow(r, {
     vendorName: vendor ? String((vendor as any).name ?? '') : null,
     vendorType: vendor ? String((vendor as any).vendorType ?? '') : null,
     productId: pid,
     productName: product ? String((product as any).name ?? '') : '',
-    attrKey: String((r as any).attrKey ?? ''),
-    attrValues: parseAttrValues((r as any).attrValues),
-    pricePerUnit: (r as any).pricePerUnit != null ? Number((r as any).pricePerUnit) : null,
-    unit: String((r as any).unit ?? ''),
-    discountPercent: (r as any).discountPercent != null ? Number((r as any).discountPercent) : null,
-    baseRate: (r as any).baseRate != null ? Number((r as any).baseRate) : null,
-    weightPerUnit: (r as any).weightPerUnit != null ? Number((r as any).weightPerUnit) : null,
-    packageQty: (r as any).packageQty != null ? String((r as any).packageQty) : null,
-    packageDims: (r as any).packageDims != null ? String((r as any).packageDims) : null,
-    moq: (r as any).moq != null ? String((r as any).moq) : null,
-    deliveryDays: (r as any).deliveryDays != null ? Number((r as any).deliveryDays) : null,
-    imageUrl: (r as any).imageUrl ? String((r as any).imageUrl) : null,
-    videoUrl: (r as any).videoUrl ? String((r as any).videoUrl) : null,
-    quotedAt: String((r as any).quotedAt ?? ''),
-    enquiryRef: (r as any).enquiryRef != null ? String((r as any).enquiryRef) : null,
-    notes: (r as any).notes ? String((r as any).notes) : null,
-    missingSpecs: parseMissingSpecs((r as any).missingSpecs),
-    active: (r as any).active !== false && (r as any).active !== 0,
-  };
+  });
 }
 
 /** Slim vendor list for name/location matching (counts resolved per hit). */
@@ -283,31 +217,11 @@ export async function getProductDetail(id: string): Promise<ProductDetail> {
       condition: parseCondition(g.condition),
       active: g.active !== false && g.active !== 0,
     }));
-    const rateRows: RateRow[] = ((rates as any[]) ?? []).map((r) => ({
-      id: String(r.id),
-      vendorId: String(r.vendorId),
+    const rateRows: RateRow[] = ((rates as any[]) ?? []).map((r) => toRateRow(r, {
       vendorName: vendorName.get(String(r.vendorId)) ?? null,
       vendorType: vendorType.get(String(r.vendorId)) ?? null,
       productId: pid,
       productName: String((product as any).name ?? ''),
-      attrKey: String(r.attrKey ?? ''),
-      attrValues: parseAttrValues(r.attrValues),
-      pricePerUnit: r.pricePerUnit != null ? Number(r.pricePerUnit) : null,
-      unit: String(r.unit ?? ''),
-      discountPercent: r.discountPercent != null ? Number(r.discountPercent) : null,
-      baseRate: r.baseRate != null ? Number(r.baseRate) : null,
-      weightPerUnit: r.weightPerUnit != null ? Number(r.weightPerUnit) : null,
-      packageQty: r.packageQty != null ? String(r.packageQty) : null,
-      packageDims: r.packageDims != null ? String(r.packageDims) : null,
-      moq: r.moq != null ? String(r.moq) : null,
-      deliveryDays: r.deliveryDays != null ? Number(r.deliveryDays) : null,
-      imageUrl: r.imageUrl ? String(r.imageUrl) : null,
-      videoUrl: r.videoUrl ? String(r.videoUrl) : null,
-      quotedAt: String(r.quotedAt ?? ''),
-      enquiryRef: r.enquiryRef != null ? String(r.enquiryRef) : null,
-      notes: (r as any).notes ? String((r as any).notes) : null,
-      missingSpecs: parseMissingSpecs((r as any).missingSpecs),
-      active: r.active !== false && r.active !== 0,
     }));
     return {
       product: {
@@ -318,6 +232,7 @@ export async function getProductDetail(id: string): Promise<ProductDetail> {
         active: (product as any).active !== false && (product as any).active !== 0,
         guideCount: guide.length,
         rateCount: rateRows.length,
+        bestPrice: rateRows.reduce<number | null>((m, r) => (r.active && r.pricePerUnit != null && (m == null || r.pricePerUnit < m) ? r.pricePerUnit : m), null),
         createdAt: String((product as any).createdAt ?? ''),
       },
       guide,

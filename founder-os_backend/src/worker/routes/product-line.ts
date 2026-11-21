@@ -70,11 +70,25 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
     });
     return c.json({ key, url: `/api/chat/files/${key}`, name: file.name }, 201);
   });
-  // ── Product detail (full identity + guide + every vendor rate w/ specs) ──
+  // ── Rates list: one page + COUNT total, whole-table search (Rates tab) ──
+  // ?page=&limit=(≤100)&q=&productId=&vendorId=&status=on|off
+  app.get('/api/product-line/rates', async (c) => {
+    try {
+      const { listRatesPaged } = await import('../../automations/product-line/service');
+      const { parsePageQuery } = await import('../../shared/paging');
+      const q = (k: string) => c.req.query(k);
+      return c.json(await listRatesPaged(parsePageQuery(q), { productId: q('productId'), vendorId: q('vendorId'), status: q('status') }));
+    } catch (e: any) {
+      return c.json({ error: String(e?.message ?? 'could not load rates').slice(0, 300) }, 500);
+    }
+  });
+  // ── Product detail (identity + guide + counted quote totals). The quotes
+  //    themselves page via /api/product-line/rates?productId= (one product
+  //    has 2,400+ quotes — never ship them all to the browser). ──
   app.get('/api/product-line/products/:id', async (c) => {
     try {
-      const { getProductDetail } = await import('../../automations/product-line/service');
-      return c.json(await getProductDetail(c.req.param('id') ?? ''));
+      const { getProductSummary } = await import('../../automations/product-line/service');
+      return c.json(await getProductSummary(c.req.param('id') ?? ''));
     } catch (e: any) {
       return c.json({ error: String(e?.message ?? 'not found').slice(0, 300) }, 404);
     }

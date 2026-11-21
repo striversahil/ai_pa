@@ -858,6 +858,16 @@ events out to every component via an in-process event bus — no per-dashboard s
     without an `events` filter): refetches on every event including the automatic `data-changed`.
   - `useLiveEvent(handler)` — imperative subscription for components with their own local
     state (e.g. the WhatsApp chat window).
+- **Paged lists (founder standard 2026-11-21)** — any list that can grow: `src/hooks/usePagedQuery.ts`
+  (page numbers, 50/page, debounced server search, filters reset to page 1) over backend
+  `src/shared/paging.ts` (`parsePageQuery` clamps 50/≤100, `searchClause` = every word in some
+  column via LIKE within D1's 50-byte cap, `pagedQuery` = page + `COUNT(*)` in one `db.batch`;
+  response `{rows,total,page,limit,totalPages}`). Live events do NOT reload a paged list: they
+  count into `<ChangesBanner>` ("N new changes — click to refresh"); our own saves call
+  `refresh()` and are muted for 4s. Footer `<Pager>` ("Showing 1–50 of N" + page numbers) from
+  `@/components/ui`. Never paged: Management Active/Unprocessed, today's dispatches, overdue,
+  procurement pending. Rolled out: product line (rates + product detail quotes, migration 0150);
+  next Master → Dispatch → Enquiries history → rest. Guard `list-paging`.
 - Backend `src/live.ts` defines `LiveEvent` (canonical type names) and `broadcastLive(c, type,
   extra?)`, which `notifyLive` now delegates to. **Every data-write path calls `broadcastLive`**:
   runner writes (`/api/runner/digests`, `tasks`, `pending-items`, `messages/mark-processed`,

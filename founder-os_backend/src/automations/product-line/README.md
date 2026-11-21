@@ -11,8 +11,16 @@ Product master dashboard (the KYP sheet as data, not JSON).
 - `Vendor` + `VendorRate`: supplier master + priced quote facts. A rate keys
   off the attribute snapshot (`attrKey`), never the bare item.
 
-Reads: `GET /api/automations/product-line/data` (KV-cached full payload —
-dashboard ONLY, pagination pending).
+Reads: `GET /api/automations/product-line/data` (KV-cached payload —
+products, guide, vendors and COUNTED totals: `rateTotal`, per-product
+`rateCount` + `bestPrice`, per-vendor `rateCount`, all GROUP BY over the
+whole table). Rates are NOT in it (2026-11-21, founder paging standard):
+`GET /api/product-line/rates?page=&limit=&q=&productId=&vendorId=&status=`
+pages them 50 at a time with whole-table search
+(`service-parts/rates-page.ts` on `shared/paging.ts`; index migration 0150).
+`GET /api/product-line/products/:id` returns `getProductSummary` (identity +
+guide + counts) — the detail screen pages its quotes through the same rates
+endpoint with `productId`.
 Writes: MIS-only CRUD under `/api/product-line/*` (worker route
 `src/worker/routes/product-line.ts`, Express mirror `src/routes/product-line.ts`).
 
@@ -20,9 +28,8 @@ Seeded once from `data/know_your_product_v2.json` (migration 0046).
 
 ## Scale path (20K+ rows)
 
-Hot paths NEVER load the full payload (it caps rates at 300 and breaches
-KV/CPU limits past ~10K). They use these targeted, per-product cached
-queries from `service.ts` instead:
+Hot paths NEVER read the dashboard payload. They use these targeted,
+per-product cached queries from `service.ts` instead:
 
 - `getProductIndex()` → slim `{id, category, name, aliases, active}` for
   catalogue matching (`product-line:index:v1`).
