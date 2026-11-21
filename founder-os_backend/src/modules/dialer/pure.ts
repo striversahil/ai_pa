@@ -1,7 +1,7 @@
 // ── Auto dialer: pure rules (sync-only; safe in tests and both runtimes) ────
 import {
   DEFAULT_CONFIG, NOT_DISPOSED,
-  type BreakReason, type DialerConfig, type Disposition,
+  type BreakReason, type DialerConfig, type Disposition, type ScheduledBreak,
 } from './types';
 
 export class DialerError extends Error {
@@ -54,6 +54,27 @@ function cleanBreaks(raw: unknown): BreakReason[] {
   return out;
 }
 
+function cleanScheduled(raw: unknown): ScheduledBreak[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ScheduledBreak[] = [];
+  for (const b of raw.slice(0, 30)) {
+    const label = String(b?.label ?? '').trim().slice(0, 40) || 'Break';
+    const start = String(b?.start ?? '').trim();
+    const end = String(b?.end ?? '').trim();
+    if (!HHMM_RE.test(start) || !HHMM_RE.test(end)) throw new DialerError(`scheduled break "${label}": times must be HH:MM`);
+    if (start >= end) throw new DialerError(`scheduled break "${label}": end must be after start`);
+    const agents = Array.isArray(b?.agents) ? [...new Set(b.agents.map((a: unknown) => String(a).trim().slice(0, 64)).filter(Boolean))] as string[] : [];
+    const id = String(b?.id ?? '').trim().slice(0, 40) || `sb_${out.length}_${start.replace(':', '')}`;
+    out.push({ id, label, start, end, agents: agents.slice(0, 200) });
+  }
+  return out;
+}
+
+/** The scheduled breaks one agent's phone must honour (others are stripped). */
+export function scheduledFor(cfg: DialerConfig, telecallerId: string): ScheduledBreak[] {
+  return cfg.scheduledBreaks.filter((b) => b.agents.length === 0 || b.agents.includes(telecallerId));
+}
+
 /** Validate a Controller write (throws DialerError on junk, never silent). */
 export function normalizeConfig(raw: any, actor = ''): DialerConfig {
   const shiftStart = String(raw?.shiftStart ?? DEFAULT_CONFIG.shiftStart).trim();
@@ -69,6 +90,8 @@ export function normalizeConfig(raw: any, actor = ''): DialerConfig {
     retryMax: clampInt(raw?.retryMax, 0, 10, DEFAULT_CONFIG.retryMax),
     dispositions: cleanDispositions(raw?.dispositions),
     breakReasons: cleanBreaks(raw?.breakReasons),
+    scheduledBreaks: cleanScheduled(raw?.scheduledBreaks),
+    trackPhoneCalls: raw?.trackPhoneCalls === undefined ? DEFAULT_CONFIG.trackPhoneCalls : !!raw.trackPhoneCalls,
     updatedAt: new Date().toISOString(),
     updatedBy: String(actor).slice(0, 120),
   };
@@ -94,6 +117,7 @@ export function dispositionOf(cfg: DialerConfig, key: string): Disposition | nul
  * What happens to a queue row after its call is disposed.
  * - callback disposition with a time → back in the queue at that time
  * - retry disposition under the attempt cap → back after retryGapMin
+ * - retry disposition at the cap → unreachable (never re-queued)
  * - anything else → done
  */
 export function queueOutcome(
@@ -102,7 +126,7 @@ export function queueOutcome(
   attempts: number,
   callbackAt: string | null,
   now = Date.now(),
-): { status: 'pending' | 'done'; source: string; dueAt: string | null } {
+): { status: 'pending' | 'done' | 'unreachable'; source: string; dueAt: string | null } {
   const d = dispositionOf(cfg, dispositionKey);
   if (d?.callback && callbackAt && Number.isFinite(Date.parse(callbackAt))) {
     return { status: 'pending', source: 'callback', dueAt: new Date(Date.parse(callbackAt)).toISOString() };
@@ -110,6 +134,7 @@ export function queueOutcome(
   if (d?.retry && attempts < cfg.retryMax) {
     return { status: 'pending', source: 'retry', dueAt: new Date(now + cfg.retryGapMin * 60_000).toISOString() };
   }
+  if (d?.retry) return { status: 'unreachable', source: '', dueAt: null };
   return { status: 'done', source: '', dueAt: null };
 }
 

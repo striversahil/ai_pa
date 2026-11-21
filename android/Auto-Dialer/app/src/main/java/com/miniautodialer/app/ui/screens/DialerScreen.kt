@@ -30,6 +30,7 @@ import com.miniautodialer.app.remote.SyncRunner
 import com.miniautodialer.app.ui.*
 import com.miniautodialer.app.util.CallManager
 import com.miniautodialer.app.util.Fmt
+import com.miniautodialer.app.util.RecordingHealth
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -69,9 +70,12 @@ private fun DialerPanel() {
     LaunchedEffect(Unit) { while (true) { SyncRunner.run(ctx); delay(60_000) } }
     // Returning from a call is handled in AppRoot's resume effect (opens this tab + AutoDialer.callEnded).
     LaunchedEffect(state is State.Disposing) { picked = null; remarks = ""; callbackAt = null }
+    // Recordings only reach Founder OS when the phone's own recorder saves them.
+    val recHint by produceState<String?>(null, state is State.Disposing) { value = RecordingHealth.problem(ctx) }
 
     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SyncLine(unsynced, session.lastSyncAt, session.lastSyncError)
+        recHint?.let { InfoCard(it, Icons.Filled.MicOff, Color(0xFFEA580C)) }
         when (val s = state) {
             State.Stopped -> {
                 InfoCard("${waiting.size} lead(s) in your queue. Once you start, calls dial one after another; use Break to stop.")
@@ -89,8 +93,9 @@ private fun DialerPanel() {
                 onRemarks = { remarks = it },
                 onSave = { scope.launch { AutoDialer.save(ctx, s.call, picked, remarks, callbackAt, auto = false) } })
             is State.OnBreak -> BreakPanel(s) { AutoDialer.endBreak(ctx) }
+            is State.Scheduled -> InfoCard("Scheduled break: ${s.label} until ${s.until} (set by your sales head). The dialer starts again by itself when it ends.", Icons.Filled.Coffee, Color(0xFFEA580C))
         }
-        val busy = state is State.Calling || state is State.OnBreak
+        val busy = state is State.Calling || state is State.OnBreak || state is State.Scheduled
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = { showBreak = true }, enabled = !busy, modifier = Modifier.weight(1f).height(52.dp)) {
                 Icon(Icons.Filled.Coffee, null); Spacer(Modifier.width(6.dp)); Text("Break")

@@ -39,6 +39,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       - name: Use the shared signing key
+        id: key
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
         run: |
@@ -46,8 +47,10 @@ jobs:
             mkdir -p ~/.android
             echo "$KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
             echo "Signing with the shared key."
+            echo "stable=true" >> "$GITHUB_OUTPUT"
           else
             echo "::warning::ANDROID_DEBUG_KEYSTORE_BASE64 not set: APK signed with a throwaway key (uninstall before installing)."
+            echo "stable=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build APK + unit tests
@@ -75,13 +78,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          STABLE_KEY: ${{ steps.key.outputs.stable }}
         run: |
           cp app/build/outputs/apk/debug/app-debug.apk auto-dialer.apk
           name=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
           code=$(grep -oP 'versionCode = \K[0-9]+' app/build.gradle.kts)
           size=$(stat -c %s auto-dialer.apk)
-          printf '{"versionName":"%s","versionCode":%s,"sizeBytes":%s,"commit":"%s","branch":"%s","builtAt":"%s","runUrl":"%s"}\n' \
-            "$name" "$code" "$size" "$GITHUB_SHA" "$GITHUB_REF_NAME" "$(date -u +%FT%TZ)" \
+          printf '{"versionName":"%s","versionCode":%s,"sizeBytes":%s,"stableKey":%s,"commit":"%s","branch":"%s","builtAt":"%s","runUrl":"%s"}\n' \
+            "$name" "$code" "$size" "${STABLE_KEY:-false}" "$GITHUB_SHA" "$GITHUB_REF_NAME" "$(date -u +%FT%TZ)" \
             "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > auto-dialer.json
           notes="Auto Dialer $name (code $code) · ${GITHUB_REF_NAME}@${GITHUB_SHA::7}. Rebuilt on every push; download from Founder OS → Sales → Controller → Auto Dialer."
           gh release view auto-dialer-latest >/dev/null 2>&1 || \

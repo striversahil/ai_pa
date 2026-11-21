@@ -15,6 +15,7 @@ import { HourlyReport } from "./HourlyReport";
 import { DialerSettings } from "./DialerSettings";
 import { AppDownload } from "./AppDownload";
 import { Recordings } from "./Recordings";
+import { Unreachable } from "./Unreachable";
 
 type Pending = { kind: "reset" | "unpair"; id: string; name: string } | null;
 
@@ -31,6 +32,7 @@ export default function AutoDialerSection({ rosterRows }: { rosterRows: RosterRo
   const board = useLiveQuery(dialerApi.board, { ...opts, pollMs: 60_000 });
   const report = useLiveQuery(() => dialerApi.report(day), { ...opts, deps: [day] });
   const recordings = useLiveQuery(() => dialerApi.recordings(day), { ...opts, deps: [day] });
+  const unreachable = useLiveQuery(() => dialerApi.unreachable(7), opts);
   const source = useLiveQuery(dialerApi.callSource, { events: ["telecalling"] });
   // New builds come from GitHub, not a live event; the server caches 5 min.
   const app = useLiveQuery(dialerApi.app, { ...opts, pollMs: 300_000 });
@@ -118,9 +120,14 @@ export default function AutoDialerSection({ rosterRows }: { rosterRows: RosterRo
         {recordings.data ? <Recordings calls={recordings.data.calls} config={config} /> : <p className="text-[11px] text-zinc-500">Loading…</p>}
       </div>
 
+      <div className="space-y-2">
+        <h4 className="text-xs font-bold uppercase tracking-wide text-zinc-500">Not reachable · gave up after {config?.retryMax ?? "N"} tries · last 7 days</h4>
+        {unreachable.data ? <Unreachable items={unreachable.data.items} config={config} /> : <p className="text-[11px] text-zinc-500">Loading…</p>}
+      </div>
+
       <details className="space-y-2">
         <summary className="cursor-pointer text-xs font-bold uppercase tracking-wide text-zinc-500">Dialer settings</summary>
-        {config && <DialerSettings config={config} onSave={async (cfg) => { await dialerApi.saveConfig(cfg); board.refresh(); report.refresh(); }} />}
+        {config && <DialerSettings config={config} agents={agents} onSave={async (cfg) => { await dialerApi.saveConfig(cfg); board.refresh(); report.refresh(); }} />}
       </details>
 
       <ConfirmDialog

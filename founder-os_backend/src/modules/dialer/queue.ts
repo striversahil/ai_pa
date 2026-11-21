@@ -108,6 +108,20 @@ export async function recallQueue(db: Db, telecallerId: string, batchId?: string
   return Number((meta as any)?.changes ?? 0);
 }
 
+/** Leads that hit the retry cap (never re-queued), newest first. */
+export async function listUnreachable(db: Db, sinceIso: string): Promise<any[]> {
+  const res: any = await db.prepare(
+    `SELECT q.id, q.telecallerId, q.mobile, q.name, q.attempts, q.lastDisposition, q.updatedAt, t.name AS agentName
+       FROM DialerQueue q LEFT JOIN Telecaller t ON t.id = q.telecallerId
+      WHERE q.status = 'unreachable' AND q.updatedAt >= ? ORDER BY q.updatedAt DESC LIMIT 300`,
+  ).bind(sinceIso).all();
+  return ((res?.results ?? []) as any[]).map((r) => ({
+    id: String(r.id), telecallerId: String(r.telecallerId), agentName: String(r.agentName ?? ''),
+    mobile: String(r.mobile ?? ''), name: String(r.name ?? ''), attempts: Number(r.attempts ?? 0),
+    lastDisposition: String(r.lastDisposition ?? ''), updatedAt: String(r.updatedAt ?? ''),
+  }));
+}
+
 /** Waiting counts per agent (due now / scheduled later) for the board. */
 export async function queueCounts(db: Db): Promise<Map<string, { due: number; later: number }>> {
   const now = new Date().toISOString();

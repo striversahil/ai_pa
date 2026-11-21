@@ -20,6 +20,9 @@ object Outbox {
 
     suspend fun enqueueCall(localCallId: Long) {
         if (session.token == null && session.pairRequestId == null) return // standalone use: nothing to sync
+        // With phone-dialer tracking on, calls not placed by the auto dialer reach
+        // Founder OS once, from the call log (PhoneCallSync) — never twice.
+        if (session.config.trackPhoneCalls && dao.callSync(localCallId) == null) return
         dao.putOutbox(OutboxItem(id = "call:$localCallId", kind = "call", payload = JSONObject().put("callId", localCallId).toString()))
         SyncScheduler.syncSoon(MiniDialerApp.instance)
     }
@@ -35,6 +38,14 @@ object Outbox {
         if (session.token == null) return
         dao.putOutbox(OutboxItem(id = "rec:$recordingId", kind = "rec",
             payload = JSONObject().put("recordingId", recordingId).put("callId", localCallId).toString()))
+        SyncScheduler.syncSoon(MiniDialerApp.instance)
+    }
+
+    /** Recording of a phone-dialer call (PhoneCallSync): uploaded once that call has synced. */
+    suspend fun enqueuePhoneRecording(recordingId: Long, callOutboxId: String, serverCallId: String) {
+        if (session.token == null) return
+        dao.putOutbox(OutboxItem(id = "rec:$recordingId", kind = "rec",
+            payload = JSONObject().put("recordingId", recordingId).put("outboxId", callOutboxId).put("serverId", serverCallId).toString()))
         SyncScheduler.syncSoon(MiniDialerApp.instance)
     }
 

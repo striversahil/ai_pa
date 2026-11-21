@@ -4,13 +4,14 @@
 // Phone side (/api/android/*, AUTH_EXEMPT, device token via requireDevice):
 //   POST /api/android/pair-request          phone asks to pair → 6-digit code
 //   POST /api/android/pair-status           phone polls; gets its token once
-//   GET  /api/android/dialer/config         dispositions, breaks, timers, shift
+//   POST /api/android/pair-restore          reinstall on the same phone → fresh token (active registration only)
+//   GET  /api/android/dialer/config         dispositions, breaks, timers, shift (scheduled breaks for this agent only)
 //   GET  /api/android/dialer/queue          due leads for this agent
 //   POST /api/android/dialer/sync           calls + dispositions + breaks + state
 // Controller side (/api/dialer/*, sales head / root):
 //   GET  /api/dialer/pair-requests  ·  POST /api/dialer/pair-requests/:id/approve|reject
 //   GET|PUT /api/dialer/config  ·  GET /api/dialer/board  ·  GET /api/dialer/report?day=
-//   POST /api/dialer/queue/recall  ·  POST /api/dialer/agents/:id/reset {wipeToday?}  ·  GET /api/dialer/app (latest APK version) · GET /api/dialer/app/download
+//   POST /api/dialer/queue/recall  ·  GET /api/dialer/unreachable?days=  ·  POST /api/dialer/agents/:id/reset {wipeToday?}  ·  GET /api/dialer/app (latest APK version) · GET /api/dialer/app/download
 // Handlers stay thin: logic in modules/dialer/*.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
@@ -19,8 +20,9 @@ import { requireDevice, requireCallManager, callViewer } from '../../modules/dev
 import { istDay } from '../../modules/device-calls/types';
 import { cacheGet, cacheSet } from '../../shared/cache';
 import { invalidateDeviceCallCaches } from '../../automations/telecalling/device-calls';
-import { createPairRequest, listPendingRequests, approveRequest, rejectRequest, claimRequest } from '../../modules/dialer/pairing';
-import { getConfig, saveConfig, listDue, recallQueue } from '../../modules/dialer/queue';
+import { createPairRequest, listPendingRequests, approveRequest, rejectRequest, claimRequest, restoreByDevice } from '../../modules/dialer/pairing';
+import { getConfig, saveConfig, listDue, recallQueue, listUnreachable } from '../../modules/dialer/queue';
+import { scheduledFor } from '../../modules/dialer/pure';
 import { applySync } from '../../modules/dialer/sync';
 import { dayReport, liveBoard } from '../../modules/dialer/report';
 import { latestAppRelease, streamLatestApk } from '../../modules/dialer/app-release';
@@ -70,10 +72,21 @@ function registerPhoneRoutes(app: Hono<{ Bindings: Bindings }>): void {
     }
   });
 
+  app.post('/api/android/pair-restore', async (c) => {
+    if (await ipLimited(c, 'pairrestore', 10)) return c.json({ error: 'Too many attempts — retry in a minute' }, 429);
+    const deviceId = String((await readBody(c))?.deviceId ?? '').trim().slice(0, 64);
+    if (deviceId.length < 8) return c.json({ error: 'deviceId required' }, 400);
+    const out = await restoreByDevice(c.env.DB, deviceId);
+    if (out.status === 'paired') notifyLive(c, { type: LiveEvent.DeviceCalls, action: 'restored' });
+    return c.json(out);
+  });
+
   app.get('/api/android/dialer/config', async (c) => {
     const auth = await requireDevice(c);
     if (!auth) return c.json({ error: 'unauthorized' }, 401);
-    return c.json({ config: await getConfig(c.env.DB), telecallerId: auth.telecallerId, serverTime: new Date().toISOString() });
+    const cfg = await getConfig(c.env.DB);
+    const config = { ...cfg, scheduledBreaks: scheduledFor(cfg, auth.telecallerId) };
+    return c.json({ config, telecallerId: auth.telecallerId, serverTime: new Date().toISOString() });
   });
 
   app.get('/api/android/dialer/queue', async (c) => {
@@ -167,6 +180,12 @@ function registerControllerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if (out.callsDeleted > 0) invalidateDeviceCallCaches().catch(() => null);
     notifyLive(c, { type: LiveEvent.DeviceCalls, action: 'reset' });
     return c.json({ ok: true, ...out });
+  });
+
+  app.get('/api/dialer/unreachable', async (c) => {
+    if (!(await manager(c))) return c.json({ error: 'sales-head or root only' }, 403);
+    const days = Math.max(1, Math.min(90, Number(c.req.query('days') ?? 7) || 7));
+    return c.json({ items: await listUnreachable(c.env.DB, new Date(Date.now() - days * 86_400_000).toISOString()) });
   });
 
   app.post('/api/dialer/queue/recall', async (c) => {

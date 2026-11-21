@@ -216,7 +216,10 @@ object RecordingImporter {
         val time = nameTime ?: d.modified.takeIf { it > 0 } ?: System.currentTimeMillis()
         val digits = phoneFromName(base)
         val match = if (forcedCustomer != null) Match(forcedCustomer, findCall(forcedCustomer, time)) else match(sc, base, digits, time, allowTimeMatch)
-        if (requireMatch && match.customerId == null) return -2
+        // Not an app call: maybe a phone-dialer call that Founder OS already has (PhoneCallSync).
+        val phoneCall = if (forcedCustomer == null && match.callId == null)
+            com.miniautodialer.app.remote.PhoneCallSync.matchRecording(time, digits) else null
+        if (requireMatch && match.customerId == null && phoneCall == null) return -2
 
         val ext = d.name.substringAfterLast('.', "m4a").lowercase().take(5)
         val fileName = "${UUID.randomUUID()}.$ext"
@@ -244,7 +247,8 @@ object RecordingImporter {
             )
         )
         // Founder OS: upload once the call itself has synced (SyncRunner checks that order).
-        match.callId?.let { com.miniautodialer.app.remote.Outbox.enqueueRecording(recId, it) }
+        if (match.callId != null) com.miniautodialer.app.remote.Outbox.enqueueRecording(recId, match.callId)
+        else phoneCall?.let { (outboxId, serverId) -> com.miniautodialer.app.remote.Outbox.enqueuePhoneRecording(recId, outboxId, serverId) }
         sc.existing += sourceKey
         return if (match.customerId != null) 1 else 0
     }

@@ -66,6 +66,11 @@ class Session(private val ctx: Context) {
         get() = sp.getString("last_sync_error", null)
         set(v) = sp.edit().putString("last_sync_error", v).apply()
 
+    /** Phone-dialer call-log entries up to this time are already queued (PhoneCallSync). */
+    var phoneLogSince: Long
+        get() = sp.getLong("phone_log_since", 0L)
+        set(v) = sp.edit().putLong("phone_log_since", v).apply()
+
     // ── live state reported to the Controller board ─────────────────────────
     var liveState: String
         get() = sp.getString("live_state", "idle") ?: "idle"

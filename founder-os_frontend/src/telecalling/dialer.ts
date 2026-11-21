@@ -19,6 +19,15 @@ export interface BreakReason {
   needsNote: boolean;
 }
 
+/** Sales-head scheduled break (IST HH:MM); agents empty = everyone. Phone locks the dialer inside it. */
+export interface ScheduledBreak {
+  id: string;
+  label: string;
+  start: string;
+  end: string;
+  agents: string[];
+}
+
 export interface DialerConfig {
   dispositionSec: number;
   nextCallSec: number;
@@ -28,6 +37,9 @@ export interface DialerConfig {
   retryMax: number;
   dispositions: Disposition[];
   breakReasons: BreakReason[];
+  scheduledBreaks: ScheduledBreak[];
+  /** Also report calls made/received in the phone's own dialer. */
+  trackPhoneCalls: boolean;
   updatedAt: string;
   updatedBy: string;
 }
@@ -75,6 +87,8 @@ export interface AgentDay {
   connected: number;
   talkSec: number;
   manual: number;
+  /** Calls from the phone's own dialer (call log). */
+  phone: number;
   flagged: number;
   hours: Record<string, HourCell>;
   dispositions: Record<string, number>;
@@ -100,12 +114,26 @@ export interface RecordedCall {
   manual: boolean;
 }
 
+/** A lead that hit the retry cap and stopped re-queuing (backend: dialer/queue.ts listUnreachable). */
+export interface UnreachableLead {
+  id: string;
+  telecallerId: string;
+  agentName: string;
+  mobile: string;
+  name: string;
+  attempts: number;
+  lastDisposition: string;
+  updatedAt: string;
+}
+
 /** Latest phone app build (backend mirror: modules/dialer/app-release.ts AppRelease). */
 export interface AppRelease {
   available: boolean;
   versionName: string;
   versionCode: number;
   sizeBytes: number;
+  /** Signed with the shared key: updates install over the old app, pairing kept. */
+  stableKey: boolean;
   builtAt: string | null;
   commit: string;
   /** Same-origin Founder OS route that streams the APK. */
@@ -146,6 +174,7 @@ export const dialerApi = {
   callSource: () => call<{ mode: CallSource }>("/api/telecalling/manual-calls/mode"),
   setCallSource: (mode: CallSource) => call<{ mode: CallSource }>("/api/telecalling/manual-calls/mode", json("PUT", { mode })),
   app: () => call<AppRelease>("/api/dialer/app"),
+  unreachable: (days = 7) => call<{ items: UnreachableLead[] }>(`/api/dialer/unreachable?days=${days}`),
   /** Calls with audio in storage for one IST day (shared call-log route, managers see all agents). */
   recordings: (day: string) =>
     call<{ calls: RecordedCall[] }>(`/api/call-log/calls?from=${encodeURIComponent(day)}&to=${encodeURIComponent(day)}&recorded=1&limit=500`),

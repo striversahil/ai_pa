@@ -23,6 +23,18 @@ export interface BreakReason {
   needsNote: boolean;
 }
 
+/**
+ * A break the sales head schedules (IST, HH:MM). Inside the window the phone
+ * locks the dialer. `agents` = telecaller ids it applies to; empty = everyone.
+ */
+export interface ScheduledBreak {
+  id: string;
+  label: string;
+  start: string;
+  end: string;
+  agents: string[];
+}
+
 export interface DialerConfig {
   /** Seconds the disposition window stays open before auto-saving. */
   dispositionSec: number;
@@ -31,11 +43,17 @@ export interface DialerConfig {
   /** Shift window (IST, HH:MM). Dialing is locked outside it. */
   shiftStart: string;
   shiftEnd: string;
-  /** Retry dispositions come back after this gap, up to retryMax attempts. */
+  /**
+   * Retry dispositions come back after this gap. After retryMax attempts the
+   * lead stops re-queuing and is marked unreachable (queue status).
+   */
   retryGapMin: number;
   retryMax: number;
   dispositions: Disposition[];
   breakReasons: BreakReason[];
+  scheduledBreaks: ScheduledBreak[];
+  /** Also report calls made/received in the phone's own dialer (call log). */
+  trackPhoneCalls: boolean;
   updatedAt: string;
   updatedBy: string;
 }
@@ -77,6 +95,8 @@ export const DEFAULT_CONFIG: DialerConfig = {
   retryMax: 3,
   dispositions: DEFAULT_DISPOSITIONS,
   breakReasons: DEFAULT_BREAK_REASONS,
+  scheduledBreaks: [],
+  trackPhoneCalls: true,
   updatedAt: '',
   updatedBy: '',
 };

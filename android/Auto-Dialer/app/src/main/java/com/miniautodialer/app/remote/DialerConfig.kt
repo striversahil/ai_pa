@@ -11,6 +11,9 @@ data class Disposition(val key: String, val label: String, val connected: Boolea
 
 data class BreakReason(val key: String, val label: String, val maxMin: Int, val needsNote: Boolean)
 
+/** Sales-head scheduled break (IST HH:MM). The server sends only this agent's. The dialer is locked inside it. */
+data class ScheduledBreak(val id: String, val label: String, val start: String, val end: String)
+
 data class DialerConfig(
     val dispositionSec: Int = 20,
     val nextCallSec: Int = 3,
@@ -20,6 +23,9 @@ data class DialerConfig(
     val retryMax: Int = 3,
     val dispositions: List<Disposition> = DEFAULT_DISPOSITIONS,
     val breakReasons: List<BreakReason> = DEFAULT_BREAKS,
+    val scheduledBreaks: List<ScheduledBreak> = emptyList(),
+    /** Report calls made/received in the phone's own dialer (call log). */
+    val trackPhoneCalls: Boolean = true,
     val updatedAt: String = "",
 ) {
     fun disposition(key: String?): Disposition? = dispositions.firstOrNull { it.key == key }
@@ -28,6 +34,11 @@ data class DialerConfig(
     fun inShift(now: LocalTime = LocalTime.now(IST)): Boolean = runCatching {
         !now.isBefore(LocalTime.parse(shiftStart)) && now.isBefore(LocalTime.parse(shiftEnd))
     }.getOrDefault(true)
+
+    /** The scheduled break running now (IST), if any. */
+    fun activeScheduledBreak(now: LocalTime = LocalTime.now(IST)): ScheduledBreak? = scheduledBreaks.firstOrNull { b ->
+        runCatching { !now.isBefore(LocalTime.parse(b.start)) && now.isBefore(LocalTime.parse(b.end)) }.getOrDefault(false)
+    }
 
     companion object {
         val IST: ZoneId = ZoneId.of("Asia/Kolkata")
@@ -73,6 +84,10 @@ data class DialerConfig(
                     breakReasons = o.optJSONArray("breakReasons").map {
                         BreakReason(it.getString("key"), it.getString("label"), it.optInt("maxMin"), it.optBoolean("needsNote"))
                     }.ifEmpty { DEFAULT_BREAKS },
+                    scheduledBreaks = o.optJSONArray("scheduledBreaks").map {
+                        ScheduledBreak(it.optString("id"), it.optString("label", "Break"), it.getString("start"), it.getString("end"))
+                    },
+                    trackPhoneCalls = o.optBoolean("trackPhoneCalls", true),
                     updatedAt = o.optString("updatedAt", ""),
                 )
             }.getOrDefault(DialerConfig())

@@ -17,7 +17,7 @@ import kotlinx.coroutines.flow.Flow
  */
 @Entity(tableName = "outbox")
 data class OutboxItem(
-    /** "call:<localCallId>" · "break:<breakId>" · "rec:<recordingId>" */
+    /** "call:<localCallId>" · "pcall:<callLogDate>" (phone dialer) · "break:<breakId>" · "rec:<recordingId>" */
     @PrimaryKey val id: String,
     val kind: String,
     val payload: String,
@@ -68,6 +68,9 @@ interface SyncDao {
 
     @Query("SELECT * FROM outbox WHERE status = 'pending' AND kind = :kind ORDER BY createdAt LIMIT :limit")
     suspend fun pending(kind: String, limit: Int): List<OutboxItem>
+
+    @Query("SELECT * FROM outbox WHERE kind = :kind AND createdAt >= :since")
+    suspend fun recent(kind: String, since: Long): List<OutboxItem>
 
     @Query("UPDATE outbox SET status = :status, error = :error, attempts = attempts + 1, updatedAt = :ts WHERE id IN (:ids)")
     suspend fun mark(ids: List<String>, status: String, error: String?, ts: Long = System.currentTimeMillis())

@@ -19,7 +19,7 @@ import java.util.UUID
  *   Start → countdown → dial → (call) → disposition window (timer, auto-save)
  *         → countdown → dial → …
  *
- * Only a break stops it. Manual dialing pauses it for one call (saving any open
+ * Only a break stops it; a scheduled break (set in the Controller) locks it until the window ends. Manual dialing pauses it for one call (saving any open
  * disposition first) and the loop continues after that call is disposed.
  * Everything that must survive a restart lives in [Session].
  */
@@ -43,6 +43,8 @@ object AutoDialer {
         data class Calling(val name: String, val phone: String, val manual: Boolean) : State
         data class Disposing(val call: CallInfo, val secsLeft: Int, val paused: Boolean) : State
         data class OnBreak(val reasonKey: String, val label: String, val note: String, val startAt: Long, val maxMin: Int) : State
+        /** Sales-head scheduled break: dialing locked until [until] (IST HH:MM). */
+        data class Scheduled(val label: String, val until: String) : State
     }
 
     private val _state = MutableStateFlow<State>(State.Stopped)
@@ -63,6 +65,7 @@ object AutoDialer {
             is State.Calling -> (if (s.manual) "manual" else "on_call") to s.name
             is State.Disposing -> "disposition" to s.call.name
             is State.OnBreak -> "break" to s.label
+            is State.Scheduled -> "break" to "${s.label} (scheduled, until ${s.until})"
         }
         session.liveState = live
         session.liveDetail = detail
@@ -93,9 +96,10 @@ object AutoDialer {
     fun next(ctx: Context) {
         loop?.cancel()
         loop = scope.launch {
-            val cfg = session.config
             while (true) {
+                val cfg = session.config // re-read: the Controller can change it between rounds
                 if (session.breakId != null) return@launch
+                cfg.activeScheduledBreak()?.let { set(State.Scheduled(it.label, it.end)); delay(20_000); continue }
                 if (!cfg.inShift()) { set(State.OffShift); delay(60_000); continue }
                 val item = dao.nextDue(System.currentTimeMillis())
                 if (item == null) {
@@ -132,6 +136,10 @@ object AutoDialer {
      */
     suspend fun manualDial(ctx: Context, number: String, pickedKey: String?, remarks: String): String? {
         (state.value as? State.Disposing)?.let { save(ctx, it.call, pickedKey, remarks, null, auto = pickedKey == null, continueAfter = false) }
+        session.config.activeScheduledBreak()?.let { b ->
+            if (session.running) next(ctx)
+            return "Dialer locked: ${b.label} until ${b.end}"
+        }
         loop?.cancel()
         val customer = Repo.customerForNumber(number, "") ?: return "Enter a valid mobile number"
         session.dialQueueId = null

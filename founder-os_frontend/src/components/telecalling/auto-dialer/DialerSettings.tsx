@@ -1,10 +1,12 @@
 "use client";
 
 // Controller-owned dialer settings: timers, shift, retries, the disposition
-// list and break reasons. Edited as a draft, saved explicitly; phones pick
+// list, break reasons, scheduled breaks and phone-dialer tracking. Edited as a draft, saved explicitly; phones pick
 // the new version up on their next sync.
 import { useEffect, useState } from "react";
 import { toKey, type BreakReason, type DialerConfig, type Disposition } from "@/telecalling/dialer";
+import { ScheduledBreaks } from "./ScheduledBreaks";
+import type { AgentOption } from "./PairRequests";
 
 const input = "rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs dark:border-zinc-800 dark:bg-zinc-950";
 
@@ -30,18 +32,19 @@ function Check({ checked, onChange, label }: { checked: boolean; onChange: (v: b
   );
 }
 
-export function DialerSettings({ config, onSave }: { config: DialerConfig; onSave: (cfg: DialerConfig) => Promise<void> }) {
-  const [draft, setDraft] = useState<DialerConfig>(config);
+export function DialerSettings({ config, agents, onSave }: { config: DialerConfig; agents: AgentOption[]; onSave: (cfg: DialerConfig) => Promise<void> }) {
+  const withDefaults = (c: DialerConfig): DialerConfig => ({ ...c, scheduledBreaks: c.scheduledBreaks ?? [], trackPhoneCalls: c.trackPhoneCalls ?? true });
+  const [draft, setDraft] = useState<DialerConfig>(withDefaults(config));
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  useEffect(() => { setDraft(config); }, [config]);
+  useEffect(() => { setDraft(withDefaults(config)); }, [config]);
 
   const set = <K extends keyof DialerConfig>(k: K, v: DialerConfig[K]) => { setDraft((d) => ({ ...d, [k]: v })); setMsg(null); };
   const setDispo = (i: number, patch: Partial<Disposition>) =>
     set("dispositions", draft.dispositions.map((d, j) => (j === i ? { ...d, ...patch } : d)));
   const setBreak = (i: number, patch: Partial<BreakReason>) =>
     set("breakReasons", draft.breakReasons.map((b, j) => (j === i ? { ...b, ...patch } : b)));
-  const dirty = JSON.stringify(draft) !== JSON.stringify(config);
+  const dirty = JSON.stringify(draft) !== JSON.stringify(withDefaults(config));
 
   const save = async () => {
     setBusy(true);
@@ -73,7 +76,7 @@ export function DialerSettings({ config, onSave }: { config: DialerConfig; onSav
           </span>
         </label>
         <NumberField id="dl-gap" label="Retry busy / no answer after" value={draft.retryGapMin} min={5} max={1440} suffix="min" onChange={(v) => set("retryGapMin", v)} />
-        <NumberField id="dl-max" label="Max attempts" value={draft.retryMax} min={0} max={10} suffix="tries" onChange={(v) => set("retryMax", v)} />
+        <NumberField id="dl-max" label="Stop re-queuing after" value={draft.retryMax} min={1} max={10} suffix="not-connected tries" onChange={(v) => set("retryMax", v)} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -107,11 +110,20 @@ export function DialerSettings({ config, onSave }: { config: DialerConfig; onSav
         </div>
       </div>
 
+      <div className="grid gap-4 lg:grid-cols-2">
+        <ScheduledBreaks breaks={draft.scheduledBreaks} agents={agents} onChange={(v) => set("scheduledBreaks", v)} />
+        <div className="space-y-1.5">
+          <h5 className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Phone dialer calls</h5>
+          <Check checked={draft.trackPhoneCalls} onChange={(v) => set("trackPhoneCalls", v)} label="Also report calls agents make or receive in the phone's own dialer" />
+          <p className="text-[11px] text-zinc-500">Read from the paired phone's call log (app 1.2.0+) and counted in the report as "Phone dialer". After the try limit above, a busy / not-answered lead is marked not reachable and never comes back.</p>
+        </div>
+      </div>
+
       <div className="flex flex-wrap items-center gap-3">
         <button type="button" disabled={!dirty || busy} onClick={() => void save()} className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-500 disabled:opacity-50">
           {busy ? "Saving…" : "Save dialer settings"}
         </button>
-        {dirty && <button type="button" onClick={() => setDraft(config)} className="text-xs text-zinc-500">Discard changes</button>}
+        {dirty && <button type="button" onClick={() => setDraft(withDefaults(config))} className="text-xs text-zinc-500">Discard changes</button>}
         {msg && <span className={`text-xs ${msg.ok ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>{msg.text}</span>}
         {config.updatedAt && <span className="text-[11px] text-zinc-500">Last saved by {config.updatedBy || "—"}</span>}
       </div>

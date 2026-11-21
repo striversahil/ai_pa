@@ -22,6 +22,7 @@ export function HourlyReport({ agents, config }: { agents: AgentDay[]; config: D
               <th className="px-2 py-1.5 text-right font-semibold">Total</th>
               <th className="px-2 py-1.5 text-right font-semibold">Talk</th>
               <th className="px-2 py-1.5 text-right font-semibold">Manual</th>
+              <th className="px-2 py-1.5 text-right font-semibold" title="Made or received in the phone's own dialer">Phone dialer</th>
               <th className="px-2 py-1.5 text-right font-semibold">Review</th>
             </tr>
           </thead>
@@ -40,13 +41,14 @@ export function HourlyReport({ agents, config }: { agents: AgentDay[]; config: D
                 <td className="px-2 py-1.5 text-right"><b>{a.connected}</b><span className="text-zinc-500">/{a.attempted}</span></td>
                 <td className="px-2 py-1.5 text-right">{fmtDuration(a.talkSec)}</td>
                 <td className="px-2 py-1.5 text-right">{a.manual}</td>
+                <td className="px-2 py-1.5 text-right">{a.phone ?? 0}</td>
                 <td className={`px-2 py-1.5 text-right ${a.flagged ? "font-bold text-amber-600 dark:text-amber-400" : "text-zinc-500"}`}>{a.flagged}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-      <p className="text-[11px] text-zinc-500">Each cell is connected / attempted for that hour (IST). Review = the disposition timer ran out on a call with talk time.</p>
+      <p className="text-[11px] text-zinc-500">Each cell is connected / attempted for that hour (IST). Review = the disposition timer ran out on a call with talk time. Phone dialer = calls made or received outside the auto dialer (included in the totals).</p>
 
       <div className="grid gap-3 md:grid-cols-2">
         {agents.map((a) => (

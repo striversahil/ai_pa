@@ -4,9 +4,14 @@ An offline calling assistant and mini CRM for sales and support teams. Import yo
 
 - **Platform:** Android 8.0 (API 26) to Android 15 (API 35)
 - **Tech:** Kotlin, Jetpack Compose (Material 3), Room, Navigation Compose
-- **Package:** `com.miniautodialer.app` · version 1.1.3
+- **Package:** `com.miniautodialer.app` · version 1.2.0
 - **Bottom bar:** Home · Callbacks · **Dialer** (big centre button, opens first) · Records · Settings. Lists and Customers are no longer tabs (Home still links to them).
 - **Founder OS:** once paired, the **Dialer** tab auto-dials leads pushed from Founder OS (Sales → Controller → Auto Dialer) and syncs calls, dispositions, breaks and recordings back. Unpaired, the app works fully offline as before.
+  - **Phone-dialer calls (1.2.0):** calls made or received in the phone's own dialer are read from the call log and reported too (Controller switch "Phone dialer calls"; report column *Phone dialer*). Their recordings upload like dialer calls.
+  - **Scheduled breaks (1.2.0):** windows the sales head sets in the Controller (everyone or chosen agents) lock auto-dial and manual dial until they end.
+  - **Retry cap:** a busy / not-answered lead comes back until the Controller's "Stop re-queuing after N tries"; then it is marked not reachable and never dialed again.
+  - **Reinstall keeps the connection (1.2.0):** a phone still paired in Founder OS reconnects by itself after a reinstall (same phone id, no new code), as long as the APK is signed with the shared key (below). Unpairing in the Controller stops this.
+  - **Recordings** need the phone's own auto call recording switched on; the Dialer tab warns when calls connect but no recordings appear.
 - **Get the APK:** built in the cloud by GitHub Actions; see [Building in the cloud (recommended)](#building-in-the-cloud-recommended).
 
 ---
@@ -258,8 +263,11 @@ The workflow signs with the key in the repository secret **`ANDROID_DEBUG_KEYSTO
   ```
   If no keystore exists yet, create one:
   `keytool -genkeypair -keystore ~/.android/debug.keystore -storepass android -keypass android -alias androiddebugkey -dname "CN=Android Debug,O=Android,C=US" -keyalg RSA -validity 10000`.
-- Without the secret, each run uses a throwaway key (the run shows a warning) and phones must
-  **uninstall** the old app first, which deletes its local data.
+- Without the secret, each run uses a throwaway key (the run shows a warning, the release JSON says
+  `"stableKey": false` and the Controller's Download card warns) and phones must **uninstall** the
+  old app first, which deletes its local data.
+- The shared key also keeps the phone id (Android's `ANDROID_ID` is per signing key), which is how a
+  reinstalled app reconnects to Founder OS without a new pairing code.
 - If an install fails with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, the phone has an APK signed
   with a different key: back up in the app (Settings → Back up), uninstall, install, restore.
 

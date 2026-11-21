@@ -1076,6 +1076,24 @@ for every approved member — not an automation.
   (`modules/dialer/app-release.ts`, KV-cached 5 min) returns that version and
   `GET /api/dialer/app/download` streams the APK same-origin (the upstream GitHub URL is never sent
   to the browser); Controller `AppDownload` shows version + Download. No local Android toolchain needed.
+- **Follow-ups (2026-11-21, migration 0149, app 1.2.0):**
+  - *Reinstall keeps pairing:* `POST /api/android/pair-restore {deviceId}` (`pairing.ts#restoreByDevice`)
+    rotates the token of the still-active registration with that ANDROID_ID; the app tries it before
+    showing the code screen. ANDROID_ID is per signing key, so it needs the shared key secret
+    (`ANDROID_DEBUG_KEYSTORE_BASE64`); the release JSON carries `stableKey` and the Controller warns
+    when a build would need an uninstall.
+  - *Phone-dialer calls:* `remote/PhoneCallSync.kt` turns call-log entries the auto dialer did not place
+    into outbox `pcall:<date>` items (server id `<dev>-L<date>`, `origin:'phone'`); `sync.ts` keeps them
+    when `config.trackPhoneCalls` (default on) and stamps `DeviceCall.origin='phone'`; the report counts
+    them (`AgentDay.phone`). Their recordings match by time and upload against that server id. With
+    tracking on, `Outbox.enqueueCall` skips non-dialer local calls so nothing counts twice.
+  - *Retry cap:* `queueOutcome` returns `unreachable` when a retry disposition reaches `retryMax`
+    (Controller "Stop re-queuing after N tries"); `GET /api/dialer/unreachable?days=` lists them.
+  - *Scheduled breaks:* `config.scheduledBreaks` (`{id,label,start,end,agents[]}`, IST, empty agents =
+    everyone); the phone config route serves only that agent's (`scheduledFor`); `AutoDialer` shows
+    `State.Scheduled` (live state `break`) and blocks manual dial inside a window.
+  - *Recording health:* the Dialer tab warns when calls connect but no recordings exist today (phone
+    recorder off) or audio access is missing.
 
 ## 15. Deployment map (current)
 

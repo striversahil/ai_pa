@@ -15,6 +15,8 @@ export interface AgentDay {
   connected: number;
   talkSec: number;
   manual: number;
+  /** Calls made/received in the phone's own dialer (call log), not the auto dialer. */
+  phone: number;
   flagged: number;
   /** IST hour (0-23) → counts; only hours with calls are present. */
   hours: Record<number, HourCell>;
@@ -32,7 +34,7 @@ function reached(cfg: DialerConfig, row: any): boolean {
 
 export async function dayReport(db: Db, cfg: DialerConfig, day: string): Promise<{ day: string; agents: AgentDay[] }> {
   const [calls, breaks, roster] = await Promise.all([
-    db.prepare(`SELECT telecallerId, attemptAt, durationSec, status, disposition, manual FROM DeviceCall WHERE day = ?`).bind(day).all(),
+    db.prepare(`SELECT telecallerId, attemptAt, durationSec, status, disposition, manual, origin FROM DeviceCall WHERE day = ?`).bind(day).all(),
     db.prepare(`SELECT telecallerId, reason, note, startAt, endAt, durationSec FROM DialerBreak WHERE day = ? ORDER BY startAt`).bind(day).all(),
     db.prepare(`SELECT id, name, region FROM Telecaller`).all(),
   ]);
@@ -43,7 +45,7 @@ export async function dayReport(db: Db, cfg: DialerConfig, day: string): Promise
     let a = agents.get(id);
     if (!a) {
       const n = names.get(id);
-      a = { telecallerId: id, name: n?.name ?? id, region: n?.region ?? '', attempted: 0, connected: 0, talkSec: 0, manual: 0, flagged: 0, hours: {}, dispositions: {}, breaks: [], breakSec: 0 };
+      a = { telecallerId: id, name: n?.name ?? id, region: n?.region ?? '', attempted: 0, connected: 0, talkSec: 0, manual: 0, phone: 0, flagged: 0, hours: {}, dispositions: {}, breaks: [], breakSec: 0 };
       agents.set(id, a);
     }
     return a;
@@ -55,6 +57,7 @@ export async function dayReport(db: Db, cfg: DialerConfig, day: string): Promise
     a.attempted++; a.talkSec += talk;
     if (ok) a.connected++;
     if (Number(r.manual) === 1) a.manual++;
+    if (r.origin === 'phone') a.phone++;
     const key = String(r.disposition ?? '') || 'NONE';
     if (key === NOT_DISPOSED) a.flagged++;
     a.dispositions[key] = (a.dispositions[key] ?? 0) + 1;
@@ -110,6 +113,7 @@ export async function liveBoard(db: Db, cfg: DialerConfig, today: string): Promi
       queueLater: q.later,
       attempted: day?.attempted ?? 0,
       connected: day?.connected ?? 0,
+      phone: day?.phone ?? 0,
       talkSec: day?.talkSec ?? 0,
       breakSec: day?.breakSec ?? 0,
       openBreak,

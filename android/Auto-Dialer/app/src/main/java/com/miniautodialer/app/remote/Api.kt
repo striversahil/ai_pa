@@ -44,6 +44,10 @@ class Api(private val session: Session) {
     suspend fun pairStatus(requestId: String, secret: String): JSONObject =
         request("POST", "/api/android/pair-status", JSONObject().put("requestId", requestId).put("secret", secret), auth = false)
 
+    /** Reinstall on the same phone: an active registration gets a fresh token, no code needed. */
+    suspend fun pairRestore(): JSONObject =
+        request("POST", "/api/android/pair-restore", JSONObject().put("deviceId", session.deviceId), auth = false)
+
     suspend fun config(): JSONObject = request("GET", "/api/android/dialer/config")
 
     suspend fun queue(): JSONObject = request("GET", "/api/android/dialer/queue?limit=100")

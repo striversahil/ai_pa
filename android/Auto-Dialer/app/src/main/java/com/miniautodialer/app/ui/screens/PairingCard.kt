@@ -37,6 +37,20 @@ fun PairingCard() {
     var busy by remember { mutableStateOf(false) }
     var msg by remember { mutableStateOf<String?>(null) }
 
+    // Reinstalled on a phone that is still paired in Founder OS: reconnect by
+    // itself (same phone id), no new code needed. Unpaired phones get "none".
+    var restoring by remember { mutableStateOf(code == null) }
+    LaunchedEffect(Unit) {
+        if (code != null) return@LaunchedEffect
+        val res = runCatching { Api(session).pairRestore() }.getOrNull()
+        if (res?.optString("status") == "paired") {
+            session.savePaired(res.getString("token"), res.optString("agent"), res.optString("telecallerId"))
+            SyncScheduler.schedulePeriodic(ctx)
+            SyncRunner.run(ctx)
+        }
+        restoring = false
+    }
+
     // Poll while a request is open; the token arrives exactly once.
     LaunchedEffect(code) {
         val id = session.pairRequestId ?: return@LaunchedEffect
@@ -62,7 +76,13 @@ fun PairingCard() {
 
     Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Connect to Founder OS", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        if (code == null) {
+        if (restoring) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(8.dp))
+                Text("Checking whether this phone is already connected…")
+            }
+        } else if (code == null) {
             Text("Your sales head links this phone to you. Enter your name and tap Connect; a code appears that they confirm in the Controller.")
             OutlinedTextField(name, { name = it }, label = { Text("Your name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             Button(

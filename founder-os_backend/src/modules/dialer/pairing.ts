@@ -89,6 +89,29 @@ export async function rejectRequest(db: Db, id: string, actorName: string): Prom
     .bind(actorName, new Date().toISOString(), id).run();
 }
 
+/**
+ * Reinstall on the same phone: Android keeps ANDROID_ID for the same signing
+ * key, so a phone whose registration is still active (never unpaired) gets a
+ * fresh token without a new code. The old token stops working.
+ */
+export async function restoreByDevice(db: Db, deviceId: string): Promise<{
+  status: 'paired' | 'none'; token?: string; agent?: string; telecallerId?: string;
+}> {
+  const row: any = await db.prepare(
+    `SELECT id, telecallerId FROM DeviceRegistration WHERE deviceId = ? AND status = 'active' ORDER BY createdAt DESC LIMIT 1`,
+  ).bind(deviceId).first();
+  if (!row || !(await findActiveAgent(db, String(row.telecallerId)))) return { status: 'none' };
+  const token = randomToken();
+  await db.prepare(`UPDATE DeviceRegistration SET tokenHash=?, updatedAt=? WHERE id=?`)
+    .bind(await hashToken(token), new Date().toISOString(), row.id).run();
+  return {
+    status: 'paired',
+    token,
+    telecallerId: String(row.telecallerId),
+    agent: (await findAgentName(db, String(row.telecallerId))) ?? '',
+  };
+}
+
 /** Phone poll. The token leaves the server once, then is erased. */
 export async function claimRequest(db: Db, id: string, secret: string): Promise<{
   status: string; token?: string; agent?: string; telecallerId?: string;

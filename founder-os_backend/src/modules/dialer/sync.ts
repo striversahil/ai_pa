@@ -44,12 +44,17 @@ async function syncCalls(db: Db, list: any[], device: { deviceId: string; teleca
     const parsed = await parseBatch({ calls: [raw] }, device.deviceId, MAX_OFFLINE_DAYS);
     const call = parsed.calls[0];
     if (!call) { out.rejectedCalls.push({ id, error: parsed.errors[0] ?? 'invalid call' }); continue; }
-    if (raw?.external === true && !(await isCustomerNumber(db, call.numberE164))) {
-      out.acceptedCalls.push(id); // personal call: acknowledged, never stored
+    // Phone-dialer calls (call log, app ≥ 1.2.0) follow the Controller switch;
+    // older apps' external calls keep the customer-number-only rule.
+    const fromPhone = raw?.origin === 'phone';
+    const keep = fromPhone ? cfg.trackPhoneCalls : raw?.external !== true || (await isCustomerNumber(db, call.numberE164));
+    if (!keep) {
+      out.acceptedCalls.push(id); // acknowledged, never stored
       continue;
     }
     const before: any = await db.prepare('SELECT disposition FROM DeviceCall WHERE idempotencyKey = ?').bind(call.idempotencyKey).first();
     await insertCalls(db, [call], device.telecallerId);
+    if (fromPhone) await db.prepare(`UPDATE DeviceCall SET origin='phone' WHERE idempotencyKey=?`).bind(call.idempotencyKey).run();
     const disposition = toKey(raw?.disposition);
     const queueId = String(raw?.queueId ?? '').slice(0, 64) || null;
     const callbackAt = isoOrNull(raw?.callbackAt);

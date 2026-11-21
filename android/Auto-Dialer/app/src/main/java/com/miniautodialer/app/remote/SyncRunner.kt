@@ -40,6 +40,7 @@ object SyncRunner {
         val api = Api(session)
         val dao = MiniDialerApp.db.sync()
         try {
+            PhoneCallSync.collect(ctx)
             pushCallsAndBreaks(api, dao)
             uploadRecordings(api, dao, ctx)
             session.configJson = api.config().optJSONObject("config")?.toString() ?: session.configJson
@@ -63,11 +64,18 @@ object SyncRunner {
         do {
             val callItems = dao.pending("call", 100)
             val breakItems = dao.pending("break", 50)
+            val phoneItems = dao.pending("pcall", 100)
             val calls = JSONArray()
             val gone = mutableListOf<String>()
             val byServerId = HashMap<String, String>()
             for (item in callItems) {
                 val p = Outbox.callPayload(item)
+                if (p == null) { gone += item.id; continue }
+                calls.put(p); byServerId[p.getString("id")] = item.id
+            }
+            // Phone-dialer calls carry their full payload.
+            for (item in phoneItems) {
+                val p = runCatching { JSONObject(item.payload) }.getOrNull()
                 if (p == null) { gone += item.id; continue }
                 calls.put(p); byServerId[p.getString("id")] = item.id
             }
@@ -86,7 +94,7 @@ object SyncRunner {
             val settled = gone.size +
                 markResult(dao, res.optJSONArray("acceptedCalls"), res.optJSONArray("rejectedCalls"), byServerId) +
                 markResult(dao, res.optJSONArray("acceptedBreaks"), res.optJSONArray("rejectedBreaks"), breakIds)
-        } while ((callItems.size == 100 || breakItems.size == 50) && settled > 0)
+        } while ((callItems.size == 100 || breakItems.size == 50 || phoneItems.size == 100) && settled > 0)
     }
 
     /** @return how many outbox items this response settled. */
@@ -104,13 +112,16 @@ object SyncRunner {
     private suspend fun uploadRecordings(api: Api, dao: SyncDao, ctx: Context) {
         for (item in dao.pending("rec", 5)) {
             val p = JSONObject(item.payload)
-            val callId = p.getLong("callId")
-            // The call row must exist on the server first.
-            if (dao.outbox("call:$callId")?.status != "done") continue
+            // The call row must exist on the server first. Auto-dialer calls are
+            // keyed by local call id; phone-dialer calls carry their server id.
+            val phone = p.has("serverId")
+            val callOutbox = if (phone) p.getString("outboxId") else "call:${p.getLong("callId")}"
+            if (dao.outbox(callOutbox)?.status != "done") continue
+            val serverId = if (phone) p.getString("serverId") else Outbox.serverCallId(p.getLong("callId"))
             val rec = MiniDialerApp.db.recordings().get(p.getLong("recordingId"))
             val file = rec?.let { Repo.recordingFile(ctx, it) }
             if (file == null || !file.exists()) { dao.mark(listOf(item.id), "done", "file gone"); continue }
-            when (val code = api.uploadRecording(Outbox.serverCallId(callId), file)) {
+            when (val code = api.uploadRecording(serverId, file)) {
                 in 200..299 -> dao.mark(listOf(item.id), "done", null)
                 501 -> return // recording storage not enabled on the server yet; retry later
                 404, 403, 413 -> dao.mark(listOf(item.id), "rejected", "HTTP $code")

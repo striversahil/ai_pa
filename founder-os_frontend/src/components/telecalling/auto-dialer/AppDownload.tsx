@@ -26,6 +26,9 @@ export function AppDownload({ release, loading }: { release: AppRelease | null; 
             built {release.builtAt ? relActive(release.builtAt).replace(/^Active /, "") : "—"}
             {" · open this page on the agent's phone and tap Download to install"}
           </p>
+          {!release.stableKey && (
+            <p className="text-[11px] text-amber-600 dark:text-amber-400">This build is not signed with the shared key: uninstall the old app before installing.</p>
+          )}
         </div>
       </div>
       <a

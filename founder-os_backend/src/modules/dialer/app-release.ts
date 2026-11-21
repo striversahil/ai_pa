@@ -18,13 +18,15 @@ export interface AppRelease {
   versionName: string;
   versionCode: number;
   sizeBytes: number;
+  /** Signed with the shared key: installs over the previous build (pairing + data kept). */
+  stableKey: boolean;
   builtAt: string | null;
   commit: string;
   downloadUrl: string;
 }
 
 const EMPTY: AppRelease = {
-  available: false, versionName: '', versionCode: 0, sizeBytes: 0, builtAt: null, commit: '', downloadUrl: DOWNLOAD_PATH,
+  available: false, versionName: '', versionCode: 0, sizeBytes: 0, stableKey: false, builtAt: null, commit: '', downloadUrl: DOWNLOAD_PATH,
 };
 
 /** Pure: normalise the workflow's JSON (anything missing → safe defaults). */
@@ -35,6 +37,7 @@ export function parseRelease(raw: any): AppRelease {
     versionName: String(raw.versionName).slice(0, 40),
     versionCode: Number(raw.versionCode) || 0,
     sizeBytes: Number(raw.sizeBytes) || 0,
+    stableKey: raw.stableKey === true,
     builtAt: typeof raw.builtAt === 'string' ? raw.builtAt : null,
     commit: String(raw.commit ?? '').slice(0, 7),
     downloadUrl: DOWNLOAD_PATH,
@@ -42,7 +45,7 @@ export function parseRelease(raw: any): AppRelease {
 }
 
 export async function latestAppRelease(): Promise<AppRelease> {
-  return cached('dialer:app-release:v2', TTL_MS, async () => {
+  return cached('dialer:app-release:v3', TTL_MS, async () => {
     try {
       const res = await fetch(META_UPSTREAM, { headers: UA, redirect: 'follow' });
       if (!res.ok) return EMPTY;
