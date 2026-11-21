@@ -130,3 +130,21 @@ export interface LocalCancelArgs {
   /** Floor-cancel marker already on the order (when set, the order is out). */
   localCancelledAt?: string | null;
 }
+
+// ── Partial line cancel (floor overlay, unavailable stock) ───────────────────
+
+export interface CancelItemEntry {
+  itemId: string;
+  /** Quantity to cancel; omitted/null = the full remaining quantity. */
+  qty?: number | null;
+}
+
+export interface CancelItemsArgs {
+  items: readonly ItemLike[];
+  /** Legacy full-line path (each id = full remaining). Prefer `entries`. */
+  itemIds?: Array<string | { itemId: string }> | null;
+  /** Partial-quantity path (qty omitted = full remaining). */
+  entries?: readonly CancelItemEntry[] | null;
+  /** Client-confirmation reason — the whole audit trail. Always mandatory. */
+  reason?: string | null;
+}

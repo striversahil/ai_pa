@@ -1164,15 +1164,18 @@ export async function amendOrderItems(args: {
 }
 
 /**
- * Cancel pending lines on the floor (client-confirmed: unavailable stock).
- * Marks each line `removedAt/By` with an `item_cancelled` audit row — the
- * lines stay in DB struck-through and leave every working queue. Dispatched
- * lines are never cancellable, and cancelling the last live line is refused
- * (use the whole-SO cancel instead) so partial vs full stays unambiguous.
+ * Cancel pending quantities on the floor (client-confirmed: unavailable stock).
+ * Each entry cancels `qty` (omitted = full remaining): a full remainder marks
+ * the line `removedAt/By` (struck-through, out of every queue), a partial qty
+ * shrinks the floor overlay (`amendedQty = effective - cancelQty`) and leaves
+ * the line open. Every line gets an `item_cancelled` audit row with the
+ * cancelled qty. Fully dispatched lines (nothing left) are rejected, and
+ * cancelling every live line in full stays a whole-SO cancel.
  */
 export async function cancelOrderItems(args: {
   idOrSo: string;
-  itemIds: string[];
+  itemIds?: string[];
+  entries?: Array<{ itemId: string; qty?: number | null }>;
   reason?: string | null;
   actor?: string | null;
   today?: string;
@@ -1192,29 +1195,57 @@ export async function cancelOrderItems(args: {
     removedAt: (r as any).removedAt ? iso((r as any).removedAt) : null,
   })) as ItemLike[];
 
-  const check = validateCancelItems({ items, itemIds: args.itemIds, reason: args.reason });
+  const legacy = (args.itemIds || []).map((id) => String(id).trim()).filter(Boolean).map((itemId) => ({ itemId }));
+  const normalized = Array.isArray(args.entries) && args.entries.length > 0 ? args.entries : legacy;
+  const check = validateCancelItems({ items, entries: normalized as any, reason: args.reason });
   if (!check.ok) throw new CrmError(check.message, 400, check.code);
 
   const now = new Date();
   const byId = new Map(itemRows.map((r) => [str(r.id), r]));
   const note = str(args.reason).trim();
-  const unique = [...new Set((args.itemIds || []).map((id) => String(id).trim()).filter(Boolean))];
+  const unique = [...new Set(normalized.map((e) => String((e as any)?.itemId ?? '').trim()).filter(Boolean))];
+  const list = normalized as Array<{ itemId: string; qty?: number | null }>;
   for (const id of unique) {
     const row = byId.get(id);
     if (!row) continue;
-    await prisma.crmSoItem.update({
-      where: { id },
-      data: { removedAt: now, removedBy: str(args.actor) || '', updatedAt: now } as any,
-    });
-    await writeEvent({
-      soId: str(orderRow.id),
-      soNumber: str(orderRow.soNumber),
-      kind: 'item_cancelled',
-      itemId: id,
-      reason: `Cancelled (unavailable: ${note}) — ${str(row.name || row.description || row.sku || 'line')}`,
-      actor: args.actor,
-      day: today,
-    });
+    const total = effectiveQty({ qty: num((row as any).qty), amendedQty: (row as any).amendedQty ?? null });
+    const done = num((row as any).dispatchedQty);
+    const remaining = Math.max(0, total - done);
+    const rawQty = list.find((e) => String((e as any)?.itemId) === id)?.qty;
+    const want = rawQty === undefined || rawQty === null || (rawQty as any) === '' ? remaining : Number(rawQty);
+    const label = str((row as any).name || (row as any).description || (row as any).sku || 'line');
+    if (want >= remaining - 1e-6) {
+      await prisma.crmSoItem.update({
+        where: { id },
+        data: { removedAt: now, removedBy: str(args.actor) || '', updatedAt: now } as any,
+      });
+      await writeEvent({
+        soId: str(orderRow.id),
+        soNumber: str(orderRow.soNumber),
+        kind: 'item_cancelled',
+        itemId: id,
+        qty: Math.round(remaining * 100) / 100,
+        reason: `Cancelled (unavailable: ${note}) — ${label}`,
+        actor: args.actor,
+        day: today,
+      });
+    } else {
+      const nextTotal = Math.round((total - want) * 100) / 100;
+      await prisma.crmSoItem.update({
+        where: { id },
+        data: { amendedQty: nextTotal, itemTotal: Math.round(nextTotal * num((row as any).rate) * 100) / 100, updatedAt: now } as any,
+      });
+      await writeEvent({
+        soId: str(orderRow.id),
+        soNumber: str(orderRow.soNumber),
+        kind: 'item_cancelled',
+        itemId: id,
+        qty: Math.round(want * 100) / 100,
+        reason: `Cancelled ${Math.round(want * 100) / 100} (unavailable: ${note}) — ${label}`,
+        actor: args.actor,
+        day: today,
+      });
+    }
   }
 
   const fresh = await loadRawItems(str(orderRow.id));

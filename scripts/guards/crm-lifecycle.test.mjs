@@ -447,15 +447,24 @@ describe('crm lifecycle mirror', () => {
       { items: open, itemIds: [], reason: 'client cancelled these lines as unavailable' },
       { items: open, itemIds: ['a'], reason: 'short' },
       { items: open, itemIds: ['a'], reason: 'client cancelled these lines as unavailable' },
-      // Dispatched line is never cancellable.
+      // Fully dispatched line (nothing left) is never cancellable.
       { items: open, itemIds: ['c'], reason: 'client cancelled these lines as unavailable' },
-      // Partially-dispatched line (dispatchedQty > 0) is never cancellable.
+      // Partially-dispatched line cancels up to its remaining balance (5-2=3).
       { items: open, itemIds: ['b'], reason: 'client cancelled these lines as unavailable' },
-      // Cancelling every open line must go through the whole-SO cancel.
+      { items: open, entries: [{ itemId: 'b', qty: 1 }], reason: 'client cancelled these lines as unavailable' },
+      { items: open, entries: [{ itemId: 'b', qty: 3 }], reason: 'client cancelled these lines as unavailable' },
+      // Over-cancel, zero and non-numeric qty are rejected.
+      { items: open, entries: [{ itemId: 'b', qty: 4 }], reason: 'client cancelled these lines as unavailable' },
+      { items: open, entries: [{ itemId: 'a', qty: 0 }], reason: 'client cancelled these lines as unavailable' },
+      { items: open, entries: [{ itemId: 'a', qty: 11 }], reason: 'client cancelled these lines as unavailable' },
+      // Cancelling every open line in full must go through the whole-SO cancel;
+      // partial qty that leaves live work is allowed on the last line.
       { items: [{ id: 'a', dispatchState: 'unscheduled', tentativeDispatchDate: null, qty: 10, dispatchedQty: 0 }], itemIds: ['a'], reason: 'client cancelled these lines as unavailable' },
+      { items: [{ id: 'a', dispatchState: 'scheduled', tentativeDispatchDate: TODAY, qty: 10, dispatchedQty: 6 }], entries: [{ itemId: 'a', qty: 2 }], reason: 'client cancelled these lines as unavailable' },
       // Unknown + duplicate ids.
       { items: open, itemIds: ['zzz'], reason: 'client cancelled these lines as unavailable' },
       { items: open, itemIds: ['a', 'a'], reason: 'client cancelled these lines as unavailable' },
+      { items: open, entries: [{ itemId: 'a' }, { itemId: 'a', qty: 1 }], reason: 'client cancelled these lines as unavailable' },
     ];
     for (const c of cancelItemsCases) {
       assert.deepEqual(fe.validateCancelItems(c), be.validateCancelItems(c), `validateCancelItems ${JSON.stringify(c)}`);
@@ -468,6 +477,24 @@ describe('crm lifecycle mirror', () => {
     assert.equal(
       fe.validateCancelItems({ items: open, itemIds: ['a'], reason: 'client cancelled these lines as unavailable' }).ok,
       true,
+    );
+    // Partial qty on the partially-dispatched line must pass on both sides.
+    assert.equal(
+      be.validateCancelItems({ items: open, entries: [{ itemId: 'b', qty: 1 }], reason: 'client cancelled these lines as unavailable' }).ok,
+      true,
+    );
+    assert.equal(
+      fe.validateCancelItems({ items: open, entries: [{ itemId: 'b', qty: 1 }], reason: 'client cancelled these lines as unavailable' }).ok,
+      true,
+    );
+    // Over-cancel must fail with bad_qty on both sides.
+    assert.equal(
+      be.validateCancelItems({ items: open, entries: [{ itemId: 'b', qty: 4 }], reason: 'client cancelled these lines as unavailable' }).code,
+      'bad_qty',
+    );
+    assert.equal(
+      fe.validateCancelItems({ items: open, entries: [{ itemId: 'b', qty: 4 }], reason: 'client cancelled these lines as unavailable' }).code,
+      'bad_qty',
     );
   });
 });

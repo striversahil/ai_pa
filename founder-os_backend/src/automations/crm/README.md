@@ -36,13 +36,13 @@ write-back:
 | line removal | `removedAt/By` (row stays, struck-through in the panel) | out of every queue, lifecycle, overdue and dispatch validation |
 | added line | `isLocalAdded` row (`local:*` key) | behaves like a normal undated line |
 | full-SO cancel | `localCancelledAt/By/Reason` + lifecycle parked at `cancelled` | out of every working queue; all floor actions locked; root reverses with `POST …/reopen` |
-| partial (line) cancel | `removedAt/By` + `item_cancelled` audit row (unavailable stock) | line struck-through, out of every queue; dispatched lines rejected; cancelling the last live line is refused (use Cancel SO) |
+| partial (line/qty) cancel | full remainder → `removedAt/By` (struck-through); partial qty → `amendedQty = effective − cancelQty` (line stays open) + `item_cancelled` audit row with the cancelled qty | nothing left to cancel is rejected; cancelling every live line in full stays a whole-SO cancel |
 
 `PUT /api/crm/orders/:id/items` (qtyChanges + removals + additions, one
 client-confirmation note for the batch, every line audit-logged as
 `item_amended` / `item_removed` / `item_added`),
-`POST /api/crm/orders/:id/cancel-items` (pending-line cancel, audit
-`item_cancelled`),
+`POST /api/crm/orders/:id/cancel-items` (entries `[{itemId, qty?}]`, qty omitted =
+full remaining, audit `item_cancelled` with the cancelled qty),
 `POST /api/crm/orders/:id/cancel-local` (`order_cancelled_local`) and
 `POST /api/crm/orders/:id/reopen` (root-only, `order_reopened_local`) — the
 item/SO cancels behind the CRM-read gate (agents own-region only), reopen

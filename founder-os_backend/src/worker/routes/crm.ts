@@ -459,10 +459,12 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
     }
   });
 
-  // ── Cancel pending lines (partial SO cancel — anyone with CRM read; agents
-  // own-region only, enforced from the session like promise dates). Unavailable
-  // stock only: dispatched lines are rejected, and the last live line must go
-  // through the whole-SO cancel so partial vs full stays unambiguous.
+  // ── Cancel pending quantities (partial SO cancel — anyone with CRM read;
+  // agents own-region only, enforced from the session like promise dates).
+  // unavailable stock only: each entry cancels qty (omitted = full remaining);
+  // a full remainder removes the line, a partial qty shrinks it. Nothing left
+  // to cancel is rejected, and cancelling every live line in full stays a
+  // whole-SO cancel so partial vs full stays unambiguous.
   app.post('/api/crm/orders/:id/cancel-items', async (c) => {
     const v = await requireRead(c);
     if (v instanceof Response) return v;
@@ -478,13 +480,20 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
       }
     }
     const body = await readBody(c);
-    const itemIds = Array.isArray(body?.itemIds)
+    const legacyIds = Array.isArray(body?.itemIds)
       ? body.itemIds.map((e: any) => String((e as any)?.itemId ?? e ?? ''))
       : [];
+    const entries = Array.isArray(body?.entries)
+      ? body.entries.map((e: any) => ({
+          itemId: String((e as any)?.itemId ?? ''),
+          qty: (e as any)?.qty === undefined || (e as any)?.qty === null || (e as any)?.qty === '' ? null : Number((e as any)?.qty),
+        }))
+      : legacyIds.map((itemId: string) => ({ itemId }));
     try {
       const res = await cancelOrderItems({
         idOrSo,
-        itemIds,
+        itemIds: legacyIds,
+        entries,
         reason: body?.reason ? String(body.reason) : null,
         actor: v.name,
       });

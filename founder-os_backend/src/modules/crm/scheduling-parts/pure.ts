@@ -290,21 +290,28 @@ export function validateAmend(args: AmendArgs): Validation {
 }
 
 /**
- * Validate a partial (line-level) floor cancel: needs a client-confirmation
- * reason, at least one cancellable line, and never the last live line (that
- * is a full SO cancel). Dispatched lines are never cancellable — the goods
- * already left; amend the remainder instead.
+ * Validate a line-level floor cancel (unavailable stock): needs a
+ * client-confirmation reason and at least one cancellable line. Each entry
+ * cancels `qty` (omitted = full remaining); a partial qty leaves the line
+ * open with a smaller balance, a full remainder removes the line. Fully
+ * dispatched lines (nothing left) are never cancellable; partially-dispatched
+ * lines can cancel up to their remaining balance. Cancelling every live line
+ * in full stays a whole-SO cancel so partial vs full stays unambiguous.
  */
 export function validateCancelItems(args: {
   items?: ItemLike[] | null;
   itemIds?: Array<string | { itemId: string }> | null;
+  entries?: Array<{ itemId: string; qty?: number | null }> | null;
   reason?: string | null;
 }): Validation {
   const reasonCheck = validateReason(args?.reason, 'Cancellation reason');
   if (!reasonCheck.ok) return reasonCheck;
-  const ids = (args.itemIds || [])
+  const fromIds = (args.itemIds || [])
     .map((e) => String((e as any)?.itemId ?? e ?? '').trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .map((itemId) => ({ itemId }));
+  const raw = Array.isArray(args.entries) && args.entries.length > 0 ? args.entries : fromIds;
+  const ids = raw.map((e) => String((e as any)?.itemId ?? '').trim()).filter(Boolean);
   const unique = [...new Set(ids)];
   if (unique.length === 0) {
     return fail('no_items', 'Select at least one pending item to cancel.');
@@ -314,17 +321,40 @@ export function validateCancelItems(args: {
   }
   const byId = new Map((args.items || []).map((it) => [it.id, it]));
   const open = (args.items || []).filter((it) => !isRemovedItem(it));
-  for (const id of unique) {
+  let fullLines = 0;
+  for (const entry of raw) {
+    const id = String((entry as any)?.itemId ?? '').trim();
     const item = byId.get(id);
     if (!item) return fail('unknown_item', 'That item is not on this sales order.', id);
     if (isRemovedItem(item)) {
       return fail('removed_item', 'That item was already removed from this sales order.', id);
     }
-    if (item.dispatchState === 'dispatched' || Number(item.dispatchedQty ?? 0) > 1e-6) {
-      return fail('already_dispatched', 'Dispatched quantities cannot be cancelled — the goods already left.', id);
+    const total = effectiveQty(item);
+    const done = Number(item.dispatchedQty ?? 0);
+    const remaining = Math.max(0, total - done);
+    if (remaining <= 1e-6) {
+      return fail('already_dispatched', 'Nothing left to cancel on this line — the goods already left.', id);
+    }
+    const rawQty = (entry as any)?.qty;
+    if (rawQty === undefined || rawQty === null || rawQty === '') continue;
+    const want = Number(rawQty);
+    if (!Number.isFinite(want) || want <= 0) {
+      return fail('bad_qty', 'Cancel quantity must be greater than zero.', id);
+    }
+    if (want > remaining + 1e-6) {
+      return fail('bad_qty', `Only ${remaining} left on this line.`, id);
+    }
+    if (want >= remaining - 1e-6) fullLines++;
+    else {
+      // Partial qty on a line — leaves live work, never counts as a full line.
     }
   }
-  if (unique.length >= open.length) {
+  // Entries without an explicit qty default to the full remainder.
+  for (const entry of raw) {
+    const rawQty = (entry as any)?.qty;
+    if (rawQty === undefined || rawQty === null || rawQty === '') fullLines++;
+  }
+  if (fullLines >= open.length && open.length > 0) {
     return fail('last_line', 'That is every pending item — use Cancel SO for the whole order instead.');
   }
   return ok;

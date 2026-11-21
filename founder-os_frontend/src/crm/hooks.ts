@@ -130,7 +130,8 @@ export function useCrmAction(onDone?: (order: CrmOrder) => void) {
   );
 
   const cancelItems = useCallback(
-    (id: string, itemIds: string[], reason: string) => run(() => crmApi.cancelItems(id, itemIds, reason)),
+    (id: string, entries: Array<{ itemId: string; qty?: number | null }>, reason: string) =>
+      run(() => crmApi.cancelItems(id, entries, reason)),
     [run],
   );
 
