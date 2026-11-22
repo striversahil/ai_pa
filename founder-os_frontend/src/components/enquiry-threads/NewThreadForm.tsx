@@ -1,30 +1,51 @@
 "use client";
 import React, { useState } from "react";
 import { Button } from "@/components/ui";
-import { DESK_LABEL, startTargets, type ThreadAttachment, type ThreadDesk } from "@/enquiry-threads/types";
+import {
+  DESK_LABEL, needsCategory, startTargets,
+  type ThreadAttachment, type ThreadCategory, type ThreadDesk,
+} from "@/enquiry-threads/types";
 import { PrivateNotice } from "./ThreadCard";
 import { AttachButton, AttachmentList, useAttachDraft } from "./Attachments";
 
 // Ask a query on one item. Targets follow the desk rules:
-// sales/procurement → management; management → sales or procurement.
+// sales → management; management → sales or procurement.
+// A sales-facing query carries a CATEGORY (founder decision 2026-11-21):
+//   Product query    → shared with Procurement, answered in this same thread
+//   Rate negotiation → Management only, never shown to Procurement
+const CATEGORY_COPY: Record<ThreadCategory, { title: string; hint: string }> = {
+  product_query: {
+    title: "Product query",
+    hint: "Spec, drawing, availability, feasibility — Management and Procurement answer here together.",
+  },
+  rate_negotiation: {
+    title: "Rate negotiation",
+    hint: "Client price or commercial terms — stays with Management only.",
+  },
+};
+
 export default function NewThreadForm({ desk, onStart, onCancel }: {
   desk: ThreadDesk;
-  onStart: (to: ThreadDesk, text: string, attachments: ThreadAttachment[]) => Promise<unknown>;
+  onStart: (to: ThreadDesk, text: string, attachments: ThreadAttachment[], category?: ThreadCategory) => Promise<unknown>;
   onCancel: () => void;
 }) {
   const targets = startTargets(desk);
   const [to, setTo] = useState<ThreadDesk>(targets[0]);
   const [text, setText] = useState("");
+  const [category, setCategory] = useState<ThreadCategory>("product_query");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const draft = useAttachDraft();
   const privateThread = (desk === "management" && to === "procurement") || desk === "procurement";
+  const withCategory = needsCategory(desk, to);
   const canSend = !busy && !draft.uploading && (!!text.trim() || draft.files.length > 0);
 
   const submit = () => {
     if (!canSend) return;
     setBusy(true); setErr(null);
-    onStart(to, text.trim(), draft.files).then(() => onCancel()).catch((e: any) => { setErr(e?.message || "Could not send the query"); setBusy(false); });
+    onStart(to, text.trim(), draft.files, withCategory ? category : undefined)
+      .then(() => onCancel())
+      .catch((e: any) => { setErr(e?.message || "Could not send the query"); setBusy(false); });
   };
 
   return (
@@ -39,13 +60,34 @@ export default function NewThreadForm({ desk, onStart, onCancel }: {
         ) : <span className="text-[var(--text-primary)]">{DESK_LABEL[to]}</span>}
         {privateThread && <PrivateNotice />}
       </div>
+
+      {withCategory && (
+        <fieldset className="space-y-1.5 rounded-[var(--radius-sm)] border border-[var(--border-card)] bg-[var(--bg-card)] p-2">
+          <legend className="px-1 text-caption font-bold text-[var(--text-secondary)]">What are you asking about?</legend>
+          {(Object.keys(CATEGORY_COPY) as ThreadCategory[]).map((c) => (
+            <label key={c} className={`flex cursor-pointer items-start gap-2 rounded-[var(--radius-sm)] border px-2 py-1.5 ${category === c ? "border-[var(--color-brand-indigo)] bg-[color-mix(in_srgb,var(--color-brand-indigo)_7%,transparent)]" : "border-transparent"}`}>
+              <input type="radio" name="thread-category" value={c} checked={category === c}
+                onChange={() => setCategory(c)} className="mt-0.5 cursor-pointer accent-[var(--color-brand-indigo)]" />
+              <span className="min-w-0">
+                <span className="block text-caption font-semibold text-[var(--text-primary)]">{CATEGORY_COPY[c].title}</span>
+                <span className="block text-caption font-normal text-[var(--text-tertiary)]">{CATEGORY_COPY[c].hint}</span>
+              </span>
+            </label>
+          ))}
+        </fieldset>
+      )}
+
       <textarea
         autoFocus
         value={text}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) submit(); }}
         rows={3}
-        placeholder={desk === "sales" ? "Rate negotiation, client's spec message, anything about this item…" : "What do you need on this item?"}
+        placeholder={
+          privateThread ? "What do you need on this item?"
+            : category === "rate_negotiation" ? "Client price / commercial terms…"
+            : "Spec, drawing, availability — what do you need to know?"
+        }
         className="w-full resize-y rounded-[var(--radius-sm)] border border-[var(--border-card)] bg-[var(--bg-card)] px-3 py-2 text-label font-normal text-[var(--text-primary)] outline-none focus:border-[var(--color-brand-indigo)]"
       />
       <AttachmentList files={draft.files} onRemove={draft.remove} />

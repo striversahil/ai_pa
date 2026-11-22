@@ -1,7 +1,10 @@
 "use client";
 import React, { useState } from "react";
 import { Badge, Button } from "@/components/ui";
-import { DESK_LABEL, counterpart, type EnquiryThread, type ThreadAttachment, type ThreadDesk } from "@/enquiry-threads/types";
+import {
+  CATEGORY_LABEL, DESK_LABEL, counterpart, isMyTurn,
+  type EnquiryThread, type ThreadAttachment, type ThreadDesk,
+} from "@/enquiry-threads/types";
 import { AttachButton, AttachmentList, useAttachDraft } from "./Attachments";
 
 const when = (iso: string) => {
@@ -19,16 +22,32 @@ export function PrivateNotice({ compact = false }: { compact?: boolean }) {
   );
 }
 
-// One conversation: header (who · item · status) · messages · reply box +
-// resolve/reopen. Management on a Sales thread can also ask Procurement
-// (opens a separate private thread — Sales never sees it).
-export default function ThreadCard({ thread: t, desk, onReply, onResolve, onReopen, onForward, onOpenEnquiry, defaultOpen = true, showItem = true }: {
+/** Procurement answering a product query speaks as Management (founder
+ *  decision 2026-11-21). Shown on the procurement + management surfaces only —
+ *  never to Sales. */
+export function ReplyAsManagement() {
+  return (
+    <p className="rounded-[var(--radius-sm)] bg-[color-mix(in_srgb,var(--color-violet)_8%,transparent)] px-3 py-2 text-caption text-[var(--text-secondary)]">
+      🔒 <b>You are replying as Management.</b> Sales will not see your name, your desk, or that Procurement was
+      involved. Do not name suppliers, vendors or quote amounts — Sales never sees vendor information.
+    </p>
+  );
+}
+
+const CATEGORY_TONE: Record<string, string> = {
+  product_query: "border-violet-500/30 bg-violet-500/10 text-[var(--color-violet)]",
+  rate_negotiation: "border-amber-500/30 bg-amber-500/10 text-amber-300",
+};
+
+// One conversation: header (category · item · status) · messages · reply box +
+// resolve/reopen. A product query is shared with Procurement from the moment
+// it is raised — no forwarding step (procurement's replies read as Management).
+export default function ThreadCard({ thread: t, desk, onReply, onResolve, onReopen, onOpenEnquiry, defaultOpen = true, showItem = true }: {
   thread: EnquiryThread;
   desk: ThreadDesk;
   onReply: (text: string, attachments: ThreadAttachment[]) => Promise<unknown>;
   onResolve: () => Promise<unknown>;
   onReopen: () => Promise<unknown>;
-  onForward?: (text: string, attachments: ThreadAttachment[]) => Promise<unknown>;
   /** Inbox only: jump to the enquiry this thread belongs to. */
   onOpenEnquiry?: () => void;
   defaultOpen?: boolean;
@@ -37,31 +56,25 @@ export default function ThreadCard({ thread: t, desk, onReply, onResolve, onReop
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [text, setText] = useState("");
-  const [mode, setMode] = useState<"reply" | "forward">("reply");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const other = counterpart(t, desk);
   const resolved = t.status === "resolved";
-  const myTurn = !resolved && t.waitingOn === desk;
-  const canForward = !!onForward && desk === "management" && t.channel === "sales";
+  const myTurn = isMyTurn(t, desk);
   const draft = useAttachDraft();
-  // Forward transfers the whole query server-side, so an empty note is valid
-  // (every message + attachment is copied); a normal reply needs text or a file.
-  const handed = t.messages.filter((m) => !m.system);
-  const handedFiles = handed.reduce((n, m) => n + (m.attachments?.length ?? 0), 0);
-  const canSend = !busy && !draft.uploading && (mode === "forward" || !!text.trim() || draft.files.length > 0);
+  const canSend = !busy && !draft.uploading && (!!text.trim() || draft.files.length > 0);
+  const waiting = (t.waitingOnAll ?? [t.waitingOn]).filter((d) => d !== desk);
+  const waitingLabel = waiting.length === 0 ? "the other side" : waiting.map((d) => DESK_LABEL[d]).join(" / ");
 
   const run = (p: () => Promise<unknown>, clear = false) => {
     setBusy(true); setErr(null);
-    p().then(() => { if (clear) { setText(""); setMode("reply"); draft.clear(); } })
+    p().then(() => { if (clear) { setText(""); draft.clear(); } })
       .catch((e: any) => setErr(e?.message || "Action failed"))
       .finally(() => setBusy(false));
   };
   const send = () => {
     if (!canSend) return;
-    const v = text.trim();
-    const files = draft.files;
-    run(() => (mode === "forward" && onForward ? onForward(v, files) : onReply(v, files)), true);
+    run(() => onReply(text.trim(), draft.files), true);
   };
 
   return (
@@ -74,6 +87,11 @@ export default function ThreadCard({ thread: t, desk, onReply, onResolve, onReop
           </p>
           <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-[var(--text-secondary)]">
             {showItem && <span>With {DESK_LABEL[other]}</span>}
+            {t.category && (
+              <span className={`rounded border px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide ${CATEGORY_TONE[t.category]}`}>
+                {CATEGORY_LABEL[t.category]}
+              </span>
+            )}
             {t.channel === "internal" && <PrivateNotice compact />}
             <span className="text-[var(--text-tertiary)]">· {t.messages.length} message{t.messages.length === 1 ? "" : "s"} · {when(t.updatedAt)}</span>
           </p>
@@ -81,7 +99,7 @@ export default function ThreadCard({ thread: t, desk, onReply, onResolve, onReop
         <span className="flex flex-shrink-0 items-center gap-1.5">
           {resolved ? <Badge tone="success" dot>Resolved</Badge>
             : myTurn ? <Badge tone="brand" dot>Your reply</Badge>
-            : <Badge tone="neutral" dot>Waiting on {DESK_LABEL[t.waitingOn]}</Badge>}
+            : <Badge tone="neutral" dot>Waiting on {waitingLabel}</Badge>}
         </span>
       </button>
 
@@ -95,16 +113,14 @@ export default function ThreadCard({ thread: t, desk, onReply, onResolve, onReop
               <li key={m.id} className={`flex ${m.by === desk ? "justify-end" : "justify-start"}`}>
                 <div className={`max-w-[85%] rounded-[var(--radius-sm)] px-3 py-2 ${m.by === desk ? "bg-[color-mix(in_srgb,var(--color-brand-indigo)_10%,transparent)]" : "bg-[var(--surface-sunken)]"}`}>
                   <p className="text-caption font-semibold text-[var(--text-secondary)]">
-                    {DESK_LABEL[m.by]}{m.authorName ? ` · ${m.authorName}` : ""}{' '}
+                    {DESK_LABEL[m.by]}{m.authorName && m.authorName !== DESK_LABEL[m.by] ? ` · ${m.authorName}` : ""}{' '}
                     <span className="font-normal text-[var(--text-tertiary)]">· {when(m.at)}</span>
-                    {/* Why the double gate: copies only ever exist on the
-                        'internal' channel, and sales must never see ANY trace of
-                        the management↔procurement hand-off (founder rule) —
-                        even if a future surface wrongly mounts an internal
-                        thread on the sales desk. */}
-                    {t.channel === "internal" && desk !== "sales" && m.transferred && (
+                    {/* Transparency for management/procurement only. Sales is
+                        served masked messages with no marker at all (founder
+                        rule: no trace of the procurement hand-off). */}
+                    {desk !== "sales" && m.masked && (
                       <span className="ml-1.5 rounded bg-[color-mix(in_srgb,var(--color-violet)_14%,transparent)] px-1 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-[var(--color-violet)]">
-                        Transferred
+                        Shown to Sales as Management
                       </span>
                     )}
                   </p>
@@ -115,23 +131,17 @@ export default function ThreadCard({ thread: t, desk, onReply, onResolve, onReop
             ))}
           </ol>
 
-          {mode === "forward" && (
-            <div className="space-y-1 rounded-[var(--radius-sm)] bg-[color-mix(in_srgb,var(--color-violet)_8%,transparent)] px-3 py-2 text-caption text-[var(--text-secondary)]">
-              <p>
-                Transfers the <b>complete query</b> to Procurement — {handed.length} message{handed.length === 1 ? "" : "s"}
-                {handedFiles > 0 && <> · {handedFiles} attachment{handedFiles === 1 ? "" : "s"}</>} from this Sales conversation, in a <b>private</b> thread Sales never sees.
-              </p>
-              <p className="text-[var(--text-tertiary)]">
-                A note below is optional. Sending again later transfers only the new Sales messages to the same thread.
-              </p>
-            </div>
-          )}
+          {desk === "procurement" && t.channel === "sales" && !resolved && <ReplyAsManagement />}
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) send(); }}
             rows={2}
-            placeholder={mode === "forward" ? "Note for Procurement (optional)…" : resolved ? `Reply to reopen — ${DESK_LABEL[other]} will see it` : `Reply to ${DESK_LABEL[other]}…`}
+            placeholder={
+              desk === "procurement" && t.channel === "sales" ? "Answer as Management…"
+                : resolved ? `Reply to reopen — ${DESK_LABEL[other]} will see it`
+                : `Reply to ${DESK_LABEL[other]}…`
+            }
             className="w-full resize-y rounded-[var(--radius-sm)] border border-[var(--border-card)] bg-[var(--bg-input)] px-3 py-2 text-label font-normal text-[var(--text-primary)] outline-none focus:border-[var(--color-brand-indigo)]"
           />
           <AttachmentList files={draft.files} onRemove={draft.remove} />
@@ -142,15 +152,10 @@ export default function ThreadCard({ thread: t, desk, onReply, onResolve, onReop
               {resolved
                 ? <Button size="sm" variant="ghost" disabled={busy} onClick={() => run(onReopen)}>Reopen</Button>
                 : <Button size="sm" variant="ghost" disabled={busy} onClick={() => run(onResolve)}>✓ Mark resolved</Button>}
-              {canForward && (
-                <Button size="sm" variant="ghost" disabled={busy} onClick={() => setMode(mode === "forward" ? "reply" : "forward")}>
-                  {mode === "forward" ? "Cancel" : "Send query to Procurement"}
-                </Button>
-              )}
               {onOpenEnquiry && <Button size="sm" variant="ghost" onClick={onOpenEnquiry}>Open enquiry →</Button>}
             </div>
             <Button size="sm" variant="primary" disabled={!canSend} onClick={send}>
-              {busy ? "Sending…" : mode === "forward" ? "Transfer query" : "Send"}
+              {busy ? "Sending…" : "Send"}
             </Button>
           </div>
         </div>

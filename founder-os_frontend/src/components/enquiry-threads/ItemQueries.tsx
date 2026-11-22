@@ -1,7 +1,7 @@
 "use client";
 import React, { useState } from "react";
 import { Button } from "@/components/ui";
-import { DESK_LABEL, startTargets } from "@/enquiry-threads/types";
+import { DESK_LABEL, isMyTurn, startTargets, type ThreadCategory } from "@/enquiry-threads/types";
 import { useItemThreadsCtx } from "./EnquiryThreadsProvider";
 import ThreadCard from "./ThreadCard";
 import NewThreadForm from "./NewThreadForm";
@@ -36,9 +36,8 @@ export default function ItemQueries({ itemIndex, itemName = "", canAsk = true }:
 
   const card = (t: (typeof mine)[number]) => (
     <ThreadCard key={t.id} thread={t} desk={desk} showItem={false}
-      defaultOpen={t.status === "open" && t.waitingOn === desk}
-      onReply={(x, a) => act.reply(t.id, x, a)} onResolve={() => act.resolve(t.id)} onReopen={() => act.reopen(t.id)}
-      onForward={desk === "management" ? (x, a) => act.forward(t.id, x, a) : undefined} />
+      defaultOpen={t.status === "open" && isMyTurn(t, desk)}
+      onReply={(x, a) => act.reply(t.id, x, a)} onResolve={() => act.resolve(t.id)} onReopen={() => act.reopen(t.id)} />
   );
 
   return (
@@ -55,7 +54,7 @@ export default function ItemQueries({ itemIndex, itemName = "", canAsk = true }:
       </div>
       {canAsk && asking && (
         <NewThreadForm desk={desk} onCancel={() => setAsking(false)}
-          onStart={(to, text, attachments) => act.start({ to, enquiryId, itemIndex, itemName, text, attachments })} />
+          onStart={(to, text, attachments, category?: ThreadCategory) => act.start({ to, enquiryId, itemIndex, itemName, text, attachments, category })} />
       )}
       {open.map(card)}
       {showResolved && resolved.map(card)}

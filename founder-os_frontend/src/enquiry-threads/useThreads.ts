@@ -6,8 +6,8 @@
 // reconciles (failure resyncs, so the UI never sits on a lie).
 import { useCallback } from "react";
 import { useLiveQuery } from "@/hooks/useLiveData";
-import { actOnThread, fetchEnquiryThreads, fetchThreadInbox, forwardThread, startThread } from "./api";
-import { counterpart, type EnquiryThread, type ThreadAttachment, type ThreadDesk, type ThreadStatus } from "./types";
+import { actOnThread, fetchEnquiryThreads, fetchThreadInbox, startThread } from "./api";
+import { counterpart, type EnquiryThread, type ThreadAttachment, type ThreadCategory, type ThreadDesk, type ThreadStatus } from "./types";
 
 const EVENTS = ["enquiry-threads"];
 
@@ -79,21 +79,24 @@ export function useThreadActions(
   }, [patch, refresh]);
 
   const echoThread = (
-    to: ThreadDesk, enquiryId: string, itemIndex: number, itemName: string, text: string, attachments?: ThreadAttachment[],
+    to: ThreadDesk, enquiryId: string, itemIndex: number, itemName: string, text: string,
+    attachments?: ThreadAttachment[], category?: ThreadCategory,
   ): EnquiryThread => {
     const now = new Date().toISOString();
+    const channel = (desk === "procurement" || to === "procurement") ? "internal" : "sales";
     return {
-      id: tmpId("th"), enquiryId, itemIndex, itemName,
-      channel: (desk === "procurement" || to === "procurement") ? "internal" : "sales",
+      id: tmpId("th"), enquiryId, itemIndex, itemName, channel,
+      category: channel === "sales" ? (category ?? "product_query") : null,
       status: "open", openedBy: desk, waitingOn: to, parentThreadId: null,
+      waitingOnAll: [to],
       messages: [{ id: tmpId("tm"), by: desk, authorName: "", text, at: now, ...(attachments?.length ? { attachments } : {}) }],
       createdAt: now, updatedAt: now, resolvedAt: null, resolvedBy: null,
     };
   };
 
   return {
-    start: (b: { to: ThreadDesk; enquiryId: string; itemIndex: number; itemName: string; text: string; attachments?: ThreadAttachment[] }) => {
-      const echo = echoThread(b.to, b.enquiryId, b.itemIndex, b.itemName, b.text, b.attachments);
+    start: (b: { to: ThreadDesk; enquiryId: string; itemIndex: number; itemName: string; text: string; attachments?: ThreadAttachment[]; category?: ThreadCategory }) => {
+      const echo = echoThread(b.to, b.enquiryId, b.itemIndex, b.itemName, b.text, b.attachments, b.category);
       return send(
         (ts) => [...ts, echo],
         () => startThread({ desk, ...b }),
@@ -106,7 +109,7 @@ export function useThreadActions(
       const files = attachments?.length ? { attachments } : {};
       return send(
         (ts) => ts.map((t) => t.id === id
-          ? { ...t, status: "open" as const, resolvedAt: null, resolvedBy: null, waitingOn: counterpart(t, desk), messages: [...t.messages, { id: mid, by: desk, authorName: "", text, at: now, ...files }], updatedAt: now }
+          ? { ...t, status: "open" as const, resolvedAt: null, resolvedBy: null, waitingOn: counterpart(t, desk), waitingOnAll: [counterpart(t, desk)], messages: [...t.messages, { id: mid, by: desk, authorName: "", text, at: now, ...files }], updatedAt: now }
           : t),
         () => actOnThread(id, "reply", desk, text, attachments),
         (ts) => ts.map((t) => t.id === id ? { ...t, messages: t.messages.filter((m) => m.id !== mid) } : t),
@@ -126,18 +129,6 @@ export function useThreadActions(
           ? { ...t, status: "open" as const, resolvedAt: null, resolvedBy: null, waitingOn: counterpart(t, desk), updatedAt: now }
           : t),
         () => actOnThread(id, "reopen", desk),
-      );
-    },
-    forward: (id: string, text: string, attachments?: ThreadAttachment[]) => {
-      // Management-only: the WHOLE sales query transfers into the private
-      // procurement thread (server copies every message + attachment); the
-      // sales thread is untouched. The echo only announces it — the server
-      // response replaces it on refresh.
-      const echo = echoThread("procurement", "", 0, "", text.trim() || "Sales query transferred to Procurement", attachments);
-      return send(
-        (ts) => [...ts, echo],
-        () => forwardThread(id, text, attachments),
-        (ts) => ts.filter((t) => t.id !== echo.id),
       );
     },
   };

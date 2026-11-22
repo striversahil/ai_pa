@@ -1,7 +1,7 @@
 // enquiry-threads/api.ts — the ONLY place that spells /api/enquiry-threads.
 // Every call names the acting desk; the Worker filters what that desk may see.
 import { api } from "@/api/client";
-import type { EnquiryThread, ThreadAttachment, ThreadDesk, ThreadStatus } from "./types";
+import type { EnquiryThread, ThreadAttachment, ThreadCategory, ThreadDesk, ThreadStatus } from "./types";
 
 const q = (o: Record<string, string>) => new URLSearchParams(o).toString();
 
@@ -11,12 +11,10 @@ export const fetchEnquiryThreads = (desk: ThreadDesk, enquiryId: string) =>
 export const fetchThreadInbox = (desk: ThreadDesk, status: ThreadStatus) =>
   api.get<{ threads: EnquiryThread[] }>(`/enquiry-threads/inbox?${q({ desk, status })}`).then((r) => r.threads ?? []);
 
-export const startThread = (body: { desk: ThreadDesk; to: ThreadDesk; enquiryId: string; itemIndex: number; itemName: string; text: string; attachments?: ThreadAttachment[] }) =>
-  api.post<{ thread: EnquiryThread }>(`/enquiry-threads`, body).then((r) => r.thread);
+export const startThread = (body: {
+  desk: ThreadDesk; to: ThreadDesk; enquiryId: string; itemIndex: number; itemName: string;
+  text: string; attachments?: ThreadAttachment[]; category?: ThreadCategory;
+}) => api.post<{ thread: EnquiryThread }>(`/enquiry-threads`, body).then((r) => r.thread);
 
 export const actOnThread = (id: string, op: "reply" | "resolve" | "reopen", desk: ThreadDesk, text?: string, attachments?: ThreadAttachment[]) =>
   api.post<{ thread: EnquiryThread }>(`/enquiry-threads/${encodeURIComponent(id)}/${op}`, { desk, text, attachments }).then((r) => r.thread);
-
-/** Management only: ask procurement about a sales thread (opens a separate, private thread). */
-export const forwardThread = (id: string, text: string, attachments?: ThreadAttachment[]) =>
-  api.post<{ thread: EnquiryThread }>(`/enquiry-threads/${encodeURIComponent(id)}/forward`, { text, attachments }).then((r) => r.thread);

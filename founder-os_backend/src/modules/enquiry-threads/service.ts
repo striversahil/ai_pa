@@ -1,14 +1,18 @@
 // enquiry-threads/service.ts — orchestration: desk check → store → pure rules
-// → channel-filtered response. Every read AND write passes deskAllowed +
-// canSee, so an internal (management <-> procurement) thread can never reach
-// the sales desk, by id or by list.
+// → channel/category-filtered response. Every read AND write passes deskAllowed
+// + canSee, so a rate negotiation never reaches procurement and the internal
+// (management <-> procurement) channel never reaches sales, by id or by list.
+//
+// 2026-11-21: a product query is ONE conversation shared by all three desks.
+// Procurement replies inline and is presented to Sales as Management — the
+// reply is scrubbed of vendor names at write time (`salesText`), so nothing
+// about suppliers or the procurement desk can leak through free text.
 import type { MeResponse } from '../auth/types';
 import {
-  canSee, channelsFor, createThread, deskAllowed, isDesk, reopenThread, replyThread, resolveThread, serveForDesk,
-  transferTranscript,
+  canSee, createThread, deskAllowed, isDesk, reopenThread, replyThread, resolveThread, serveForDesk, stampSalesCopy,
 } from './pure';
 import {
-  countOpenByEnquiry, findChildThread, getThread, insertThread, listInbox, listThreadsForEnquiry, readItemName, saveThreadState,
+  countOpenByEnquiry, getThread, insertThread, listInbox, listThreadsForEnquiry, readItemName, readItemVendors, saveThreadState,
 } from './store';
 import type { EnquiryThread, ThreadActor, ThreadDesk, ThreadResult } from './types';
 
@@ -33,20 +37,20 @@ export async function threadsForEnquiry(db: D1, me: MeResponse | null, rawDesk: 
   const g = gate(me, rawDesk);
   if (!g.ok) return g;
   if (!enquiryId) return { ok: false, status: 400, error: 'enquiryId required' };
-  return { ok: true, value: serveAll(await listThreadsForEnquiry(db, enquiryId, channelsFor(g.value)), g.value) };
+  return { ok: true, value: serveAll(await listThreadsForEnquiry(db, enquiryId, g.value), g.value) };
 }
 
 export async function threadInbox(db: D1, me: MeResponse | null, rawDesk: unknown, rawStatus: unknown): Promise<Res<EnquiryThread[]>> {
   const g = gate(me, rawDesk);
   if (!g.ok) return g;
   const status = rawStatus === 'resolved' ? 'resolved' : 'open';
-  return { ok: true, value: serveAll(await listInbox(db, channelsFor(g.value), status), g.value) };
+  return { ok: true, value: serveAll(await listInbox(db, g.value, status), g.value) };
 }
 
 export async function threadCounts(db: D1, me: MeResponse | null, rawDesk: unknown) {
   const g = gate(me, rawDesk);
   if (!g.ok) return g;
-  return { ok: true as const, value: await countOpenByEnquiry(db, channelsFor(g.value)) };
+  return { ok: true as const, value: await countOpenByEnquiry(db, g.value) };
 }
 
 export async function startThread(db: D1, me: MeResponse | null, body: any): Promise<Res<EnquiryThread>> {
@@ -60,13 +64,31 @@ export async function startThread(db: D1, me: MeResponse | null, body: any): Pro
   const r = createThread({
     enquiryId, itemIndex, itemName: item.name || String(body?.itemName ?? ''),
     actor: actorFor(me as MeResponse, g.value), to: body.to, text: body?.text, now: new Date().toISOString(),
-    attachments: body?.attachments,
+    attachments: body?.attachments, category: body?.category,
   });
   if (r.ok) await insertThread(db, r.value);
   return r;
 }
 
 type Op = 'reply' | 'resolve' | 'reopen';
+
+/** Procurement replying inside a sales-channel thread is published as
+ *  Management, so the stored message carries a `salesText` copy with every
+ *  vendor name replaced. Only the LAST message can be new, so the scrub is
+ *  scoped to it (no items-blob reads on any list path). */
+async function stampProcurementReply(db: D1, thread: EnquiryThread, next: EnquiryThread): Promise<EnquiryThread> {
+  if (thread.channel !== 'sales') return next;
+  const vendors = await readItemVendors(db, thread.enquiryId, thread.itemIndex);
+  if (vendors.length === 0) return next;
+  const lastIdx = next.messages.length - 1;
+  const last = next.messages[lastIdx];
+  if (!last) return next;
+  const stamped = stampSalesCopy(last, vendors);
+  if (stamped === last) return next;
+  const messages = [...next.messages];
+  messages[lastIdx] = stamped;
+  return { ...next, messages };
+}
 
 export async function actOnThread(db: D1, me: MeResponse | null, id: string, body: any, op: Op): Promise<Res<EnquiryThread>> {
   const g = gate(me, body?.desk);
@@ -80,28 +102,17 @@ export async function actOnThread(db: D1, me: MeResponse | null, id: string, bod
     : op === 'resolve' ? resolveThread(thread, actor, now)
     : reopenThread(thread, actor, now);
   if (!r.ok) return r;
-  if (r.value !== thread) await saveThreadState(db, r.value);
-  return { ok: true, value: serveForDesk(r.value, g.value) as EnquiryThread };
+  const next = op === 'reply' && g.value === 'procurement'
+    ? await stampProcurementReply(db, thread, r.value)
+    : r.value;
+  if (next !== thread) await saveThreadState(db, next);
+  return { ok: true, value: serveForDesk(next, g.value) as EnquiryThread };
 }
 
-/** Management sends a sales thread's question on to procurement: the WHOLE
- *  conversation (messages + attachments) is transferred into a SEPARATE
- *  internal thread (parent link kept for management only). The sales thread
- *  is untouched — sales never learns procurement was asked. Re-forwarding the
- *  same sales thread appends only the new messages to the one child thread. */
-export async function forwardToProcurement(db: D1, me: MeResponse | null, id: string, body: any): Promise<Res<EnquiryThread>> {
-  const g = gate(me, 'management');
-  if (!g.ok) return g;
-  const src = await getThread(db, id);
-  if (!src || src.channel !== 'sales') return { ok: false, status: 404, error: 'sales thread not found' };
-  const existing = await findChildThread(db, src.id);
-  const r = transferTranscript({
-    src, actor: actorFor(me as MeResponse, 'management'),
-    note: String(body?.text ?? ''), attachments: body?.attachments,
-    now: new Date().toISOString(), existing,
-  });
-  if (!r.ok) return r;
-  if (existing) await saveThreadState(db, r.value.thread);
-  else await insertThread(db, r.value.thread);
-  return { ok: true, value: serveForDesk(r.value.thread, g.value) as EnquiryThread };
+/** RETIRED 2026-11-21 — a product query is shared with procurement from the
+ *  moment it is raised, so there is nothing left to "send over". Rate
+ *  negotiations never go to procurement. Kept as a stub so older tabs get a
+ *  clean answer instead of a broken button. */
+export async function forwardToProcurement(): Promise<Res<EnquiryThread>> {
+  return { ok: false, status: 410, error: 'Ask-Procurement forwarding is retired — product queries are visible to Procurement directly.' };
 }

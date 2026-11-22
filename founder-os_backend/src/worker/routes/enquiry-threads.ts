@@ -3,16 +3,17 @@
 // Procurement and Management desks (founder ask 2026-11-20). Worker-only.
 //
 // Every call names the acting `desk`; the service checks the login may act as
-// that desk and serves only that desk's channels. Sales never receives an
-// internal (management <-> procurement) thread — list, inbox or by id.
-// Live events carry ids only (no text), so the EventHub leaks nothing.
+// that desk and serves only what that desk may see (channel + category).
+// A product query is shared by all three desks (procurement speaks as
+// Management); a rate negotiation stays sales<->management; the internal
+// channel never reaches sales. Live events carry ids only (no text).
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import { notifyLive, type Bindings } from '../context';
 import { getViewerMe } from '../viewer';
 import { readBody } from '../http';
 import {
-  actOnThread, forwardToProcurement, startThread, threadCounts, threadInbox, threadsForEnquiry,
+  actOnThread, startThread, threadCounts, threadInbox, threadsForEnquiry,
 } from '../../modules/enquiry-threads/service';
 
 function send(c: any, r: { ok: true; value: unknown } | { ok: false; status: number; error: string }, key: string, status = 200) {
@@ -47,9 +48,8 @@ export function registerEnquiryThreadRoutes(app: Hono<{ Bindings: Bindings }>): 
     });
   }
 
-  app.post('/api/enquiry-threads/:id/forward', async (c) => {
-    const r = await forwardToProcurement(c.env.DB, await getViewerMe(c), c.req.param('id') ?? '', await readBody(c));
-    live(c, 'forwarded', r);
-    return send(c, r, 'thread', 201);
-  });
+  // RETIRED 2026-11-21: product queries are visible to Procurement when they
+  // are raised (no forwarding step); rate negotiations never go to
+  // Procurement. Stub keeps older tabs working instead of erroring.
+  app.post('/api/enquiry-threads/:id/forward', (c) => c.json({ retired: true }));
 }

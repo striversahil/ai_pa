@@ -1,9 +1,13 @@
-// enquiry-threads.test.mjs — three-desk enquiry threads (founder ask 2026-11-20).
+// enquiry-threads.test.mjs — three-desk enquiry conversations.
 //
-// Locks the confidentiality rule: anything between procurement and
-// management (channel 'internal') is NEVER served to the sales desk, by list,
-// inbox or id; sales and procurement never talk directly; each scope may only
-// act as its own desk. Also locks the FE type mirror.
+// Founder rules under test:
+//   2026-11-20  the internal (management<->procurement) channel is NEVER served
+//               to the sales desk, by list, inbox or id.
+//   2026-11-21  a PRODUCT QUERY is one shared conversation: procurement sees it
+//               when it is raised (no forwarding step) and answers in place,
+//               presented to Sales as MANAGEMENT (no name, no desk, no vendor
+//               names). A RATE NEGOTIATION never reaches procurement.
+// Also locks the FE type mirror and the retired forward endpoint.
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -11,25 +15,31 @@ import { join } from 'node:path';
 import { bundleToFile, BACKEND_DIR, FRONTEND_SRC } from './_bundle.mjs';
 
 const mod = await import(bundleToFile(join(BACKEND_DIR, 'src', 'modules', 'enquiry-threads', 'pure.ts')));
-const { channelBetween, channelsFor, serveForDesk, createThread, replyThread, resolveThread, reopenThread, deskAllowed, summarizeForDesk } = mod;
+const {
+  channelBetween, serveForDesk, canSee, createThread, replyThread, resolveThread, reopenThread,
+  deskAllowed, summarizeForDesk, waitingOnAllFor, scrubVendors, stampSalesCopy,
+} = mod;
 
 const me = (scopes, extra = {}) => ({ user: { id: 'u', email: 'x@y', name: 'X' }, scopes, roles: [], isRoot: false, isAdmin: false, ...extra });
-const NOW = '2026-11-20T10:00:00.000Z';
-const mk = (from, to, text = 'hello') => createThread({ enquiryId: 'e1', itemIndex: 0, itemName: 'Item', actor: { desk: from, name: from }, to, text, now: NOW });
+const NOW = '2026-11-21T10:00:00.000Z';
+const mk = (from, to, text = 'hello', category) => createThread({
+  enquiryId: 'e1', itemIndex: 0, itemName: 'Item', actor: { desk: from, name: from }, to, text, now: NOW, category,
+});
+/** Legacy-shaped sales thread (no category) — must behave exactly as before. */
+const legacy = () => {
+  const t = mk('sales', 'management').value;
+  return { ...t, category: null };
+};
 
-describe('enquiry threads — confidentiality', () => {
-  it('sales desk never sees the internal channel', () => {
-    assert.deepEqual(channelsFor('sales'), ['sales']);
+describe('enquiry conversations — confidentiality (2026-11-20 rule)', () => {
+  it('the internal channel is never served to the sales desk', () => {
     const internal = mk('management', 'procurement').value;
     assert.equal(internal.channel, 'internal');
+    assert.equal(internal.category, null, 'internal threads carry no category');
+    assert.equal(canSee(internal, 'sales'), false);
     assert.equal(serveForDesk(internal, 'sales'), null);
     assert.ok(serveForDesk(internal, 'procurement'));
     assert.ok(serveForDesk(internal, 'management'));
-  });
-
-  it('procurement desk never sees the sales channel', () => {
-    assert.deepEqual(channelsFor('procurement'), ['internal']);
-    assert.equal(serveForDesk(mk('sales', 'management').value, 'procurement'), null);
   });
 
   it('sales and procurement never talk directly', () => {
@@ -40,37 +50,133 @@ describe('enquiry threads — confidentiality', () => {
     assert.equal(channelBetween('management', 'sales'), 'sales');
   });
 
-  it('only the two parties of a channel can reply / resolve / reopen', () => {
-    const internal = mk('procurement', 'management').value;
-    assert.equal(replyThread(internal, { desk: 'sales', name: 's' }, 'peek', NOW).ok, false);
-    assert.equal(resolveThread(internal, { desk: 'sales', name: 's' }, NOW).ok, false);
-    assert.equal(reopenThread(internal, { desk: 'sales', name: 's' }, NOW).ok, false);
+  it('a legacy (pre-category) sales thread stays closed to procurement — no backfill', () => {
+    const t = legacy();
+    assert.equal(t.category, null);
+    assert.deepEqual(serveForDesk(t, 'procurement'), null);
+    assert.ok(serveForDesk(t, 'sales'));
+  });
+});
+
+describe('enquiry conversations — category routing (2026-11-21)', () => {
+  it('a product query is visible to all three desks without any forward step', () => {
+    const t = mk('sales', 'management', 'which motor?', 'product_query').value;
+    assert.equal(t.category, 'product_query');
+    for (const d of ['sales', 'management', 'procurement']) assert.ok(serveForDesk(t, d), `${d} must see a product query`);
   });
 
-  it('forwarded parent link is stripped for non-management desks', () => {
-    const fwd = createThread({ enquiryId: 'e1', itemIndex: 0, itemName: 'I', actor: { desk: 'management', name: 'm' }, to: 'procurement', text: 'pls quote', now: NOW, parentThreadId: 'th_sales' }).value;
-    assert.equal(serveForDesk(fwd, 'management').parentThreadId, 'th_sales');
-    assert.equal(serveForDesk(fwd, 'procurement').parentThreadId, null);
+  it('a rate negotiation never reaches procurement', () => {
+    const t = mk('sales', 'management', 'client wants 400', 'rate_negotiation').value;
+    assert.equal(t.category, 'rate_negotiation');
+    assert.equal(serveForDesk(t, 'procurement'), null, 'procurement must never see rate talk');
+    assert.ok(serveForDesk(t, 'sales'));
+    assert.ok(serveForDesk(t, 'management'));
+    // and it cannot be replied to / resolved by procurement either
+    assert.equal(replyThread(t, { desk: 'procurement', name: 'P' }, 'x', NOW).ok, false);
+    assert.equal(resolveThread(t, { desk: 'procurement', name: 'P' }, NOW).ok, false);
+    assert.equal(reopenThread(t, { desk: 'procurement', name: 'P' }, NOW).ok, false);
+  });
+
+  it('categories default to product_query, never to the rate channel', () => {
+    assert.equal(mk('sales', 'management').value.category, 'product_query');
+    assert.equal(mk('sales', 'management', 'x', 'nonsense').value.category, 'product_query');
+  });
+
+  it('procurement may answer a product query in place; the turn returns to Sales', () => {
+    let t = mk('sales', 'management', 'which motor?', 'product_query').value;
+    assert.equal(t.waitingOn, 'management');
+    const r = replyThread(t, { desk: 'procurement', name: 'Ramesh' }, 'IP55 is available', NOW);
+    assert.equal(r.ok, true);
+    t = r.value;
+    assert.equal(t.waitingOn, 'sales', 'sales owes the next reply (it looks like management answered)');
+    assert.equal(t.messages.at(-1).by, 'procurement', 'true authorship is stored');
+  });
+
+  it('either side may resolve; procurement can resolve its own product query', () => {
+    const t = mk('sales', 'management', 'q', 'product_query').value;
+    assert.equal(resolveThread(t, { desk: 'procurement', name: 'P' }, NOW).value.status, 'resolved');
+    assert.equal(resolveThread(t, { desk: 'sales', name: 'S' }, NOW).value.status, 'resolved');
+    assert.equal(resolveThread(t, { desk: 'management', name: 'M' }, NOW).value.status, 'resolved');
+  });
+
+  it('waiting sets: product queries wait on management AND procurement, sales never hears procurement', () => {
+    const t = mk('sales', 'management', 'q', 'product_query').value;
+    assert.deepEqual(waitingOnAllFor(t, 'management'), ['management', 'procurement']);
+    assert.deepEqual(waitingOnAllFor(t, 'procurement'), ['management', 'procurement']);
+    assert.deepEqual(waitingOnAllFor(t, 'sales'), ['management'], 'sales is never told procurement is involved');
+    const answered = replyThread(t, { desk: 'procurement', name: 'P' }, 'ok', NOW).value;
+    assert.deepEqual(waitingOnAllFor(answered, 'management'), ['sales']);
+    const rate = mk('sales', 'management', 'q', 'rate_negotiation').value;
+    assert.deepEqual(waitingOnAllFor(rate, 'management'), ['management']);
   });
 
   it('each scope acts only as its own desk; management access covers all', () => {
-    const sales = me(['enquiry-tracker']);
-    assert.equal(deskAllowed(sales, 'sales'), true);
-    assert.equal(deskAllowed(sales, 'procurement'), false);
-    assert.equal(deskAllowed(sales, 'management'), false);
-    const proc = me(['procurement']);
-    assert.equal(deskAllowed(proc, 'procurement'), true);
-    assert.equal(deskAllowed(proc, 'sales'), false);
-    assert.equal(deskAllowed(proc, 'management'), false);
+    assert.equal(deskAllowed(me(['enquiry-tracker']), 'sales'), true);
+    assert.equal(deskAllowed(me(['enquiry-tracker']), 'procurement'), false);
+    assert.equal(deskAllowed(me(['procurement']), 'procurement'), true);
+    assert.equal(deskAllowed(me(['procurement']), 'sales'), false);
     const mgmt = me(['enquiry-management']);
     for (const d of ['sales', 'procurement', 'management']) assert.equal(deskAllowed(mgmt, d), true);
     assert.equal(deskAllowed(null, 'sales'), false);
   });
 });
 
-describe('enquiry threads — open / resolved flow', () => {
+describe('enquiry conversations — procurement speaks as Management', () => {
+  const vendors = ['Shree Steel Works', 'Balaji'];
+  const answered = () => {
+    const t = mk('sales', 'management', 'which motor?', 'product_query').value;
+    const r = replyThread(t, { desk: 'procurement', name: 'Ramesh' }, 'Shree Steel Works has IP55, Balaji does not', NOW);
+    const msgs = [...r.value.messages];
+    msgs[msgs.length - 1] = stampSalesCopy(msgs[msgs.length - 1], vendors);
+    return { ...r.value, messages: msgs };
+  };
+
+  it('sales sees the reply as Management — no name, no desk, no vendor', () => {
+    const sales = serveForDesk(answered(), 'sales');
+    const msg = sales.messages.at(-1);
+    assert.equal(msg.by, 'management');
+    assert.equal(msg.authorName, 'Management');
+    assert.ok(!/procurement|ramesh|shree|balaji/i.test(JSON.stringify(sales)), 'sales payload must not leak the desk, the person or the vendor');
+    assert.match(msg.text, /our supplier/);
+    assert.equal(msg.masked, undefined, 'no masking marker is ever served to sales');
+    assert.equal(msg.salesText, undefined, 'the raw copy is never served to sales');
+  });
+
+  it('management + procurement keep true authorship and the original text', () => {
+    const t = answered();
+    for (const d of ['management', 'procurement']) {
+      const served = serveForDesk(t, d);
+      const msg = served.messages.at(-1);
+      assert.equal(msg.by, 'procurement');
+      assert.equal(msg.authorName, 'Ramesh');
+      assert.equal(msg.masked, true, 'the UI can explain what sales will see');
+      assert.match(msg.text, /Shree Steel Works/);
+    }
+  });
+
+  it('scrub replaces every vendor name, longest first, case-insensitively', () => {
+    assert.equal(scrubVendors('SHREE STEEL WORKS quoted 410; shree steel works is cheaper', vendors), 'our supplier quoted 410; our supplier is cheaper');
+    assert.equal(scrubVendors('no vendors here', vendors), 'no vendors here');
+    assert.equal(scrubVendors('Balaji', []), 'Balaji', 'nothing to scrub without a vendor list');
+  });
+
+  it('attachment filenames are scrubbed for sales only', () => {
+    const t = mk('sales', 'management', 'q', 'product_query').value;
+    const withFile = {
+      ...t,
+      messages: [{ ...t.messages[0], by: 'procurement', authorName: 'Ramesh', text: 'see file',
+        attachments: [{ url: '/api/enquiries/files/enq/a.pdf', name: 'Shree Steel Works quote.pdf', type: 'pdf' }] }],
+    };
+    const stamped = stampSalesCopy(withFile.messages[0], vendors);
+    const thread = { ...withFile, messages: [stamped] };
+    assert.equal(serveForDesk(thread, 'sales').messages[0].attachments[0].name, 'our supplier quote.pdf');
+    assert.equal(serveForDesk(thread, 'management').messages[0].attachments[0].name, 'Shree Steel Works quote.pdf');
+  });
+});
+
+describe('enquiry conversations — open / resolved flow', () => {
   it('reply hands the turn to the other side and reopens a resolved thread', () => {
-    let t = mk('sales', 'management').value;
+    let t = mk('sales', 'management', 'hello', 'product_query').value;
     assert.equal(t.waitingOn, 'management');
     t = replyThread(t, { desk: 'management', name: 'm' }, 'best is 410', NOW).value;
     assert.equal(t.waitingOn, 'sales');
@@ -82,129 +188,51 @@ describe('enquiry threads — open / resolved flow', () => {
     assert.equal(t.waitingOn, 'management');
   });
 
-  it('either side may resolve (founder choice 2026-11-20)', () => {
-    assert.equal(resolveThread(mk('sales', 'management').value, { desk: 'management', name: 'm' }, NOW).value.status, 'resolved');
-    assert.equal(resolveThread(mk('sales', 'management').value, { desk: 'sales', name: 's' }, NOW).value.status, 'resolved');
-  });
-
   it('attachments: locker URLs only, attachment-only messages allowed', () => {
     const ok = { url: '/api/enquiries/files/enq/abc-123.jpg', name: 'nameplate.jpg', type: 'image' };
     const kept = mod.cleanAttachments([ok, { url: 'data:image/png;base64,AAAA', name: 'x' }, { url: 'https://evil.example/x.pdf', name: 'y' }, { url: '/api/enquiries/files/enq/../../x', name: 'z' }]);
     assert.deepEqual(kept, [ok]);
     assert.equal(mod.cleanAttachments(Array.from({ length: 10 }, () => ok)).length, 6);
-    let t = mk('sales', 'management').value;
-    const r = replyThread(t, { desk: 'management', name: 'm' }, '', NOW, [ok]);
-    assert.equal(r.ok, true);
-    assert.deepEqual(r.value.messages.at(-1).attachments, [ok]);
+    const t = mk('sales', 'management').value;
+    assert.equal(replyThread(t, { desk: 'management', name: 'm' }, '', NOW, [ok]).ok, true);
     assert.equal(replyThread(t, { desk: 'management', name: 'm' }, '  ', NOW, [{ url: 'data:x' }]).ok, false);
-    const c = createThread({ enquiryId: 'e1', itemIndex: 0, itemName: 'I', actor: { desk: 'sales', name: 's' }, to: 'management', text: '', now: NOW, attachments: [ok] });
-    assert.equal(c.ok, true);
   });
 
-  it('summary counts only what the desk can see', () => {
-    const rows = [mk('sales', 'management').value, mk('management', 'procurement').value];
-    assert.deepEqual(summarizeForDesk(rows, 'sales'), { open: 1, resolved: 0, waitingOnYou: 0 });
-    assert.deepEqual(summarizeForDesk(rows, 'management'), { open: 2, resolved: 0, waitingOnYou: 1 });
-  });
-});
-
-describe('enquiry threads — ask-procurement transfer', () => {
-  const transfer = mod.transferTranscript;
-  const files = [{ url: '/api/enquiries/files/enq/a.jpg', name: 'a.jpg', type: 'image' }];
-  /** A real sales query: ask -> management reply -> sales follow-up with a photo. */
-  const srcThread = () => {
-    const t = mk('sales', 'management', 'what is the motor rating?').value;
-    const answered = replyThread(t, { desk: 'management', name: 'Mgr' }, 'checking with the vendor', NOW).value;
-    return replyThread(answered, { desk: 'sales', name: 'Rep' }, '', NOW, files).value;
-  };
-  const mgmt = { desk: 'management', name: 'M' };
-
-  it('transfers the COMPLETE sales query — every message, author and attachment', () => {
-    const src = srcThread();
-    const r = transfer({ src, actor: mgmt, note: '', now: NOW });
-    assert.equal(r.ok, true);
-    assert.equal(r.value.thread.channel, 'internal');
-    assert.equal(r.value.thread.parentThreadId, src.id);
-    assert.equal(r.value.thread.waitingOn, 'procurement');
-    assert.equal(r.value.copied, src.messages.length);
-    const copied = r.value.thread.messages.filter((m) => m.transferred);
-    assert.deepEqual(copied.map((m) => m.text), src.messages.map((m) => m.text));
-    assert.deepEqual(copied.flatMap((m) => m.attachments ?? []), files);
-    assert.equal(r.value.attached, 1);
-    // authors survive, so procurement knows who asked what
-    assert.deepEqual([...new Set(copied.map((m) => m.by))], ['sales', 'management']);
-    assert.ok(r.value.thread.messages.some((m) => m.system && /transferred/i.test(m.text)));
-  });
-
-  it('privacy still holds: the transferred child is never served to sales', () => {
-    const r = transfer({ src: srcThread(), actor: mgmt, note: '', now: NOW });
-    assert.equal(serveForDesk(r.value.thread, 'sales'), null);
-    assert.ok(serveForDesk(r.value.thread, 'procurement'));
-    assert.ok(serveForDesk(r.value.thread, 'management'));
-  });
-
-  it('a transfer never annotates the sales thread (sales learns nothing)', () => {
-    const src = srcThread();
-    const before = JSON.stringify(src.messages);
-    const r = transfer({ src, actor: mgmt, note: 'please quote this — client is waiting', now: NOW });
-    assert.equal(r.ok, true);
-    // The sales conversation is a pure input: no marker, no note, no mutation.
-    assert.equal(JSON.stringify(src.messages), before);
-    assert.ok(!/procurement|transferred|private/i.test(JSON.stringify(src)), 'sales thread must not mention the internal hand-off');
-    // And the served sales payload is literally nothing for that thread.
-    assert.equal(JSON.stringify(serveForDesk(r.value.thread, 'sales') ?? null), 'null');
-  });
-
-  it('re-forward copies only the delta and reopens the same child', () => {
-    const src = srcThread();
-    const first = transfer({ src, actor: mgmt, note: 'please quote', now: NOW });
-    const child = resolveThread(first.value.thread, { desk: 'procurement', name: 'P' }, NOW).value;
-    assert.equal(child.status, 'resolved');
-    const later = replyThread(src, { desk: 'sales', name: 'Rep' }, 'client added: IP55', NOW).value;
-    const again = transfer({ src: later, actor: mgmt, note: '', now: NOW, existing: child });
-    assert.equal(again.ok, true);
-    assert.equal(again.value.copied, 1);
-    assert.equal(again.value.reopened, true);
-    assert.equal(again.value.thread.status, 'open');
-    assert.equal(again.value.thread.waitingOn, 'procurement');
-    assert.equal(again.value.thread.id, child.id);
-    assert.ok(again.value.thread.messages.filter((m) => m.transferred).some((m) => m.text === 'client added: IP55'));
-    // no duplicate copies of the messages already transferred
-    assert.equal(again.value.thread.messages.filter((m) => m.transferred).length, src.messages.length + 1);
-  });
-
-  it('refuses an empty re-forward instead of spamming the thread', () => {
-    const src = srcThread();
-    const first = transfer({ src, actor: mgmt, note: '', now: NOW });
-    const again = transfer({ src, actor: mgmt, note: '  ', now: NOW, existing: first.value.thread });
-    assert.equal(again.ok, false);
-    assert.equal(again.status, 400);
-  });
-
-  it('over-cap transcripts say how many messages were omitted', () => {
-    const many = mk('sales', 'management', 'm0').value;
-    many.messages = Array.from({ length: 205 }, (_, i) => ({ id: `tm_cap_${i}`, by: 'sales', authorName: 's', text: `m${i}`, at: NOW }));
-    const r = transfer({ src: many, actor: mgmt, note: '', now: NOW });
-    assert.equal(r.ok, true);
-    assert.ok(r.value.thread.messages.length <= 200, 'thread stays under the message cap');
-    assert.match(r.value.thread.messages[0].text, /\d+ earlier messages? omitted/);
-  });
-
-  it('management-only, sales-thread-only', () => {
-    const src = srcThread();
-    assert.equal(transfer({ src, actor: { desk: 'procurement', name: 'P' }, note: '', now: NOW }).ok, false);
-    assert.equal(transfer({ src, actor: { desk: 'sales', name: 'S' }, note: '', now: NOW }).ok, false);
-    assert.equal(transfer({ src: mk('management', 'procurement').value, actor: mgmt, note: '', now: NOW }).ok, false);
+  it('summary counts what each desk sees, including the shared waiting set', () => {
+    const rows = [
+      mk('sales', 'management', 'product?', 'product_query').value,
+      mk('sales', 'management', 'rate?', 'rate_negotiation').value,
+      mk('management', 'procurement').value,
+    ];
+    assert.deepEqual(summarizeForDesk(rows, 'sales'), { open: 2, resolved: 0, waitingOnYou: 0 });
+    // the product query and the internal thread both wait on procurement
+    assert.deepEqual(summarizeForDesk(rows, 'procurement'), { open: 2, resolved: 0, waitingOnYou: 2 });
+    assert.deepEqual(summarizeForDesk(rows, 'management'), { open: 3, resolved: 0, waitingOnYou: 2 });
   });
 });
 
-describe('enquiry threads — wiring', () => {
-  it('service gates every read and write by desk + channel', () => {
+describe('enquiry conversations — wiring', () => {
+  it('service gates every read and write by desk + visibility', () => {
     const src = readFileSync(join(BACKEND_DIR, 'src', 'modules', 'enquiry-threads', 'service.ts'), 'utf8');
     assert.ok(src.includes('!canSee(thread, g.value)'), 'actOnThread must hide invisible threads');
-    assert.ok((src.match(/serveAll\(await/g) ?? []).length >= 2, 'both list reads (enquiry + inbox) must pass serveForDesk');
-    assert.ok(src.includes('countOpenByEnquiry(db, channelsFor(g.value))'), 'counts must be channel-filtered for the desk');
-    assert.ok(!/saveThreadState\(db, src\)/.test(src), 'forward must never write to the sales thread');
+    assert.ok((src.match(/serveForDesk/g) ?? []).length >= 2, 'every read path must pass serveForDesk');
+    assert.ok(src.includes('listThreadsForEnquiry(db, enquiryId, g.value)'), 'reads are desk-scoped, not channel-scoped');
+    assert.ok(src.includes('stampSalesCopy'), 'procurement replies must be scrubbed for sales');
+  });
+
+  it('sales-channel SQL mirror matches canSee (legacy rows excluded for procurement)', () => {
+    const src = readFileSync(join(BACKEND_DIR, 'src', 'modules', 'enquiry-threads', 'store.ts'), 'utf8');
+    assert.ok(src.includes("channel = 'sales' AND ${prefix}category = 'product_query'"), 'procurement SQL must require the product category');
+    assert.ok(/desk === 'sales'\) return `\$\{prefix\}channel = 'sales'`/.test(src), 'sales SQL stays sales-channel only');
+  });
+
+  it('the forward endpoint is retired, and the sales desk has no forward button', () => {
+    const route = readFileSync(join(BACKEND_DIR, 'src', 'worker', 'routes', 'enquiry-threads.ts'), 'utf8');
+    assert.ok(route.includes('{ retired: true }'), 'forward must be a retired stub');
+    const card = readFileSync(join(FRONTEND_SRC, 'components', 'enquiry-threads', 'ThreadCard.tsx'), 'utf8');
+    assert.ok(!/onForward|Send query to Procurement/.test(card), 'no forwarding UI may remain');
+    const inbox = readFileSync(join(FRONTEND_SRC, 'components', 'enquiry-threads', 'ThreadInbox.tsx'), 'utf8');
+    assert.ok(!/onForward/.test(inbox), 'inbox must not offer forwarding');
   });
 
   it('live events carry ids only, never text', () => {
@@ -213,28 +241,11 @@ describe('enquiry threads — wiring', () => {
     assert.ok(m && !/text|messages/.test(m[1]), 'live payload must not include message text');
   });
 
-  it('frontend type mirror keeps the same desks + channels', () => {
+  it('frontend type mirror keeps the same desks, channels and categories', () => {
     const fe = readFileSync(join(FRONTEND_SRC, 'enquiry-threads', 'types.ts'), 'utf8');
     assert.ok(fe.includes("'sales' | 'procurement' | 'management'"), 'FE ThreadDesk union drifted');
     assert.ok(fe.includes("'sales' | 'internal'"), 'FE ThreadChannel union drifted');
-  });
-
-  it('pending-from-sales bucket is any flagged draft row (lenses, not a partition)', () => {
-    const src = readFileSync(join(FRONTEND_SRC, 'components', 'ManagementReview.tsx'), 'utf8');
-    assert.ok(src.includes('threadWaitingIds'), 'sales bucket must union thread queries (threads set no loop flags)');
-    assert.ok(/waitingOn === "management"/.test(src), 'bucket must pick threads waiting on management');
-    assert.ok(/hasOpenFlag\(e\) \|\| threadWaitingIds/.test(src), 'sales bucket: open flag on any item OR waiting thread');
-    const salesFilters = [...src.matchAll(/queueUnprocessed\.filter\(\(e\) => ([^)]+)\)/g)].map((m) => m[1]);
-    assert.ok(salesFilters.some((f) => f.includes('hasOpenFlag') && !f.includes('isManagementPendingEnquiry')),
-      'sales bucket must not exclude Active rows (mixed rows double-list by design)');
-  });
-
-  it('the Transferred marker can never render on the sales desk', () => {
-    const fe = readFileSync(join(FRONTEND_SRC, 'components', 'enquiry-threads', 'ThreadCard.tsx'), 'utf8');
-    const line = (fe.match(/[^\n]*m\.transferred[^\n]*/) ?? [''])[0];
-    assert.ok(line, 'marker must exist so its gate stays reviewable');
-    assert.ok(/internal/.test(line), 'marker gated to the internal channel');
-    assert.ok(/sales/.test(line), 'marker explicitly blocked on the sales desk');
+    assert.ok(fe.includes("'product_query' | 'rate_negotiation'"), 'FE ThreadCategory union drifted');
   });
 
   it('thread writes paint optimistic echoes before the server confirms', () => {

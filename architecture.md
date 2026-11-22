@@ -359,15 +359,16 @@ tools), and keeping threads out of them means none of those paths can leak a pri
   (management = `canManageRates`, procurement = `procurement` scope, sales = sales scopes;
   management access covers any desk) and serves only `channelsFor(desk)` — list, inbox and by-id
   (invisible ids 404). Live events carry ids only.
-- **Flow**: either party replies (turn passes to the other side, a reply reopens), either party
-  resolves/reopens. Management **"Send query to Procurement"** on a sales thread TRANSFERS the
-  complete query (`transferTranscript`): every message, author, timestamp and attachment is copied
-  as a snapshot into ONE `internal` thread with `parentThreadId` (served to management only); the
-  sales thread is untouched and sales never sees the internal side. Re-forwarding the same sales
-  thread appends only the not-yet-copied messages (deduped by source message id) and reopens that
-  one child — one private thread per sales thread, never a duplicate per click. The over-cap case
-  (200 messages) drops the oldest and says how many were omitted, never silently. Management's note
-  is optional — the transcript alone is a complete hand-off. Index: migration `0151`.
+- **Flow**: either party replies (turn passes to whichever side owes the next move), either party
+  resolves/reopens. A sales-facing query carries a **category** (founder decision 2026-11-21):
+  `product_query` is ONE conversation shared by sales + management + procurement from the moment it
+  is raised (no forwarding step) — procurement replies inline and, for sales, that reply reads as
+  **Management**: the true author stays in the row, and the reply's sales-facing copy (`salesText`,
+  plus `salesName` on attachments) has every vendor name replaced before it can be served. Sales is
+  never given a marker, a name or the desk. `rate_negotiation` stays sales↔management — procurement
+  gets 404 on list, inbox and by id. Legacy rows (`category` NULL) keep the pre-category behaviour:
+  no backfill (founder 2026-11-21). `POST …/:id/forward` is retired (`{retired:true}`) because there
+  is nothing left to send over. Index: migration `0151`; column: migration `0152`.
 - **API** (`worker/routes/enquiry-threads.ts`): `GET /api/enquiry-threads?desk&enquiryId`,
   `GET …/inbox?desk&status`, `GET …/counts?desk`, `POST /api/enquiry-threads`,
   `POST …/:id/{reply,resolve,reopen,forward}`.

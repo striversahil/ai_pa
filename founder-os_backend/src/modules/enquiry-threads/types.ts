@@ -8,6 +8,12 @@ export type ThreadDesk = 'sales' | 'procurement' | 'management';
 export type ThreadChannel = 'sales' | 'internal';
 export type ThreadStatus = 'open' | 'resolved';
 
+/** What the query is about (founder decision 2026-11-21). A product query is
+ *  answered by management AND procurement in the same thread; a rate
+ *  negotiation stays management-only. NULL = legacy row (pre-category). */
+export type ThreadCategory = 'product_query' | 'rate_negotiation';
+export const THREAD_CATEGORIES: readonly ThreadCategory[] = ['product_query', 'rate_negotiation'];
+
 export const THREAD_DESKS: readonly ThreadDesk[] = ['sales', 'procurement', 'management'];
 export const MAX_THREAD_TEXT = 2000;
 export const MAX_THREAD_MESSAGES = 200;
@@ -19,6 +25,9 @@ export interface ThreadAttachment {
   url: string;
   name: string;
   type: 'image' | 'video' | 'pdf';
+  /** Scrubbed filename for the sales projection (vendor names removed).
+   *  Never served as its own field — the projection swaps it into `name`. */
+  salesName?: string;
 }
 
 export interface ThreadMessage {
@@ -27,13 +36,15 @@ export interface ThreadMessage {
   authorName: string;
   text: string;
   at: string;
-  /** System line (resolve / reopen / forwarded) — rendered muted. */
+  /** System line (resolve / reopen) — rendered muted. */
   system?: boolean;
   attachments?: ThreadAttachment[];
-  /** Copied verbatim from a Sales query when management transferred it to
-   *  Procurement (keeps the source id so a re-forward copies only the delta). */
-  transferred?: boolean;
-  sourceThreadId?: string;
+  /** Sales-facing rewrite of `text` (vendor names → "our supplier"). Written
+   *  by the service; management/procurement keep the original. */
+  salesText?: string;
+  /** Served only to management/procurement: this message is shown to Sales
+   *  as Management (procurement-authored, sales-channel). Never sent to sales. */
+  masked?: boolean;
 }
 
 export interface EnquiryThread {
@@ -42,9 +53,14 @@ export interface EnquiryThread {
   itemIndex: number;
   itemName: string;
   channel: ThreadChannel;
+  /** What the query is about; null on internal threads and legacy rows. */
+  category: ThreadCategory | null;
   status: ThreadStatus;
   openedBy: ThreadDesk;
   waitingOn: ThreadDesk;
+  /** Served (computed per desk): every desk that owes the next move. Sales
+   *  never sees 'procurement' here. */
+  waitingOnAll?: ThreadDesk[];
   /** Internal thread forwarded from a sales thread (management/procurement only). */
   parentThreadId: string | null;
   messages: ThreadMessage[];

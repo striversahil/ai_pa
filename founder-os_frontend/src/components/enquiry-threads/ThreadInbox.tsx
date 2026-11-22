@@ -3,11 +3,12 @@ import React, { useState } from "react";
 import { EmptyState, TabBar, Skeleton } from "@/components/ui";
 import type { DeskInbox } from "@/enquiry-threads/useThreads";
 import type { ThreadDesk } from "@/enquiry-threads/types";
+import { isMyTurn } from "@/enquiry-threads/types";
 import ThreadCard from "./ThreadCard";
 
 const OPEN_HINT: Record<ThreadDesk, string> = {
   sales: "Your questions to Management that are still open. Resolved ones move to Resolved automatically.",
-  procurement: "Private threads with Management that are still open. Sales never sees these.",
+  procurement: "Product queries from Sales and private threads with Management. Answer in place — Sales sees your reply as Management.",
   management: "Threads from Sales and Procurement — the ones waiting on your reply are on top.",
 };
 
@@ -52,9 +53,8 @@ export default function ThreadInbox({ desk, inbox, onOpenEnquiry }: {
       ) : (
         <div className="space-y-2">
           {list.map((t) => (
-            <ThreadCard key={t.id} thread={t} desk={desk} defaultOpen={tab === "open" && t.waitingOn === desk}
+            <ThreadCard key={t.id} thread={t} desk={desk} defaultOpen={tab === "open" && isMyTurn(t, desk)}
               onReply={(x, a) => inbox.act.reply(t.id, x, a)} onResolve={() => inbox.act.resolve(t.id)} onReopen={() => inbox.act.reopen(t.id)}
-              onForward={desk === "management" ? (x, a) => inbox.act.forward(t.id, x, a) : undefined}
               onOpenEnquiry={onOpenEnquiry ? () => onOpenEnquiry(t.enquiryId) : undefined} />
           ))}
         </div>
