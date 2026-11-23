@@ -150,6 +150,65 @@ export async function cacheDelPrefix(prefix: string): Promise<number> {
   return deleted;
 }
 
+/**
+ * ── Revision keys (single-key invalidation) ────────────────────────────────
+ * A dashboard payload usually fans out into many cache variants (per period,
+ * per user, per drill). Invalidating with `cacheDelPrefix` walks the whole
+ * prefix — a KV `list()` plus one `delete()` per variant — and drops variants
+ * the write cannot have affected. A revision key flips ONE value instead:
+ * readers fold the current revisions into their cache key, so a write is a
+ * single small put and stale variants simply stop being read (they expire by
+ * their own TTL).
+ *
+ * Read cost is one KV get per name, memoised per isolate for REV_MEMO_MS —
+ * a rev bump somewhere else becomes visible here within that window, which is
+ * far inside the payload TTL it governs.
+ */
+const REV_PREFIX = 'rev:';
+const REV_MEMO_MS = 10_000;
+const revMemo = new Map<string, { value: string; at: number }>();
+
+/** Current revision of a data family ('0' when it has never been bumped). */
+export async function cacheRev(name: string): Promise<string> {
+  const memo = revMemo.get(name);
+  if (memo && Date.now() - memo.at < REV_MEMO_MS) return memo.value;
+  const fullKey = `${NS}:${REV_PREFIX}${name}`;
+  let value = '0';
+  if (kv) {
+    try {
+      value = (await kv.get(fullKey)) ?? '0';
+    } catch {
+      /* KV hiccup → treat as un-bumped; the payload TTL still bounds staleness */
+    }
+  } else {
+    const mem = memory.get(fullKey);
+    if (mem) value = String(mem.payload ?? '0');
+  }
+  revMemo.set(name, { value, at: Date.now() });
+  return value;
+}
+
+/** `cacheRevs(['a','b'])` → a compact key fragment (`a=1&b=7`). */
+export async function cacheRevs(names: string[]): Promise<string> {
+  const values = await Promise.all(names.map((n) => cacheRev(n)));
+  return names.map((n, i) => `${n}=${values[i]}`).join('&');
+}
+
+/** Bump a data family so every cache key that folded it in is abandoned. */
+export async function bumpRev(name: string): Promise<string> {
+  const next = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  revMemo.set(name, { value: next, at: Date.now() });
+  memory.set(`${NS}:${REV_PREFIX}${name}`, { payload: next, computedAt: Date.now() });
+  if (kv) {
+    try {
+      await kv.put(`${NS}:${REV_PREFIX}${name}`, next);
+    } catch (e: any) {
+      logger.warn({ err: e?.message, name }, 'kv rev write failed — local rev still advanced');
+    }
+  }
+  return next;
+}
+
 /** List cache key names under a prefix (without the `kvx:` namespace).
  *  Paginates fully; capped at `cap` names. Read-only — for manager readouts. */
 export async function cacheKeys(prefix: string, cap = 1000): Promise<string[]> {

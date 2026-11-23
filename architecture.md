@@ -383,6 +383,36 @@ tools), and keeping threads out of them means none of those paths can leak a pri
   given (`finalRate` set), never on rate-available items; existing threads always show.
   Guard: `scripts/guards/enquiry-threads.test.mjs` (+ gate in `enquiry-loop-ask-kinds`).
 
+### 3.2c HR leave applications — employee-applied, HR-decided (2026-11-22, migration 0153)
+
+The HR leave register became a **request lifecycle on the same table**, so attendance and
+payroll keep exactly one source of truth (`HumanResourcesLeave`); no second table, no mirror.
+
+- **Employee surface**: sidebar **Leave** (`/leave`, `components/my-leave/`) — every approved
+  login. `GET /api/leave/mine` resolves the caller's roster member (`resolveSelfHumanResourcesMember`
+  cascade: `?as=` → `loginEmail` → contact `email` → unique name match) and returns **only their
+  own** applications; an unlinked login gets `linked:false` plus the "ask HR to link your login"
+  hint. Applying (`POST /api/leave/requests`) is `full_day` | `half_day` (0.5 working day) |
+  `short` (a recorded `fromTime`–`toTime` window; no pay effect), any date, **purpose mandatory**;
+  the member is always the caller (never the body), the date window is −30…+90 days, half/short
+  must be a single date, and overlapping non-rejected leave is refused (`leave-requests-parse.ts`
+  holds every pure rule — day maths is server-only so there is no FE mirror to guard).
+- **HR surface**: HR → Leaves & holidays now leads with **Requests** — the tab carries the pending
+  count (`TabBar` count with `tone:"danger"`, the same number pill the Accounts payment-reminder
+  tabs use), fed by the dashboard payload (`leaves.pendingCount`, `isAdmin` only, so a self-scoped
+  viewer never receives another person's leave). `GET /api/human-resources/leave-requests?status=`
+  is month-free on purpose (pending work must not hide in another month);
+  `POST …/:id/decide {action,note}` approves or rejects — **a rejection requires a note** the
+  employee reads on their Leave page, only `pending` rows can be decided, and nobody decides their
+  own request (`isRoot` excepted). Employees can withdraw their own still-pending request.
+- **Consumers read `approved` only**: `attendance.ts` (auto-marked leave on the day view),
+  `payroll.ts#computeStats` (full day = 1, half day = 0.5, short = present — the person worked),
+  and `attendanceSummary.leaveDays`. HR's "Record leave" path still creates the row already
+  `approved`, and migration 0153 defaults every pre-existing row to `status='approved'` /
+  `durationType='full_day'`, so historical data behaves exactly as before.
+- Live: every write broadcasts the existing `human-resources` event (no new event name);
+  `invalidateHumanResourcesCache()` keeps the 5-min dashboard cache honest.
+
 ### 3.3 Trigger dispatch
 `POST /api/trigger/:slug` runs the matching automation (auth required). On the Worker,
 cron-driven automations are reached via GitHub Actions → `curl /api/trigger/:slug`.
@@ -795,6 +825,17 @@ cPanel host in the root `.env`).
   broadcast. When the endpoint **writes** data that other caches derive from, invalidate
   them (e.g. `invalidateDerivedEstimateCaches()`, `invalidateNeodoveCache()`,
   `invalidateRiskCache()`, or `cacheDel(key)` / `cacheDelPrefix(prefix)`).
+- **Fanned-out caches: bump a revision, don't delete a prefix** (2026-11-21). A payload with
+  many variants (period × user × drill) must fold `await cacheRevs([...])` into its key and be
+  invalidated with `bumpRev(name)` — one small put. `cacheDelPrefix` on such a family is a KV
+  `list()` plus one delete per variant on EVERY write; the Sales leaderboard ran that on every
+  estimate write and every 5-minute NeoDove refresh, which kept it permanently cold.
+- **A GET must never wait on a cold boot.** `SchedulerService.init()` loads the automation
+  registry; the boot middleware caps that wait at 2 s for read paths (15 s for `/api/trigger/*`).
+  Registry loading is ONE `automation.findMany`, not one `findUnique` per automation.
+- **Never fan a dashboard out into N per-slice requests.** One payload carries every slice
+  (Sales: `?follow_ups=1` returns all regions' open pipeline), and a slice endpoint must compute
+  only that slice (`automations/telecalling/service-parts/drill.ts`), never the full aggregation.
 - Build/verify: `node scripts/build-worker.mjs && node scripts/smoke-worker.mjs`.
 
 ### 10.4 New model
@@ -1235,3 +1276,100 @@ Re-run the report after each cleanup and update these numbers; `dup-audit.mjs` s
 - Guards: d1-parity + fe.files 24→25 failures pre-date this work (frontend growth needs its own split — follow-up, not this slice).
 - Phase 2a remainder (same slice): persistence out of routes — auth `listLoginEmails` (Memory/D1/Prisma), device-calls `findAgentName`/`findActiveAgent`/`recordConsent`, telecalling `listActiveTelecallers` (crm/enquiries/telecalling/manual-calls), automation `listAutomationDefs` (automations+session), new `modules/crm/attachments.ts`, `modules/whatsapp/tokens.ts`, `modules/whatsapp-marketing/store.ts`. Dead imports removed (8: incl. pre-existing `isApproved`/`deps`/`authStore`/`procurementSubmittable`/`getEntryOrReload`/`requireScope`).
 - Explicitly not moved (route is the sole owner — needs domain design, not extraction): autopilot waTask/waAction/history CRUD, runner GH pipelines, estimates bulk-upsert/report payloads, system waba-debug SQL, `*-parts/io.ts` god halves, digital-marketing + zoho-sent-analyzer god services (prior exclusion: inference/`__dirname`).
+
+## 19. Product Line & KYP schema v2 (2026-11-23)
+
+The founder authors ONE file — `resources/json/kyp/bui_milling_vendor_kyp_schema_v2.json`
+(Draft-07) — and it is the sole truth for **products, categories, aliases and the spec-ask**.
+Nothing product-shaped is hand-typed anywhere else.
+
+**What the file carries.** 25 envelope properties (13 required), 103 products in `definitions`,
+and a root `allOf` with one branch per product that binds
+`product_key → category` (const, or an enum for the dual-category `transmission_belt`),
+`aliases` defaults and `specs: {$ref: "#/definitions/<key>"}` — the dispatch `specs` alone lacks.
+Each definition also carries `x-category`, `x-aliases` and `x-client-ask` (1–5 prose ask
+prompts). Specs are typed per product: 652 attribute slots, 366 distinct keys, 237 enums,
+19 `if/then` bound rules, `additionalProperties: false`.
+
+**Generated artifacts (never hand-edited).** `scripts/gen-kyp-catalog.mjs` compiles the JSON to
+`src/automations/product-line/kyp-catalog.ts` (labels, categories, aliases, `ask`, typed props,
+flattened rules) and to `migrations/0156_kyp_catalog_v2_seed.sql` (103 `ProductItem` + 652
+`KypGuide` rows, deterministic ids `pi_<key>` / `kg_<key>_<attr>`). Guard `kyp-schema` reruns the
+generator with `--check` and asserts the JSON's own invariants.
+
+**Runtime typecheck.** `kyp-schema.ts` = catalog view + `validateSpecs(productKey, specs)` (type,
+enum, min/max/exclusiveMinimum, required, if-then) and `validateEnvelope`. `rate-specs.ts` runs it
+on every quote write (`applySpecsToData` before the D1 write) and refreshes `missingSpecs`; a
+schema violation is a 400, a missing required value is recorded, never invented (founder call).
+
+**Storage decisions.**
+- `ProductItem` / `KypGuide` / `Vendor` / `VendorRate` keep their existing names — no rename.
+- The spec document is ONE JSON column: `VendorRate.attrValues` (schema `specs`). `brand` (and
+  `material`, `machine_make_model` where the branch does not declare them) live **inside** it —
+  no per-field columns. `EXTRA_SPEC_KEYS` in `kyp-schema.ts` is the allowlist that makes that
+  legal against `additionalProperties: false`.
+- `baseRate` stays a stored derived value (`price × (1 − discount/100)`), with
+  `pricePerUnit`/`discountPercent` stored separately; `deliveryMaxDays` (mig 0155) carries
+  `delivery_time_max_days`. Media stays `imageUrl`/`videoUrl` pointing at real `CHAT_FILES` KV
+  objects; `has_reference_media` is derived, not stored.
+- **Spec queries** (founder ask: typechecked + millisecond): `VendorRateSpec` (mig 0155) is a
+  typed mirror — one row per (quote, spec key) with `valueText` + `valueNum` and indexes on
+  `(attrKey, valueNum)` / `(attrKey, valueText)`, written in the same D1 batch as the quote.
+  Any key can be filtered without one index per key (366 keys × 103 products). The JSON column
+  stays authoritative; the index is rebuildable. HTTP form:
+  `GET /api/product-line/rates?spec=brand:PIX&spec=width_mm:>=1000&spec=material:in:ss,gi`.
+
+**Revenue semantics (why the table is `VendorRate`).** It stores the vendor's quote, never a
+selling price: `pricePerUnit` = vendor price before discount, `baseRate` = net after discount,
+and the customer price is computed at read (`match.ts` → `effectivePrice` → `applyMarkup`, +25%
+`SALES_MARKUP_PERCENT`), so markup changes never rewrite stored rates.
+
+History: `0154` wiped the pre-schema data (191 products / 425 guide / 6,978 quotes, `Vendor`
+master kept, `product-photo/` KV cleared); the Product Line AI agents (knowledge copilot +
+"Add vendor rates" intake) were removed 2026-11-22 and `src/copilot/registry.ts` is empty.
+
+
+### 19.1 Editable catalogue + rate sheet UI (2026-11-23)
+
+D1 is the working copy of the KYP catalogue, and the dashboard owns it:
+
+- **Editors** — `components/product-line/`: `ProductsTab` (search + category filter + New product + KYP
+  download), `ProductEditor` (name, category with rename-everywhere, alias chips), `SpecsEditor` (per spec:
+  label, type, enum list, min/max, required, order, add, delete), `VendorsTab` (supplier master; brands are
+  NOT vendors), `RatesSheet` + `RatesFilters` + `RateDrawer` (quotes as a spreadsheet, row → full editor).
+- **One contract** — `catalog-live.ts` reads `ProductItem`/`KypGuide` into the same shape as the compiled
+  seed and caches it (`product-line:catalog:v1`); rate writes (`rate-specs.ts`) typecheck against it, so a
+  spec edit changes validation immediately, and `schema-export.ts` rebuilds the KYP v2 JSON from it
+  (`GET /api/product-line/schema.json`, downloadable). Guard `kyp-schema` covers the export round-trip.
+- **Policies** — `attrKey` immutable (quotes + `VendorRateSpec` key off it); spec delete blocked while quotes
+  carry a value (error names the count); category rename is a bulk value update; missing required values are
+  displayed, never invented.
+- **Rates sheet** — filters compile to SQL (`rates-page.ts`): `productId, vendorId, category, status,
+  priceMin/Max, netMin/Max, leadMin/Max, from/to, missing=1, sort`, plus repeatable `spec=key:op:value`
+  (`eq`, `in:`, `>=`, `<=`, `a..b`) answered by the indexed `VendorRateSpec` mirror. `RATES_PAGE_MAX = 500`
+  per page (the rest of the app keeps the 50/≤100 standard); totals are `COUNT(*)`; loading paints sheet
+  skeletons, not an empty grid.
+
+### 19.2 Second pass: defaults, categories, prompt + pasted rates (2026-11-23)
+
+- **Spec rows** — `SpecsEditor` owns order (HTML5 drag, optimistic: the row moves on drop, the write
+  follows, a failure snaps back) and `SpecRowEditor` owns the panel. Enum members are printed on the
+  collapsed row, so "is this a choice or free text" never needs a click. A spec may declare a
+  **default** (`KypGuide.defaultValue`, JSON text, validated against its enum by `spec-default.ts`);
+  the rate drawer seeds a new quote from it.
+- **Categories** — `catalog-categories.ts`: declared list in Setting `product-line:categories`
+  (`addCategory`), bulk `renameCategory` (every product + the declared entry, refusing a collision),
+  `deleteCategory` only while unused. `catalog-live.ts` merges declared + derived, so a category can
+  exist before its first product.
+- **Prompt → paste → typed quotes** — `prompt.ts` stores an editable prompt (`product-line:rate-prompt`)
+  and renders its vendor placeholder as "name — city" for active vendors only. `rate-import.ts` accepts
+  the `{ create_vendors, rates: [ { product_key, vendor, unit, price_per_unit, … , specs } ] }` envelope
+  (fenced or bare), resolves products by key/name/alias and vendors by name (creating them only when
+  asked), then calls `createRate` — so specs, `missingSpecs` and the typed index are exactly what the
+  drawer would produce. Pure parsing lives in `rate-import-parse.ts`.
+- **Rates sheet** — the filter builder edits a draft and `Run query` commits it (`useRates.draft/run`),
+  so a dozen range fields cost one request. `missing` filters by `any | spec | envelope`, and each row
+  renders `Missing (n)` whose tooltip lists the field names; `missingFieldsFor` (backend) is mirrored by
+  `filters.ts#missingFields` and the guard diffs both on the same fixture. Rows are compact (10.5px,
+  one-line cells) so a 500-row page reads as a sheet. Creating a required spec, flipping `isRequired`, or
+  editing a product refreshes `missingSpecs` for that product, so the filter cannot drift.

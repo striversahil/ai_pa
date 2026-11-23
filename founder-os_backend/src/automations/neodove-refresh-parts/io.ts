@@ -205,6 +205,8 @@ export async function refreshNeodoveReport(dateStr?: string): Promise<{
   reportDate: string;
   stored: number;
   dropped?: number;
+  /** True when the fetched rows matched the stored snapshot — nothing written, no cache bumped. */
+  unchanged?: boolean;
   error?: string;
 }> {
   const reportDate = dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr) ? dateStr : istDateStr(0);
@@ -338,11 +340,34 @@ export async function refreshNeodoveReport(dateStr?: string): Promise<{
 
   // 4. store snapshot (overwrite semantics — same as the GH runner)
   const key = `neodove_user_report:${reportDate}`;
-  const payload = JSON.stringify({
-    rows: filtered.map((r: any) => normalizeRow(r, leadsByUser[r.userId] ?? 0)),
-    fetchedAt: new Date().toISOString(),
-  });
+  const rows = filtered.map((r: any) => normalizeRow(r, leadsByUser[r.userId] ?? 0));
+  const rowsJson = JSON.stringify(rows);
+  const payload = JSON.stringify({ rows, fetchedAt: new Date().toISOString() });
   const existing = await prisma.setting.findUnique({ where: { key } });
+  /** The snapshot only matters if its ROWS changed (`fetchedAt` always does). */
+  const rowsUnchanged = (() => {
+    if (!existing) return false;
+    try {
+      return JSON.stringify(JSON.parse(String((existing as any).value ?? '{}'))?.rows ?? null) === rowsJson;
+    } catch {
+      return false;
+    }
+  })();
+  if (rowsUnchanged) {
+    // Idle 5-minute refresh: same numbers, so writing + invalidating the
+    // dashboard would only force a pointless full recompute for every viewer.
+    // (2026-11-21: this refresh runs every 5 minutes and used to wipe the whole
+    // `telecalling:dashboard` prefix each time — even with nothing changed —
+    // which is why the leaderboard cache never survived a working day.)
+    logger.info({ reportDate, stored: rows.length }, 'neodove refresh unchanged — snapshot and caches kept');
+    return {
+      ok: true,
+      reportDate,
+      stored: rows.length,
+      dropped: all.length - filtered.length,
+      unchanged: true,
+    };
+  }
   if (existing) {
     await prisma.setting.update({ where: { key }, data: { value: payload, updatedAt: new Date() } });
   } else {

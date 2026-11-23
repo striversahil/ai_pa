@@ -187,6 +187,13 @@ export interface DashData {  meta: { day: string; requestedDay?: string; unassig
   unmappedAccepted?: { count: number; value: number; points: number; items: UnmappedAcceptedItem[] } | null;
   /** History reset epoch — points read only from this day onward. */
   epoch?: string | null;
+  /**
+   * Every region's open pipeline, carried by the board when fetched with
+   * `follow_ups=1` (key = region id, plus `UNMAPPED`). Replaces the per-region
+   * `?region=` prefetch fan-out: region tabs read this map, so switching costs
+   * no request at all.
+   */
+  regionFollowUps?: Record<string, any>;
 }
 
 /** One day × one telecaller of manager detail (backend `daily` block, ?daily=1). */

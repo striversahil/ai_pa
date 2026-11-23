@@ -119,7 +119,14 @@ export const deps = () => {
 // proceeds immediately. A failed/hung init is RETRYABLE by the next request.
 export const BOOT_PATH_RE = /^\/api\/(trigger|automations|session|status|health)(\/|$)/;
 const BOOT_TIMEOUT_MS = 20000;
-const BOOT_WAIT_MS = 15000;
+// A read path must never pay for a cold automation registry. 15s here was the
+// real cause of "the Sales leaderboard takes ages to load": every
+// /api/session|automations|status request blocked on the registry load even
+// when its own payload was already cached (2026-11-21). Handlers that genuinely
+// need an entry self-heal per slug (getEntryOrReload), so waiting is optional.
+const BOOT_WAIT_MS = 2000;
+/** Cron/trigger callers are not interactive — they may wait for a full boot. */
+const BOOT_WAIT_TRIGGER_MS = 15000;
 const BOOT_MAX_ATTEMPTS = 5;
 let bootAttempts = 0;
 let bootSucceeded = false;
@@ -485,10 +492,17 @@ export function createApp(): Hono<{ Bindings: Bindings }> {
   // Boot middleware: warm/ensure the automation engine for automation routes.
   app.use('*', async (c, next) => {
     bootstrapEnv(c.env);
-    if (BOOT_PATH_RE.test(new URL(c.req.url).pathname)) {
+    const path = new URL(c.req.url).pathname;
+    if (BOOT_PATH_RE.test(path)) {
       if (!bootPromise && bootAttempts >= BOOT_MAX_ATTEMPTS) resetBootAttemptsIfEmpty();
       if (!bootPromise && shouldTriggerBoot()) void ensureBoot();
-      if (bootPromise) await Promise.race([bootPromise, new Promise((r) => setTimeout(r, BOOT_WAIT_MS))]);
+      if (bootPromise) {
+        // Trigger routes run a handler and MUST have the registry; dashboards
+        // only resolve their own entry (self-healing on demand), so they wait
+        // briefly and never block a cached payload behind a cold boot.
+        const waitMs = path.startsWith('/api/trigger') ? BOOT_WAIT_TRIGGER_MS : BOOT_WAIT_MS;
+        await Promise.race([bootPromise, new Promise((r) => setTimeout(r, waitMs))]);
+      }
     } else if (!bootPromise && shouldTriggerBoot()) {
       void ensureBoot(); // opportunistic warm-up on any other request
     }

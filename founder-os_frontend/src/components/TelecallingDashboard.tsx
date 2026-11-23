@@ -47,11 +47,15 @@ export default function TelecallingDashboard() {
   ];
   const dash = useLiveQuery<DashData>(
     async () => {
-      const res = await fetch(`${workspaceDataUrl("telecalling")}?period=${period}`);
+      // `follow_ups=1` brings every region's open pipeline back WITH the board:
+      // the region tabs used to fan out one `?region=` request each (5 requests,
+      // each running a full leaderboard aggregation server-side) on every load
+      // and every live event. Region switching is now a local read.
+      const res = await fetch(`${workspaceDataUrl("telecalling")}?period=${period}&follow_ups=1`);
       if (!res.ok) throw new Error(`Failed to load leaderboard (HTTP ${res.status})`);
       return adaptDashData(await res.json());
     },
-    { events: TELECALLING_EVENTS, deps: [period], clearOnError: true },
+    { events: TELECALLING_EVENTS, deps: [period], clearOnError: false },
   );
 
   // Lead Conversion is the default view with no period filtering — it hits the
@@ -97,34 +101,16 @@ export default function TelecallingDashboard() {
   // ── Root estimate assignment overrides (lock to one agent / never assign) ──
   const [overrideBusy, setOverrideBusy] = useState(false);
 
-  // Prefetch EVERY region's pipeline in parallel (one round of requests),
-  // refreshed on live events. Switching region tabs then reads from the local
-  // map — instant, and it never shows another region's stale data while
-  // loading. Region keys: R1–R4 (+ UNMAPPED for managers).
-  const activeRegionKeys = (convDash.data?.regions ?? dash.data?.regions ?? [])
-    .map((r) => r.id);
-  if ((convDash.data?.unmapped?.items?.length ?? 0) > 0) activeRegionKeys.push("UNMAPPED");
-  // A scoped (non-manager) agent only ever sees their OWN region — prefetch
-  // just that key, never every region.
-  const regionKeysKey = selfAgentId ? regionKey(selfRegion) : activeRegionKeys.join(",");
-  const agentViews = useLiveQuery<Record<string, AgentViewData | null>>(
-    async () => {
-      if (!regionKeysKey) return {};
-      const keys = regionKeysKey.split(",");
-      const entries = await Promise.all(
-        keys.map(async (key) => {
-          try {
-            const res = await fetch(`${workspaceDataUrl("telecalling")}?region=${encodeURIComponent(regionQuery(key))}`);
-            return [key, res.ok ? adaptAgentView(await res.json()) : null] as const;
-          } catch {
-            return [key, null] as const;
-          }
-        }),
-      );
-      return Object.fromEntries(entries);
-    },
-    { events: TELECALLING_EVENTS, deps: [regionKeysKey], clearOnError: true },
-  );
+  // ── Region pipelines, carried by the board payload ─────────────────────
+  // `dash.data.regionFollowUps` holds EVERY region's open estimates (server-built
+  // from one query). No per-region prefetch hook: switching a region tab used to
+  // fire a request whose server side ran the whole leaderboard aggregation.
+  const drillMap = useMemo(() => {
+    const src = ((dash.data as any)?.regionFollowUps ?? {}) as Record<string, any>;
+    const out: Record<string, AgentViewData | null> = {};
+    for (const [key, view] of Object.entries(src)) out[key] = adaptAgentView(view);
+    return out;
+  }, [dash.data]);
   // ── Sheets-style instant tags ──────────────────────────────────────────
   // The backend pushes the changed row INSIDE the telecalling live event
   // (delta, not a full refetch — same idea as Sheets cell ops over one
@@ -177,21 +163,23 @@ export default function TelecallingDashboard() {
     });
   }, []);
   /**
-   * Reconcile ONE agent's view after a tag save (1 request) instead of
-   * re-fetching every agent. The optimistic override already painted the tap;
-   * this confirms server state (setter name, timestamp) without the storm.
+   * Reconcile ONE region's pipeline after a tag/next-step save (1 cheap request
+   * — the drill endpoint reads that region's open estimates and nothing else).
+   * The optimistic override already painted the tap; this confirms server state.
    */
   const refreshOneAgent = useCallback(async (key: string | null) => {
-    if (!key) { agentViews.refresh(); return; }
+    if (!key) { dash.refresh(); return; }
     try {
       const res = await fetch(`${workspaceDataUrl("telecalling")}?region=${encodeURIComponent(regionQuery(key))}`);
       if (!res.ok) return;
-      const view = adaptAgentView(await res.json());
-      agentViews.setData((prev) => ({ ...(prev ?? {}), [key]: view }));
+      const view = await res.json();
+      dash.setData((prev) => (prev
+        ? { ...prev, regionFollowUps: { ...((prev as any).regionFollowUps ?? {}), [key]: view } }
+        : prev));
     } catch { /* override patch already shows the tap; next event refetch reconciles */ }
-  }, [agentViews]);
+  }, [dash]);
   const agentViewsMap = useMemo(() => {
-    const src = agentViews.data ?? {};
+    const src = drillMap;
     if (Object.keys(tagOverrides).length === 0) return src;
     const out: Record<string, AgentViewData | null> = {};
     for (const [id, v] of Object.entries(src)) {
@@ -202,7 +190,7 @@ export default function TelecallingDashboard() {
       };
     }
     return out;
-  }, [agentViews.data, tagOverrides]);
+  }, [drillMap, tagOverrides]);
   const getAgentView = (key: string | null): AgentViewData | null => (key ? agentViewsMap[key] ?? null : null);
   const selectedAgentView = getAgentView(regionFilter);
   // No-pickup subset of the selected agent's follow-ups (NeoDove dial outcome).
@@ -228,7 +216,7 @@ export default function TelecallingDashboard() {
   // badges render only when 2+ orgs are present (single-org = today's view).
   const teleOrgs = useMemo(() => {
     const set = new Set<string>();
-    for (const v of Object.values(agentViews.data ?? {})) {
+    for (const v of Object.values(drillMap)) {
       for (const f of v?.followUps ?? []) {
         if (f?.organizationId) set.add(String(f.organizationId));
       }
@@ -237,14 +225,13 @@ export default function TelecallingDashboard() {
       if ((r as any)?.organizationId) set.add(String((r as any).organizationId));
     }
     return [...set].sort();
-  }, [agentViews.data, dash.data]);
+  }, [drillMap, dash.data]);
 
   const refreshAll = useCallback(() => {
     dash.refresh();
     convDash.refresh();
     genDash.refresh();
-    agentViews.refresh();
-  }, [dash, convDash, genDash, agentViews]);
+  }, [dash, convDash, genDash]);
 
   // Risk is informational in the region model (red/zombie + stale next step
   // surface as attention flags; nothing is re-poached at EOD anymore).
@@ -398,7 +385,7 @@ export default function TelecallingDashboard() {
                 <div className="space-y-3 p-3 md:p-4">
                   {boardRegions.map((r, i) => (
                     <PodiumRow
-                      key={`${r.id}-${period}`}
+                      key={r.id}
                       region={r}
                       index={i}
                       staff={boardStaffByRegion.get(r.id) ?? []}
@@ -596,14 +583,14 @@ export default function TelecallingDashboard() {
                       )}
                     </div>
                   )}
-                  {agentViews.loading && !selectedAgentView && <p className="text-sm text-zinc-500">Loading…</p>}
-                  {!agentViews.loading && !selectedAgentView && Boolean(agentViews.error) && (
-                    <p className="text-sm text-rose-500">Couldn't load follow-ups — <button className="underline font-semibold" onClick={() => agentViews.refresh()}>retry</button>.</p>
+                  {dash.loading && !selectedAgentView && <p className="text-sm text-zinc-500">Loading…</p>}
+                  {!dash.loading && !selectedAgentView && Boolean(dash.error) && (
+                    <p className="text-sm text-rose-500">Couldn't load follow-ups — <button className="underline font-semibold" onClick={() => dash.refresh()}>retry</button>.</p>
                   )}
-                  {!agentViews.loading && selectedAgentView && (selectedAgentView?.followUps?.length ?? 0) === 0 && (
+                  {!dash.loading && selectedAgentView && (selectedAgentView?.followUps?.length ?? 0) === 0 && (
                     <p className="text-sm text-zinc-500">No follow-up estimates in this region.</p>
                   )}
-                  {!agentViews.loading && (selectedAgentView?.followUps?.length ?? 0) > 0 && visibleFollowUps.length === 0 && (
+                  {!dash.loading && (selectedAgentView?.followUps?.length ?? 0) > 0 && visibleFollowUps.length === 0 && (
                     <p className="text-sm text-zinc-500">{filtersActive ? "No follow-ups match the active filters." : "No follow-ups in this region."}</p>
                   )}
                   <div className="space-y-2">
@@ -752,11 +739,11 @@ export default function TelecallingDashboard() {
                             </button>
                             {open && (
                               <div className="mt-2 space-y-1.5">
-                                {agentViews.loading && !view && <p className="text-[11px] text-zinc-500">Loading…</p>}
-                                {!agentViews.loading && !view && Boolean(agentViews.error) && (
-                                  <p className="text-[11px] text-rose-500">Couldn't load estimates — <button className="underline font-semibold" onClick={() => agentViews.refresh()}>retry</button>.</p>
+                                {dash.loading && !view && <p className="text-[11px] text-zinc-500">Loading…</p>}
+                                {!dash.loading && !view && Boolean(dash.error) && (
+                                  <p className="text-[11px] text-rose-500">Couldn't load estimates — <button className="underline font-semibold" onClick={() => dash.refresh()}>retry</button>.</p>
                                 )}
-                                {!agentViews.loading && view && (view?.followUps?.length ?? 0) === 0 && (
+                                {!dash.loading && view && (view?.followUps?.length ?? 0) === 0 && (
                                   <p className="text-[11px] text-zinc-500">No open estimates in this region.</p>
                                 )}
                                 {(view?.followUps ?? []).map((f) => (

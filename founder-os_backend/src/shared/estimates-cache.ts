@@ -1,4 +1,4 @@
-import { cached, cacheGet, cacheDel, cacheDelPrefix } from './cache';
+import { cached, cacheGet, cacheDel, cacheDelPrefix, bumpRev } from './cache';
 import { prisma } from './prisma';
 import { logger } from './logger';
 import { isSystemGeneratedComment } from './systemComment';
@@ -95,12 +95,21 @@ export async function invalidateEstimatesCache(): Promise<void> {
  * Invalidate every derived cache that depends on the estimates payload (e.g.
  * the telecalling KRA attribution reads the same estimates). Called alongside
  * invalidateEstimatesCache() on any mutation.
+ *
+ * The leaderboard fans out into many cache variants (period × user × drill), so
+ * the `telecalling:dashboard` family is invalidated by BUMPING ITS REVISION —
+ * one small put — instead of `cacheDelPrefix`, which walked the whole prefix
+ * (a KV list + one delete per variant) on every estimate write. Readers fold
+ * the revision into their key, so every stale variant is abandoned at once and
+ * expires by TTL. (2026-11-21: the prefix delete ran on every runner sync and
+ * every NeoDove refresh, i.e. continuously during business hours, which kept
+ * the leaderboard permanently cold.)
  */
 export async function invalidateDerivedEstimateCaches(): Promise<void> {
   await Promise.all([
     cacheDelPrefix('neodove:kra'),
     cacheDelPrefix('telecalling:risk'),
-    cacheDelPrefix('telecalling:dashboard'),
+    bumpRev('est'),
     cacheDelPrefix('telecalling:converters'),
     cacheDelPrefix('zoho:movement'),
     cacheDel(KEY),

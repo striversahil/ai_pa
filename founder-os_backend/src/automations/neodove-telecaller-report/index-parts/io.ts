@@ -1,6 +1,6 @@
 // Extracted verbatim from index.ts by scripts/refactor/split-module.mjs.
 // index.ts re-exports everything public here, so existing imports keep working.
-import { cached, cacheDelPrefix } from "../../../shared/cache";
+import { cached, cacheDelPrefix, bumpRev } from "../../../shared/cache";
 import { prisma } from "../../../shared/prisma";
 import { isSystemGeneratedComment } from "../../../shared/systemComment";
 import { logger } from "../../../shared/logger";
@@ -64,10 +64,14 @@ export async function loadReportsInRange(from?: string, to?: string): Promise<{ 
 
 /** Invalidate all cached NeoDove reads when a report snapshot is (re)written. */
 export async function invalidateNeodoveCache(): Promise<void> {
+  // NeoDove call numbers feed the leaderboard, so bump the leaderboard's
+  // NeoDove revision (one small put) rather than prefix-deleting every cached
+  // dashboard variant — see shared/cache.ts#bumpRev and the 2026-11-21 note in
+  // shared/estimates-cache.ts.
   await Promise.all([
     cacheDelPrefix('neodove:report_range'),
     cacheDelPrefix('neodove:kra'),
-    cacheDelPrefix('telecalling:dashboard'),
+    bumpRev('neo'),
   ]);
 }
 

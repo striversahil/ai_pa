@@ -213,12 +213,28 @@ export async function listAutomationDefs(prisma: any): Promise<any[]> {
 
 export class AutomationRegistry {
   static async load(): Promise<void> {
-    // Parallel: each loadOne is an independent D1 upsert; sequential awaits
-    // serialized 12 round trips and dominated cold-start latency.
+    // ONE read for the whole registry.
+    //
+    // This used to be `Promise.all(RULES.map(loadOne))`, i.e. 31 concurrent
+    // `automation.findUnique` round-trips on EVERY cold isolate. D1 serialized
+    // them into ~15s of latency, and the boot middleware in worker/context.ts
+    // (BOOT_WAIT_MS) made every dashboard request wait for it — the Sales
+    // leaderboard's real "lag" was this, not its aggregation (2026-11-21).
+    //
+    // Definitions live in code (RULES), so the DB only supplies per-row state:
+    // id / config / enabled / cooldown. One `findMany` is enough to compare and
+    // to know which rows (if any) actually need a write.
+    let rows: any[] = [];
+    try {
+      rows = (await prisma.automation.findMany({})) as any[];
+    } catch (e: any) {
+      logger.error({ error: e?.message }, 'Automation registry: read failed — registering code defaults');
+    }
+    const bySlug = new Map<string, any>((rows ?? []).map((r) => [String(r.slug), r]));
     await Promise.all(
       Object.entries(RULES).map(async ([slug, fileDef]) => {
         try {
-          await this.loadOne(slug, fileDef);
+          await this.loadOne(slug, fileDef, bySlug.get(slug) ?? null);
         } catch (e: any) {
           logger.error({ slug, error: e.message }, 'Automation registry: failed to load automation');
         }
@@ -227,7 +243,12 @@ export class AutomationRegistry {
     logger.info({ count: Object.keys(RULES).length }, 'Automation registry loaded');
   }
 
-  private static async loadOne(slug: string, fileDef: Partial<AutomationDefinition>): Promise<void> {
+  private static async loadOne(
+    slug: string,
+    fileDef: Partial<AutomationDefinition>,
+    /** The stored row, pre-fetched by load() — null when this slug has none. */
+    stored: any = undefined,
+  ): Promise<void> {
     const module: AutomationModule = MODULES[slug] ?? {};
 
     const def: AutomationDefinition = {
@@ -258,7 +279,11 @@ export class AutomationRegistry {
     };
 
     let row: any;
-    const existing = await prisma.automation.findUnique({ where: { slug } });
+    // `stored` comes from load()'s single read; a direct call (undefined) still
+    // does its own lookup, and a genuinely missing row falls back to the write.
+    const existing = stored === undefined
+      ? await prisma.automation.findUnique({ where: { slug } })
+      : stored;
     const unchanged =
       existing &&
       existing.name === desired.name &&

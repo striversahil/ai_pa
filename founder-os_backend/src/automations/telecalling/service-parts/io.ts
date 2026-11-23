@@ -9,28 +9,31 @@ import { loadCreatorIndex, loadAcceptedSnapshot, groupAcceptedByWeek, groupAccep
 import type { AcceptedSnapshot, AcceptedAgg, AcceptedEstimate } from "../accepted";
 import { getNeodoveAgentMap, getNeodoveRangeMap, CONNECTED_CALLS_PER_DAY, LEADS_PER_AGENT_PER_DAY } from "../../neodove-telecaller-report";
 import type { AutomationContext } from "../../../modules/automation/types";
-import { DATE_RE, istDate, IN_BATCH } from "../util";
-import { cached } from "../../../shared/cache";
-import { overlayCallTags, overlayNextSteps } from "../call-tags";
+import { DATE_RE, istDate } from "../util";
+import { cached, cacheGet, cacheRevs } from "../../../shared/cache";
+import { resolveDrillScope, buildRegionDrill, buildAllRegionFollowUps, loadRoster } from "./drill";
 import { isValidRegion, REGIONS, tlRegions, DAILY_TL_RESELLER_TARGET, TL_LEVELS } from "../regions";
 import type { TlLevel, RegionId } from "../regions";
 import { loadDeclinedSnapshot } from "../declined";
 import type { DeclinedEstimate, DeclinedAgg } from "../declined";
 import { classifyClients, normalizeClientKey } from "../client-segments";
 import type { ClientSegmentKind } from "../client-segments";
-import { getRiskItems, parseCommentDateMs, buildSnatchReason } from "../risk";
+import { getRiskItems } from "../risk";
 import { DEFAULT_TARGET_START, TARGET_START_KEY, weekStartOf, buildRegionTargets, workingDaysBetweenExcluding, DAILY_REGION_TARGET, isSunday } from "../targets";
 import type { RegionTarget } from "../targets";
-import { isSystemGeneratedComment } from "../../../shared/systemComment";
 import { istDayOf, UNATTRIBUTED_LEADS_KEY, listDays, UNATTRIBUTED_CLOSE_KEY, weekdayOf, periodRange, periodPrefix, RISK_LIST_CAP } from "./pure";
 import type { TelecallingDailyRow, SalesHoliday } from "./types";
 
 export async function getEnquiryLeadCounts(from: string, to: string): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   try {
-    // Unfiltered read + JS-side IST-day gate (portable across D1/Postgres
-    // date storage; the Enquiry table is small).
+    // Windowed read (2026-11-21): this used to fetch EVERY enquiry row and gate
+    // the date in JS on every leaderboard compute. `createdAt` is stored as an
+    // ISO timestamp on both runtimes, so a lexicographic range is correct for
+    // D1 and Postgres alike; the JS gate below stays as defence for rows whose
+    // stored value is odd (they are skipped either way).
     const rows = await prisma.enquiry.findMany({
+      where: { createdAt: { gte: `${from}T00:00:00`, lte: `${to}T23:59:59.999Z` } },
       select: { assignedAgentId: true, createdAt: true },
     });
     for (const r of (rows as any[]) ?? []) {
@@ -215,13 +218,16 @@ export async function computeTelecallingDaily(
 
 export async function getTelecallingDashboardData(ctx?: AutomationContext): Promise<any> {
   const q = (ctx?.subject ?? {}) as Record<string, unknown>;
-  // 5-min TTL (not 30s): every write path invalidates these keys explicitly
-  // (invalidateRiskCache / estimates-cache / neodove report), and live events
-  // refetch — so the TTL only governs idle re-reads. A short TTL meant every
-  // filter click + every 30s of idle viewing re-ran the full aggregation, and
-  // a page load's ~10 concurrent cold computes contended into 30s+ timeouts
-  // (2026-09-08 filter incident).
-  const DASH_TTL_MS = 5 * 60 * 1000;
+  const t0 = Date.now();
+  // 10-min TTL: every write path bumps a REVISION (shared/cache.ts#bumpRev) and
+  // live events refetch, so the TTL only governs idle re-reads. It is set ABOVE
+  // the cron warmer's 5-minute cadence on purpose: at 5 minutes the warmer and
+  // the expiry raced, so a page load could land on an expired key and eat a full
+  // recompute (2026-11-21).
+  const DASH_TTL_MS = 10 * 60 * 1000;
+  // Drills are one estimate read + notes; a short TTL keeps call tags + next
+  // steps fresh without ever re-running the leaderboard aggregation.
+  const DRILL_TTL_MS = 60 * 1000;
   // Converters-only shortcut for the per-estimate export
   // (GET /api/automations/telecalling/data?converters=1&since=YYYY-MM-DD):
   // returns just { converters } from the close ledger and skips the full
@@ -233,32 +239,98 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
     return cached<any>(`telecalling:converters:${since || 'all'}`, DASH_TTL_MS, () => getConvertersMap(since));
   }
   const requestedDay = typeof q.date === 'string' && DATE_RE.test(q.date) ? q.date : istDate();
+  // Revision fragment: a write bumps ONE key and every derived cache entry is
+  // abandoned at once, instead of the old prefix delete (one KV delete per
+  // variant) that ran on every estimate write and every 5-min NeoDove refresh.
+  const revs = await cacheRevs(['est', 'neo']);
+
+  // ── Region drill (?region= / ?agent=) ────────────────────────────────────
+  // Served from its OWN small cache: the drill needs one region's open
+  // estimates and nothing else. It used to run the whole leaderboard
+  // aggregation first — five extra full computes on every dashboard load,
+  // because the dashboard pre-fetches one drill per region.
+  const wantsDrill = (typeof q.region === 'string' && q.region.trim() !== '')
+    || (typeof q.agent === 'string' && q.agent !== '');
+  if (wantsDrill) {
+    const { telecallers } = await loadRoster();
+    const { scope, error } = resolveDrillScope(q, telecallers);
+    if (error) {
+      return {
+        meta: {
+          analysis: 'sales-leaderboard',
+          title: 'Sales Leaderboard',
+          day: requestedDay,
+          agents: telecallers.map((t: any) => ({
+            id: String(t.id), name: String(t.name ?? ''), region: String(t.region ?? ''),
+            region2: String(t.region2 ?? ''), tlLevel: String(t.tlLevel ?? ''), active: !!t.assignEstimateFollowUps,
+          })),
+          generatedAt: new Date().toISOString(),
+          computeMs: Date.now() - t0,
+          error,
+        },
+      };
+    }
+    if (scope) {
+      return cached<any>(
+        `telecalling:drill:${revs}:${requestedDay}:${scope.regionId}:${scope.staff ? String(scope.staff.id) : ''}`,
+        DRILL_TTL_MS,
+        () => buildRegionDrill({ regionId: scope.regionId, staff: scope.staff, requestedDay }),
+      );
+    }
+  }
+
+  // The roster sync is a WRITE. It used to run inside every cold compute, so a
+  // page load could upsert the roster ten times over; now it runs at most once
+  // per 10 minutes behind the cache (new NeoDove agents still appear same-day,
+  // and the daily engine run keeps the roster authoritative).
+  try {
+    await cached('telecalling:roster_sync', 10 * 60 * 1000, async () => {
+      await syncTelecallersFromNeodove();
+      return true;
+    });
+  } catch { /* roster sync is best-effort — the board never waits on it */ }
+
   const period = typeof q.period === 'string' && q.period ? q.period : 'today';
   const agent = typeof q.agent === 'string' && q.agent ? q.agent : '';
-  const selfAgentId = typeof q.selfAgentId === 'string' && q.selfAgentId ? q.selfAgentId : '';
   // Include selfAgentId so a scoped staff member never receives a cached
   // team-wide (managed) payload — each user's view is isolated in the cache.
+  const selfAgentId = typeof q.selfAgentId === 'string' && q.selfAgentId ? q.selfAgentId : '';
   const wantDaily = String(q.daily ?? '') === '1' || String(q.daily ?? '').toLowerCase() === 'true';
-  // Region drills carry their own followUps, so they MUST NOT share a cache
-  // entry with the unfiltered dashboard: whichever request populated the key
-  // used to win, and a dashboard-first load cached a payload with no
-  // followUps → every region tab rendered an empty Lead Conversion list.
-  const regionKey = typeof q.region === 'string' ? q.region.trim().toLowerCase() : '';
-  const cacheKey = `telecalling:dashboard:${period}:${requestedDay}:${agent}:${selfAgentId}:${wantDaily ? 'daily' : ''}:${regionKey}`;
-  const payload = await cached<any>(cacheKey, DASH_TTL_MS, async () => {
-    return computeTelecallingDashboardData(ctx);
-  });
-  // Agent call tags ride OUTSIDE the 5-min cache (see overlayCallTags): a tag
-  // tap is a single-row write with zero invalidation, and this merge makes it
-  // visible on the very next read — millisecond-grade propagation without the
-  // multi-second full-aggregation recompute a cache bust would force.
-  try {
-    const rows: any[] = Array.isArray((payload as any)?.followUps) ? (payload as any).followUps : [];
-    if (rows.length > 0) {
-      await overlayCallTags(rows);
-      await overlayNextSteps(rows);
-    }
-  } catch { /* overlay best-effort; cached rows render as-is */ }
+  const wantFollowUps = String(q.follow_ups ?? '') === '1' || String(q.follow_ups ?? '').toLowerCase() === 'true';
+  const cacheKey = `telecalling:dashboard:${revs}:${period}:${requestedDay}:${agent}:${selfAgentId}:${wantDaily ? 'daily' : ''}`;
+  // Cache flag for the perf chip: a `cached()` call hides whether it computed.
+  const hit = await cacheGet<any>(cacheKey, DASH_TTL_MS);
+  const base = hit ?? await cached<any>(cacheKey, DASH_TTL_MS, () => computeTelecallingDashboardData(ctx));
+  const payload: any = {
+    ...base,
+    meta: { ...((base as any)?.meta ?? {}), cacheHit: hit !== null, computeMs: hit ? 0 : (base as any)?.meta?.computeMs ?? null },
+  };
+
+  // ── One request for every region's follow-ups (`?follow_ups=1`) ─────────
+  // The dashboard used to fan out one `?region=` request per region tab, in
+  // parallel, on every load AND every live event. All regions' open estimates
+  // come from ONE query here, cached per viewer scope.
+  if (wantFollowUps) {
+    const staffRow = selfAgentId
+      ? ((payload?.meta?.staff ?? []) as any[]).find((s) => String(s.id) === selfAgentId) ?? null
+      : null;
+    const allowed = selfAgentId
+      ? (() => {
+          const regs = Array.isArray(staffRow?.regions) && staffRow.regions.length > 0
+            ? (staffRow.regions as string[])
+            : [String(payload?.meta?.viewer?.region ?? '')].filter(Boolean);
+          return regs.length > 0 ? regs : null;
+        })()
+      : null;
+    const scopeKey = allowed ? [...allowed].sort().join('+') : 'all';
+    try {
+      payload.regionFollowUps = await cached<Record<string, any>>(
+        `telecalling:followups:${revs}:${requestedDay}:${scopeKey}`,
+        DRILL_TTL_MS,
+        () => buildAllRegionFollowUps({ allowedRegions: allowed, day: requestedDay }),
+      );
+    } catch { /* the board still renders; region tabs fall back to a drill fetch */ }
+  }
   return payload;
 }
 
@@ -275,24 +347,65 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   const periodRangeInfo = periodRange(typeof q.period === 'string' ? q.period : 'today', istDate());
   const periodMode = periodRangeInfo !== null;
 
-  // Auto-sync the Telecaller roster from the unique NeoDove agents (all stored
-  // days). Idempotent — no-op once every agent is already present.
-  await syncTelecallersFromNeodove();
+  // Auto-sync of the Telecaller roster is a WRITE and no longer runs here:
+  // `getTelecallingDashboardData` performs it at most once per 10 minutes,
+  // outside the payload cache (a page load used to upsert the roster per
+  // compute, and 7 concurrent computes meant 7 roster syncs).
 
   // Always use the requested day/range. Never substitute an older NeoDove
   // snapshot: doing that mixed yesterday's calls with today's enquiry leads
   // (and mislabeled stale data as "Today"). If today's push is empty, calls
   // legitimately read 0 until the next sync — leads stay live from enquiries.
   const day = requestedDay;
-  let neodoveMap: Record<string, any> = {};
-  if (periodMode && periodRangeInfo) {
-    // Period leaderboard: sum the stored daily NeoDove reports across the range.
-    neodoveMap = await getNeodoveRangeMap(periodRangeInfo.from, periodRangeInfo.to);
-  } else {
-    neodoveMap = await getNeodoveAgentMap(requestedDay);
-  }
+  const leadFrom = periodMode && periodRangeInfo ? periodRangeInfo.from : day;
+  const leadTo = periodMode && periodRangeInfo ? periodRangeInfo.to : day;
 
-  const telecallers = await prisma.telecaller.findMany({ where: { deleted: false }, orderBy: { order: 'asc' } });
+  // ── Wave 1: every read that depends on NOTHING but the request ─────────────
+  // These used to be awaited one after another, so a cold board paid the sum of
+  // ~12 D1 round-trips (5-6s) instead of the slowest one (~1s). Nothing in this
+  // wave feeds another member of it — the derivations below consume the results
+  // exactly as before, in the same order.
+  const [
+    neodoveMap,
+    telecallers,
+    epoch,
+    enquiryLeadCounts,
+    creatorIndex,
+    riskItems,
+    sentOpen,
+    unmappedRows,
+    targetStartRow,
+    holidayRows,
+    penaltyEvents,
+  ] = await Promise.all([
+    // Period leaderboard sums the stored daily NeoDove reports across the range.
+    periodMode && periodRangeInfo
+      ? getNeodoveRangeMap(periodRangeInfo.from, periodRangeInfo.to)
+      : getNeodoveAgentMap(requestedDay),
+    prisma.telecaller.findMany({ where: { deleted: false }, orderBy: { order: 'asc' } }),
+    getEpochDate(),
+    getEnquiryLeadCounts(leadFrom, leadTo).catch(() => new Map<string, number>()),
+    loadCreatorIndex(),
+    // Live pipeline risk over the open `sent` estimates — served from the
+    // 15-min cache (D1 row-read budget protection). Informational only.
+    getRiskItems().catch(() => [] as any[]),
+    prisma.estimate.findMany({
+      where: { status: 'sent' },
+      select: { estimateId: true, estimateNumber: true, customerName: true, total: true, region: true, organizationId: true, createdBy: true, lastSyncTime: true },
+    }),
+    prisma.estimate.findMany({
+      where: { region: '', status: { in: ['sent', 'accepted', 'confirmed', 'declined'] } },
+      select: { estimateId: true, estimateNumber: true, customerName: true, total: true, status: true, organizationId: true, createdBy: true, lastSyncTime: true },
+      orderBy: { lastSyncTime: 'desc' },
+    }),
+    prisma.setting.findUnique({ where: { key: TARGET_START_KEY } }).catch(() => null),
+    (prisma as any).salesHoliday.findMany({ orderBy: { day: 'asc' } }).catch(() => []),
+    prisma.telecallerScoreEvent.findMany({
+      where: { day: { gte: periodMode && periodRangeInfo ? periodRangeInfo.from : day, lte: periodMode && periodRangeInfo ? periodRangeInfo.to : day }, delta: { lt: 0 } },
+      select: { telecallerId: true, delta: true, day: true },
+    }).catch(() => []),
+  ]);
+
   const nameById = new Map(telecallers.map((t) => [t.id, t.name]));
   const regionByTc = new Map<string, string>();
   const tlLevelByTc = new Map<string, TlLevel>();
@@ -300,9 +413,6 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     regionByTc.set(String(t.id), String((t as any).region ?? ''));
     tlLevelByTc.set(String(t.id), ((t as any).tlLevel ?? '') as TlLevel);
   }
-
-  // History epoch — every close-ledger read starts at max(periodFrom, epoch).
-  const epoch = await getEpochDate();
 
   // Lead Generation: drilled call KPis per staff member from the NeoDove map.
   // The userId fallback serves ONLY rows with no stored userName: NeoDove ids
@@ -373,12 +483,11 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   // get-leads): per-agent enquiry-creation totals over the leaderboard window.
   // The UNATTRIBUTED_LEADS_KEY sentinel is peeled off into unattributedLeads
   // (meta) — never attributed to an agent id of ''.
-  const leadFrom = periodMode && periodRangeInfo ? periodRangeInfo.from : day;
-  const leadTo = periodMode && periodRangeInfo ? periodRangeInfo.to : day;
+  // (leadFrom / leadTo were derived at the top with the wave-1 reads.)
   const leadsByAgent = new Map<string, number>();
   let unattributedLeads = 0;
   try {
-    const enquiryLeads = await getEnquiryLeadCounts(leadFrom, leadTo);
+    const enquiryLeads = enquiryLeadCounts;
     for (const [k, n] of enquiryLeads) {
       if (k === UNATTRIBUTED_LEADS_KEY) { unattributedLeads += n; continue; }
       const agent = k.slice(k.indexOf('|') + 1);
@@ -394,12 +503,14 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   // window — a founder-approved reset means "start counting from that day".
   const wonFrom = epoch && epoch > leadFrom ? epoch : leadFrom;
   const wonTo = periodMode && periodRangeInfo ? periodRangeInfo.to : leadTo;
-  const creatorIndex = await loadCreatorIndex();
-  const wonSnapshot: AcceptedSnapshot = await loadAcceptedSnapshot(wonFrom, wonTo, { creatorIndex });
-  // Declines use the PERIOD window (never the points epoch — a history reset
-  // only forgets credits, not what the team lost). Same creator index, same
-  // region attribution rule as wins (declined.ts).
-  const declinedSnapshot = await loadDeclinedSnapshot(leadFrom, wonTo, { creatorIndex });
+  // ── Wave 2: the two period snapshots (both need creatorIndex, nothing else) ─
+  const [wonSnapshot, declinedSnapshot] = await Promise.all([
+    loadAcceptedSnapshot(wonFrom, wonTo, { creatorIndex }) as Promise<AcceptedSnapshot>,
+    // Declines use the PERIOD window (never the points epoch — a history reset
+    // only forgets credits, not what the team lost). Same creator index, same
+    // region attribution rule as wins (declined.ts).
+    loadDeclinedSnapshot(leadFrom, wonTo, { creatorIndex }),
+  ]);
 
   // ── Consumer vs reseller (founder 2026-11-02: the ₹1L/day target counts
   //  END-CONSUMER accepted ₹ only). Every accepted/declined row in the window
@@ -410,9 +521,31 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   for (const list of declinedSnapshot.byRegionItems.values()) {
     for (const r of list as DeclinedEstimate[]) declinedNames.push(String(r?.customerName ?? ''));
   }
-  const segmentByKey = await classifyClients([
-    ...wonSnapshot.rows.map((r) => String(r?.customerName ?? '')),
-    ...declinedNames,
+  // Target-start + holiday set come from wave 1 (pure derivations, no I/O).
+  // Hoisted so the ledger-window snapshot can load ALONGSIDE the classify
+  // instead of after it — they do not depend on each other.
+  let targetStart = DEFAULT_TARGET_START;
+  try {
+    const v = String((targetStartRow as any)?.value ?? '').trim();
+    if (DATE_RE.test(v)) targetStart = v;
+  } catch { /* fall back to the default start */ }
+  const holidays = new Set<string>();
+  try {
+    for (const r of (holidayRows as any[]) ?? []) {
+      const d = String((r as any)?.day ?? '').trim();
+      if (DATE_RE.test(d)) holidays.add(d);
+    }
+  } catch { /* fresh DB without the table — behave as no holidays */ }
+  const todayDay = istDate();
+  const [segmentByKey, targetSnapshot] = await Promise.all([
+    classifyClients([
+      ...wonSnapshot.rows.map((r) => String(r?.customerName ?? '')),
+      ...declinedNames,
+    ]),
+    // Reuse the wins snapshot when it already spans the whole ledger window.
+    (wonFrom <= targetStart && todayDay <= wonTo
+      ? Promise.resolve(wonSnapshot)
+      : loadAcceptedSnapshot(targetStart, todayDay, { creatorIndex })) as Promise<AcceptedSnapshot>,
   ]);
   const segOf = (customerName: unknown): { segment: ClientSegmentKind; source: string } => {
     const cls = segmentByKey.get(normalizeClientKey(customerName));
@@ -424,11 +557,12 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   // still move a staff score; positive close rows no longer define wins.
   const penaltiesByTc = new Map<string, number>();
   try {
-    const events = await prisma.telecallerScoreEvent.findMany({
-      where: { day: { gte: wonFrom, lte: wonTo }, delta: { lt: 0 } },
-      select: { telecallerId: true, delta: true },
-    });
-    for (const ev of events as any[]) {
+    for (const ev of penaltyEvents as any[]) {
+      // Wave 1 read the WIDER period window (it cannot know the epoch gate yet);
+      // apply the exact `wonFrom..wonTo` bound here so the score matches the
+      // previous sequential read byte for byte.
+      const d = String(ev.day ?? '');
+      if (d && d < wonFrom) continue;
       const id = String(ev.telecallerId);
       penaltiesByTc.set(id, (penaltiesByTc.get(id) ?? 0) + (Number(ev.delta) || 0));
     }
@@ -436,16 +570,11 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     logger.warn({ err: e?.message }, 'legacy penalty read failed — scores ignore historic penalties');
   }
 
-  // Live pipeline risk over the open `sent` estimates — served from the 15-min
-  // cache (D1 row-read budget protection). Informational only.
+  // Live pipeline risk + the open/unmapped estimate reads were fetched in wave 1
+  // (they depend on nothing but the request). Informational only.
   const nowMs = Date.now();
-  const riskItems = await getRiskItems();
 
   // ── Open `sent` pipeline per REGION (the ownership model) ──────────────────
-  const sentOpen = await prisma.estimate.findMany({
-    where: { status: 'sent' },
-    select: { estimateId: true, estimateNumber: true, customerName: true, total: true, region: true, organizationId: true, createdBy: true, lastSyncTime: true },
-  });
   const openByRegion = new Map<string, { count: number; value: number }>();
   for (const e of sentOpen as any[]) {
     const region = String(e.region ?? '');
@@ -461,11 +590,6 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   // applies regardless of status, and a no-region accepted row earns nothing
   // until it is linked. Kept separate from the `sent`-only openByRegion above
   // so region pipeline cards don't change shape.
-  const unmappedRows = await prisma.estimate.findMany({
-    where: { region: '', status: { in: ['sent', 'accepted', 'confirmed', 'declined'] } },
-    select: { estimateId: true, estimateNumber: true, customerName: true, total: true, status: true, organizationId: true, createdBy: true, lastSyncTime: true },
-    orderBy: { lastSyncTime: 'desc' },
-  });
   const unmappedSent: Array<Record<string, unknown>> = [];
   for (const e of (unmappedRows as any[]).slice(0, 50)) {
     unmappedSent.push({
@@ -493,25 +617,8 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   // Sundays, so they shrink the week's target and the carry-out deficit. The
   // ledger recomputes from the start on every call, so backdated holidays
   // retroactively reduce old dues by design.
-  let targetStart = DEFAULT_TARGET_START;
-  try {
-    const row: any = await prisma.setting.findUnique({ where: { key: TARGET_START_KEY } });
-    const v = String(row?.value ?? '').trim();
-    if (DATE_RE.test(v)) targetStart = v;
-  } catch { /* fall back to the default start */ }
-  let holidays = new Set<string>();
-  try {
-    const rows: any[] = await (prisma as any).salesHoliday.findMany({ orderBy: { day: 'asc' } });
-    for (const r of rows ?? []) {
-      const day = String((r as any)?.day ?? '').trim();
-      if (DATE_RE.test(day)) holidays.add(day);
-    }
-  } catch { /* fresh DB without the table — behave as no holidays */ }
-  const todayDay = istDate();
-  // Reuse the wins snapshot when it already spans the whole ledger window.
-  const targetSnapshot = wonFrom <= targetStart && todayDay <= wonTo
-    ? wonSnapshot
-    : await loadAcceptedSnapshot(targetStart, todayDay, { creatorIndex });
+  // (targetStart / holidays / todayDay / targetSnapshot were loaded as wave 3,
+  // above, alongside the segment classify.)
   // The ledger window can hold customer names the period classify never saw —
   // merge them so segOf/regionOf cover every ledger row (else older-week
   // reseller rows silently miss the TL ledger).
@@ -1022,7 +1129,10 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
         return merged.slice(0, 60);
       })(),
       declined: { count: declined.count, value: Math.round(declined.value) },
-      declinedItems: annotateDeclined(declinedSnapshot.byRegionItems.get(def.id) ?? []),
+      // Capped like `acceptedItems`: the drawer shows the top of the loss list,
+      // and an uncapped list made every leaderboard payload megabytes on a bad
+      // month without changing what anyone reads.
+      declinedItems: annotateDeclined(declinedSnapshot.byRegionItems.get(def.id) ?? []).slice(0, 60),
       target: targetByRegion.get(def.id) ?? null,
       periodTarget: {
         label: periodRangeInfo?.label ?? 'Today',
@@ -1192,217 +1302,12 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     unmappedNeodoveUsers.sort((x, y) => x.userName.localeCompare(y.userName));
   } catch { /* picker list is best-effort — the board never depends on it */ }
 
-  // ── Region drill-down: ?region=R1..R4|unmapped (or ?agent= → that staff's region)
-  // Staff work every open estimate in their own region, so the drill shows the
-  // whole region's pipeline (not a personal hold). A scoped staff member may
-  // only ever drill into THEIR OWN region: any explicit ?agent=/?region= is
-  // coerced to self (blocks reading other regions).
-  const selfAgentId = typeof q.selfAgentId === 'string' && q.selfAgentId ? q.selfAgentId : null;
-  const requestedAgent = typeof q.agent === 'string' && q.agent ? q.agent : undefined;
-  const requestedRegionRaw = typeof q.region === 'string' ? String(q.region).trim() : '';
-  const requestedRegion: string | undefined = requestedRegionRaw
-    ? (requestedRegionRaw.toLowerCase() === 'unmapped' ? '' : requestedRegionRaw.toUpperCase())
-    : undefined;
-  const agentFilter = requestedAgent ? (selfAgentId ?? requestedAgent) : undefined;
-  const drillSelfStaff = selfAgentId
-    ? (telecallers as any[]).find((t) => String(t.id) === selfAgentId) ?? null
-    : null;
-
-  let drillStaff: any = null;
-  let regionScope: string | undefined;
-  if (selfAgentId) {
-    // A scoped agent may only ever drill into THEIR OWN region — but a PLAIN
-    // dashboard request (no ?region=, no ?agent=) must keep returning the full
-    // leaderboard payload. Setting regionScope on every self-scoped request used
-    // to short-circuit into the agent-drill response ({meta, agent, followUps}),
-    // so every non-root viewer got a payload with NO `regions`, NO
-    // `kpi` and NO `meta.teamTarget` — the dashboard rendered empty for them.
-    if (agentFilter || requestedRegion !== undefined) {
-      drillStaff = drillSelfStaff;
-      regionScope = String(drillSelfStaff?.region ?? '');
-    }
-  } else if (agentFilter) {
-    const tc = telecallers.find(
-      (t: any) => String(t.id) === agentFilter || String(t.name ?? '') === agentFilter || (t.neodoveUserName ?? '') === agentFilter,
-    ) as any;
-    if (!tc) {
-      return {
-        meta: {
-          analysis: 'sales-leaderboard',
-          title: 'Sales Leaderboard',
-          day,
-          agents: agentList,
-          generatedAt: new Date().toISOString(),
-          computeMs: Date.now() - t0,
-          error: 'agent not found',
-        },
-      };
-    }
-    drillStaff = tc;
-    regionScope = String(tc.region ?? '');
-  } else if (requestedRegion !== undefined) {
-    regionScope = requestedRegion;
-  }
-
-  if (regionScope !== undefined) {
-    const regionId = regionScope;
-    const followUpEsts = await prisma.estimate.findMany({
-      where: { region: regionId, status: 'sent' },
-      // Highest-value estimates first — staff see the biggest deals at the
-      // top of their region list.
-      orderBy: [{ total: 'desc' }, { date: 'asc' }],
-      // 15-min Zoho analyzer verdict — drives the Satisfactory/Unsatisfactory
-      // chip. Note: D1PrismaClient resolves relations via `include`, not a
-      // nested relation under `select`.
-      include: { classification: true },
-    });
-    const followLastComments = new Map<string, string>();
-    for (const r of riskItems) {
-      if (r.lastCommentDate) followLastComments.set(r.estimateId, r.lastCommentDate);
-    }
-    // Most recent real sales note per follow-up estimate (text shown inline on
-    // each row). Timestamp-ordered (Zoho ids aren't chronological); system
-    // auto-logs excluded. Fail-open: rows render without the note.
-    const latestCommentByEst = new Map<string, { text: string; commentedBy: string; dateFormatted: string | null }>();
-    try {
-      const ids = followUpEsts.map((e) => e.estimateId);
-      if (ids.length > 0) {
-        // Chunked at IN_BATCH — D1 caps bound variables at 100/statement.
-        const rows: any[] = [];
-        for (let i = 0; i < ids.length; i += IN_BATCH) {
-          rows.push(...await prisma.comment.findMany({
-            where: { estimateId: { in: ids.slice(i, i + IN_BATCH) } },
-            select: { estimateId: true, description: true, commentedBy: true, date: true, dateFormatted: true },
-          }));
-        }
-        const best = new Map<string, { ts: number; v: { text: string; commentedBy: string; dateFormatted: string | null } }>();
-        for (const c of rows as any[]) {
-          const text = String(c.description || '').trim();
-          if (!text) continue;
-          if (isSystemGeneratedComment(text, String(c.commentedBy || ''))) continue;
-          const ts = parseCommentDateMs(String(c.dateFormatted ?? c.date ?? ''));
-          if (ts === null) continue;
-          const cur = best.get(String(c.estimateId));
-          if (cur && cur.ts >= ts) continue;
-          best.set(String(c.estimateId), {
-            ts,
-            v: {
-              text,
-              commentedBy: String(c.commentedBy || ''),
-              dateFormatted: (c.dateFormatted ?? c.date ?? null) as string | null,
-            },
-          });
-        }
-        for (const [eid, v] of best) latestCommentByEst.set(eid, v.v);
-      }
-    } catch (e: any) {
-      logger.warn({ err: e?.message }, 'follow-up latest-comment lookup failed — rows render without notes');
-    }
-    // Telecaller names for the call-tag "set by" attribution below.
-    const nameByTelecallerId = new Map<string, string>(
-      (telecallers as any[]).map((t) => [String(t.id), String(t.name ?? '')]),
-    );
-    const def = REGIONS.find((r) => r.id === regionId) ?? null;
-    const followUps = followUpEsts.map((e) => {
-      const lastCommentDate = followLastComments.get(e.estimateId) ?? null;
-      const ts = parseCommentDateMs(lastCommentDate);
-      const staleHours = ts !== null ? (nowMs - ts) / 3600000 : null;
-      const riskItem = riskItems.find((r) => r.estimateId === e.estimateId);
-      const risk = riskItem?.risk ?? 'pending';
-      const callTagBy = (e as any).callTagBy ?? null;
-      return {
-        estimateId: e.estimateId,
-        estimateNumber: e.estimateNumber,
-        customerName: e.customerName,
-        status: e.status,
-        total: e.total,
-        // Zoho org (multi-org sync) — drives the dashboard org badge/filter.
-        organizationId: (e as any).organizationId ?? null,
-        region: String((e as any).region ?? ''),
-        day,
-        satisfactory: (e as any).classification ? !!(e as any).classification.meaningfulUpdate : null,
-        intentScore: (e as any).classification?.intentScore ?? null,
-        analysisSummary: (e as any).classification?.summary ?? null,
-        lastCommentDate,
-        staleHours,
-        // Most recent real sales note on THIS estimate (see lookup above).
-        latestComment: latestCommentByEst.get(e.estimateId) ?? null,
-        // Lead details: per-estimate capture ONLY (stored by the GH runner from this
-        // estimate's own Zoho comments). NO company-name enquiry fallback — a
-        // fuzzy company match can surface a DIFFERENT customer's POC/mobile/
-        // enquiry number as wrong chips. Chips stay blank (UI shows the
-        // "AI capturing" state) until the runner stores real per-estimate data.
-        enquiryNumber: (e as any).enquiryNumber ?? null,
-        sourceLead: (e as any).sourceLead ?? null,
-        location: (e as any).location ?? null,
-        contactName: (e as any).contactName ?? null,
-        contactPhone: (e as any).contactPhone ?? null,
-        contactEmail: (e as any).contactEmail ?? null,
-        detailsCaptured: !!(e as any).detailsCaptured,
-        // Terminal AI give-up: 10 capture turns with <3 fields (see the
-        // lead-details route). UI shows "Details unavailable" instead of the
-        // perpetual "AI capturing…" state.
-        detailsFailed: !!(e as any).detailsFailed,
-        // "Lead generated by" = the originating staff (creator) — the enquiry
-        // author whose enquiry stamped the region. Hidden (null) until recorded.
-        leadOf: (e as any).createdBy ? nameByTelecallerId.get(String((e as any).createdBy)) ?? null : null,
-        risk,
-        staleReason: riskItem?.staleReason ?? (risk === 'red' || risk === 'zombie' ? buildSnatchReason(e, risk) : null),
-        // Agent call-disposition tag (Lead Conversion view): NO_ANSWER /
-        // BUSY / CALLBACK (+callbackDate, max +10d). Sticky, engine-untouched.
-        callTag: (e as any).callTag ?? null,
-        callbackDate: (e as any).callbackDate ?? null,
-        callTagBy,
-        callTagByName: callTagBy ? (nameByTelecallerId.get(String(callTagBy)) ?? null) : null,
-        callTagAt: (e as any).callTagAt ?? null,
-        // Dated next step (migration 0028) — the restored NextStepControl
-        // editor writes these via PUT /api/estimates/:id/next-step.
-        nextStep: (e as any).nextStep ?? null,
-        nextStepDate: (e as any).nextStepDate ?? null,
-      };
-    });
-    const me = drillStaff ? staffRows.get(String(drillStaff.id)) ?? null : null;
-    const regionRow = regions.find((r) => r.id === regionId) ?? null;
-    // Region-level aggregate when no staff is targeted (Conversion region tabs):
-    // sum the roster rows mapped to that region ('' = unmapped staff).
-    const regionMembers = [...staffRows.values()].filter((s) => s.region === regionId);
-    const agg = {
-      won: me?.won ?? regionRow?.won.count ?? regionMembers.reduce((s, m) => s + m.won, 0),
-      points: me?.points ?? regionRow?.points ?? Math.round(regionMembers.reduce((s, m) => s + m.points, 0)),
-      callsConnected: me?.callsConnected ?? regionRow?.callsConnected ?? regionMembers.reduce((s, m) => s + m.callsConnected, 0),
-      leadsGenerated: me?.leadsGenerated ?? regionRow?.leadsGenerated ?? regionMembers.reduce((s, m) => s + m.leadsGenerated, 0),
-    };
-    const regionOpen = openByRegion.get(regionId) ?? { count: 0, value: 0 };
-    const staffName = drillStaff ? String(drillStaff.name ?? '') : null;
-    return {
-      meta: {
-        analysis: 'sales-leaderboard-region',
-        title: staffName ? `Sales Leaderboard — ${staffName}` : `Sales Leaderboard — ${def?.name ?? 'Unmapped'}`,
-        day,
-        requestedDay,
-        region: regionId,
-        regionName: def?.name ?? 'Unmapped',
-        agents: agentList,
-        generatedAt: new Date().toISOString(),
-        computeMs: Date.now() - t0,
-      },
-      agent: {
-        id: drillStaff ? String(drillStaff.id) : regionId,
-        name: staffName ?? (def?.name ?? 'Unmapped'),
-        region: regionId,
-        tlLevel: drillStaff ? String(drillStaff.tlLevel ?? '') : (def?.tl ?? ''),
-        won: agg.won,
-        points: agg.points,
-        callsConnected: agg.callsConnected,
-        leadsGenerated: agg.leadsGenerated,
-        regionOpen,
-        followUpCount: followUps.length,
-      },
-      followUps,
-    };
-  }
-
   // ── Recent activity ──────────────────────────────────────────────────────────
+  // Viewer scope: the route injects `selfAgentId` for NON-admin users only, so
+  // its absence means root/sales-head. `canManage` and the at-risk/recent
+  // filters below hang off it. (Region drills do not reach this code — they are
+  // served by service-parts/drill.ts.)
+  const selfAgentId = typeof q.selfAgentId === 'string' && q.selfAgentId ? q.selfAgentId : null;
   const recentRows = await prisma.estimate.findMany({
     where: { status: { in: ['sent', 'accepted', 'confirmed', 'declined'] } },
     orderBy: { lastSyncTime: 'desc' },
@@ -1447,7 +1352,13 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   // core_credit now, single table, nothing to compare.)
   try {
     const { shadowCompareSales } = await import('../../../modules/core/sales');
-    await shadowCompareSales();
+    // Log-only shadow compare: it writes SystemJob rows, so running it on every
+    // cold compute (7× per page load) was pure write amplification. Once per
+    // 30 minutes is plenty for a drift report nobody reads live.
+    await cached('telecalling:sales_shadow', 30 * 60 * 1000, async () => {
+      await shadowCompareSales();
+      return true;
+    });
   } catch { /* never block the leaderboard */ }
   return {
     meta: {
