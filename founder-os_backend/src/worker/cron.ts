@@ -250,6 +250,27 @@ async function runScheduled(event: { cron?: string; scheduledTime?: number }, en
   const now = new Date(event.scheduledTime ?? Date.now());
   const min = now.getUTCMinutes();
 
+  // Notification engine — rule-driven, position-wise in-app notifications.
+  // Native in-worker (no GH dispatch, no LLM): the founder's SQL becomes the
+  // message set for every due rule, and the dispatch is immediate. A no-op
+  // tick costs one indexed read (`nextDueAt <= slot`), which is why it can run
+  // on every fire without a gate. Quiet hours deliberately do NOT apply — the
+  // founder asked for round-the-clock escalation.
+  ctx.waitUntil(
+    (async () => {
+      try {
+        const { runNotificationSweep } = await import('../modules/notifications/sweep');
+        const r = await runNotificationSweep(env, now, ctx);
+        if (r.dispatched > 0) {
+          console.log(`[cron] notifications: ${r.dispatched} dispatched across ${r.rules.length} rule(s)`);
+        }
+        if (r.errors.length > 0) console.error('[cron] notifications:', r.errors.join(' | ').slice(0, 400));
+      } catch (e: any) {
+        console.error('[cron] notification sweep failed:', e?.message);
+      }
+    })(),
+  );
+
   // NeoDove campaign drain — finishes a lead push whose tab was closed mid-run.
   // Not gated by quiet hours: the push was explicitly started by a manager and
   // a stranded batch would otherwise sit `pending` until 09:00 IST. No-op

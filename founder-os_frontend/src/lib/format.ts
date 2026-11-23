@@ -93,3 +93,40 @@ export function relActive(iso: string | null | undefined): string {
   if (days < 30) return `Active ${days}d ago`;
   return `Active ${Math.floor(days / 30)}mo ago`;
 }
+
+/** IST wall clock "14:05" for an ISO timestamp; "" when unparseable. (notifications) */
+export function fmtIstTime(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return new Intl.DateTimeFormat("en-IN", {
+    timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: false,
+  }).format(d);
+}
+
+/** IST date + time "24 Nov, 14:05"; "" when unparseable. (notifications) */
+export function fmtIstDateTime(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return new Intl.DateTimeFormat("en-IN", {
+    timeZone: "Asia/Kolkata", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false,
+  }).format(d);
+}
+
+/** Generic recency ("just now" / "4m ago" / "3d ago"). The org-chart "Active …"
+ *  wording stays in relActive — different voice, different surface. (notifications) */
+export function relAgo(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return "";
+  const diff = Date.now() - t;
+  if (diff < 45_000) return "just now";
+  const mins = Math.round(diff / 60_000);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return fmtIstDateTime(iso);
+}

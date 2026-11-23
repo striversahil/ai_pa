@@ -17,6 +17,9 @@ import { WorkspaceHostProvider } from "@/workspaces/WorkspaceHost";
 import { useWorkspaces } from "@/workspaces/useWorkspaces";
 import { canonicalNavSlug } from "@/workspaces/aliases";
 import { useChatUnread } from "../hooks/useChatUnread";
+import { NotificationProvider } from "@/notifications/NotificationProvider";
+import { NotificationOverlay } from "@/components/notifications/NotificationOverlay";
+import { NotificationBell } from "@/components/notifications/NotificationBell";
 
 // Heavy views are lazy-loaded so only the active view's JS is fetched & parsed.
 const FounderAssistant = dynamic(() => import("../components/FounderAssistant"), { ssr: false });
@@ -111,6 +114,7 @@ function AppInner() {
   if (!me) return <LoginScreen />;
 
   return (
+    <NotificationProvider>
     <div className="flex min-h-screen font-sans antialiased text-[var(--text-primary)]">
       <Sidebar activeView={activeView} activeSlug={sub} onNavigate={navigateTo} theme={theme} onSetTheme={setTheme} accent={accent} onSetAccent={setAccent} me={me ? me.user : null} onLogout={logout} canView={canView} chatUnread={chatUnread} />
 
@@ -132,6 +136,8 @@ function AppInner() {
           )}
           <span className="font-heading text-base font-extrabold tracking-tight">Brindavan Udyog India</span>
         </div>
+        <div className="flex items-center gap-1">
+        <NotificationBell header />
         <button onClick={toggleTheme} className="rounded-lg p-2 text-[var(--text-secondary)] transition hover:bg-[var(--bg-input)]">
           {isDark ? (
             <svg className="h-5 w-5 text-yellow-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707m0-12.728l.707.707m12.728 12.728l.707.707M12 8a4 4 0 100 8 4 4 0 000-8z" /></svg>
@@ -139,7 +145,10 @@ function AppInner() {
             <svg className="h-5 w-5 text-indigo-900" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" /></svg>
           )}
         </button>
+        </div>
       </header>
+
+      <NotificationOverlay />
 
       <MobileDrawer
         open={mobileMenuOpen}
@@ -195,5 +204,6 @@ function AppInner() {
       </main>
       </div>
     </div>
+    </NotificationProvider>
   );
 }

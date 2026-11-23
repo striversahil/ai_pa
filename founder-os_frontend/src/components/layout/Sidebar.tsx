@@ -18,6 +18,7 @@ import {
 } from "@/hooks/useSidebarCustom";
 import { APP_THEMES, APP_ACCENTS } from "@/hooks/useTheme";
 import { LayoutGrid, Palette, Check, Pin, PinOff, RotateCcw } from "lucide-react";
+import { NotificationBell } from "@/components/notifications/NotificationBell";
 import type { SidebarProps, SidebarRow } from "./sidebar/types";
 import { DASH_ICONS } from "./sidebar/helpers";
 
@@ -394,6 +395,7 @@ export default function Sidebar({ activeView, activeSlug, onNavigate, theme, onS
       </nav>
 
       <div className="mt-auto flex flex-col gap-3 border-t border-[var(--border-card)] pt-4">
+        <NotificationBell expanded={expanded} />
         <div className="relative">
           <button
             onClick={() => setAppearanceOpen((v) => !v)}

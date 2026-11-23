@@ -2,6 +2,8 @@
 
 import React, { useState } from "react";
 import { useAuth } from "@/auth/AuthContext";
+import { TabBar } from "@/components/ui";
+import { NotificationConsole } from "@/components/notifications-console/NotificationConsole";
 import { useLiveDashboard } from "@/hooks/useLiveData";
 import { manageAiProvider } from "@/api/ai-providers";
 
@@ -26,6 +28,7 @@ export default function SettingsDashboard() {
   }, { events: ["settings"] });
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [tab, setTab] = useState<"ai" | "notifications">("ai");
 
   if (!me?.isRoot) {
     return (
@@ -111,6 +114,17 @@ export default function SettingsDashboard() {
         <p className="text-[11px] text-[var(--text-secondary)]">Runtime backend controls. Changes apply to the next chat turn / intake run — no deploy needed. API keys stay in secrets and are never shown here.</p>
       </div>
 
+      <TabBar
+        variant="segmented"
+        active={tab}
+        onChange={(k: string) => setTab(k as "ai" | "notifications")}
+        items={[
+          { key: "ai", label: "AI gateway" },
+          { key: "notifications", label: "Notifications" },
+        ]}
+      />
+
+      {tab === "notifications" ? <NotificationConsole /> : <>
       {dash.loading && !dash.data && <p className="text-xs text-[var(--text-tertiary)]">Loading settings…</p>}
       {!!dash.error && !dash.data && <p className="text-xs font-bold text-red-500">Failed to load settings.</p>}
       {saveError && <p className="text-xs font-bold text-red-500">{saveError}</p>}
@@ -137,6 +151,7 @@ export default function SettingsDashboard() {
           )}
         </>
       )}
+      </>}
     </div>
   );
 }

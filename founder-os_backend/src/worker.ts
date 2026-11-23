@@ -54,6 +54,7 @@ import { registerCallLogRoutes } from './worker/routes/call-log';
 import { registerDialerRoutes } from './worker/routes/dialer';
 import { registerFieldStaffRoutes } from './worker/routes/field-staff';
 import { registerSalesObjectionsRoutes } from './worker/routes/sales-objections';
+import { registerNotificationRoutes } from './worker/routes/notifications';
 import { registerWorkRoutes } from './worker/routes/work';
 import { registerOrgRoutes } from './worker/routes/org';
 import { registerDashboardRoutes } from './worker/routes/dashboards';
@@ -104,6 +105,9 @@ registerCallLogRoutes(app);
 registerDialerRoutes(app);
 registerFieldStaffRoutes(app);
 registerSalesObjectionsRoutes(app);
+// Registered BEFORE work.ts so the richer notification API owns
+// /api/notifications (work.ts keeps the legacy Phase-6a handlers).
+registerNotificationRoutes(app);
 registerWorkRoutes(app);
 registerOrgRoutes(app);
 registerDashboardRoutes(app);
