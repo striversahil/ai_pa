@@ -32,11 +32,13 @@ function rowToThread(r: any): EnquiryThread {
 
 /** Row-level visibility in SQL — mirror of `pure.canSee` (guard
  *  enquiry-threads). Legacy rows (category NULL) stay management-only on the
- *  sales channel, exactly as before categories existed. */
+ *  sales channel, exactly as before categories existed. Procurement joins a
+ *  sales thread ONLY when Sales raised a product query — a management→sales
+ *  question stays private (founder rule 2026-11-23). */
 function visibility(desk: ThreadDesk, prefix = ''): string {
   if (desk === 'management') return '1 = 1';
   if (desk === 'sales') return `${prefix}channel = 'sales'`;
-  return `(${prefix}channel = 'internal' OR (${prefix}channel = 'sales' AND ${prefix}category = 'product_query'))`;
+  return `(${prefix}channel = 'internal' OR (${prefix}channel = 'sales' AND ${prefix}category = 'product_query' AND ${prefix}openedBy = 'sales'))`;
 }
 
 export async function listThreadsForEnquiry(db: D1, enquiryId: string, desk: ThreadDesk): Promise<EnquiryThread[]> {

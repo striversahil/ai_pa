@@ -37,6 +37,9 @@ export default function NewThreadForm({ desk, onStart, onCancel }: {
   const [err, setErr] = useState<string | null>(null);
   const draft = useAttachDraft();
   const privateThread = (desk === "management" && to === "procurement") || desk === "procurement";
+  // A question Management asks Sales is private to those two desks — it is
+  // never a procurement product query (founder rule 2026-11-23).
+  const mgmtToSales = desk === "management" && to === "sales";
   const withCategory = needsCategory(desk, to);
   const canSend = !busy && !draft.uploading && (!!text.trim() || draft.files.length > 0);
 
@@ -59,6 +62,7 @@ export default function NewThreadForm({ desk, onStart, onCancel }: {
           </select>
         ) : <span className="text-[var(--text-primary)]">{DESK_LABEL[to]}</span>}
         {privateThread && <PrivateNotice />}
+        {mgmtToSales && <span className="text-caption font-semibold text-[var(--text-tertiary)]">Private with Sales — Procurement never sees this</span>}
       </div>
 
       {withCategory && (

@@ -75,9 +75,13 @@ export function otherParty(channel: ThreadChannel, desk: ThreadDesk): ThreadDesk
 /** Row-level visibility. `category` only widens the sales channel to
  *  procurement for product queries — it never narrows it (sales/management
  *  always see their own conversation). Mirror in SQL: `store.ts#visibility`. */
-export function canSee(thread: Pick<EnquiryThread, 'channel' | 'category'>, desk: ThreadDesk): boolean {
+export function canSee(thread: Pick<EnquiryThread, 'channel' | 'category' | 'openedBy'>, desk: ThreadDesk): boolean {
   if (thread.channel === 'internal') return desk !== 'sales';
-  if (desk === 'procurement') return thread.category === 'product_query';
+  // Procurement joins ONLY a product query raised by Sales. A question
+  // Management asks Sales is private to those two desks (founder rule
+  // 2026-11-23) — it must never surface in the procurement inbox, even if a
+  // stray row still carries the category.
+  if (desk === 'procurement') return thread.category === 'product_query' && thread.openedBy === 'sales';
   return true;
 }
 
@@ -176,9 +180,13 @@ export function createThread(input: {
   if (!channel) return { ok: false, status: 400, error: `${DESK_LABEL[input.actor.desk]} cannot start a thread with ${DESK_LABEL[input.to]}` };
   const b = body(input.text, input.attachments);
   if (!b) return { ok: false, status: 400, error: 'message text or an attachment required' };
-  // Category exists only on sales-facing threads: it decides whether
-  // Procurement participates. Internal threads stay admin-only (null).
-  const category: ThreadCategory | null = channel === 'sales' ? normalizeCategory(input.category) : null;
+  // Category exists only on SALES-raised threads: it decides whether
+  // Procurement participates. Internal threads AND questions Management asks
+  // Sales stay private to their two desks (null) — a management→sales query
+  // is NOT a procurement product query (founder rule 2026-11-23).
+  const category: ThreadCategory | null = channel === 'sales' && input.actor.desk === 'sales'
+    ? normalizeCategory(input.category)
+    : null;
   return {
     ok: true,
     value: {

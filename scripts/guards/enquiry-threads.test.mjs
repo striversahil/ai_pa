@@ -58,6 +58,62 @@ describe('enquiry conversations — confidentiality (2026-11-20 rule)', () => {
   });
 });
 
+describe('management→sales questions stay private (2026-11-23)', () => {
+  it('a question Management asks Sales carries no category and never reaches procurement', () => {
+    // The live case: Enquiry No 7 - 23 NOV TL, "does the client require rubber
+    // or rexene bag?" — asked by management, wrongly stored as a product query.
+    const t = mk('management', 'sales', 'does the client require rubber or rexene bag?', 'product_query').value;
+    assert.equal(t.channel, 'sales');
+    assert.equal(t.openedBy, 'management');
+    assert.equal(t.category, null, 'management must never open a procurement-visible product query');
+    assert.ok(serveForDesk(t, 'sales'), 'sales sees it');
+    assert.ok(serveForDesk(t, 'management'), 'management sees it');
+    assert.equal(serveForDesk(t, 'procurement'), null, 'procurement must not see it');
+    assert.equal(canSee(t, 'procurement'), false);
+    assert.equal(replyThread(t, { desk: 'procurement', name: 'P' }, 'x', NOW).ok, false);
+    assert.equal(resolveThread(t, { desk: 'procurement', name: 'P' }, NOW).ok, false);
+    assert.equal(reopenThread(t, { desk: 'procurement', name: 'P' }, NOW).ok, false);
+  });
+
+  it('a stale row that still carries the category is hidden by canSee', () => {
+    // Migration 0162 backfills these; visibility must not depend on the
+    // backfill having run (defence in depth).
+    const stale = { ...mk('sales', 'management', 'q', 'product_query').value, openedBy: 'management', category: 'product_query' };
+    assert.equal(canSee(stale, 'procurement'), false);
+    assert.equal(canSee(stale, 'sales'), true);
+    assert.equal(canSee(stale, 'management'), true);
+  });
+
+  it('sales-raised product queries still reach procurement', () => {
+    const t = mk('sales', 'management', 'which motor?', 'product_query').value;
+    assert.equal(canSee(t, 'procurement'), true);
+    assert.ok(serveForDesk(t, 'procurement'));
+  });
+
+  it('procurement-raised threads are internal with no category', () => {
+    const t = mk('procurement', 'management', 'price list', 'product_query').value;
+    assert.equal(t.channel, 'internal');
+    assert.equal(t.category, null);
+    assert.equal(canSee(t, 'procurement'), true);
+    assert.equal(canSee(t, 'management'), true);
+    assert.equal(canSee(t, 'sales'), false);
+  });
+
+  it('the composer offers the category picker to SALES only', () => {
+    const fe = readFileSync(join(FRONTEND_SRC, 'enquiry-threads', 'types.ts'), 'utf8');
+    assert.ok(fe.includes("return desk === 'sales' && to === 'management'"), 'needsCategory must be sales-only');
+    const form = readFileSync(join(FRONTEND_SRC, 'components', 'enquiry-threads', 'NewThreadForm.tsx'), 'utf8');
+    assert.ok(form.includes('Private with Sales'), 'management→sales must say it is private');
+  });
+
+  it('migration 0162 clears the stale category on non-sales-opened rows', () => {
+    const sql = readFileSync(join(BACKEND_DIR, 'migrations', '0162_management_threads_private.sql'), 'utf8');
+    assert.ok(sql.includes('SET category = NULL'));
+    assert.ok(sql.includes("openedBy <> 'sales'"));
+    assert.ok(sql.includes("channel = 'sales'"));
+  });
+});
+
 describe('enquiry conversations — category routing (2026-11-21)', () => {
   it('a product query is visible to all three desks without any forward step', () => {
     const t = mk('sales', 'management', 'which motor?', 'product_query').value;
@@ -223,6 +279,7 @@ describe('enquiry conversations — wiring', () => {
   it('sales-channel SQL mirror matches canSee (legacy rows excluded for procurement)', () => {
     const src = readFileSync(join(BACKEND_DIR, 'src', 'modules', 'enquiry-threads', 'store.ts'), 'utf8');
     assert.ok(src.includes("channel = 'sales' AND ${prefix}category = 'product_query'"), 'procurement SQL must require the product category');
+    assert.ok(src.includes("${prefix}openedBy = 'sales'"), 'procurement SQL must require a SALES-raised query (2026-11-23)');
     assert.ok(/desk === 'sales'\) return `\$\{prefix\}channel = 'sales'`/.test(src), 'sales SQL stays sales-channel only');
   });
 

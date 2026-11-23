@@ -70,10 +70,12 @@ export function startTargets(desk: ThreadDesk): ThreadDesk[] {
   return ['management'];
 }
 
-/** A category is chosen only when the thread is sales-facing (the internal
- *  management↔procurement thread has none). */
+/** A category is chosen only when SALES raises a thread: it decides whether
+ *  Procurement joins that conversation. A question Management asks Sales is
+ *  private to those two desks (founder rule 2026-11-23), and the internal
+ *  management↔procurement thread has none either. */
 export function needsCategory(desk: ThreadDesk, to: ThreadDesk): boolean {
-  return !(desk === 'management' && to === 'procurement') && !(desk === 'procurement');
+  return desk === 'sales' && to === 'management';
 }
 
 /** The other side of a thread from `desk`'s point of view. Procurement is
