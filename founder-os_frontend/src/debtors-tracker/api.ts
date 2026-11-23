@@ -41,9 +41,17 @@ async function request(url: string, init: RequestInit): Promise<void> {
   }
 }
 
-/** Full live dashboard payload (same endpoint the screen uses). */
-export async function getDebtorsTrackerData(): Promise<DebtorsTrackerPayload> {
-  const res = await fetch(`/api/debtors-tracker/data`, { cache: "no-store" });
+/** Full live dashboard payload (same endpoint the screen uses).
+ *  `asOf`/`from` request a point-in-time snapshot (read-only historical view). */
+export async function getDebtorsTrackerData(opts: {
+  asOf?: string | null;
+  from?: string | null;
+} = {}): Promise<DebtorsTrackerPayload> {
+  const query = new URLSearchParams();
+  if (opts.asOf) query.set("asOf", opts.asOf);
+  if (opts.from) query.set("from", opts.from);
+  const qs = query.toString();
+  const res = await fetch(`/api/debtors-tracker/data${qs ? `?${qs}` : ""}`, { cache: "no-store" });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body?.error || `Request failed (${res.status})`);
@@ -235,9 +243,14 @@ export async function runReminderDryRun(): Promise<void> {
   await request(`/api/debtors-tracker/reminders/run`, { method: "POST" });
 }
 
-/** Complete statement for one customer (sales or accounts). */
-export async function getCustomerLedger(customerKey: string): Promise<CustomerLedger> {
-  const res = await fetch(`/api/debtors-tracker/customers/${encodeURIComponent(customerKey)}/ledger`, {
+/** Complete statement for one customer (sales or accounts).
+ *  `asOf` rebuilds the statement at that date (same rules as the payload). */
+export async function getCustomerLedger(
+  customerKey: string,
+  opts: { asOf?: string | null } = {},
+): Promise<CustomerLedger> {
+  const qs = opts.asOf ? `?asOf=${encodeURIComponent(opts.asOf)}` : "";
+  const res = await fetch(`/api/debtors-tracker/customers/${encodeURIComponent(customerKey)}/ledger${qs}`, {
     cache: "no-store",
   });
   if (!res.ok) {

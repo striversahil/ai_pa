@@ -1,5 +1,6 @@
 // Extracted verbatim from types.ts by scripts/refactor/split-module.mjs.
 // types.ts re-exports everything public here, so existing imports keep working.
+import type { AsOfCoverage, AsOfMovement, BucketMovement } from '../as-of';
 
 
 export interface DebtorRow {
@@ -89,21 +90,7 @@ export interface CollectionImportReport extends DebtorImportReport {
 
 /** Live-updated dashboard payload — GET /api/debtors-tracker/data. */
 export interface DebtorsTrackerPayload {
-  summary: {    totalReceivable: number;
-    notDue: number;
-    grossDue: number;
-    advanceReceived: number;
-    netDue: number;
-    bucket0to30: number;
-    bucket31to60: number;
-    bucket61to90: number;
-    bucket91to180: number;
-    bucketAbove180: number;
-    above90Total: number;
-    invoiceCount: number;
-    collectionCount: number;
-    customerCount: number;
-  };
+  summary: SummaryRow;
   customers: CustomerAgeingRow[];
   invoices: LiveInvoice[];
   collections: LiveCollection[];
@@ -134,7 +121,50 @@ export interface DebtorsTrackerPayload {
     reminderRunDay: string;
     /** Same invoice no. under multiple customers — review, never auto-merge. */
     invoiceConflicts: InvoiceNoConflict[];
+    /** Historical ("as of") view — read-only, rebuilt from dated rows. */
+    isHistorical: boolean;
+    /** Comparison point when a range is active (`from` < asOf), else null. */
+    rangeFrom: string | null;
+    /** What the ledger can speak about; the picker clamps to these dates. */
+    coverage: AsOfCoverage;
+    /** Plain-language limits shown in the banner (never hide a caveat). */
+    caveats: string[];
   };
+  /** Then-vs-now comparison. Present only when `from` is supplied. */
+  compare?: DebtorsAsOfCompare;
+}
+
+export interface SummaryRow {
+  totalReceivable: number;
+  notDue: number;
+  grossDue: number;
+  advanceReceived: number;
+  netDue: number;
+  bucket0to30: number;
+  bucket31to60: number;
+  bucket61to90: number;
+  bucket91to180: number;
+  bucketAbove180: number;
+  above90Total: number;
+  invoiceCount: number;
+  collectionCount: number;
+  customerCount: number;
+}
+
+export interface DebtorsAsOfPoint {
+  asOfIST: string;
+  summary: SummaryRow;
+}
+
+/** Payload `compare` block — mirrors founder-os_frontend/src/debtors-tracker/types.ts. */
+export interface DebtorsAsOfCompare {
+  from: string;
+  to: string;
+  then: DebtorsAsOfPoint;
+  now: DebtorsAsOfPoint;
+  movement: AsOfMovement;
+  /** Invoice bucket transitions (then → now) for bills visible at both dates. */
+  migration: BucketMovement[];
 }
 
 export interface CustomerAgeingRow {
@@ -177,6 +207,9 @@ export interface CustomerAgeingRow {
   invoiceCount: number;
   /** Latest invoice date across all of the customer's invoices (null = none dated). */
   lastInvoiceDate: string | null;
+  /** Comparison (as-of `from`) balances — present only with a range. */
+  thenGrossDue?: number;
+  thenNetDue?: number;
 }
 
 export interface LiveInvoice {

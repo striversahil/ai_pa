@@ -21,6 +21,8 @@ export interface DashboardModalsProps {
   situation: CustomerAgeingRow | null;
   ledgerCustomer: CustomerAgeingRow | null;
   canAccounts: boolean;
+  /** Historical mode: the ledger statement opens at this date. */
+  asOf?: string | null;
   onCloseImport: () => void;
   onCloseEditing: () => void;
   onCloseContact: () => void;
@@ -39,6 +41,7 @@ export default function DashboardModals({
   situation,
   ledgerCustomer,
   canAccounts,
+  asOf,
   onCloseImport,
   onCloseEditing,
   onCloseContact,
@@ -98,6 +101,7 @@ export default function DashboardModals({
       <CustomerLedgerModal
         key={ledgerCustomer?.customerKey ?? "none"}
         customer={ledgerCustomer}
+        asOf={asOf}
         onClose={onCloseLedger}
       />
     </>

@@ -413,6 +413,41 @@ payroll keep exactly one source of truth (`HumanResourcesLeave`); no second tabl
 - Live: every write broadcasts the existing `human-resources` event (no new event name);
   `invalidateHumanResourcesCache()` keeps the 5-min dashboard cache honest.
 
+### 3.2d Debtors Tracker point-in-time views (2026-11-24, migrations 0161/0162)
+
+The Debtors Tracker stores only current state, so an "as of" view is **derived, never stored**:
+`GET /api/debtors-tracker/data?asOf=YYYY-MM-DD&from=YYYY-MM-DD` rebuilds the entire dashboard
+(same payload shape) as it stood on `asOf`, and `from` adds a then-vs-now block. No parameters =
+today, and that path is byte-identical to the pre-feature computation (guard-asserted).
+
+- **Rules** (`automations/debtors-tracker/as-of.ts`, pure): an invoice is visible when
+  `invoiceDate ≤ asOf` (else `createdAt`); a receipt when `collectionDate ≤ asOf`. Ageing is
+  re-derived at `asOf` (`daysBetween(due || invoiceDate, asOf)` → the same buckets), and
+  `buildLiveInvoices(rows, colls, asOf, { asOf })` applies it. Advances at that date reduce
+  `netDue` exactly as today.
+- **Received money** is the honest part: `receipt = Σ matched collections ≤ asOf`, and the pasted
+  sheet's cumulative "Amount Received" counts only from the import that recorded it
+  (`lastImportAt`), or from `DebtorInvoiceReceivedEvent` rows once they exist. `importDebtors`
+  appends the **delta** on every paste (migration 0162, backfilled from `lastImportAt`), so sheet
+  history is exact after the first import that shipped this. Money is never invented: before either
+  stamp it is treated as unknown (higher receivable, never a fake receipt).
+- **Soft deletes** stamp `deletedAt` (0161) so a bill deleted **after** `asOf` still shows at that
+  date; legacy deleted rows stay invisible everywhere.
+- **Comparison**: `compare = { then, now, movement, migration }` where
+  `movement` reconciles exactly — `receivableChange = invoicedInRange − collectedInRange −
+  sheetAdjustments` (advances reported separately because they move `netDue`, not gross), plus
+  bills booked/settled, customers added/settled, aged-deeper/shallower, paid. `migration` is the
+  invoice bucket transition list (then → now).
+- **Read-only by design**: `meta.isHistorical` disables imports, edits, pins and the reminder run
+  in the UI, and a banner states the limits. Region, CRM situation and promises are current-only
+  (no history table) — the payload says so in `meta.caveats`.
+- **Cache**: per-(asOf,from) variants fold `cacheRevs(['debtors'])`; every write calls
+  `bumpRev('debtors')` (`invalidateDebtorsCache`) instead of a prefix delete.
+- **UI**: shared `components/ui/DateRangePicker` (presets + two dates; reused by other dashboards,
+  never forked), `components/debtors-tracker/RangeBar` (picker + historical banner),
+  `tabs/summary-tab/ComparisonSection` (then vs now, ageing shift, movement). The customer Ledger
+  endpoint takes the same `?asOf=`. Guard: `scripts/guards/debtors-as-of.test.mjs`.
+
 ### 3.3 Trigger dispatch
 `POST /api/trigger/:slug` runs the matching automation (auth required). On the Worker,
 cron-driven automations are reached via GitHub Actions → `curl /api/trigger/:slug`.

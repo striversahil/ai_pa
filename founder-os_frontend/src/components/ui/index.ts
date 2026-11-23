@@ -19,3 +19,7 @@ export { default as Modal } from "../Modal";
 export { default as ConfirmDialog } from "./ConfirmDialog";
 export { default as Popover } from "./Popover";
 export { Drawer } from "./Drawer";
+
+// Date range (as-of snapshot vs comparison) — one home for every dashboard.
+export { default as DateRangePicker } from "./DateRangePicker";
+export type { DateRangeValue, DateRangePreset, DateRangePickerProps } from "./DateRangePicker";

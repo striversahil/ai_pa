@@ -113,6 +113,9 @@ export interface CustomerAgeingRow {
   invoiceCount: number;
   /** Latest invoice date across all of the customer's invoices (null = none dated). */
   lastInvoiceDate: string | null;
+  /** Comparison (as-of `from`) balances — present only when a range is set. */
+  thenGrossDue?: number;
+  thenNetDue?: number;
 }
 
 export interface LiveCollection {
@@ -236,6 +239,50 @@ export interface InvoiceNoConflict {
   customers: string[];
 }
 
+/** What the ledger can speak about; the range picker clamps to these dates.
+ *  MIRROR: backend `automations/debtors-tracker/as-of.ts#AsOfCoverage`. */
+export interface AsOfCoverage {
+  firstInvoiceDate: string | null;
+  lastInvoiceDate: string | null;
+  lastCollectionDate: string | null;
+  firstImportAt: string | null;
+  lastImportAt: string | null;
+}
+
+/** Then-vs-now totals for the range. Mirror: backend `as-of.ts#AsOfMovement`. */
+export interface AsOfMovement {
+  invoicedInRange: number;
+  collectedInRange: number;
+  advanceInRange: number;
+  sheetAdjustments: number;
+  receivableChange: number;
+  grossDueChange: number;
+  netDueChange: number;
+  invoicesBooked: number;
+  invoicesSettled: number;
+  customersAdded: number;
+  customersSettled: number;
+  agedDeeper: number;
+  agedShallower: number;
+  paidInRange: number;
+}
+
+export interface BucketMovement {
+  fromBucket: string;
+  toBucket: string;
+  count: number;
+  amount: number;
+}
+
+export interface DebtorsAsOfCompare {
+  from: string;
+  to: string;
+  then: { asOfIST: string; summary: SummaryRow };
+  now: { asOfIST: string; summary: SummaryRow };
+  movement: AsOfMovement;
+  migration: BucketMovement[];
+}
+
 export interface DebtorsTrackerPayload {
   summary: SummaryRow;
   customers: CustomerAgeingRow[];
@@ -263,7 +310,16 @@ export interface DebtorsTrackerPayload {
     reminderMode: "dry_run" | "live";
     reminderRunDay: string;
     invoiceConflicts: InvoiceNoConflict[];
+    /** Historical ("as of") snapshot — read-only. */
+    isHistorical: boolean;
+    /** Comparison point when a range is active, else null. */
+    rangeFrom: string | null;
+    coverage: AsOfCoverage;
+    /** Plain-language limits shown in the banner (never hidden). */
+    caveats: string[];
   };
+  /** Then-vs-now comparison — present only when `from` is supplied. */
+  compare?: DebtorsAsOfCompare;
 }
 
 export const BUCKET_LABELS: Record<Bucket | "PAID", string> = {

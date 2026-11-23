@@ -5,10 +5,11 @@ import CustomerLedgerView from "./CustomerLedgerView";
 
 /** Accounts/sales: complete invoice + receipt statement with CSV/print. */
 export default function CustomerLedgerModal({
-  customer, onClose,
+  customer, onClose, asOf,
 }: {
   customer: CustomerAgeingRow | null;
   onClose: () => void;
+  asOf?: string | null;
 }) {
   if (!customer) return null;
 
@@ -18,7 +19,7 @@ export default function CustomerLedgerModal({
         className="w-full max-w-6xl rounded-2xl border border-zinc-200 bg-white p-4 shadow-xl dark:border-zinc-800 dark:bg-zinc-950 sm:p-5"
         onClick={(e) => e.stopPropagation()}
       >
-        <CustomerLedgerView customer={customer} onClose={onClose} />
+        <CustomerLedgerView customer={customer} onClose={onClose} asOf={asOf} />
       </div>
     </div>
   );

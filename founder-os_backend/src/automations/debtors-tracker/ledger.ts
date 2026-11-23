@@ -8,6 +8,9 @@ import {
   bucketForDays, daysBetween, isAdvanceCollection, isIsoDate, monthLabel,
   round2, weekStart,
 } from './shared';
+import {
+  AS_OF_EPSILON, collectionVisibleAt, invoiceVisibleAt, sheetReceivedAt,
+} from './as-of';
 
 export type CustomerDue = {
   customerName: string;
@@ -32,15 +35,31 @@ export type LiveLedger = {
   advanceByCustomer: Map<string, number>;
 };
 
+/**
+ * Historical mode options. Omitted = today's exact behaviour (no filtering,
+ * the pasted sheet figure used as-is).
+ */
+export interface LiveLedgerOptions {
+  /** Point-in-time date. Rows dated later are invisible and `baseReceived`
+   *  only counts from the import that recorded it (see as-of.ts). */
+  asOf?: string;
+  /** Append-only sheet-received deltas per invoice (exact history). */
+  eventsByInvoice?: Map<string, Array<{ day?: string | null; amount?: number | null }>>;
+}
+
 export function buildLiveInvoices(
   invoiceRows: any[],
   collRows: any[],
   today: string,
+  opts?: LiveLedgerOptions,
 ): LiveLedger {
+  const asOf = opts?.asOf;
+  const events = opts?.eventsByInvoice;
   const ledgerByInvoice = new Map<string, number>();
   const advanceByCustomer = new Map<string, number>();
 
   for (const c of collRows) {
+    if (asOf && !collectionVisibleAt(c, asOf)) continue;
     const amount = Number(c.amount) || 0;
     if (isAdvanceCollection(c)) {
       const key = String(c.customerName || '');
@@ -52,7 +71,9 @@ export function buildLiveInvoices(
     ledgerByInvoice.set(k, (ledgerByInvoice.get(k) || 0) + amount);
   }
 
-  const liveInvoices: LiveInvoice[] = invoiceRows.map((inv) => {
+  const liveInvoices: LiveInvoice[] = invoiceRows
+    .filter((inv) => !asOf || invoiceVisibleAt(inv, asOf))
+    .map((inv) => {
     const id = String(inv.id);
     const ledgerReceived = ledgerByInvoice.get(id) || 0;
     // The receipts sheet is a cumulative history: its per-invoice total is the
@@ -60,7 +81,11 @@ export function buildLiveInvoices(
     // the larger of sheet vs ledger is order-independent (debtors-first or
     // collections-first) and never double-counts the history; new receipts
     // still register once the cumulative ledger exceeds the sheet figure.
-    const effectiveReceived = round2(Math.max(Number(inv.baseReceived) || 0, ledgerReceived));
+    // In historical mode the sheet figure only exists from its import day.
+    const sheetBase = asOf
+      ? sheetReceivedAt(inv, asOf, events?.get(String(inv.id)))
+      : round2(Number(inv.baseReceived) || 0);
+    const effectiveReceived = round2(Math.max(sheetBase, ledgerReceived));
     const invoiceAmount = round2(Number(inv.invoiceAmount) || 0);
     const balance = round2(invoiceAmount - effectiveReceived);
     const invoiceDate = isIsoDate(inv.invoiceDate) ? inv.invoiceDate : '';
@@ -79,7 +104,7 @@ export function buildLiveInvoices(
       creditPeriodDays: inv.creditPeriodDays ?? null,
       dueDate: due || null,
       invoiceAmount,
-      baseReceived: round2(Number(inv.baseReceived) || 0),
+      baseReceived: sheetBase,
       ledgerReceived: round2(ledgerReceived),
       effectiveReceived,
       balance,
@@ -89,7 +114,7 @@ export function buildLiveInvoices(
       invoiceWeekStart: invoiceDate ? weekStart(invoiceDate) : null,
       dueWeekStart: anchor ? weekStart(anchor) : null,
       // Future-due (or unbucketed) invoices are NOT DUE; only past-due amounts age.
-      bucket: balance <= 0.005 ? 'PAID' : (daysOverdue == null || daysOverdue <= 0 ? 'NOT_DUE' : bucketForDays(daysOverdue)),
+      bucket: balance <= AS_OF_EPSILON ? 'PAID' : (daysOverdue == null || daysOverdue <= 0 ? 'NOT_DUE' : bucketForDays(daysOverdue)),
       contactName: inv.contactName || '',
       contactPhone: inv.contactPhone || '',
       contactMail: inv.contactMail || '',
