@@ -1397,3 +1397,25 @@ D1 is the working copy of the KYP catalogue, and the dashboard owns it:
   numbers every unanswered field and says to open the row. `batchId` filters the sheet from the batch log.
 - **Overlays** — one state machine in `ProductLineDashboard` (`prompt | import | batches | rate`), so
   opening a panel closes whatever was open; every delete goes through the shared `ConfirmDialog`.
+
+### 19.4 Paste write path is batched, INSERT-only (2026-11-23)
+
+- **Why** — `POST /rates/import` used to call `createRate()` per row. Each row cost ~13 network round
+  trips (vendor read, product read, INSERT, the D1 shim's post-insert SELECT, a spec-index batch, six KV
+  cache invalidations, two KV catalogue reads), so a 300-quote paste was ~3,900 sequential round trips.
+- **Plan** — `rate-import-plan.ts` is the pure planner: `rateInsertStatement` (one `INSERT INTO
+  VendorRate`), `specIndexInsertStatements` (one `INSERT INTO VendorRateSpec` per answer), `planRateRow`,
+  `chunkPlannedRows` (chunks by STATEMENT count, `IMPORT_STATEMENT_CHUNK = 50`, never splits a quote) and
+  `vendorInsertStatement`. `bindValue` coerces booleans→1/0, Dates→ISO, objects→JSON for D1 params. No
+  SELECT/UPDATE/DELETE is ever planned — a paste only inserts.
+- **Row body** — `rate-row.ts` owns the VendorRate column mapping (`numOrNull`, `baseRateFor`, and
+  `rateRowData`, which `update.ts` now reuses), so one row and one paste cannot drift.
+- **Write** — `rate-import-write.ts#writeImportRows` creates the approved vendors in one `db.batch()`
+  (falling back row-by-row so a single bad vendor is attributed), validates every row through the same
+  `applySpecsToData` the drawer uses against ONE preloaded `LiveCatalog`, ships the planned statements in
+  chunks (a failed chunk is retried row-by-row so the reason lands on that quote), then runs ONE cache wave
+  via `touchedMany` for the distinct products. `prepareRateSpecs`/`applySpecsToData` accept the preloaded
+  catalogue so validation no longer costs a KV read per row.
+- **Result** — a 300-quote, 8-spec paste is 2,700 statements in ~60 D1 batches: planning ~5 ms, payload
+  ~570 KB, ~69 round trips instead of ~3,900. Guard `kyp-schema` asserts the plan stays INSERT-only, that
+  chunking never splits a quote, and that vendor creation happens only from an explicit `create` decision.

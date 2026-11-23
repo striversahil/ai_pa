@@ -397,14 +397,21 @@ describe('batch log + two-phase import', () => {
 
   it('the importer is two-phase and never creates a vendor without a decision', () => {
     const src = read('src/automations/product-line/rate-import.ts');
+    const writer = read('src/automations/product-line/rate-import-write.ts');
+    const plan = read('src/automations/product-line/rate-import-plan.ts');
     assert.ok(/export async function previewImport/.test(src), 'preview phase exists');
     assert.ok(/RateBatch|createBatch/.test(src), 'imports are stamped with a batch');
-    // the only vendor.create call sits behind an explicit `create` decision
-    const creates = src.split('vendor.create').length - 1;
-    assert.equal(creates, 1, 'exactly one vendor-creation site');
-    assert.ok(/decision.action === 'map'/.test(src), 'map-to-existing is honoured');
-    assert.ok(/vendor skipped/.test(src), 'skip rejects the row');
-    assert.ok(/vendor not confirmed/.test(src), 'silence is a failure, never a silent create');
+    // Creation moved from a per-row `vendor.create` to ONE batched INSERT, so the
+    // rule is enforced where the statement is planned: only an explicit `create`
+    // decision ever queues a vendor row.
+    assert.ok(/d\.action === 'create'/.test(writer), 'only an explicit create decision queues a vendor');
+    const vendorInserts = plan
+      .split('\n')
+      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l) && l.includes('INSERT INTO Vendor ('));
+    assert.equal(vendorInserts.length, 1, 'exactly one vendor-creation statement');
+    assert.ok(/decision\?\.action === 'map'/.test(writer), 'map-to-existing is honoured');
+    assert.ok(/vendor skipped/.test(writer), 'skip rejects the row');
+    assert.ok(/vendor not confirmed/.test(writer), 'silence is a failure, never a silent create');
   });
 
   it('a row flagged is_new_vendor is only a CANDIDATE (review decides)', () => {
@@ -449,5 +456,81 @@ describe('batch log + two-phase import', () => {
       assert.ok(src.includes('ConfirmDialog'), `${file} imports the shared confirm dialog`);
       assert.ok(src.includes(title), `${file} asks "${title}"`);
     }
+  });
+});
+
+// ── bulk paste write path: batched, INSERT-only ─────────────────────────────
+// A 300-row paste used to run `createRate()` per row: ~14 network round trips
+// each (vendor read, product read, INSERT, the shim's post-insert SELECT, one
+// spec-index batch, 6 KV invalidations, 2 KV catalogue reads). The plan below is
+// what replaced it — plain statements for `db.batch()`, no reads at all.
+const PLAN_TS = join(BACKEND_DIR, 'src', 'automations', 'product-line', 'rate-import-plan.ts');
+const PASTE_SPECS = { brand: 'PIX', width_mm: 1000, grade: 'GG' };
+const PASTE_ROWS = Array.from({ length: 300 }, (_, i) => ({
+  index: i + 1,
+  id: 'vr_' + (i + 1),
+  data: {
+    id: 'vr_' + (i + 1),
+    vendorId: 'v1',
+    productId: 'pi_milling_fabric',
+    attrValues: JSON.stringify(PASTE_SPECS),
+    attrKey: 'brand=PIX|grade=GG|width_mm=1000',
+    pricePerUnit: 120,
+    discountPercent: 10,
+    baseRate: 108,
+    unit: 'meter',
+    moq: '100',
+    deliveryDays: 5,
+    quotedAt: '2026-11-23T00:00:00.000Z',
+    active: true,
+    batchId: 'rb_x',
+    createdAt: '2026-11-23T00:00:00.000Z',
+    updatedAt: '2026-11-23T00:00:00.000Z',
+  },
+}));
+
+describe('bulk paste — the write plan is batched, not per-row', () => {
+  it('300 quotes = 300 rate INSERTs + 900 spec INSERTs, with zero reads', async () => {
+    const plan = await import(pathToFileURL(bundleToFile(PLAN_TS)).href);
+    const planned = PASTE_ROWS.map((r) => plan.planRateRow(r, '2026-11-23T00:00:00.000Z'));
+    const stmts = planned.flatMap((p) => p.statements);
+    assert.equal(planned.length, 300, 'one plan per accepted row');
+    assert.equal(stmts.filter((s) => s.sql.startsWith('INSERT INTO VendorRate (')).length, 300);
+    assert.equal(stmts.filter((s) => s.sql.startsWith('INSERT INTO VendorRateSpec')).length, 900, 'one index row per spec value');
+    assert.equal(
+      stmts.filter((s) => /^(SELECT|UPDATE|DELETE)/i.test(s.sql)).length,
+      0,
+      'a paste must never read or update per row — that is what made it slow',
+    );
+  });
+
+  it('chunks by statement count and never splits a quote across batches', async () => {
+    const plan = await import(pathToFileURL(bundleToFile(PLAN_TS)).href);
+    const planned = PASTE_ROWS.map((r) => plan.planRateRow(r, '2026-11-23T00:00:00.000Z'));
+    const chunks = plan.chunkPlannedRows(planned);
+    const total = planned.reduce((n, p) => n + p.statements.length, 0);
+    assert.ok(chunks.length >= Math.ceil(total / plan.IMPORT_STATEMENT_CHUNK), 'chunk count follows the statement cap');
+    assert.ok(chunks.length < 80, 'a 300-row paste should need few D1 batches, got ' + chunks.length);
+    const seen = chunks.flat().map((r) => r.index).sort((a, b) => a - b);
+    assert.deepEqual(seen, PASTE_ROWS.map((r) => r.index), 'every row planned exactly once');
+    for (const chunk of chunks) {
+      const n = chunk.reduce((acc, r) => acc + r.statements.length, 0);
+      const biggest = Math.max.apply(null, chunk.map((r) => r.statements.length));
+      assert.ok(n <= Math.max(plan.IMPORT_STATEMENT_CHUNK, biggest), 'chunk stays within the cap (a single row may exceed it)');
+    }
+  });
+
+  it('binds D1-safe params and inserts an approved vendor with active = 1', async () => {
+    const plan = await import(pathToFileURL(bundleToFile(PLAN_TS)).href);
+    const ins = plan.rateInsertStatement(PASTE_ROWS[0]);
+    assert.ok(!ins.params.some((p) => typeof p === 'boolean'), 'booleans must be 1/0 for D1');
+    assert.ok(ins.params.includes(1), 'active: true binds as 1');
+    assert.equal(ins.sql.split('?').length - 1, ins.params.length, 'placeholder/param count matches');
+    const vendor = plan.vendorInsertStatement({
+      id: 'v_new', name: 'Shreeji Textiles', location: 'Ahmedabad', contactPerson: '', contactPhone1: '',
+      contactPhone2: '', address: '', yearEstablished: null, vendorType: 'manufacturer', now: '2026-11-23T00:00:00.000Z',
+    });
+    assert.ok(vendor.sql.startsWith('INSERT INTO Vendor ('), 'vendor creation is one statement, not a read-then-write');
+    assert.ok(vendor.sql.includes(', 1, '), 'active literal = 1');
   });
 });

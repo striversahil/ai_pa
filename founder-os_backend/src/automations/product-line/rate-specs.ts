@@ -7,7 +7,7 @@
 // in sync with the JSON document.
 import { prisma } from '../../shared/prisma-d1';
 import { resolveProductKey, validateEnvelope, validateSpecsFor, kypProduct, type EnvelopeInput, type SpecValue } from './kyp-schema';
-import { findLiveProduct, getLiveCatalog } from './catalog-live';
+import { findLiveProduct, getLiveCatalog, type LiveCatalog } from './catalog-live';
 import { clearSpecIndex, syncSpecIndex } from './spec-index';
 import { missingFieldsFor } from './service-parts/missing';
 
@@ -41,10 +41,13 @@ export async function prepareRateSpecs(
   productId: string,
   rawAttrValues: unknown,
   envelope: EnvelopeInput = {},
+  /** Pre-loaded catalogue (a bulk paste validates hundreds of rows against one
+   *  snapshot — each `getLiveCatalog()` is a KV round trip). */
+  preloaded?: LiveCatalog | null,
 ): Promise<PreparedSpecs> {
   // The LIVE catalogue (D1) is the contract — edits in the dashboard take effect
   // immediately; the compiled seed is only the import snapshot.
-  const catalog = await getLiveCatalog();
+  const catalog = preloaded ?? (await getLiveCatalog());
   const live = findLiveProduct(catalog, { id: productId });
   const compiledKey = live ? null : resolveProductKey(productId, await productName(productId));
   const product = live ?? kypProduct(compiledKey);
@@ -122,6 +125,7 @@ export async function applySpecsToData(
   productId: string,
   body: any,
   strict = true,
+  preloaded?: LiveCatalog | null,
 ): Promise<PreparedSpecs> {
   let raw: unknown = {};
   if (body?.attrValues !== undefined) raw = body.attrValues;
@@ -152,7 +156,7 @@ export async function applySpecsToData(
     deliveryDays: pick(data, body, 'deliveryDays'),
     deliveryMaxDays: pick(data, body, 'deliveryMaxDays'),
     quotedAt: pick(data, body, 'quotedAt'),
-  });
+  }, preloaded);
   data.attrValues = prepared.attrValues;
   data.attrKey = prepared.attrKey;
   data.missingSpecs = prepared.missingSpecs;
