@@ -150,6 +150,29 @@ export async function completeLogin(
   return { sessionId, user };
 }
 
+export interface AuthSnapshot {
+  user: AuthUser | null;
+  scopes: string[];
+  roles: string[];
+  roleScopes: Record<string, string[]>;
+}
+
+/**
+ * Assemble MeResponse from ONE batched auth snapshot (user + direct scopes +
+ * roles + role→scopes). Single home for the merge: getMe() and the root
+ * "view as" overlay (modules/auth/view-as.ts) both build identity here, so an
+ * impersonated viewer holds exactly the scopes the target would hold.
+ */
+export function meFromSnapshot(snap: AuthSnapshot | null | undefined): MeResponse | null {
+  if (!snap?.user) return null;
+  const roleScopes = new Set<string>();
+  for (const roleKey of snap.roles ?? []) {
+    for (const s of snap.roleScopes?.[roleKey] || []) roleScopes.add(s);
+  }
+  const scopes = [...new Set([...(snap.scopes ?? []), ...roleScopes])];
+  return toMe(snap.user, scopes, snap.roles ?? []);
+}
+
 function toMe(user: AuthUser, scopes: string[], roles: string[]): MeResponse {
   return {
     user,
@@ -171,15 +194,8 @@ export async function getMe(store: AuthStore, sessionId: string | null): Promise
   if (!sess) return null;
   // One-shot batched read (user + scopes + roles + role→scopes) — the auth
   // gate runs on every request, so this collapses 5 D1 queries into 2.
-  const snap = await store.getAuthSnapshot(sess.userId);
-  if (!snap.user) return null;
-  const direct = snap.scopes;
-  const roleScopes = new Set<string>();
-  for (const roleKey of snap.roles) {
-    for (const s of snap.roleScopes[roleKey] || []) roleScopes.add(s);
-  }
-  const scopes = [...new Set([...direct, ...roleScopes])];
-  const me = toMe(snap.user, scopes, snap.roles);
+  const me = meFromSnapshot(await store.getAuthSnapshot(sess.userId));
+  if (!me) return null;
   getMeCache.set(sessionId, { me, expiresAt: Date.now() + GET_ME_CACHE_MS });
   return me;
 }

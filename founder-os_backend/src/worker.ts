@@ -16,6 +16,7 @@ import { AsyncTaskRunner } from './durable/async-task-runner';
 import { ChatRoomDO } from './durable/chat-room';
 import { createApp } from './worker/context';
 import { registerAuthRoutes } from './worker/routes/auth';
+import { registerViewAsRoutes } from './worker/routes/view-as';
 import { registerChatRoutes } from './worker/routes/chat';
 import { registerEnquiryRoutes } from './worker/routes/enquiries';
 import { registerEnquiryFileRoutes } from './worker/routes/enquiry-files';
@@ -66,6 +67,10 @@ const app = createApp();
 
 // ── Route modules ────────────────────────────────────────────────────────────
 registerAuthRoutes(app);
+// Root "view as" (read-only impersonation) — under /api/auth/, registered here
+// so the enter/exit endpoints exist even though the read-only gate lives in
+// createApp().
+registerViewAsRoutes(app);
 registerChatRoutes(app);
 registerEnquiryRoutes(app);
 registerEnquiryFileRoutes(app);

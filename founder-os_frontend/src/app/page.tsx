@@ -20,6 +20,7 @@ import { useChatUnread } from "../hooks/useChatUnread";
 import { NotificationProvider } from "@/notifications/NotificationProvider";
 import { NotificationOverlay } from "@/components/notifications/NotificationOverlay";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
+import ViewAsBanner from "@/components/layout/ViewAsBanner";
 
 // Heavy views are lazy-loaded so only the active view's JS is fetched & parsed.
 const FounderAssistant = dynamic(() => import("../components/FounderAssistant"), { ssr: false });
@@ -115,7 +116,10 @@ function AppInner() {
 
   return (
     <NotificationProvider>
-    <div className="flex min-h-screen font-sans antialiased text-[var(--text-primary)]">
+    {/* key on the identity: entering/leaving root "view as" remounts the shell, so
+        every dashboard refetches as the new viewer instead of keeping the
+        previous person's data on screen. Ordinary me refreshes keep the id. */}
+    <div key={me.user.id} className="flex min-h-screen font-sans antialiased text-[var(--text-primary)]">
       <Sidebar activeView={activeView} activeSlug={sub} onNavigate={navigateTo} theme={theme} onSetTheme={setTheme} accent={accent} onSetAccent={setAccent} me={me ? me.user : null} onLogout={logout} canView={canView} chatUnread={chatUnread} />
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -149,6 +153,7 @@ function AppInner() {
       </header>
 
       <NotificationOverlay />
+      <ViewAsBanner />
 
       <MobileDrawer
         open={mobileMenuOpen}

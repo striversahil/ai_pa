@@ -25,6 +25,7 @@ import { refreshNeodoveReport, istDateStr as neodoveTodayIst } from '../automati
 import { isSystemGeneratedComment } from '../shared/systemComment';
 import { getEstimatesPayload } from '../shared/estimates-cache';
 import { getViewerMe } from './viewer';
+import { readViewAsCookie, isReadOnlyViewAsRequest } from '../modules/auth/view-as-pure';
 import { publicDataPaths } from '../modules/workspaces/catalog';
 
 export type Bindings = {
@@ -518,6 +519,24 @@ export function createApp(): Hono<{ Bindings: Bindings }> {
     if (!me) {
       if (c.req.header('upgrade')?.toLowerCase() === 'websocket') return c.body(null, 401);
       return c.json({ error: 'Authentication required' }, 401);
+    }
+    await next();
+  });
+
+  // Root "view as" (impersonation) is strictly READ-ONLY. The overlay cookie
+  // swaps the viewer, so a write would mutate the target's data and be
+  // attributed to them. Verified against the cookie itself (not the resolved
+  // viewer) so it also covers exemptions and never depends on a DB read. Enter
+  // and exit stay open — you must be able to leave.
+  app.use('*', async (c, next) => {
+    if (readViewAsCookie(c.req.header('cookie') ?? null)) {
+      const path = new URL(c.req.url).pathname;
+      if (isReadOnlyViewAsRequest(c.req.method, path)) {
+        return c.json(
+          { error: 'View-only impersonation — exit “view as” to make changes', code: 'VIEW_AS_READONLY' },
+          403,
+        );
+      }
     }
     await next();
   });

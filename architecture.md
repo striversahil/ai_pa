@@ -369,6 +369,15 @@ tools), and keeping threads out of them means none of those paths can leak a pri
   gets 404 on list, inbox and by id. Legacy rows (`category` NULL) keep the pre-category behaviour:
   no backfill (founder 2026-11-21). `POST …/:id/forward` is retired (`{retired:true}`) because there
   is nothing left to send over. Index: migration `0151`; column: migration `0152`.
+- **Only SALES can open a product query (founder rule 2026-11-23)**: the category is stored only
+  when the thread is raised BY the sales desk — a question *management* asks sales ("does the client
+  require rubber or rexene bag?") is private to those two desks, and `createThread` stores
+  `category = null` for it. Procurement visibility therefore needs **both**
+  `category='product_query'` AND `openedBy='sales'` (`pure.canSee` + the `visibility()` SQL mirror in
+  `store.ts`), so a stray row can never leak into the procurement inbox even before a backfill runs.
+  Migration `0162` cleared the two such rows that existed (management-opened queries on Enquiry No 7
+  - 23 NOV TL); the FE composer shows the category picker for sales only and labels a
+  management→sales query "Private with Sales — Procurement never sees this".
 - **API** (`worker/routes/enquiry-threads.ts`): `GET /api/enquiry-threads?desk&enquiryId`,
   `GET …/inbox?desk&status`, `GET …/counts?desk`, `POST /api/enquiry-threads`,
   `POST …/:id/{reply,resolve,reopen,forward}`.
@@ -1272,6 +1281,7 @@ Never sideways between route modules or between `views/automations` and `views/s
 | `format-canonical` | one home for money/date formatting |
 | `workspace-catalog`, `workspace-scoping` | the §16 catalog + viewer scoping |
 | `notifications` | §20 escalation palette, BE↔FE level/template mirrors, authored-SQL firewall, IST windows |
+| `view-as` | §21 root-only impersonation: no root→root/self, overlay is never root, write gate blocks every non-read, cookie shape, viewer/context wiring |
 | `d1-parity`, `gateway-js-parity`, `gateway-pool` | D1 shim registries; TS gateway ↔ JS runner port |
 | `core-guard.mjs` (not in the suite) | locked ERP core signature |
 
@@ -1484,3 +1494,49 @@ escalation. Channels beyond in-app (WhatsApp/web push) stay on `core_notificatio
 `latestNotificationId()` reads the just-written `core_notification` row back by (employee, title, body,
 since) because the locked `notifyUsers` contract returns a count, not ids — the clean fix is a core change
 request to accept an `id` in `NotifyItem`.
+
+## 21. Root "view as" — read-only impersonation (2026-11-24)
+
+Root can look at the platform exactly as any employee sees it: their sidebar, their dashboards, their
+notification bell. Built as a **cookie overlay**, not a session swap — so the real session never leaves the
+browser, nothing is ever written as the target, and exiting is one call.
+
+```
+root session (fos_session) ─┐
+                            ├─► worker/viewer.ts#getViewerMe  ──► MeResponse
+fos_view_as=<userId>  ──────┘        │  (only when the REAL session is root)
+                                     ├─► target's scopes  → sidebar / workspaces / bell count
+                                     └─► actingAs: { real root }
+
+POST   /api/auth/view-as {userId}   → set cookie (+ hlp_view_as row)
+DELETE /api/auth/view-as            → clear cookie (+ close the row)
+GET    /api/auth/view-as            → last 50 views (audit)
+```
+
+**Why one cookie and not a header or a second session.** The whole app already authenticates by cookie, so
+an overlay cookie makes *every* existing call resolve as the target with zero per-call plumbing: dashboards,
+`/api/session/workspaces`, the notification panel, chat unread, even `<img>`. A second session would
+attribute writes to the target and need cookie juggling across providers; a custom header would have to be
+injected into some 200 fetch sites (and the ratchet forbids new raw fetches).
+
+**One choke point.** `getViewerMe` is what the auth gate and every handler call, so the overlay lands in
+exactly one place (~20 lines in `worker/viewer.ts` + `modules/auth/{view-as,view-as-pure}.ts`). Scoping stays
+where it already is — `expandScopes`, `modules/workspaces/scoping.ts`, per-viewer queries — which is why the
+sidebar and the dashboards change with no importer edits. `meFromSnapshot()` in `modules/auth/service.ts` is
+the single identity assembly, so an impersonated viewer holds *exactly* the target's scopes.
+
+**Read-only, enforced.** `worker/context.ts` refuses every non-GET/HEAD/OPTIONS request while `fos_view_as`
+is present (`403 {code:'VIEW_AS_READONLY'}`), with `/api/auth/view-as` exempt so you can always leave. This
+also blocks marking the target's notifications read — the founder's inbox is a read-only museum while you
+are inside. The real user's own session keeps running: they still receive live notifications and toasts in
+their own browser while root watches.
+
+**Rules.** Root only; never root→root; never self; unknown/malformed cookie falls back to the real identity
+(never an error, never an escalation); 2 h TTL; `hlp_view_as` records who looked at whom, when it started and
+when it ended (best-effort — an audit write never blocks the view).
+
+**UI.** `AuthContext` gained `enterViewAs`/`exitViewAs`/`isViewingAs`; `ViewAsBanner` is a sticky amber strip
+on every view with the Exit button; the app shell is keyed on `me.user.id` so entering/leaving remounts and
+refetches instead of leaving the previous person's data on screen. The launcher lives in
+**Users & Permissions → View as**: positions (chart titles, with seated-login counts) → person (search, roles,
+last login) → **Enter** → `/session`. Logins with no role are shown greyed (“grant a role first”).

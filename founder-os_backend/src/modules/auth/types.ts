@@ -76,6 +76,11 @@ export interface MeResponse {
   isRoot: boolean;
   /** Convenience: true if user holds `admin` scope or is root. */
   isAdmin: boolean;
+  /** Present ONLY while root is impersonating (root "view as"): the REAL root
+   *  identity behind this request. `user`/`scopes`/`isRoot` above are already
+   *  the TARGET's, so every route, cache and dashboard scopes itself like the
+   *  target's own request; the UI uses this to show the amber banner + Exit. */
+  actingAs?: { id: string; email: string; name: string };
 }
 
 export class AuthError extends Error {

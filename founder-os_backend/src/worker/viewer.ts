@@ -13,6 +13,8 @@
 import { createAuthStore } from '../modules/auth/store';
 import { getMe } from '../modules/auth/service';
 import { readSessionCookie } from '../modules/auth/session';
+import { readViewAsCookie } from '../modules/auth/view-as-pure';
+import { resolveViewAs } from '../modules/auth/view-as';
 import type { MeResponse } from '../modules/auth/types';
 import { AuthError } from '../modules/auth/types';
 import { resolveSelfTelecallerId } from '../modules/telecalling/self-roster';
@@ -32,17 +34,39 @@ export interface Viewer {
 const memo = new WeakMap<object, Promise<MeResponse | null>>();
 
 /** MeResponse for this request (null when signed out). Same result + errors as
- *  getMe(authStore(c), readSessionCookie(cookie)). */
+ *  getMe(authStore(c), readSessionCookie(cookie)), plus the root "view as"
+ *  overlay: when root holds a valid `fos_view_as` cookie, this returns the
+ *  TARGET's identity (with `actingAs`). One choke point means the auth gate and
+ *  every handler — dashboards, bell, chat unread — scope themselves exactly
+ *  like the target's own request, with no per-route impersonation code. */
 export function getViewerMe(c: any): Promise<MeResponse | null> {
   const key = (c.req?.raw ?? c.req) as object;
   let p = memo.get(key);
   if (!p) {
-    p = getMe(createAuthStore(c.env), readSessionCookie(c.req.header('cookie') ?? null));
+    p = resolveMe(c);
     memo.set(key, p);
     // A failed lookup must not be cached for the rest of the request.
     p.catch(() => memo.delete(key));
   }
   return p;
+}
+
+async function resolveMe(c: any): Promise<MeResponse | null> {
+  const store = createAuthStore(c.env);
+  const cookie = c.req.header('cookie') ?? null;
+  const real = await getMe(store, readSessionCookie(cookie));
+  if (!real) return null;
+  const targetId = readViewAsCookie(cookie);
+  if (!targetId) return real;
+  // Bogus / stale / non-root cookie → the REAL identity, never an error: a
+  // broken overlay must not lock the founder out of their own account.
+  return (await resolveViewAs(store, real, targetId)) ?? real;
+}
+
+/** The REAL session identity, ignoring any view-as overlay. Used by the
+ *  enter/exit endpoints and the audit trail (they must name the actual root). */
+export async function getRealMe(c: any): Promise<MeResponse | null> {
+  return getMe(createAuthStore(c.env), readSessionCookie(c.req.header('cookie') ?? null));
 }
 
 export function toViewer(me: MeResponse | null): Viewer {

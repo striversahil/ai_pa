@@ -101,11 +101,15 @@ export const DASHBOARD_SCOPES = [
 ];
 
 export interface AuthUserMe {
-  user: { id: string; email: string; name: string; picture: string | null; isRoot: boolean };
+  user: { id: string; email: string; name: string; picture: string | null; isRoot: boolean; displayName?: string | null };
   scopes: string[];
   roles: string[];
   isRoot: boolean;
   isAdmin: boolean;
+  /** Present only while root is impersonating: the REAL root identity. `user`
+   *  and `scopes` above are already the TARGET's. Mirror of the backend
+   *  MeResponse.actingAs (founder-os_backend/src/modules/auth/types.ts). */
+  actingAs?: { id: string; email: string; name: string };
 }
 
 export function canView(me: AuthUserMe | null, viewOrSlug: string): boolean {

@@ -11,6 +11,7 @@ import { createRole as apiCreateRole, updateRole as apiUpdateRole } from "@/api/
 import type { ScopeRow, RoleRow, UserRow, DashboardRow } from "./admin/AdminDrawers";
 import type { Tab } from "./user-admin/types";
 import { fmtDate } from "./user-admin/helpers";
+import ViewAsTab from "./user-admin/ViewAsTab";
 
 export default function UserAdmin() {
   const { me, refresh } = useAuth();
@@ -213,6 +214,8 @@ export default function UserAdmin() {
   const tabs: { key: Tab; label: string; count?: number }[] = [
     { key: "users" as Tab, label: "Users", count: users.length },
     ...(isRoot ? [{ key: "roles" as Tab, label: "Roles", count: roles.length }] : []),
+    // Root-only: "view as" is a founder tool (the API refuses non-root callers).
+    ...(isRoot ? [{ key: "viewas" as Tab, label: "View as" }] : []),
     { key: "scopes" as Tab, label: "Scopes", count: scopes.length },
     { key: "orphans" as Tab, label: "Orphans", count: orphanCount },
   ];
@@ -520,6 +523,8 @@ export default function UserAdmin() {
           </div>
         </section>
       )}
+
+      {tab === "viewas" && isRoot && <ViewAsTab />}
 
       {managingUser && (
         <Drawer title={`Manage ${managingUser.name}`} subtitle={managingUser.email} onClose={() => setManagingId(null)}>

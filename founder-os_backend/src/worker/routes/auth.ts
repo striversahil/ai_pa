@@ -4,6 +4,7 @@
 import type { Hono } from 'hono';
 import { authStore, publicOrigin, isSecure, AuthRoutes, type Bindings } from '../context';
 import { readBody } from '../http';
+import { getViewerMe } from '../viewer';
 
 export function registerAuthRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.get('/api/auth/google', async (c) => {
@@ -18,8 +19,12 @@ export function registerAuthRoutes(app: Hono<{ Bindings: Bindings }>): void {
     return c.json(r.body, r.status as any);
   });
   app.get('/api/auth/me', async (c) => {
-    const r = await AuthRoutes.authMe(authStore(c), c.req.header('cookie') ?? null);
-    return c.json(r.body, r.status as any);
+    // Resolved through the viewer (not the raw session) so a root "view as"
+    // overlay returns the TARGET's identity + `actingAs` here too — the frontend
+    // rebuilds its whole sidebar/permissions from this one payload.
+    const me = await getViewerMe(c);
+    if (!me) return c.json({ error: 'Not authenticated' }, 401);
+    return c.json(me);
   });
   app.post('/api/auth/logout', async (c) => {
     const r = await AuthRoutes.authLogout(authStore(c), c.req.header('cookie') ?? null, isSecure(c));
