@@ -1373,3 +1373,24 @@ D1 is the working copy of the KYP catalogue, and the dashboard owns it:
   `filters.ts#missingFields` and the guard diffs both on the same fixture. Rows are compact (10.5px,
   one-line cells) so a 500-row page reads as a sheet. Creating a required spec, flipping `isRequired`, or
   editing a product refreshes `missingSpecs` for that product, so the filter cannot drift.
+
+### 19.3 Batches, two-phase import and the completeness column (2026-11-23)
+
+- **Trace** — every bulk paste opens a `RateBatch` (`rate-batch.ts`, mig 0160: source, actor, label,
+  rowCount, createdCount, failedCount, vendorNames, failures JSON, status) and stamps its quotes with
+  `VendorRate.batchId`. `DELETE /api/product-line/batches/:id` clears exactly those quotes plus their
+  `VendorRateSpec` rows and marks the batch `deleted` — the log survives the undo. Single manual creates
+  stay batch-less, so "undo that paste" never touches hand-entered data.
+- **Two phases** — `POST /rates/import/preview` resolves products by key/name/alias, matches vendors by
+  name, runs the same `prepareRateSpecs` typecheck the drawer runs, and returns the rows plus the
+  `newVendors` candidates with whatever the sheet said about them. Nothing is written. `POST
+  /rates/import` takes `vendors: [{ name, action: create|map|skip, …edited fields }]`: `create` inserts the
+  vendor (name, city, contact person, both phones, address, year, type), `map` points at an existing row,
+  `skip` rejects those rows. `create_vendors` in the agent payload is informational only.
+- **`is_new_vendor`** — the prompt tells the model to copy the ACTIVE VENDORS name when it matches and to
+  set the flag only for an unlisted supplier; the server treats a name that exists in the master as matched
+  regardless, and an unknown vendor that was *not* flagged fails with an explicit message.
+- **Sheet** — Completeness moved next to Vendor: green `Complete`, or `Missing (n)` whose hover/focus card
+  numbers every unanswered field and says to open the row. `batchId` filters the sheet from the batch log.
+- **Overlays** — one state machine in `ProductLineDashboard` (`prompt | import | batches | rate`), so
+  opening a panel closes whatever was open; every delete goes through the shared `ConfirmDialog`.

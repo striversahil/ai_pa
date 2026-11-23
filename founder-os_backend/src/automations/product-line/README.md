@@ -102,6 +102,17 @@ spec typechecker, export round-trip, filter vocabulary).
 vendor by name (creating it only when the payload asks), then calls `createRate` — the same typechecker,
 `missingSpecs` recompute and spec-index write as the drawer. Rows fail independently.
 
+## Batches: one paste = one undoable unit (2026-11-23)
+
+`rate-batch.ts` owns the trace: `createBatch` (source, actor, label, row count) → quotes written with
+`VendorRate.batchId` → `finishBatch` (created/failed counts, vendor names, failures). `listBatches` joins a
+live count, `deleteBatch` removes exactly those quotes (+ spec-index rows) and keeps the row as `deleted`.
+
+`rate-import.ts` is two-phase: `previewImport` resolves + typechecks without writing and names the vendors
+that would be created (the review step), then `importRates` lands it under one batch using the operator's
+`vendors: [{ name, action: create|map|skip, …fields }]`. A vendor is created only from an explicit `create`
+decision — `is_new_vendor` from the agent is a candidate flag, never an instruction.
+
 ## Typecheck on write
 
 `rate-specs.ts` runs `validateSpecs` (type, enum, min/max/exclusiveMinimum,

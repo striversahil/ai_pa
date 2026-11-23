@@ -138,12 +138,13 @@ Shared kits: `@/components/ui` (Badge, Card, KpiCard, Skeleton, EmptyState/Error
 - `CategoryManager.tsx` — add / rename-everywhere / delete-if-empty categories
 - `RatesSheet.tsx`, `RatesFilters.tsx`, `RateDrawer.tsx` — vendor rates as a spreadsheet
 - `PromptDrawer.tsx` — the saved rate-intake prompt (copy for a chat agent)
-- `RateImporter.tsx` — paste the agent's `{rates:[…]}` back as typed quotes
+- `RateImporter.tsx` — preview the agent's `{rates:[…]}`, decide new vendors, import as one batch
+- `BatchLogDrawer.tsx` — every bulk paste, its failures, and the undo
 - `VendorsTab.tsx`, `Skeletons.tsx`
 
 ### `product-line/` (domain)
 - `api.ts` — `productLineApi`, `downloadKypSchema`
-- `hooks.ts` — `usePayload`, `useCatalog`, `useRates` (draft + `run()`), `useRateDetail`, `usePrompt`
+- `hooks.ts` — `usePayload`, `useCatalog`, `useRates` (draft + `run()` + `patchAndRun`), `useRateDetail`, `usePrompt`, `useBatches`
 - `filters.ts` — `RateFilters`, `toQuery`, `missingFields`, `MISSING_OPTIONS`, `RATES_PAGE_MAX`
 - `types.ts` — `KypProduct`, `KypSpec`, `LiveCatalog`, `RateRow`, `RateDetail`, `Paged`
 

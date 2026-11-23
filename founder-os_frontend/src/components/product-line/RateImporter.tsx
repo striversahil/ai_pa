@@ -97,6 +97,20 @@ export function RateImporter({ vendors, onClose, onChanged, onCopyPrompt, onOpen
     });
   }, [preview, choices, drafts, mapTo]);
 
+  /** Rows that will NOT land because their (new) vendor is being skipped. */
+  const skippedNames = useMemo(() => {
+    if (!preview) return new Set<string>();
+    return new Set(
+      preview.newVendors
+        .filter((v) => (choices[v.name] ?? "skip") === "skip")
+        .map((v) => v.name.toLowerCase()),
+    );
+  }, [preview, choices]);
+  const importable = useMemo(() => {
+    if (!preview) return 0;
+    return preview.rows.filter((r) => r.ok && !skippedNames.has(r.vendor.toLowerCase())).length;
+  }, [preview, skippedNames]);
+
   const blocked = useMemo(() => {
     if (!preview) return 0;
     return preview.newVendors.filter((v) => {
@@ -194,6 +208,9 @@ export function RateImporter({ vendors, onClose, onChanged, onCopyPrompt, onOpen
               <span className="text-[var(--text-tertiary)]">
                 {preview.matchedVendors.length} vendor{preview.matchedVendors.length === 1 ? "" : "s"} matched
               </span>
+              {skippedNames.size ? (
+                <span className="text-[var(--text-tertiary)]">{preview.okCount - importable} will be skipped</span>
+              ) : null}
             </div>
 
             {/* New vendors — the only thing that needs a human decision */}
@@ -326,8 +343,8 @@ export function RateImporter({ vendors, onClose, onChanged, onCopyPrompt, onOpen
             </button>
           ) : null}
           {preview && !result ? (
-            <button type="button" className={primaryBtn} disabled={busy || blocked > 0 || preview.okCount === 0} onClick={() => void runImport()}>
-              <Plus size={13} /> {busy ? "Importing…" : `Import ${preview.okCount} row${preview.okCount === 1 ? "" : "s"}`}
+            <button type="button" className={primaryBtn} disabled={busy || blocked > 0 || importable === 0} onClick={() => void runImport()}>
+              <Plus size={13} /> {busy ? "Importing…" : `Import ${importable} row${importable === 1 ? "" : "s"}`}
             </button>
           ) : null}
           <button type="button" className={ghostBtn} onClick={onClose}>Close</button>
