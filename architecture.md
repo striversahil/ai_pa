@@ -413,6 +413,35 @@ payroll keep exactly one source of truth (`HumanResourcesLeave`); no second tabl
 - Live: every write broadcasts the existing `human-resources` event (no new event name);
   `invalidateHumanResourcesCache()` keeps the 5-min dashboard cache honest.
 
+### 3.2d Procurement queue ownership — manual conclude only (2026-11-21)
+
+The sourcing queue is the procurement desk's own worklist, not a mirror of the estimate lifecycle.
+
+- **Active** = has items AND the requirement is not dead in Zoho AND `procurementSubmittedAt` is
+  empty. **History** is the exact complement, so every row is in exactly one tab
+  (`isProcurementPendingEnquiry` / `isProcurementHistoryEnquiry`, backend
+  `modules/enquiries/queues.ts` ↔ frontend `src/enquiry/queue.ts`, guard `queue-mirror`).
+- **Nothing else closes a row.** `rateStatus` (`rates_received` / `finalized` / `sent`) and Zoho's
+  draft/approved state are not gates: both auto-conclude paths are gone —
+  `routes/enquiries.ts#maybePromoteEnquiriesSent` now stamps only dead rows
+  (`isZohoClosedStatus`) and auto-answers their open loops, and
+  `update-parts/pure.ts#applyRateLifecycles` still answers sent spec asks but never stamps the
+  handoff. This supersedes the 2026-09-23/09-25 "Zoho not draft → procurement done" rule.
+- **Late quotes still work**: a new vendor quote on a finalized row runs `applyLateQuoteReopen` and
+  reopens the decision for management; the item card has no `finalRate`/`submitted` lock (only
+  `notAvailable` / an open `not_available` ask read as read-only).
+- **Repeats are first class**: one vendor may carry several quotes for the same product (different
+  size, spec or terms). Merge identity stays `vendor|rate` with the twin-preserving greedy match,
+  the decision persists the exact row via `selectedRateIdx`, and procurement re-seeds a repeat with
+  the `+` affordance on a rate row (repeat rows are numbered `#n`).
+- **Sales order brief**: under each item's spec the sales view shows an amber "⚠ Order this spec —
+  not the client's original" block (`specSame === false` → `specDiff`) and an emerald "Note from
+  Management" block (`salesNote`), plus matching header chips. It is deliberately **not** gated on
+  `rateStatus`, because the order is placed *after* the estimate is sent. Vendor identity stays
+  hidden — only the differing spec text and the note go out.
+- Chat composers send on plain **Enter** (`Shift+Enter` = newline) in `ThreadCard` and
+  `NewThreadForm`. Guard `enquiry-procurement-ownership` pins all of the above.
+
 ### 3.3 Trigger dispatch
 `POST /api/trigger/:slug` runs the matching automation (auth required). On the Worker,
 cron-driven automations are reached via GitHub Actions → `curl /api/trigger/:slug`.
@@ -1242,6 +1271,7 @@ Never sideways between route modules or between `views/automations` and `views/s
 | `queue-mirror`, `crm-lifecycle`, `enquiry-rates-union` | backend↔frontend predicate/lifecycle mirrors stay identical |
 | `format-canonical` | one home for money/date formatting |
 | `workspace-catalog`, `workspace-scoping` | the §16 catalog + viewer scoping |
+| `notifications` | §20 escalation palette, BE↔FE level/template mirrors, authored-SQL firewall, IST windows |
 | `d1-parity`, `gateway-js-parity`, `gateway-pool` | D1 shim registries; TS gateway ↔ JS runner port |
 | `core-guard.mjs` (not in the suite) | locked ERP core signature |
 
@@ -1394,3 +1424,63 @@ D1 is the working copy of the KYP catalogue, and the dashboard owns it:
   numbers every unanswered field and says to open the row. `batchId` filters the sheet from the batch log.
 - **Overlays** — one state machine in `ProductLineDashboard` (`prompt | import | batches | rate`), so
   opening a panel closes whatever was open; every delete goes through the shared `ConfirmDialog`.
+
+## 20. Notifications — rule-driven, position-wise escalation (2026-11-24)
+
+One authored rule per audience/metric replaces every ad-hoc alert. The founder writes a query in
+**Settings → Notifications**; the `* * * * *` cron turns its rows into notifications, forever after.
+
+```
+RULE (hlp_notification_rule)
+  audience  positions / departments / regions / rosterTypes / roles / explicit people
+  cadence   hourly | everyNMin | daily | weekly | manual   (windows IST-aligned)
+  sqlText   ONE read-only SELECT  (?1 window start, ?2 window end, ?3 IST day)
+  template  title + body, mustache-lite {TOKEN}
+            ↓ cron (src/worker/cron.ts → modules/notifications/sweep.ts, every fire, no GH dispatch)
+ROW = one person = one notification
+  telecaller_id | employee_key  → seat (HR member ← roster by email, never guessed)
+  value                         → {VALUE} (+ any other alias as its own token)
+  level 1..5                    → palette colour + severity (row column wins; thresholds fallback)
+            ↓
+notifyUsers()  → core_notification (the ONE inbox/audit; core lock intact)
+              + hlp_notification_delivery (level/colour/metrics, UNIQUE rule+employee+window)
+              + hlp_notification_state (streak, used only when the SQL returns no level)
+              → EventHub `notifications` → toast + bell panel
+```
+
+**Level semantics (founder palette, Setting `notifications:levels`).** 1 = Normal / Resolved → the row is
+recorded (state + audit) and **never toasted**; 2–5 dispatch with their own hex. A rule may opt into a
+single level-1 "resolved" note when a breach clears (`escalation.notifyOnRecovery`).
+
+**Reuse, not replacement.** `core_notification` already existed (Phase 6a, migration 0125) with
+`core_notification_pref` / `core_notification_template`; the engine writes through
+`modules/core/notify.ts#notifyUsers` and never touches `core_*` directly (core-guard enforces it). The
+sidecar tables are `hlp_*` (free to change) so escalation metadata never needs a core migration.
+`GET /api/notifications` in the locked `routes/work.ts` is superseded by `routes/notifications.ts`
+(registered first); the old handlers stay until the next core re-sign.
+
+**Identity.** A login maps to an HR member by email (`employeeKeyForEmail`, the same join the org module
+uses), falling back to `core_user_link`. No HR row → empty inbox, never an error.
+
+**Audience.** Position = HR `designation` (exact chart title). Regions/roster types come through the
+`Telecaller` row matched by email; roles come from `auth_user_role`. A row whose person is outside the
+audience is skipped and counted (`skipped`/`unmatched` in Test), so a broad query cannot notify the wrong
+department.
+
+**Safety.** The SQL is authored by root/admin only and validated single-statement read-only
+(`metric-sql.ts`: SELECT/WITH, no comments, no DDL/DML/ATTACH/PRAGMA, 8k cap, 5k result cap). Test is a
+dry run (writes nothing, shows rows + rendered text + unmatched keys); Run now dispatches for real. Per
+person per hour a flood cap applies (`notifications:settings`), and `UNIQUE(rule, employee, window)` makes
+a 5-minute sweep safe for an hourly rule.
+
+**UI.** `NotificationProvider` (one fetch, live on `notifications` + 30 s poll because the Pages proxy
+cannot forward the WS upgrade) feeds the Sidebar/mobile bell, the animated level-coloured toasts (max 3,
+9 s) and the panel (newest **200**, All/Unread/level filters, mark read / mark all). The authoring console
+(`components/notifications-console/`) is a Settings tab: Rules (Test/Run/pause), Deliveries (newest 200
+across everyone) and Levels & caps.
+
+**Not in v1 (deliberate).** Quiet hours are NOT applied — the founder asked for round-the-clock
+escalation. Channels beyond in-app (WhatsApp/web push) stay on `core_notification_pref` for a later phase.
+`latestNotificationId()` reads the just-written `core_notification` row back by (employee, title, body,
+since) because the locked `notifyUsers` contract returns a count, not ids — the clean fix is a core change
+request to accept an `id` in `NotifyItem`.
