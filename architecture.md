@@ -866,6 +866,19 @@ safety nets).
   the DO replies `pong`.
 - `/broadcast` (internal, POST): iterates `state.getWebSockets()` and sends the JSON
   event to every connected client, then hibernates again.
+- **The Pages Function proxy must pass the upgrade through** (`founder-os_frontend/functions/api/[[path]].ts`):
+  browsers open the socket on the app's own origin, so every frame crosses that proxy.
+  A 101 response carries the socket on `res.webSocket` and **cannot be rebuilt** —
+  `new Response(body, { status: 101 })` throws (the constructor only accepts 200–599) and a
+  101 without `webSocket` never completes the handshake. The proxy therefore returns
+  `new Response(null, { status: 101, webSocket: res.webSocket })` *before* its normal
+  streamed-body branch. Until 2026-11-24 it rebuilt every response, so the handshake
+  threw and the entire app was fetch-once: own writes still felt instant (optimistic
+  echoes) and views with a `pollMs` safety net still caught up, but a surface with no
+  local echo and no poll — the enquiry **Queries** inbox — only updated on a manual
+  reload. Guard: `scripts/guards/live-transport.test.mjs` (upgrade branch present *and*
+  before the streamed branch, route forwards `c.req.raw`, DO answers 101, client feeds
+  the shared bus, cross-desk inboxes poll).
 
 ### 11.2 Broadcast contract
 Every data-write endpoint calls the `notifyLive(c, event)` helper, which fire-and-forgets

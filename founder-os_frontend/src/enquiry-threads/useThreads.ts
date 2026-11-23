@@ -4,15 +4,21 @@
 // Writes are optimistic (sales-enquiry standard): the echo paints instantly
 // into the visible lists, the server confirms in the background, and refresh
 // reconciles (failure resyncs, so the UI never sits on a lie).
+// Queries are the one CROSS-DESK surface — the payload is written by the other
+// desk, so there is no local echo to fall back on. A 60s safety-net poll keeps
+// the list correct while the live socket is reconnecting (the same slow poll
+// the accounts/HR views use); without it a dropped hub meant "reload to see
+// new queries".
 import { useCallback } from "react";
 import { useLiveQuery } from "@/hooks/useLiveData";
 import { actOnThread, fetchEnquiryThreads, fetchThreadInbox, startThread } from "./api";
 import { counterpart, type EnquiryThread, type ThreadAttachment, type ThreadCategory, type ThreadDesk, type ThreadStatus } from "./types";
 
 const EVENTS = ["enquiry-threads"];
+const POLL_MS = 60_000;
 
 export function useEnquiryThreads(desk: ThreadDesk, enquiryId: string) {
-  const q = useLiveQuery<EnquiryThread[]>(() => fetchEnquiryThreads(desk, enquiryId), { events: EVENTS, deps: [desk, enquiryId] });
+  const q = useLiveQuery<EnquiryThread[]>(() => fetchEnquiryThreads(desk, enquiryId), { events: EVENTS, deps: [desk, enquiryId], pollMs: POLL_MS });
   const patch = useCallback((fn: (ts: EnquiryThread[]) => EnquiryThread[]) => {
     q.setData((prev) => fn(prev ?? []));
   }, [q.setData]);
@@ -20,7 +26,7 @@ export function useEnquiryThreads(desk: ThreadDesk, enquiryId: string) {
 }
 
 export function useThreadInbox(desk: ThreadDesk, status: ThreadStatus) {
-  const q = useLiveQuery<EnquiryThread[]>(() => fetchThreadInbox(desk, status), { events: EVENTS, deps: [desk, status] });
+  const q = useLiveQuery<EnquiryThread[]>(() => fetchThreadInbox(desk, status), { events: EVENTS, deps: [desk, status], pollMs: POLL_MS });
   const patch = useCallback((fn: (ts: EnquiryThread[]) => EnquiryThread[]) => {
     q.setData((prev) => fn(prev ?? []));
   }, [q.setData]);
