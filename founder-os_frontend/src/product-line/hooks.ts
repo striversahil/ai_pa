@@ -45,6 +45,8 @@ export interface UseRatesResult {
   applied: RateFilters;
   /** "Run query" — commit the draft and go back to page 1. */
   run: () => void;
+  /** Commit one change immediately (batch drill-down, deep links). */
+  patchAndRun: (patch: Partial<RateFilters>) => void;
   /** True while the builder differs from what is displayed. */
   dirty: boolean;
   resetFilters: () => void;
@@ -79,6 +81,15 @@ export function useRates(initial: Partial<RateFilters> = {}): UseRatesResult {
     setPage(1);
   }, [draft]);
 
+  const patchAndRun = useCallback((p: Partial<RateFilters>) => {
+    setDraft((d) => {
+      const next = { ...d, ...p };
+      setApplied(next);
+      return next;
+    });
+    setPage(1);
+  }, []);
+
   const resetFilters = useCallback(() => {
     setDraft(base);
     setApplied(base);
@@ -102,6 +113,7 @@ export function useRates(initial: Partial<RateFilters> = {}): UseRatesResult {
     patch,
     applied,
     run,
+    patchAndRun,
     dirty,
     resetFilters,
     refresh: useCallback(() => {

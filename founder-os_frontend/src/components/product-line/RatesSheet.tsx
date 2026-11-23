@@ -135,10 +135,7 @@ export function RatesSheet({ rates, catalog, payload, vendors, onOpen, canEdit }
               type="button"
               aria-label="Clear batch filter"
               className="hover:text-[var(--text-primary)]"
-              onClick={() => {
-                rates.patch({ batchId: "" });
-                rates.run();
-              }}
+              onClick={() => rates.patchAndRun({ batchId: "" })}
             >
               <X size={10} />
             </button>

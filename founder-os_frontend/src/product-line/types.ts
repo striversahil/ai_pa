@@ -166,10 +166,11 @@ export interface PromptPayload {
 
 /** POST /api/product-line/rates/import — one paste's outcome. */
 export interface ImportResult {
+  /** The batch every imported quote is stamped with (see the batch log). */
+  batchId: string;
   created: number;
   failed: { row: number; product?: string; vendor?: string; error: string }[];
   vendorsCreated: string[];
-  warnings: string[];
   total: number;
 }
 

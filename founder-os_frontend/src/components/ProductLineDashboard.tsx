@@ -253,8 +253,7 @@ export default function ProductLineDashboard() {
           onViewRates={(batchId) => {
             setOverlay(null);
             setTab("rates");
-            rates.patch({ batchId });
-            rates.run();
+            rates.patchAndRun({ batchId });
           }}
         />
       ) : null}

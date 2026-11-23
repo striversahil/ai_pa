@@ -371,3 +371,83 @@ describe('missing fields — server and client never disagree', () => {
     assert.equal(beMissing.missingFieldsFor(cases[0].rate, products).length, 7);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2026-11-23 v3: batches, two-phase import, is_new_vendor.
+// Pure assertions only — the D1 lifecycle is covered by the live smoke curl.
+// ─────────────────────────────────────────────────────────────────────────────
+const previewRows = await import(
+  pathToFileURL(bundleToFile(join(BACKEND_DIR, 'src', 'automations/product-line', 'rate-import-parse.ts'))).href
+);
+
+describe('batch log + two-phase import', () => {
+  const read = (p) => readFileSync(join(BACKEND_DIR, p), 'utf8');
+
+  it('the batch table, the trace column and the index exist as a re-runnable migration', () => {
+    const mig = read('migrations/0160_product_rate_batch.sql');
+    assert.ok(/CREATE TABLE IF NOT EXISTS RateBatch/.test(mig), 'RateBatch is created idempotently');
+    assert.ok(/idx_vendorrate_batch/.test(mig), 'quotes are indexed by batch');
+    for (const col of ['rowCount', 'createdCount', 'failedCount', 'vendorNames', 'failures', 'status']) {
+      assert.ok(mig.includes(col), `RateBatch carries ${col}`);
+    }
+    const schema = read('prisma/schema.prisma');
+    assert.ok(/model RateBatch \{/.test(schema), 'prisma knows the trace table');
+    assert.ok(/batchId\s+String\?/.test(schema), 'VendorRate keeps the trace column');
+  });
+
+  it('the importer is two-phase and never creates a vendor without a decision', () => {
+    const src = read('src/automations/product-line/rate-import.ts');
+    assert.ok(/export async function previewImport/.test(src), 'preview phase exists');
+    assert.ok(/RateBatch|createBatch/.test(src), 'imports are stamped with a batch');
+    // the only vendor.create call sits behind an explicit `create` decision
+    const creates = src.split('vendor.create').length - 1;
+    assert.equal(creates, 1, 'exactly one vendor-creation site');
+    assert.ok(/decision.action === 'map'/.test(src), 'map-to-existing is honoured');
+    assert.ok(/vendor skipped/.test(src), 'skip rejects the row');
+    assert.ok(/vendor not confirmed/.test(src), 'silence is a failure, never a silent create');
+  });
+
+  it('a row flagged is_new_vendor is only a CANDIDATE (review decides)', () => {
+    const src = read('src/automations/product-line/rate-import.ts');
+    assert.ok(/is_new_vendor === true/.test(src), 'honours the agent flag');
+    assert.ok(/newVendors/.test(src) && /isNewVendor/.test(src), 'candidates are surfaced for review');
+    assert.ok(/not in the master and the agent did not mark it is_new_vendor/.test(src), 'unflagged unknown vendors fail loudly');
+  });
+
+  it('the prompt teaches the flag and the vendor fields', () => {
+    const src = read('src/automations/product-line/prompt.ts');
+    assert.ok(src.includes('"is_new_vendor": false'), 'output example carries the flag');
+    assert.ok(/is_new_vendor": true/.test(src), 'rule tells the model when to set it true');
+    assert.ok(/vendor_location/.test(src) && /contact_number_1/.test(src), 'new-vendor fields are named');
+  });
+
+  it('the rates sheet puts completeness next to the vendor and can filter a batch', () => {
+    const sheet = readFileSync(join(FRONTEND_SRC, 'components', 'product-line', 'RatesSheet.tsx'), 'utf8');
+    const header = sheet.slice(sheet.indexOf('["Product"'), sheet.indexOf('].map((h, i)'));
+    assert.ok(header.indexOf('Completeness') > 0, 'completeness is a column');
+    assert.ok(header.indexOf('Completeness') < header.indexOf('Brand'), 'completeness sits right after the vendor');
+    assert.ok(/Complete/.test(sheet), 'complete rows read Complete with a tick');
+    assert.ok(/rating the field|Needs \{fields.length\}/.test(sheet), 'the hover card explains what is missing');
+    const filters = readFileSync(join(FRONTEND_SRC, 'product-line', 'filters.ts'), 'utf8');
+    assert.ok(/batchId: string/.test(filters) && /p\.set\("batchId"/.test(filters), 'batch is a first-class filter');
+    const be = read('src/automations/product-line/service-parts/rates-page.ts');
+    assert.ok(/batchId\?: string/.test(be) && /r\.batchId = \?/.test(be), 'server filters by batch');
+  });
+
+  it('every product-line delete goes through a confirm panel', () => {
+    const dir = join(FRONTEND_SRC, 'components', 'product-line');
+    const expectConfirm = {
+      'RateDrawer.tsx': 'Delete this vendor rate?',
+      'SpecsEditor.tsx': 'Remove this spec?',
+      'VendorsTab.tsx': 'Delete this vendor?',
+      'ProductEditor.tsx': 'Delete this product?',
+      'CategoryManager.tsx': 'Remove this category?',
+      'BatchLogDrawer.tsx': 'Delete this batch?',
+    };
+    for (const [file, title] of Object.entries(expectConfirm)) {
+      const src = readFileSync(join(dir, file), 'utf8');
+      assert.ok(src.includes('ConfirmDialog'), `${file} imports the shared confirm dialog`);
+      assert.ok(src.includes(title), `${file} asks "${title}"`);
+    }
+  });
+});
