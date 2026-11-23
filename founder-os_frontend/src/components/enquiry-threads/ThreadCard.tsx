@@ -135,7 +135,15 @@ export default function ThreadCard({ thread: t, desk, onReply, onResolve, onReop
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) send(); }}
+            onKeyDown={(e) => {
+              // Plain Enter sends (chat behaviour, founder ask 2026-11-21);
+              // Shift+Enter is the newline escape. Ctrl/Cmd+Enter still sends
+              // for people used to the old chord.
+              if (e.key !== "Enter") return;
+              if (e.shiftKey) return;
+              e.preventDefault();
+              send();
+            }}
             rows={2}
             placeholder={
               desk === "procurement" && t.channel === "sales" ? "Answer as Management…"
@@ -154,9 +162,12 @@ export default function ThreadCard({ thread: t, desk, onReply, onResolve, onReop
                 : <Button size="sm" variant="ghost" disabled={busy} onClick={() => run(onResolve)}>✓ Mark resolved</Button>}
               {onOpenEnquiry && <Button size="sm" variant="ghost" onClick={onOpenEnquiry}>Open enquiry →</Button>}
             </div>
-            <Button size="sm" variant="primary" disabled={!canSend} onClick={send}>
-              {busy ? "Sending…" : "Send"}
-            </Button>
+            <div className="flex items-center gap-2">
+              <span className="hidden text-caption text-[var(--text-tertiary)] sm:inline">Enter to send · Shift+Enter for a new line</span>
+              <Button size="sm" variant="primary" disabled={!canSend} onClick={send}>
+                {busy ? "Sending…" : "Send"}
+              </Button>
+            </div>
           </div>
         </div>
       )}

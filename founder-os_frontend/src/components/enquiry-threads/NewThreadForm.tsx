@@ -81,7 +81,13 @@ export default function NewThreadForm({ desk, onStart, onCancel }: {
         autoFocus
         value={text}
         onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) submit(); }}
+        onKeyDown={(e) => {
+          // Plain Enter asks (chat behaviour, founder ask 2026-11-21);
+          // Shift+Enter keeps the long-form newline.
+          if (e.key !== "Enter" || e.shiftKey) return;
+          e.preventDefault();
+          submit();
+        }}
         rows={3}
         placeholder={
           privateThread ? "What do you need on this item?"

@@ -135,43 +135,46 @@ export function isZohoClosedStatus(s: unknown): boolean {
   return isZohoCancelledStatus(v) || v.includes('accept');
 }
 
+/**
+ * Procurement Active queue — the Sourcing Queue.
+ *
+ * FOUNDER DECISION 2026-11-21 (supersedes 2026-09-23 "Zoho not draft →
+ * procurement done"): procurement owns an enquiry until they CONCLUDE it
+ * themselves (`procurementSubmittedAt`, the "Enquiry Concluded" stamp).
+ * Estimate status and Zoho's draft/sent state are NOT locks — they may keep
+ * adding vendor quotes (including several quotes from the same vendor, and
+ * late quotes after management finalized; a late quote reopens the decision
+ * through applyLateQuoteReopen). The seller sending the estimate does not end
+ * procurement's work; only their own conclusion does.
+ *
+ * The two exceptions are not locks but facts about the row:
+ *   • no items yet — there is nothing to quote (it needs sales first);
+ *   • the requirement is dead in Zoho (declined/void/cancelled/rejected or
+ *     client-accepted = order placed) — quoting it is pointless.
+ *
+ * History is the exact complement, so every row is in exactly one tab.
+ * Mirror: `founder-os_frontend/src/enquiry/queue.ts` — change both together.
+ */
 export function isProcurementPendingEnquiry(e: EnquiryShape): boolean {
   const items = (e as any).items ?? [];
   if (items.length === 0) return false;
-  // Procurement-held ask reactivates even when terminal — check before terminal gate
+  // Dead requirement (client cancelled / already accepted): nothing to quote.
+  if (isZohoClosedStatus((e as any).zohoStatus)) return false;
+  // A live procurement-held ask reopens a row they already concluded.
   if (hasPendingProcurementLoop(e as any)) return true;
-  // Open sent-revision: the row loops again — Zoho non-draft does NOT hold it terminal.
-  const reopened = isSentReopened(e as any);
-  const isTerminal = !reopened && (String((e as any).rateStatus ?? '') === 'sent' || (String((e as any).zohoStatus ?? '').trim() && String((e as any).zohoStatus ?? '').trim().toLowerCase() !== 'draft'));
-  // Zoho sent + open sales-originated loop reactivates terminal for visibility — e.g. 10-23 "sent"
-  if (isTerminal && hasOpenSalesLoop(e as any)) return true;
-  // Zoho not draft (sent/accepted/declined etc.) — procurement done even with pending rates
-  if (!reopened && String((e as any).rateStatus ?? '') === 'sent') return false;
-  const zs = String((e as any).zohoStatus ?? '').trim().toLowerCase();
-  if (!reopened && zs && zs !== 'draft') return false;
-  // Fresh work (new unquoted lines, pending alternate requests) reopens the
-  // queue even on concluded rows — the client keeps asking.
-  if (hasFreshUnquotedWork(e as any) || hasPendingVariationWork(e as any)) return true;
+  // Concluded by procurement = the ONLY way out of the working queue.
   if (isSubmitted(e)) return false;
-  return items.some((it: any) => !it?.rateAvailable && !(it as any)?.notAvailable && openItemLoops(it, 'not_available').length === 0 && !it?.internalRates);
+  return true;
 }
 
+/** Procurement History: concluded by procurement, or a dead requirement.
+ *  Read-only in the UI — everything else stays editable in Active. */
 export function isProcurementHistoryEnquiry(e: EnquiryShape): boolean {
   const items = (e as any).items ?? [];
+  if (items.length === 0) return false;
+  if (isZohoClosedStatus((e as any).zohoStatus)) return true;
   if (hasPendingProcurementLoop(e as any)) return false;
-  const reopened = isSentReopened(e as any);
-  const isTerminal = !reopened && (String((e as any).rateStatus ?? '') === 'sent' || (String((e as any).zohoStatus ?? '').trim() && String((e as any).zohoStatus ?? '').trim().toLowerCase() !== 'draft'));
-  if (isTerminal && hasOpenSalesLoop(e as any)) return false;
-  // Zoho not draft (sent/accepted/declined etc.) — always History
-  if (!reopened && String((e as any).rateStatus ?? '') === 'sent') return items.length > 0;
-  const zs = String((e as any).zohoStatus ?? '').trim().toLowerCase();
-  if (!reopened && zs && zs !== 'draft') return items.length > 0;
-  // Closed requirement: concluded automatically — visible in History even
-  // before/without the explicit handoff stamp.
-  if (!isSubmitted(e)) return false;
-  if (hasFreshUnquotedWork(e as any) || hasPendingVariationWork(e as any)) return false;
-  if (hasPendingNotAvailableWork(e as any)) return false;
-  return items.some((it: any) => ((it.rates ?? []).length > 0 && openItemLoops(it, 'rates').length === 0) || (it as any).notAvailable || openItemLoops(it, 'not_available').length > 0 || it.rateAvailable);
+  return isSubmitted(e);
 }
 
 export function isManagementPendingEnquiry(e: EnquiryShape): boolean {

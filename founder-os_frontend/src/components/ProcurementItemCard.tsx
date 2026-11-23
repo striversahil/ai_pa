@@ -40,6 +40,9 @@ export default function ProcurementItemCard({
   lateQuote = false,
 }: ProcurementItemCardProps) {
   const [showAdd, setShowAdd] = useState(false);
+  // Vendor seeded into a fresh quote — one vendor may hold several quotes for
+  // the same product (different size / spec / terms).
+  const [addSeed, setAddSeed] = useState<{ vendor?: string }>({});
   const [showKnown, setShowKnown] = useState(false);
   const [editingRate, setEditingRate] = useState<number | null>(null);
   const [refError, setRefError] = useState<string | null>(null);
@@ -52,8 +55,16 @@ export default function ProcurementItemCard({
   const openQuery = openLoops(item, 'query')[0];
   const alternateRequested = !!openQuery;
   const alternateFromMgmt = openQuery?.holder === 'management';
-  const locked = item.finalRate !== undefined && item.finalRate !== null;
   const media = item.media ?? [];
+  // Repeat vendors are normal (several quotes from one supplier). Number the
+  // repeats so two rows from the same vendor are never indistinguishable.
+  const vendorKey = (r: EnquiryItemRate) => String(r.vendor ?? '').trim().toLowerCase();
+  const vendorTotals = rates.reduce<Record<string, number>>((acc, r) => {
+    const k = vendorKey(r);
+    acc[k] = (acc[k] ?? 0) + 1;
+    return acc;
+  }, {});
+  const vendorSeen: Record<string, number> = {};
   const images = media.map((m) => m.url).filter(Boolean);
 
   // Per-vendor reference attachments: each quote carries its own photos /
@@ -217,7 +228,12 @@ export default function ProcurementItemCard({
                 />
               ) : (
                 <div className="flex items-center gap-2 text-[11px]">
-                  <span className="font-bold text-[var(--text-primary)] truncate flex-1 min-w-0">{r.vendor}{(r as any)?.size ? <span className="font-semibold text-[var(--text-secondary)]"> · {String((r as any).size).slice(0, 60)}</span> : ""}</span>
+                  <span className="font-bold text-[var(--text-primary)] truncate flex-1 min-w-0">{r.vendor}{(() => {
+                    const k = vendorKey(r);
+                    if ((vendorTotals[k] ?? 0) < 2) return null;
+                    vendorSeen[k] = (vendorSeen[k] ?? 0) + 1;
+                    return <span title="This vendor has more than one quote on this item" className="ml-1 text-[9px] font-extrabold text-[var(--text-tertiary)]">#{vendorSeen[k]}</span>;
+                  })()}{(r as any)?.size ? <span className="font-semibold text-[var(--text-secondary)]"> · {String((r as any).size).slice(0, 60)}</span> : ""}</span>
                   {r.specSame === false && (
                     <span className="px-1 py-0.5 rounded text-[8px] font-extrabold uppercase tracking-wide bg-amber-500/10 text-amber-500 border border-amber-500/30 flex-shrink-0">Spec differs</span>
                   )}
@@ -235,6 +251,11 @@ export default function ProcurementItemCard({
                     <button type="button" onClick={() => { setEditingRate(ri); setShowAdd(false); }}
                       title="Edit rate"
                       className="text-[var(--color-brand-indigo)] hover:opacity-80 font-bold cursor-pointer bg-transparent border-0 flex-shrink-0 px-0.5">✎</button>
+                  )}
+                  {!readOnly && (
+                    <button type="button" onClick={() => { setAddSeed({ vendor: r.vendor }); setShowAdd(true); setEditingRate(null); }}
+                      title="Add another quote from this vendor — different size, spec or terms"
+                      className="text-brand-indigo hover:opacity-80 font-extrabold cursor-pointer bg-transparent border-0 flex-shrink-0 px-0.5">+</button>
                   )}
                 </div>
               )}
@@ -322,16 +343,23 @@ export default function ProcurementItemCard({
           {showAdd ? (
             <div className="flex-1 min-w-[12rem]">
               <ItemRateForm
+                key={addSeed.vendor ?? "blank"}
+                seedVendor={addSeed.vendor}
                 submitLabel="Add rate"
-                onCancel={() => setShowAdd(false)}
-                onAdd={(rate) => { onAddRate(rate); setShowAdd(false); }}
+                onCancel={() => { setShowAdd(false); setAddSeed({}); }}
+                onAdd={(rate) => { onAddRate(rate); setShowAdd(false); setAddSeed({}); }}
               />
             </div>
           ) : (
-            <button type="button" onClick={() => { setShowAdd(true); setEditingRate(null); }}
-              className="px-2.5 py-1.5 bg-brand-indigo/10 text-brand-indigo hover:bg-brand-indigo/20 font-bold text-[11px] rounded-lg cursor-pointer border-0">
-              + Add vendor rate
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" onClick={() => { setAddSeed({}); setShowAdd(true); setEditingRate(null); }}
+                className="px-2.5 py-1.5 bg-brand-indigo/10 text-brand-indigo hover:bg-brand-indigo/20 font-bold text-[11px] rounded-lg cursor-pointer border-0">
+                + Add vendor rate
+              </button>
+              <span className="text-[10px] font-semibold text-[var(--text-tertiary)]">
+                One vendor can hold several quotes — use + on a row to add another size/spec.
+              </span>
+            </div>
           )}
         </div>
       )}

@@ -665,7 +665,11 @@ export function applySentRevision(
 export function applyRateLifecycles(updates: any, ctx: RateWriteCtx): void {
   const { storedForItems, storedItems, privileged, restricted } = ctx;
   const canStamp = privileged || restricted || ctx.canConclude === true;
-  // Sent/terminal: auto-answer open spec asks (hold released), conclude procurement
+  // Sent: auto-answer open spec asks (the estimate is out, sales can no longer
+  // change it). This does NOT conclude procurement — founder decision
+  // 2026-11-21: only procurement's own "Enquiry Concluded" stamp closes their
+  // queue, so they may keep quoting (and a late quote reopens the decision via
+  // applyLateQuoteReopen).
   if ((updates as any).rateStatus === 'sent' && Array.isArray((updates as any).items)) {
     const nowIso = new Date().toISOString();
     (updates as any).items = (updates as any).items.map((it: any) => {
@@ -673,9 +677,6 @@ export function applyRateLifecycles(updates: any, ctx: RateWriteCtx): void {
       if (!loops.some((l: any) => l && l.status === 'open' && l.kind === 'spec')) return it;
       return { ...it, loops: answerOpen(loops, 'spec', 'Resolved on sent', privileged ? 'management' : 'sales', nowIso) };
     });
-    if (!String((updates as any).procurementSubmittedAt ?? '').trim() && !String((storedForItems as any)?.procurementSubmittedAt ?? '').trim()) {
-      (updates as any).procurementSubmittedAt = nowIso;
-    }
   }
   if ((updates as any).procurementSubmittedAt !== undefined) {
     if (!canStamp) {

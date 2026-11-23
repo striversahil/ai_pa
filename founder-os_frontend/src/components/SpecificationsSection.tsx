@@ -324,6 +324,32 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                           Not available{(it as any).notAvailableReason ? ` — ${String((it as any).notAvailableReason).slice(0, 80)}` : ""}
                         </div>
                       )}
+                      {/* Header chip for the two things sales must not miss —
+                          visible without scrolling into the rate block. */}
+                      {mode === "none" && !it.rateAvailable && !(it as any).notAvailable && (() => {
+                        const selIdx = (it as any)?.selectedRateIdx;
+                        const decided = (it.rates ?? []).find((r) => (r as any).selected === true)
+                          ?? (typeof selIdx === "number" ? (it.rates ?? [])[selIdx] : undefined)
+                          ?? (it.rates ?? []).find((r) => it.selectedVendor && r.vendor === it.selectedVendor)
+                          ?? (it.rates ?? []).find((r) => (r as any).sharedWithSales === true);
+                        const diff = decided && decided.specSame === false;
+                        const note = !!(decided?.salesNote && String(decided.salesNote).trim());
+                        if (!diff && !note) return null;
+                        return (
+                          <span className="mt-1 flex flex-wrap items-center gap-1.5">
+                            {diff && (
+                              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-700 dark:text-amber-300 text-[11px] font-extrabold">
+                                ⚠ Spec differs — order their spec
+                              </span>
+                            )}
+                            {note && (
+                              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-emerald-500/15 border border-emerald-500/40 text-emerald-700 dark:text-emerald-300 text-[11px] font-extrabold">
+                                📝 Note for sales
+                              </span>
+                            )}
+                          </span>
+                        );
+                      })()}
                       {(it as any).aiPending === true && (
                         <AiProcessingLoader compact />
                       )}
@@ -492,6 +518,36 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                       )}
                       {it.qty && <div className="text-[11px] font-bold text-[var(--text-secondary)]">Qty: {it.qty}</div>}
                       {it.spec && <p className="text-xs md:text-sm text-[var(--text-secondary)] font-medium whitespace-pre-wrap leading-relaxed mt-0.5">{it.spec}</p>}
+                      {/* ORDER BRIEF (sales only) — what to actually order. Deliberately
+                          NOT gated on rateStatus: it matters most AFTER the estimate is
+                          sent, which is when the order is placed. Vendor identity stays
+                          hidden; only the differing spec text and the note go out. */}
+                      {mode === "none" && !it.rateAvailable && !(it as any).notAvailable && (() => {
+                        const selIdx = (it as any)?.selectedRateIdx;
+                        const decided = (it.rates ?? []).find((r) => (r as any).selected === true)
+                          ?? (typeof selIdx === "number" ? (it.rates ?? [])[selIdx] : undefined)
+                          ?? (it.rates ?? []).find((r) => it.selectedVendor && r.vendor === it.selectedVendor)
+                          ?? (it.rates ?? []).find((r) => (r as any).sharedWithSales === true);
+                        const note = decided?.salesNote ? String(decided.salesNote).trim() : "";
+                        const diff = decided && decided.specSame === false ? String(decided.specDiff ?? "").trim() : "";
+                        if (!note && !diff) return null;
+                        return (
+                          <div className="mt-2 space-y-1.5">
+                            {diff && (
+                              <div className="rounded-lg border-2 border-amber-500/50 bg-amber-500/10 px-2.5 py-2">
+                                <p className="text-[10px] font-extrabold uppercase tracking-wider text-amber-600 dark:text-amber-400">⚠ Order this spec — not the client's original</p>
+                                <p className="mt-0.5 text-xs font-semibold text-[var(--text-primary)] whitespace-pre-wrap leading-relaxed">{diff}</p>
+                              </div>
+                            )}
+                            {note && (
+                              <div className="rounded-lg border-2 border-emerald-500/40 bg-emerald-500/10 px-2.5 py-2">
+                                <p className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">Note from Management — for this order</p>
+                                <p className="mt-0.5 text-xs font-semibold text-[var(--text-primary)] whitespace-pre-wrap leading-relaxed">{note}</p>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                        {!it.rateAvailable && !(it as any).notAvailable && String((selectedEnquiry as any).rateStatus ?? "") !== "sent" && it.internalRates && (it.finalRate === undefined || it.finalRate === null) && (
                         <div className="mt-1 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-violet-500/10 border border-violet-500/30 text-violet-600 dark:text-violet-400 text-[11px] font-extrabold">
                           Handled internally — rate to follow
@@ -513,14 +569,15 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                         const selRate = (it.rates ?? []).find((r) => (r as any).selected === true)
                           ?? (typeof selIdx === "number" ? (it.rates ?? [])[selIdx] : undefined)
                           ?? (it.rates ?? []).find((r) => it.selectedVendor && r.vendor === it.selectedVendor);
-                        const note = (selRate as any)?.salesNote ? String((selRate as any).salesNote).trim() : "";
                         const hasRate = it.finalRate !== undefined && it.finalRate !== null;
                         const refs = selRate?.references ?? [];
                         const refImages = refs.filter((m) => m.type !== "video" && m.type !== "pdf").map((m) => m.url).filter(Boolean);
                         // Management-shared alternates (same vendor, two makes): every
                         // shared row except the exact quoted one above.
                         const alts = (it.rates ?? []).filter((r) => r !== selRate && (r as any)?.sharedWithSales === true);
-                        const hasContent = hasRate || !!note || refs.length > 0;
+                        // The note now lives in the visible ORDER BRIEF above —
+                        // keeping it here too would print it twice.
+                        const hasContent = hasRate || refs.length > 0;
                         if (!hasContent) return null;
                         return (
                           <div className="mt-1.5 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-2.5 py-2 space-y-1.5">
@@ -532,7 +589,6 @@ export default function SpecificationsSection({ selectedEnquiry, onOpenLightbox,
                                 {mode !== "none" && (it as any).finalDiscountPercent ? ` · ${(it as any).finalDiscountPercent}% off` : ""}
                               </p>
                             )}
-                            {note && <p className="text-xs text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">{note}</p>}
                             {refs.length > 0 && (
                               <div className="flex flex-wrap gap-1.5 pt-1">
                                 {refs.map((m, mi) => (

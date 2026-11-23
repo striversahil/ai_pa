@@ -581,7 +581,7 @@ export default function ProcurementQueue() {
             if (submitted && freshCount > 0) {
               return (
                 <p className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] font-bold text-amber-600 dark:text-amber-400">
-                  {freshCount} item{freshCount === 1 ? "" : "s"} still need{freshCount === 1 ? "s" : ""} quotes — decided lines stay locked, quote only the open {freshCount === 1 ? "line" : "lines"} below.
+                  {freshCount} item{freshCount === 1 ? "" : "s"} still need{freshCount === 1 ? "s" : ""} quotes — nothing is locked here: you can add or replace a vendor quote on any line until you conclude.
                 </p>
               );
             }
@@ -700,7 +700,7 @@ export default function ProcurementQueue() {
                         onLoopWithdraw={(id) => handleLoopWithdraw(selEnquiry.id, itemIdx, id)}
                         onOpenLightbox={handleOpenLightbox}
                         onAddItemMedia={(media) => handleAddItemMedia(selEnquiry.id, itemIdx, media)}
-                        readOnly={(submitted && !isFreshQuotableItem(item) && openLoops(item, 'query', 'procurement').length === 0) || (item.finalRate !== undefined && item.finalRate !== null && openLoops(item, 'query', 'procurement').length === 0) || !!(item as any).notAvailable || openLoops(item, 'not_available').length > 0}
+                        readOnly={!!(item as any).notAvailable || openLoops(item, 'not_available').length > 0}
                       />
                     ))
                   )}

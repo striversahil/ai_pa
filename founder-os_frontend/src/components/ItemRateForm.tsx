@@ -9,6 +9,10 @@ interface ItemRateFormProps {
   onAdd: (rate: EnquiryItemRate) => void;
   /** Edit mode: prefill + relabel the submit button. */
   initial?: EnquiryItemRate;
+  /** "Add another quote from this vendor": seeds the vendor field only
+   *  (rate/spec left blank) so one vendor can hold several quotes for the
+   *  same product — different sizes, specs or terms (founder 2026-11-21). */
+  seedVendor?: string;
   submitLabel?: string;
   onCancel?: () => void;
 }
@@ -17,8 +21,8 @@ interface ItemRateFormProps {
  *  SpecificationsSection inline form): vendor name/address textarea,
  *  description textarea, rate input, spec same/different selector with a
  *  conditional differing-spec box. Vendor + valid non-negative rate required. */
-export default function ItemRateForm({ onAdd, initial, submitLabel = "Add rate", onCancel }: ItemRateFormProps) {
-  const [vendor, setVendor] = useState(initial?.vendor ?? "");
+export default function ItemRateForm({ onAdd, initial, seedVendor, submitLabel = "Add rate", onCancel }: ItemRateFormProps) {
+  const [vendor, setVendor] = useState(initial?.vendor ?? seedVendor ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [salesNote, setSalesNote] = useState(initial?.salesNote ?? "");
   const [rate, setRate] = useState(initial?.rate !== undefined ? String(initial.rate) : "");

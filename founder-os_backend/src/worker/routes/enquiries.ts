@@ -178,20 +178,23 @@ function aiConfigured(c: any): boolean {
   }
 
   // Fire-and-forget DB promotion: Zoho non-draft → Enquiry `sent`.
-  // Plus auto-conclude (`procurementSubmittedAt`) so concluded rows drop out
-  // of the procurement Active queue into History without a manual click.
-  // Founder rule (2026-09-25): ANY non-draft Zoho status concludes from the
-  // procurement end, overriding open spec flags and unquoted items — the
-  // estimate already went to the client, so procurement is done. Concluding
-  // also auto-resolves open spec flags (noted in thread). Never clears an
-  // existing stamp. Never blocks the request. Open sent-revisions stay
-  // exempt (management owns the row until re-sent).
+  // Auto-conclude (`procurementSubmittedAt`) is now reserved for DEAD rows
+  // only — cancelled/declined/void/rejected (and client-accepted = order
+  // placed) — which nobody can quote any more and which close their open
+  // loops with an audit answer.
+  //
+  // FOUNDER DECISION 2026-11-21 (supersedes 2026-09-23/09-25 "Zoho not draft
+  // → procurement done"): sending the estimate does NOT end procurement's
+  // work. They conclude the enquiry themselves ("Enquiry Concluded"); until
+  // then the row stays in their Active queue and accepts further vendor
+  // quotes, including late ones after management finalized (a late quote
+  // reopens the decision). Never clears an existing stamp. Never blocks the
+  // request.
   function maybePromoteEnquiriesSent(c: any, enquiries: any[]): void {
     try {
       const ids: string[] = [];
-      // id → 'terminal' | 'sent': terminal stamps unconditionally, sent only
-      // when the stored row has nothing left to quote.
-      const conclude = new Map<string, 'terminal' | 'sent'>();
+      // id → 'terminal': only dead rows auto-conclude.
+      const conclude = new Map<string, 'terminal'>();
       for (const e of enquiries as any[]) {
         const s = String((e as any)?.zohoStatus ?? '').toLowerCase();
         if (!s || s === 'draft') continue;
@@ -208,11 +211,10 @@ function aiConfigured(c: any): boolean {
           // and DB still not sent, update. We track ids via `id`.
           if (origRateStatus !== 'sent' && e?.id) ids.push(String(e.id));
         }
-        // Auto-conclude: any non-draft status stamps (terminal or sent) —
-        // flags and unquoted items never block it. Skip rows that already
-        // carry the handoff.
-        if (e?.id && !String((e as any)?.procurementSubmittedAt ?? '').trim()) {
-          conclude.set(String(e.id), isZohoClosedStatus(s) ? 'terminal' : 'sent');
+        // Auto-conclude ONLY dead rows (cancelled/accepted). A live sent
+        // estimate leaves procurement working (founder 2026-11-21).
+        if (e?.id && isZohoClosedStatus(s) && !String((e as any)?.procurementSubmittedAt ?? '').trim()) {
+          conclude.set(String(e.id), 'terminal');
         }
       }
       if (!ids.length && !conclude.size) return;
@@ -257,10 +259,10 @@ function aiConfigured(c: any): boolean {
                 });
               }
               concluded.push(id);
-              // Terminal zoho (sent/declined/accepted) auto-answers open loops:
-              // no desk can act on a concluded row, so every open ask closes
-              // with an audit answer instead of lingering in queues.
-              if (kind === 'terminal' || kind === 'sent') {
+              // Dead requirement (declined/cancelled/accepted) auto-answers
+              // open loops: no desk can act on a concluded row, so every open
+              // ask closes with an audit answer instead of lingering.
+              if (kind === 'terminal') {
                 try {
                   let cur: any = null;
                   try { cur = await (prisma as any).enquiry.findUnique?.({ where: { id } }); } catch { cur = null; }
