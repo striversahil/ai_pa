@@ -21,7 +21,7 @@ import type { ClientSegmentKind } from "../client-segments";
 import { getRiskItems } from "../risk";
 import { DEFAULT_TARGET_START, TARGET_START_KEY, weekStartOf, buildRegionTargets, workingDaysBetweenExcluding, DAILY_REGION_TARGET, isSunday } from "../targets";
 import type { RegionTarget } from "../targets";
-import { istDayOf, UNATTRIBUTED_LEADS_KEY, listDays, UNATTRIBUTED_CLOSE_KEY, weekdayOf, periodRange, periodPrefix, RISK_LIST_CAP } from "./pure";
+import { istDayOf, UNATTRIBUTED_LEADS_KEY, listDays, UNATTRIBUTED_CLOSE_KEY, weekdayOf, resolvePeriod, periodPrefix, RISK_LIST_CAP } from "./pure";
 import type { TelecallingDailyRow, SalesHoliday } from "./types";
 
 export async function getEnquiryLeadCounts(from: string, to: string): Promise<Map<string, number>> {
@@ -290,14 +290,19 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
     });
   } catch { /* roster sync is best-effort — the board never waits on it */ }
 
+  // Filter window: a preset (?period=week) OR an arbitrary ?from=&to=.
+  // resolvePeriod normalizes (swap / no-future / 93-day cap), so the cache key
+  // is built from the RESOLVED dates - never from a raw client string.
   const period = typeof q.period === 'string' && q.period ? q.period : 'today';
+  const win = resolvePeriod(q, istDate());
+  const periodToken = win ? (win.kind === 'custom' ? `${win.from}:${win.to}` : period) : 'today';
   const agent = typeof q.agent === 'string' && q.agent ? q.agent : '';
   // Include selfAgentId so a scoped staff member never receives a cached
   // team-wide (managed) payload — each user's view is isolated in the cache.
   const selfAgentId = typeof q.selfAgentId === 'string' && q.selfAgentId ? q.selfAgentId : '';
   const wantDaily = String(q.daily ?? '') === '1' || String(q.daily ?? '').toLowerCase() === 'true';
   const wantFollowUps = String(q.follow_ups ?? '') === '1' || String(q.follow_ups ?? '').toLowerCase() === 'true';
-  const cacheKey = `telecalling:dashboard:${revs}:${period}:${requestedDay}:${agent}:${selfAgentId}:${wantDaily ? 'daily' : ''}`;
+  const cacheKey = `telecalling:dashboard:${revs}:${periodToken}:${requestedDay}:${agent}:${selfAgentId}:${wantDaily ? 'daily' : ''}`;
   // Cache flag for the perf chip: a `cached()` call hides whether it computed.
   const hit = await cacheGet<any>(cacheKey, DASH_TTL_MS);
   const base = hit ?? await cached<any>(cacheKey, DASH_TTL_MS, () => computeTelecallingDashboardData(ctx));
@@ -344,7 +349,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   const t0 = Date.now();
   const q = (ctx?.subject ?? {}) as Record<string, unknown>;
   const requestedDay = (typeof q.date === 'string' && DATE_RE.test(q.date) ? q.date : istDate());
-  const periodRangeInfo = periodRange(typeof q.period === 'string' ? q.period : 'today', istDate());
+  const periodRangeInfo = resolvePeriod(q, istDate());
   const periodMode = periodRangeInfo !== null;
 
   // Auto-sync of the Telecaller roster is a WRITE and no longer runs here:
@@ -1136,7 +1141,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       target: targetByRegion.get(def.id) ?? null,
       periodTarget: {
         label: periodRangeInfo?.label ?? 'Today',
-        prefix: periodPrefix(typeof q.period === 'string' ? q.period : 'today'),
+        prefix: periodPrefix(periodRangeInfo?.kind === 'custom' ? 'custom' : (typeof q.period === 'string' ? q.period : 'today')),
         from: periodRangeInfo?.from ?? day,
         to: periodRangeInfo?.to ?? day,
         workingDays,
@@ -1369,10 +1374,14 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       // TEMPORARY: which source the connected-call column reads (manual log vs
       // NeoDove). The Call Log tab owns the toggle.
       callsSource,
-      period: periodMode && periodRangeInfo ? q.period : 'today',
+      period: periodRangeInfo?.kind === 'custom' ? 'custom' : periodMode && periodRangeInfo ? String(q.period) : 'today',
       periodLabel: periodRangeInfo?.label ?? 'Today',
       periodFrom: periodRangeInfo?.from ?? null,
       periodTo: periodRangeInfo?.to ?? null,
+      /** 'day' | 'preset' | 'custom' - which range mode the board is showing. */
+      periodKind: periodRangeInfo?.kind ?? 'day',
+      /** True when resolvePeriod capped the span at MAX_CUSTOM_RANGE_DAYS. */
+      periodClamped: !!periodRangeInfo?.clamped,
       generatedAt: new Date().toISOString(),
       computeMs: Date.now() - t0,
       // Sales taxonomy: the region table first-class in the payload.

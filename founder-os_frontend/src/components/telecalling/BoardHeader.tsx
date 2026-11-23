@@ -6,7 +6,7 @@
 // Replaces the old gradient banner + separate table toolbar (the toolbars
 // duplicated the period switcher and split the page into two visual languages).
 
-import React from "react";
+import React, { useState } from "react";
 import {
   CalendarDays, Info, PhoneCall, RotateCcw, Sparkles, Target, Trophy, Users,
 } from "lucide-react";
@@ -22,6 +22,12 @@ export interface BoardHeaderProps {
   loading?: boolean;
   /** The chase-window switcher only drives the dashboard tab. */
   showControls?: boolean;
+  /** Applied custom from -> to window (null = a preset is active). */
+  custom?: { from: string; to: string } | null;
+  /** The server capped the requested span (MAX_CUSTOM_RANGE_DAYS). */
+  customClamped?: boolean;
+  onCustom?: (from: string, to: string) => void;
+  onClearCustom?: () => void;
 }
 
 const RULES = [
@@ -31,7 +37,22 @@ const RULES = [
   { icon: PhoneCall, value: "+0.5", label: "Connected call", note: "per NeoDove connect" },
 ];
 
-export function BoardHeader({ meta, period, periods, onPeriod, loading = false, showControls = true }: BoardHeaderProps) {
+export function BoardHeader({ meta, period, periods, onPeriod, loading = false, showControls = true, custom = null, customClamped = false, onCustom, onClearCustom }: BoardHeaderProps) {
+  // Draft range for the picker. Seeded from the APPLIED window the server echoes
+  // back (meta.periodFrom/To), so the inputs and the board can never disagree
+  // about clamping or swapping. `today` is the server's IST day, not the clock.
+  const today = String(meta?.day ?? "");
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState<{ from: string; to: string } | null>(null);
+  const seed = custom
+    ?? (meta?.periodFrom && meta?.periodTo ? { from: String(meta.periodFrom), to: String(meta.periodTo) } : null);
+  const apply = () => {
+    if (!draft?.from || !draft?.to) return;
+    const [f, t] = draft.from > draft.to ? [draft.to, draft.from] : [draft.from, draft.to];
+    onCustom?.(f, today && t > today ? today : t);
+    setOpen(false);
+  };
+
   const specialists = Number(meta?.activeCount ?? 0);
   const totalStaff = Number(meta?.telecallerCount ?? 0);
   const unattributed = Number(meta?.unattributedLeads ?? 0);
@@ -115,7 +136,7 @@ export function BoardHeader({ meta, period, periods, onPeriod, loading = false, 
             className="inline-flex flex-wrap items-center gap-1 rounded-xl border border-[var(--border-card)] bg-[var(--surface-sunken)] p-1"
           >
             {periods.map((p) => {
-              const active = period === p.key;
+              const active = !custom && period === p.key;
               return (
                 <button
                   key={p.key}
@@ -132,7 +153,73 @@ export function BoardHeader({ meta, period, periods, onPeriod, loading = false, 
                 </button>
               );
             })}
+            {onCustom && (
+              <button
+                type="button"
+                onClick={() => { setOpen((o) => !o); setDraft(seed); }}
+                aria-expanded={open}
+                aria-pressed={!!custom}
+                title="Pick a custom from -> to window"
+                className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-bold transition-all active:scale-[0.98] ${FOCUS} ${
+                  custom
+                    ? "bg-indigo-600 text-white shadow-sm shadow-indigo-600/25"
+                    : "text-[var(--text-tertiary)] hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)]"
+                }`}
+              >
+                <CalendarDays className="h-3 w-3" aria-hidden="true" />
+                Custom
+              </button>
+            )}
           </div>
+
+          {onCustom && open && (
+            <div
+              role="group"
+              aria-label="Custom range"
+              className="flex flex-wrap items-center justify-end gap-1.5 rounded-xl border border-[var(--border-card)] bg-[var(--surface-sunken)] p-1"
+            >
+              <input
+                type="date"
+                value={draft?.from ?? ""}
+                max={draft?.to || today || undefined}
+                onChange={(e) => setDraft((d) => ({ from: e.target.value, to: d?.to ?? e.target.value }))}
+                aria-label="From date"
+                className="rounded-lg border border-[var(--border-card)] bg-[var(--bg-card)] px-2 py-1 text-[11px] font-semibold text-[var(--text-primary)]"
+              />
+              <span className="text-[11px] text-[var(--text-tertiary)]" aria-hidden="true">→</span>
+              <input
+                type="date"
+                value={draft?.to ?? ""}
+                min={draft?.from || undefined}
+                max={today || undefined}
+                onChange={(e) => setDraft((d) => ({ from: d?.from ?? e.target.value, to: e.target.value }))}
+                aria-label="To date"
+                className="rounded-lg border border-[var(--border-card)] bg-[var(--bg-card)] px-2 py-1 text-[11px] font-semibold text-[var(--text-primary)]"
+              />
+              <button
+                type="button"
+                onClick={apply}
+                disabled={!draft?.from || !draft?.to}
+                className={`rounded-lg bg-indigo-600 px-2.5 py-1 text-[11px] font-bold text-white transition-colors hover:bg-indigo-700 disabled:opacity-40 ${FOCUS}`}
+              >
+                Apply
+              </button>
+              <button
+                type="button"
+                onClick={() => { setOpen(false); onClearCustom?.(); }}
+                aria-label="Clear custom range"
+                title="Back to the preset window"
+                className={`grid h-6 w-6 place-items-center rounded-full border border-[var(--border-card)] text-[var(--text-tertiary)] transition-colors hover:text-[var(--text-primary)] ${FOCUS}`}
+              >
+                ×
+              </button>
+            </div>
+          )}
+          {custom && customClamped && (
+            <p className="text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+              Range capped to 93 days — pick a shorter window for a fuller view.
+            </p>
+          )}
 
           <div className="flex items-center gap-1.5">
             <Users className="h-3.5 w-3.5 text-[var(--text-tertiary)]" aria-hidden="true" />

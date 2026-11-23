@@ -748,6 +748,8 @@ founder-os_frontend/src/
     ├── ZohoEstimates + zoho/{EstimateCard, CommentsTimeline, DailyMovementTracker,
     │   CallingPriorityChecklist, ActiveFilters, KpiCards, ZohoEstimatesHeader, types, utils}
     ├── TelecallingDashboard           # leaderboard + At-Risk + Lead Conversion/Generation
+    │                                  #   filter = presets (?period=) OR custom ?from=&to=
+    │                                  #   (pure.ts#resolvePeriod; 93-day cap; meta.periodKind)
     ├── EnquiryTracker + Enquiry{List,Detail,Modal,RowItem}  # live sales pipeline
     ├── NeodoveTelecallerDashboard, WaEngineDashboard, DppPricesDashboard
     ├── CrmDashboard                   # dispatch floor (schedule → dispatch → reschedule; D1 rows)
@@ -1240,6 +1242,7 @@ Never sideways between route modules or between `views/automations` and `views/s
 |---|---|
 | `rewrite-ratchet` + `rewrite-baseline.json` | 18 duplication/boundary metrics from `scripts/dup-audit.mjs` never grow (raw FE fetch, local INR/date formatters, ad-hoc modals, auth/body boilerplate, files > 400 lines, registry leaks) |
 | `queue-mirror`, `crm-lifecycle`, `enquiry-rates-union` | backend↔frontend predicate/lifecycle mirrors stay identical |
+| `sales-range` | the Sales board's custom `from→to` window: one resolver (`resolvePeriod`), cache key from the resolved dates, 93-day cap |
 | `format-canonical` | one home for money/date formatting |
 | `workspace-catalog`, `workspace-scoping` | the §16 catalog + viewer scoping |
 | `d1-parity`, `gateway-js-parity`, `gateway-pool` | D1 shim registries; TS gateway ↔ JS runner port |

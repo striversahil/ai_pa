@@ -84,8 +84,62 @@ export function periodPrefix(period: string): string {
     case 'lastmonth': return 'last mo';
     case 'year': return 'yr';
     case 'lastyear': return 'last yr';
+    case 'custom': return 'range';
     default: return 'today';
   }
+}
+
+// -- Filter windows: presets AND an arbitrary from->to range ---------------
+// The leaderboard is already a pure from->to window; presets are only a
+// name->dates resolver. A custom range is validated/clamped HERE so the board
+// cache key and every downstream read see ONE normalized window (never a raw
+// client string). Precedence: from/to > period. null = day mode (today/?date=).
+
+/** Longest custom range honoured - matches listDays() below, which the
+ *  Controller's daily export caps at 93 days. */
+export const MAX_CUSTOM_RANGE_DAYS = 93;
+
+export interface PeriodWindow {
+  from: string;
+  to: string;
+  label: string;
+  kind: 'preset' | 'custom';
+  /** True when the requested span was longer than MAX_CUSTOM_RANGE_DAYS. */
+  clamped?: boolean;
+}
+
+const ISO_DAY_RE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
+
+function dayMsOf(day: string): number {
+  return Date.UTC(Number(day.slice(0, 4)), Number(day.slice(5, 7)) - 1, Number(day.slice(8, 10)));
+}
+
+/** Resolve ?from/?to (custom) or ?period (preset) into one window.
+ *  A custom range is swapped when reversed, never reaches into the future
+ *  (that would inflate the working-day target) and is capped at
+ *  MAX_CUSTOM_RANGE_DAYS. Anything else falls through to the presets. */
+export function resolvePeriod(
+  q: { period?: unknown; from?: unknown; to?: unknown },
+  today: string,
+): PeriodWindow | null {
+  const f = typeof q.from === 'string' && ISO_DAY_RE.test(q.from) ? q.from : null;
+  const t = typeof q.to === 'string' && ISO_DAY_RE.test(q.to) ? q.to : null;
+  if (f && t) {
+    let from = f;
+    let to = t;
+    if (from > to) [from, to] = [to, from];
+    if (to > today) to = today;
+    if (from > to) from = to;
+    let clamped = false;
+    const span = Math.round((dayMsOf(to) - dayMsOf(from)) / 86400000) + 1;
+    if (span > MAX_CUSTOM_RANGE_DAYS) {
+      from = shiftDays(to, -(MAX_CUSTOM_RANGE_DAYS - 1));
+      clamped = true;
+    }
+    return { from, to, label: 'Custom range', kind: 'custom', clamped };
+  }
+  const preset = periodRange(typeof q.period === 'string' ? q.period : 'today', today);
+  return preset ? { ...preset, kind: 'preset' } : null;
 }
 
 /** Working days (Mon–Sat, 6-day work week) inclusive between two IST dates. */
