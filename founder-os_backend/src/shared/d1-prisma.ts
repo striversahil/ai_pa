@@ -155,7 +155,7 @@ const DATE_FIELDS: Record<string, string[]> = {
   HumanResourcesSalaryTemplate: ['createdAt', 'updatedAt'],
   HumanResourcesSalaryTemplateComponent: ['createdAt', 'updatedAt'],
   HumanResourcesAttendance: ['createdAt', 'updatedAt'],
-  HumanResourcesLeave: ['createdAt', 'updatedAt'],
+  HumanResourcesLeave: ['createdAt', 'updatedAt', 'decidedAt'],
   HumanResourcesHoliday: ['createdAt', 'updatedAt'],
   SalesHoliday: ['createdAt'],
   HumanResourcesSalarySlip: ['finalizedAt', 'paidAt', 'createdAt', 'updatedAt'],

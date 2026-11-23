@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import Modal from "../Modal";
-import { LEAVE_TYPES, LEAVE_TYPE_LABEL, type HrEmployee, type HrLeave, type LeaveType } from "@/hr/types";
+import { LEAVE_DURATIONS, LEAVE_DURATION_LABEL, LEAVE_TYPES, LEAVE_TYPE_LABEL, type HrEmployee, type HrLeave, type LeaveDuration, type LeaveType } from "@/hr/types";
 import { jsonRequest, readError } from "@/hr/api";
 import { todayIST } from "@/hr/format";
 
@@ -18,23 +18,35 @@ export default function LeaveFormModal({ leave, employees, onClose, onSaved }: {
   const [form, setForm] = useState({
     memberId: leave?.memberId ?? employees.find((e) => e.active)?.id ?? "",
     leaveType: (leave?.leaveType ?? "casual") as LeaveType,
+    durationType: (leave?.durationType ?? "full_day") as LeaveDuration,
     paid: leave?.paid ?? true,
     startDate: leave?.startDate ?? todayIST(),
     endDate: leave?.endDate ?? todayIST(),
+    fromTime: leave?.fromTime ?? "",
+    toTime: leave?.toTime ?? "",
     reason: leave?.reason ?? "",
   });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  const ranged = form.durationType === "full_day";
+  const timed = form.durationType !== "full_day";
 
   const set = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) => setForm((prev) => ({ ...prev, [key]: value }));
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.memberId) { setErr("Select an employee"); return; }
-    if (form.endDate < form.startDate) { setErr("End date cannot be before start date"); return; }
+    if (ranged && form.endDate < form.startDate) { setErr("End date cannot be before start date"); return; }
     setBusy(true); setErr(null);
     try {
-      const body = { ...form, reason: form.reason.trim() || null };
+      const body = {
+        ...form,
+        endDate: ranged ? form.endDate : form.startDate,
+        fromTime: timed ? (form.fromTime || null) : null,
+        toTime: timed ? (form.toTime || null) : null,
+        reason: form.reason.trim() || null,
+      };
       const res = leave
         ? await jsonRequest(`/api/human-resources/leaves/${leave.id}`, "PATCH", body)
         : await jsonRequest("/api/human-resources/leaves", "POST", body);
@@ -61,12 +73,24 @@ export default function LeaveFormModal({ leave, employees, onClose, onSaved }: {
               {LEAVE_TYPES.map((t) => <option key={t} value={t}>{LEAVE_TYPE_LABEL[t]}</option>)}
             </select>
           </div>
-          <label className="flex items-end gap-2 pb-2 text-sm font-semibold"><input type="checkbox" checked={form.paid} onChange={(e) => set("paid", e.target.checked)} /> Paid leave</label>
+          <div>
+            <label className={label}>Duration</label>
+            <select value={form.durationType} onChange={(e) => set("durationType", e.target.value as LeaveDuration)} className={field}>
+              {LEAVE_DURATIONS.map((d) => <option key={d} value={d}>{LEAVE_DURATION_LABEL[d]}</option>)}
+            </select>
+          </div>
         </div>
+        <label className="flex items-center gap-2 text-sm font-semibold"><input type="checkbox" checked={form.paid} onChange={(e) => set("paid", e.target.checked)} /> Paid leave</label>
         <div className="grid gap-2 sm:grid-cols-2">
-          <div><label className={label}>Start date</label><input type="date" value={form.startDate} onChange={(e) => { set("startDate", e.target.value); if (form.endDate < e.target.value) set("endDate", e.target.value); }} className={field} /></div>
-          <div><label className={label}>End date</label><input type="date" value={form.endDate} onChange={(e) => set("endDate", e.target.value)} className={field} /></div>
+          <div><label className={label}>{ranged ? "Start date" : "Date"}</label><input type="date" value={form.startDate} onChange={(e) => { set("startDate", e.target.value); if (form.endDate < e.target.value) set("endDate", e.target.value); }} className={field} /></div>
+          {ranged && <div><label className={label}>End date</label><input type="date" value={form.endDate} min={form.startDate} onChange={(e) => set("endDate", e.target.value)} className={field} /></div>}
         </div>
+        {timed && (
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div><label className={label}>From time (optional)</label><input type="time" value={form.fromTime} onChange={(e) => set("fromTime", e.target.value)} className={field} /></div>
+            <div><label className={label}>To time (optional)</label><input type="time" value={form.toTime} onChange={(e) => set("toTime", e.target.value)} className={field} /></div>
+          </div>
+        )}
         <div><label className={label}>Reason</label><textarea value={form.reason} onChange={(e) => set("reason", e.target.value)} rows={2} className={field} /></div>
         {err && <div className="rounded-lg border border-rose-500/30 bg-rose-500/5 px-3 py-2 text-xs text-rose-500">{err}</div>}
         <div className="flex justify-end gap-2 pt-1">

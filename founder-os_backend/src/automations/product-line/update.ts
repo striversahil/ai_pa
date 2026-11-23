@@ -1,71 +1,39 @@
 import { prisma } from '../../shared/prisma';
-import { invalidateProductLineCache, invalidateProductDetailCache, invalidateProductIndex, invalidateProductRatesCache, invalidateVendorIndex } from './service';
+import {
+  fail,
+  mediaUrl,
+  parseAliasesInput,
+  slugAttrKey,
+  str,
+  touched,
+  touchedGuide,
+} from './write-common';
+import {
+  invalidateProductDetailCache,
+  invalidateProductRatesCache,
+} from './service';
+import { dropRateSpecs, applySpecsToData, syncRateSpecs, refreshMissingSpecs } from './rate-specs';
+import {
+  assertGuideDeletable,
+  guideTypedData,
+  normalizeDefaultValue,
+  productKeyFor,
+} from './catalog-write';
 
-function fail(msg: string): never {
-  throw new Error(msg);
-}
+export { slugAttrKey };
 
-function mediaUrl(v: unknown): string | null {
-  const s = String(v ?? '').trim().slice(0, 2000);
-  if (!s) return null;
-  if (!/^https?:\/\/.+/i.test(s) && !/^data:image\//i.test(s) && !/^\/api\/chat\/files\//.test(s)) {
-    fail('media must be an uploaded photo or an https:// URL');
+/** Enum members out of a stored/offered `enumJson` column. */
+function enumList(json: string | null | undefined): string[] {
+  if (!json) return [];
+  try {
+    const v = JSON.parse(json);
+    return Array.isArray(v) ? v.map(String) : [];
+  } catch {
+    return String(json).split(',').map((x) => x.trim()).filter(Boolean);
   }
-  return s;
 }
 
-function str(v: unknown, max = 500): string {
-  return String(v ?? '').trim().slice(0, max);
-}
-
-/** Stable attrKey slug — generated once at create, never renamed after. */
-export function slugAttrKey(question: string, taken: Set<string>): string {
-  const words = String(question || '').toLowerCase().match(/[a-z0-9]+/g) ?? [];
-  const base = words.slice(0, 6).join('_').slice(0, 48) || 'attr';
-  let k = base;
-  let i = 1;
-  while (taken.has(k)) {
-    i += 1;
-    k = `${base}_${i}`;
-  }
-  taken.add(k);
-  return k;
-}
-
-function parseAliasesInput(v: unknown): string | null {
-  if (v === undefined) return null;
-  const list = Array.isArray(v)
-    ? v.map((s) => String(s).trim()).filter(Boolean)
-    : String(v ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-  return JSON.stringify(list.slice(0, 50));
-}
-
-async function touched(productId?: string): Promise<void> {
-  // One wave, not five round trips: every del is independent, so they fire
-  // together. This runs per write — on a 20-row Confirm it used to be
-  // 100 sequential KV deletes.
-  await Promise.all([
-    invalidateProductLineCache(),
-    // Scale-path caches: index rebuilds on next read (one slim query);
-    // rates cache is per-product. Unconditional — correctness over micro-opt.
-    invalidateProductIndex().catch(() => {}),
-    invalidateVendorIndex().catch(() => {}),
-    ...(productId
-      ? [invalidateProductDetailCache(productId), invalidateProductRatesCache(productId).catch(() => {})]
-      : []),
-  ]);
-}
-
-async function touchedGuide(guideId?: string, productId?: string): Promise<void> {
-  let pid = productId;
-  if (!pid && guideId) {
-    try {
-      const g = await (prisma as any).kypGuide.findUnique({ where: { id: String(guideId) } }).catch(() => null);
-      if (g) pid = String((g as any).productId);
-    } catch { /* best-effort */ }
-  }
-  await touched(pid);
-}
+const hasDefault = (body: any) => body?.default !== undefined || body?.defaultValue !== undefined;
 
 // ── Products ────────────────────────────────────────────────────────────────
 export async function createProduct(body: any): Promise<any> {
@@ -78,6 +46,7 @@ export async function createProduct(body: any): Promise<any> {
   const createData: Record<string, unknown> = {
     category,
     name,
+    key: productKeyFor(body, name),
     aliases: parseAliasesInput(body?.aliases) ?? '[]',
     active: body?.active === false ? false : true,
   };
@@ -102,6 +71,7 @@ export async function updateProduct(id: string, body: any): Promise<any> {
   }
   const aliases = parseAliasesInput(body?.aliases);
   if (aliases !== null) data.aliases = aliases;
+  if (body?.key !== undefined) data.key = productKeyFor(body, String(body?.name ?? ''));
   if (body?.active !== undefined) data.active = body.active !== false;
   if (Object.keys(data).length === 0) fail('nothing to update');
   const row = await (prisma as any).productItem.update({ where: { id: String(id) }, data });
@@ -130,6 +100,10 @@ export async function createGuide(body: any): Promise<any> {
   const existing = await (prisma as any).kypGuide.findMany({ where: { productId }, select: { attrKey: true, sortOrder: true } }).catch(() => []);
   const taken = new Set(((existing as any[]) ?? []).map((g) => String(g.attrKey)));
   const maxOrder = Math.max(-1, ...(((existing as any[]) ?? []).map((g) => Number(g.sortOrder ?? 0))));
+  const typed = guideTypedData(body, true);
+  const defaultValue = hasDefault(body)
+    ? normalizeDefaultValue(body?.default ?? body?.defaultValue, { type: typed.type, enum: enumList(typed.enumJson) })
+    : undefined;
   const row = await (prisma as any).kypGuide.create({
     data: {
       productId,
@@ -141,10 +115,15 @@ export async function createGuide(body: any): Promise<any> {
       condition: body?.condition !== undefined && body.condition !== null
         ? (typeof body.condition === 'string' ? body.condition : JSON.stringify(body.condition)).slice(0, 2000)
         : null,
+      ...typed,
+      ...(defaultValue !== undefined ? { defaultValue } : {}),
       active: body?.active === false ? false : true,
     },
   });
   await touchedGuide(undefined, productId);
+  // A new required spec turns existing quotes incomplete — keep the stored
+  // `missingSpecs` (what the sheet's incomplete filter reads) honest.
+  if (row?.isRequired) await refreshMissingSpecs(productId).catch(() => {});
   return row;
 }
 
@@ -165,9 +144,22 @@ export async function updateGuide(id: string, body: any): Promise<any> {
       : (typeof body.condition === 'string' ? body.condition : JSON.stringify(body.condition)).slice(0, 2000);
   }
   if (body?.active !== undefined) data.active = body.active !== false;
+  const typed = guideTypedData(body, false);
+  Object.assign(data, typed);
+  if (hasDefault(body)) {
+    // The enum may come from this request or from the stored row; validating
+    // against the merge keeps a selector-only edit from inventing a value.
+    const cur = await (prisma as any).kypGuide.findUnique({ where: { id: String(id) } }).catch(() => null);
+    const type = typed.type ?? String((cur as any)?.type ?? 'string');
+    const enums = typed.enumJson !== undefined ? enumList(typed.enumJson) : enumList((cur as any)?.enumJson);
+    data.defaultValue = normalizeDefaultValue(body?.default ?? body?.defaultValue, { type, enum: enums });
+  }
   if (Object.keys(data).length === 0) fail('nothing to update');
   const row = await (prisma as any).kypGuide.update({ where: { id: String(id) }, data });
   await touchedGuide(String(id));
+  if (body?.isRequired !== undefined) {
+    await refreshMissingSpecs(String((row as any)?.productId ?? '')).catch(() => {});
+  }
   return row;
 }
 
@@ -177,6 +169,9 @@ export async function deleteGuide(id: string): Promise<{ ok: true }> {
   // nothing and the product's detail/rates caches stay stale (deleted rows
   // keep showing in an open product view: "delete is not working").
   const cur = await (prisma as any).kypGuide.findUnique({ where: { id: gid } }).catch(() => null);
+  // Deleting a spec that live quotes still answer is blocked, with the count
+  // (founder decision 2026-11-23) — the UI surfaces this message verbatim.
+  await assertGuideDeletable(cur);
   await (prisma as any).kypGuide.delete({ where: { id: gid } });
   await touchedGuide(undefined, (cur as any)?.productId);
   return { ok: true };
@@ -292,6 +287,10 @@ function rateData(body: any, isCreate: boolean): { data: Record<string, unknown>
     const dd = numOrNull(body.deliveryDays);
     data.deliveryDays = dd === null ? null : Math.max(0, Math.floor(dd));
   }
+  if (body?.deliveryMaxDays !== undefined) {
+    const dm = numOrNull(body.deliveryMaxDays);
+    data.deliveryMaxDays = dm === null ? null : Math.max(0, Math.floor(dm));
+  }
   // Quote media: vendor's item photo + manufacturing video (per quote, not product).
   if (body?.imageUrl !== undefined) data.imageUrl = mediaUrl(body.imageUrl);
   if (body?.videoUrl !== undefined) data.videoUrl = mediaUrl(body.videoUrl);
@@ -305,6 +304,9 @@ function rateData(body: any, isCreate: boolean): { data: Record<string, unknown>
   }
   if (body?.enquiryRef !== undefined) data.enquiryRef = str(body.enquiryRef, 300) || null;
   if (body?.notes !== undefined) data.notes = str(body.notes, 2000) || null;
+  // Bulk-import trace: the RateBatch this quote arrived in (mig 0160).
+  if (body?.batchId !== undefined) data.batchId = str(body.batchId, 120) || null;
+  if (body?.sourceRef !== undefined) data.sourceRef = str(body.sourceRef, 300) || null;
   if (body?.missingSpecs !== undefined) {
     const ms = Array.isArray(body.missingSpecs) ? body.missingSpecs.map(String).filter(Boolean).slice(0, 50) : [];
     data.missingSpecs = JSON.stringify(ms);
@@ -326,7 +328,11 @@ export async function createRate(body: any): Promise<any> {
     const product = await (prisma as any).productItem.findUnique({ where: { id: productId } }).catch(() => null);
     if (!product) fail('product not found');
   }
+  // Typecheck the spec document against the product's schema branch (KYP v2)
+  // and refresh missingSpecs before the row lands.
+  const prepared = await applySpecsToData(data, String(productId ?? ''), body);
   const row = await (prisma as any).vendorRate.create({ data });
+  await syncRateSpecs(String((row as any)?.id ?? ''), prepared);
   await touched();
   // Per-product rates cache MUST bust here: dup detection (commit_all) and
   // sales matching read getRatesForProduct, which would otherwise serve the
@@ -349,7 +355,16 @@ export async function updateRate(id: string, body: any): Promise<any> {
     else data.baseRate = null;
   }
   if (Object.keys(data).length === 0) fail('nothing to update');
+  const cur = await (prisma as any).vendorRate.findUnique({ where: { id: rid } }).catch(() => null);
+  if (!cur) fail('rate not found');
+  const prepared = await applySpecsToData(
+    data,
+    String((data as any).productId ?? (cur as any)?.productId ?? ''),
+    body,
+    body?.attrValues !== undefined,
+  );
   const row = await (prisma as any).vendorRate.update({ where: { id: rid }, data });
+  await syncRateSpecs(rid, prepared);
   await touched();
   try {
     const pid = (row as any)?.productId ?? (body as any)?.productId;
@@ -368,6 +383,7 @@ export async function deleteRate(id: string): Promise<{ ok: true }> {
   const cur = await (prisma as any).vendorRate.findUnique({ where: { id: rid } }).catch(() => null);
   if (!cur) fail('rate not found');
   await (prisma as any).vendorRate.delete({ where: { id: rid } });
+  await dropRateSpecs(rid);
   await touched(String((cur as any)?.productId ?? ''));
   return { ok: true };
 }
@@ -382,5 +398,21 @@ export async function setRateActive(id: string, active: boolean): Promise<{ ok: 
       await invalidateProductRatesCache(String(pid));
     }
   } catch { /* best-effort */ }
+  return { ok: true };
+}
+
+// ── Catalogue order ─────────────────────────────────────────────────────────
+/** Reorder a product's spec rows (the dashboard's up/down + drag handles). */
+export async function reorderGuide(productId: string, ids: string[]): Promise<{ ok: true }> {
+  const pid = str(productId);
+  if (!pid) fail('productId required');
+  const list = (Array.isArray(ids) ? ids : []).map(String).filter(Boolean).slice(0, 200);
+  if (!list.length) fail('spec order required');
+  let i = 0;
+  for (const id of list) {
+    await (prisma as any).kypGuide.update({ where: { id }, data: { sortOrder: i } });
+    i += 1;
+  }
+  await touchedGuide(undefined, pid);
   return { ok: true };
 }

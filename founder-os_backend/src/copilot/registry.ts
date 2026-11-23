@@ -1,19 +1,19 @@
 // copilot/registry.ts — department copilot registry.
 //
-// One entry per department. To add a department copilot:
-//   1. implement CopilotDef in the department module (see
-//      automations/product-line/copilot.ts for the reference), and
+// Founder decision 2026-11-22: the Product Line AI agents (knowledge Q&A +
+// "Add vendor rates" intake) were removed with the Product Line data wipe, so
+// the registry is currently EMPTY. The engine (runTurn/streamTurn), the
+// /api/copilot/:id/* routes and the sales copilot (its own store-bound routes
+// in worker/routes/enquiries.ts) stay in place.
+//
+// To add a department copilot:
+//   1. implement CopilotDef in the department module (see copilot/types.ts),
 //   2. add it to COPILOTS below.
 // No engine or route changes needed — /api/copilot/<id>/chat|stream|execute
 // dispatch through this registry.
 import type { CopilotDef } from './types';
-import { productLineCopilotDef } from '../automations/product-line/copilot';
-import { productLineIntakeDef } from '../automations/product-line/intake';
 
-const COPILOTS: Record<string, CopilotDef<any>> = {
-  [productLineCopilotDef.id]: productLineCopilotDef,
-  [productLineIntakeDef.id]: productLineIntakeDef,
-};
+const COPILOTS: Record<string, CopilotDef<any>> = {};
 
 export function getCopilot(id: string): CopilotDef<any> | null {
   return COPILOTS[String(id ?? '').toLowerCase()] ?? null;

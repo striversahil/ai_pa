@@ -19,6 +19,9 @@ Files:
   completion-date window).
 - `task-json.ts` — shared HrTask / HrTaskLog JSON mappers (dashboard + board).
 - `inventory.ts` — daily-item catalog, stock movement ledger, derived stock levels and optional stock-in expenses.
+- `leaves.ts` — leave register: HR-recording, row JSON, overlap/working-day validation shared with employee applications.
+- `leave-requests.ts` — employee leave applications: apply, withdraw, HR approve/reject, HR queue + dashboard pending badge.
+- `leave-requests-parse.ts` — pure application rules (duration, date window, mandatory purpose, rejection note, day maths).
 - `hiring-positions.ts` — hiring kit: positions with any number of JD / SOP documents (D1 metadata).
 - `hiring-positions-parse.ts` — pure position-name/PDF validation shared with the route layer.
 - `employee-codes.ts` — `BUI-NNN` employee-code generator + unique-conflict retries.
@@ -110,3 +113,22 @@ Files:
 - `DELETE /api/delegation/tasks/:id` (own self tasks; HR/MIS any task)
 - `GET /api/delegation/tasks/:id/logs` (journal, self-scoped)
 - `PUT /api/delegation/members/:id/login-email` (HR/MIS — links a roster member to a login)
+
+## Leave applications (migration 0153)
+
+Every roster member may apply for leave from the sidebar **Leave** page
+(`/leave`, any approved login, self-scoped server-side): `full_day`, `half_day`
+(0.5 day) or `short` (a recorded time window — no pay effect), for any date,
+with a **mandatory purpose**. Applications are rows on the same
+`HumanResourcesLeave` table as HR records, so attendance + payroll keep one
+source of truth. `status` starts `pending`; HR decides in HR → Leaves &
+holidays and **a rejection always carries a note** the employee reads. Nobody
+decides their own request (root excepted). **Only `approved` rows count** in
+attendance auto-marking and payroll; HR's "Record leave" path still creates the
+row already approved. The HR tab badge is the pending count.
+
+- `GET /api/human-resources/leave-requests?status=pending|approved|rejected|all` (HR/MIS, month-free)
+- `POST /api/human-resources/leave-requests/:id/decide` `{action:approve|reject, note}` (rejection note required)
+- `GET /api/leave/mine` (any approved login, self-scoped — `linked=false` when the login has no roster row)
+- `POST /api/leave/requests` (employee applies for their own roster member)
+- `POST /api/leave/requests/:id/cancel` (withdraw own pending request)

@@ -57,10 +57,13 @@ function computeStats(
   const eligible = workingDatesInRange(range.start, range.end, holidayDates);
   stats.eligibleDays = eligible.length;
   const attendanceBy = new Map(attendance.map((r) => [String(r.date), r]));
-  const leaveDates = new Set<string>();
+  // Approved leave per date (the caller only passes approved rows). Duration
+  // decides the weight: full day = 1, half day = 0.5, short leave = present
+  // (the employee was at work, just away for a couple of hours).
+  const leaveByDate = new Map<string, any>();
   for (const leave of leaves) {
     for (let d = String(leave.startDate); d <= String(leave.endDate); d = nextDay(d)) {
-      leaveDates.add(d);
+      if (!leaveByDate.has(d)) leaveByDate.set(d, leave);
     }
   }
   for (const date of eligible) {
@@ -73,9 +76,12 @@ function computeStats(
       else add(stats, 'present');
       continue;
     }
-    if (leaveDates.has(date)) {
-      const leave = leaves.find((l) => String(l.startDate) <= date && String(l.endDate) >= date);
-      add(stats, leave?.paid === false ? 'unpaidLeave' : 'paidLeave');
+    const leave = leaveByDate.get(date);
+    if (leave) {
+      const duration = String(leave.durationType ?? 'full_day');
+      if (duration === 'short') add(stats, 'present');
+      else if (duration === 'half_day') add(stats, 'half');
+      else add(stats, leave?.paid === false ? 'unpaidLeave' : 'paidLeave');
       continue;
     }
     add(stats, 'unmarked');
@@ -252,7 +258,7 @@ export async function generatePayroll(monthInput: unknown, actor: string | null)
     prisma.humanResourcesAttendance.findMany({
       where: { date: { gte: start, lte: end }, deleted: false },
     }) as Promise<any[]>,
-    prisma.humanResourcesLeave.findMany({ where: { deleted: false } }) as Promise<any[]>,
+    prisma.humanResourcesLeave.findMany({ where: { deleted: false, status: 'approved' } }) as Promise<any[]>,
     prisma.humanResourcesHoliday.findMany({ where: { date: { gte: start, lte: end } } }) as Promise<any[]>,
     prisma.humanResourcesSalarySlip.findMany({ where: { month } }) as Promise<any[]>,
   ]);

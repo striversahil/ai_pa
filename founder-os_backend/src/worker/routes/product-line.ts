@@ -1,43 +1,24 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// routes/product-line.ts — Product Line master CRUD (root-gated writes).
+// routes/product-line.ts — Product Line catalogue + vendor-quote CRUD.
+// Writes need the `product-line` scope (or root) — founder decision 2026-11-23:
+// whoever maintains vendor rates also owns the catalogue they typecheck against.
 // Reads ride the automation data endpoint (/api/automations/product-line/data).
 // Mirror: founder-os_backend/src/routes/product-line.ts (Express alt runtime).
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { adminGuard, adminScopeError, notifyLive, LiveEvent, type Bindings } from '../context';
-import { AuthError, ScopeKeys } from '../../modules/auth/types';
-import { requireViewer } from '../viewer';
+import { notifyLive, LiveEvent, type Bindings } from '../context';
 import { readBody } from '../http';
-
-/** Quote writes: whoever holds the `product-line` scope (granted from the
- *  Admin panel). Products/guide/vendors stay root-only. */
-async function requireQuoteScope(c: any): Promise<void> {
-  const me = await requireViewer(c);
-  if (me.isAdmin) return;
-  const scopes = (me as any).scopes ?? [];
-  if (!scopes.includes(ScopeKeys.ProductLine)) {
-    throw new AuthError('FORBIDDEN', "Requires 'product-line' permission", 403);
-  }
-}
-
-function writeError(c: any, e: any) {
-  const msg = String(e?.message ?? 'write failed');
-  if (/already exists/i.test(msg)) return c.json({ error: msg.slice(0, 300) }, 409);
-  // Map raw D1 errors to field messages — the UI must never see internals.
-  const nn = msg.match(/NOT NULL constraint failed:\s*[\w"]+\.([\w"]+)/i);
-  if (nn) return c.json({ error: `${nn[1]} is required` }, 400);
-  const uq = msg.match(/UNIQUE constraint failed:\s*[\w"]+\.([\w"]+)/i);
-  if (uq) return c.json({ error: `this ${uq[1]} already exists` }, 409);
-  if (/no such table|no such column/i.test(msg)) return c.json({ error: 'database not ready — try again in a minute' }, 503);
-  return c.json({ error: 'could not save — check the fields and retry' }, 400);
-}
+import { requireQuoteScope, writeError, adminScopeError } from './product-line-guards';
+import { registerProductLineBatchRoutes } from './product-line-batches';
 
 export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): void {
+  registerProductLineBatchRoutes(app);
+
   // ── Product photos (stored in KV file storage, served via /api/chat/files) ──
   const PHOTO_PREFIX = 'product-photo/';
   const PHOTO_MAX_BYTES = 5 * 1024 * 1024;
   app.get('/api/product-line/photos', async (c) => {
-    const denied = await adminGuard(c); if (denied) return denied;
+    try { await requireQuoteScope(c); } catch (e) { return adminScopeError(c, e); }
     if (!c.env.CHAT_FILES) return c.json({ error: 'File storage is not configured' }, 501);
     try {
       const list = await (c.env.CHAT_FILES as any).list({ prefix: PHOTO_PREFIX, limit: 100 });
@@ -51,7 +32,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
     }
   });
   app.post('/api/product-line/photos', async (c) => {
-    const denied = await adminGuard(c); if (denied) return denied;
+    try { await requireQuoteScope(c); } catch (e) { return adminScopeError(c, e); }
     if (!c.env.CHAT_FILES) return c.json({ error: 'File storage is not configured' }, 501);
     let form: FormData;
     try {
@@ -70,14 +51,38 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
     });
     return c.json({ key, url: `/api/chat/files/${key}`, name: file.name }, 201);
   });
-  // ── Rates list: one page + COUNT total, whole-table search (Rates tab) ──
-  // ?page=&limit=(≤100)&q=&productId=&vendorId=&status=on|off
+  // ── Rates sheet: one page + COUNT total, every filter applied by D1 ──
+  // ?page=&limit=(<=500)&q=&productId=&vendorId=&category=&status=on|off
+  // &priceMin&priceMax&netMin&netMax&leadMin&leadMax&from&to&missing=1&sort=
+  // &batchId=rb_…&spec=brand:PIX&spec=width_mm:>=1000&spec=material:in:ss,gi
   app.get('/api/product-line/rates', async (c) => {
     try {
-      const { listRatesPaged } = await import('../../automations/product-line/service');
+      const { listRatesPaged, RATES_PAGE_MAX } = await import('../../automations/product-line/service');
       const { parsePageQuery } = await import('../../shared/paging');
       const q = (k: string) => c.req.query(k);
-      return c.json(await listRatesPaged(parsePageQuery(q), { productId: q('productId'), vendorId: q('vendorId'), status: q('status') }));
+      const spec = (c.req.queries('spec') ?? []) as string[];
+      const page = parsePageQuery(q);
+      // The sheet may load up to 500 rows a page (founder decision 2026-11-23);
+      // every other list keeps the standard 100 cap from shared/paging.
+      const limit = Math.min(RATES_PAGE_MAX, Math.max(1, Math.floor(Number(q('limit')) || page.limit)));
+      return c.json(await listRatesPaged({ ...page, limit, offset: (page.page - 1) * limit }, {
+        productId: q('productId'),
+        vendorId: q('vendorId'),
+        category: q('category'),
+        batchId: q('batchId'),
+        status: q('status'),
+        priceMin: q('priceMin'),
+        priceMax: q('priceMax'),
+        netMin: q('netMin'),
+        netMax: q('netMax'),
+        leadMin: q('leadMin'),
+        leadMax: q('leadMax'),
+        from: q('from'),
+        to: q('to'),
+        missing: q('missing'),
+        sort: q('sort'),
+        spec: spec.length ? spec : q('spec'),
+      }));
     } catch (e: any) {
       return c.json({ error: String(e?.message ?? 'could not load rates').slice(0, 300) }, 500);
     }
@@ -95,7 +100,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
   });
   // ── Products ──
   app.post('/api/product-line/products', async (c) => {
-    const denied = await adminGuard(c); if (denied) return denied;
+    try { await requireQuoteScope(c); } catch (e) { return adminScopeError(c, e); }
     try {
       const { createProduct } = await import('../../automations/product-line/update');
       const row = await createProduct(await readBody(c));
@@ -104,7 +109,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
     } catch (e: any) { return writeError(c, e); }
   });
   app.patch('/api/product-line/products/:id', async (c) => {
-    const denied = await adminGuard(c); if (denied) return denied;
+    try { await requireQuoteScope(c); } catch (e) { return adminScopeError(c, e); }
     try {
       const { updateProduct } = await import('../../automations/product-line/update');
       const row = await updateProduct(c.req.param('id') ?? '', await readBody(c));
@@ -113,7 +118,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
     } catch (e: any) { return writeError(c, e); }
   });
   app.delete('/api/product-line/products/:id', async (c) => {
-    const denied = await adminGuard(c); if (denied) return denied;
+    try { await requireQuoteScope(c); } catch (e) { return adminScopeError(c, e); }
     try {
       const { deleteProduct } = await import('../../automations/product-line/update');
       const out = await deleteProduct(c.req.param('id') ?? '');
@@ -123,7 +128,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
   });
   // ── Guide ──
   app.post('/api/product-line/guide', async (c) => {
-    const denied = await adminGuard(c); if (denied) return denied;
+    try { await requireQuoteScope(c); } catch (e) { return adminScopeError(c, e); }
     try {
       const { createGuide } = await import('../../automations/product-line/update');
       const row = await createGuide(await readBody(c));
@@ -132,7 +137,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
     } catch (e: any) { return writeError(c, e); }
   });
   app.patch('/api/product-line/guide/:id', async (c) => {
-    const denied = await adminGuard(c); if (denied) return denied;
+    try { await requireQuoteScope(c); } catch (e) { return adminScopeError(c, e); }
     try {
       const { updateGuide } = await import('../../automations/product-line/update');
       const row = await updateGuide(c.req.param('id') ?? '', await readBody(c));
@@ -141,7 +146,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
     } catch (e: any) { return writeError(c, e); }
   });
   app.delete('/api/product-line/guide/:id', async (c) => {
-    const denied = await adminGuard(c); if (denied) return denied;
+    try { await requireQuoteScope(c); } catch (e) { return adminScopeError(c, e); }
     try {
       const { deleteGuide } = await import('../../automations/product-line/update');
       const out = await deleteGuide(c.req.param('id') ?? '');
@@ -149,9 +154,114 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
       return c.json(out);
     } catch (e: any) { return writeError(c, e); }
   });
+  // ── Catalogue (live, editable) ─────────────────────────────────────────
+  // GET /api/product-line/catalog — products + typed specs as they exist in D1.
+  // The dashboard edits THIS (not the compiled seed) and the KYP JSON download
+  // is generated from it.
+  app.get('/api/product-line/catalog', async (c) => {
+    try {
+      const { getLiveCatalog } = await import('../../automations/product-line/catalog-live');
+      return c.json(await getLiveCatalog());
+    } catch (e: any) { return writeError(c, e); }
+  });
+  // GET /api/product-line/schema.json — download the KYP JSON built from D1.
+  app.get('/api/product-line/schema.json', async (c) => {
+    try { await requireQuoteScope(c); } catch (e) { return adminScopeError(c, e); }
+    try {
+      const { getLiveCatalog } = await import('../../automations/product-line/catalog-live');
+      const { buildKypSchema, schemaFileName } = await import('../../automations/product-line/schema-export');
+      const body = JSON.stringify(buildKypSchema(await getLiveCatalog()), null, 2);
+      return new Response(body, {
+        headers: {
+          'content-type': 'application/json; charset=utf-8',
+          'content-disposition': `attachment; filename="${schemaFileName()}"`,
+          'cache-control': 'no-store',
+        },
+      });
+    } catch (e: any) { return writeError(c, e); }
+  });
+  // POST /api/product-line/categories/rename — rename a category everywhere.
+  app.post('/api/product-line/categories/rename', async (c) => {
+    try { await requireQuoteScope(c); } catch (e) { return adminScopeError(c, e); }
+    try {
+      const body = await readBody(c);
+      const { renameCategory } = await import('../../automations/product-line/catalog-categories');
+      const out = await renameCategory(body?.from, body?.to);
+      notifyLive(c, { type: LiveEvent.ProductLine });
+      return c.json(out);
+    } catch (e: any) { return writeError(c, e); }
+  });
+  // POST /api/product-line/categories — declare a category ahead of products.
+  app.post('/api/product-line/categories', async (c) => {
+    try { await requireQuoteScope(c); } catch (e) { return adminScopeError(c, e); }
+    try {
+      const body = await readBody(c);
+      const { addCategory, deleteCategory } = await import('../../automations/product-line/catalog-categories');
+      const out = await addCategory(body?.name);
+      const { touched } = await import('../../automations/product-line/write-common');
+      await touched();
+      notifyLive(c, { type: LiveEvent.ProductLine });
+      return c.json(out, 201);
+    } catch (e: any) { return writeError(c, e); }
+  });
+  // DELETE /api/product-line/categories/:name — only while nothing uses it.
+  app.delete('/api/product-line/categories/:name', async (c) => {
+    try { await requireQuoteScope(c); } catch (e) { return adminScopeError(c, e); }
+    try {
+      const { deleteCategory } = await import('../../automations/product-line/catalog-categories');
+      const out = await deleteCategory(decodeURIComponent(c.req.param('name') ?? ''));
+      const { touched } = await import('../../automations/product-line/write-common');
+      await touched();
+      notifyLive(c, { type: LiveEvent.ProductLine });
+      return c.json(out);
+    } catch (e: any) { return writeError(c, e); }
+  });
+  // POST /api/product-line/guide/reorder — spec order for one product.
+  app.post('/api/product-line/guide/reorder', async (c) => {
+    try { await requireQuoteScope(c); } catch (e) { return adminScopeError(c, e); }
+    try {
+      const body = await readBody(c);
+      const { reorderGuide } = await import('../../automations/product-line/update');
+      const out = await reorderGuide(String(body?.productId ?? ''), body?.ids ?? []);
+      notifyLive(c, { type: LiveEvent.ProductLine });
+      return c.json(out);
+    } catch (e: any) { return writeError(c, e); }
+  });
+  // GET /api/product-line/prompt — the rate-intake prompt (template + rendered).
+  // POST /api/product-line/prompt — save an edit; DELETE — back to the shipped one.
+  app.get('/api/product-line/prompt', async (c) => {
+    try { await requireQuoteScope(c); } catch (e) { return adminScopeError(c, e); }
+    try {
+      const { promptForCopy } = await import('../../automations/product-line/prompt');
+      return c.json(await promptForCopy());
+    } catch (e: any) { return writeError(c, e); }
+  });
+  app.post('/api/product-line/prompt', async (c) => {
+    try { await requireQuoteScope(c); } catch (e) { return adminScopeError(c, e); }
+    try {
+      const body = await readBody(c);
+      const { saveRatePrompt } = await import('../../automations/product-line/prompt');
+      return c.json(await saveRatePrompt(body?.template));
+    } catch (e: any) { return writeError(c, e); }
+  });
+  app.delete('/api/product-line/prompt', async (c) => {
+    try { await requireQuoteScope(c); } catch (e) { return adminScopeError(c, e); }
+    try {
+      const { resetRatePrompt } = await import('../../automations/product-line/prompt');
+      return c.json(await resetRatePrompt());
+    } catch (e: any) { return writeError(c, e); }
+  });
+  // GET /api/product-line/rates/:id — one quote + its product's spec contract.
+  app.get('/api/product-line/rates/:id', async (c) => {
+    try {
+      const { getRateDetail } = await import('../../automations/product-line/service');
+      return c.json(await getRateDetail(c.req.param('id') ?? ''));
+    } catch (e: any) { return c.json({ error: String((e as any)?.message ?? 'rate not found').slice(0, 300) }, 404); }
+  });
+
   // ── Vendors ──
   app.post('/api/product-line/vendors', async (c) => {
-    const denied = await adminGuard(c); if (denied) return denied;
+    try { await requireQuoteScope(c); } catch (e) { return adminScopeError(c, e); }
     try {
       const { createVendor } = await import('../../automations/product-line/update');
       const row = await createVendor(await readBody(c));
@@ -160,7 +270,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
     } catch (e: any) { return writeError(c, e); }
   });
   app.patch('/api/product-line/vendors/:id', async (c) => {
-    const denied = await adminGuard(c); if (denied) return denied;
+    try { await requireQuoteScope(c); } catch (e) { return adminScopeError(c, e); }
     try {
       const { updateVendor } = await import('../../automations/product-line/update');
       const row = await updateVendor(c.req.param('id') ?? '', await readBody(c));
@@ -169,7 +279,7 @@ export function registerProductLineRoutes(app: Hono<{ Bindings: Bindings }>): vo
     } catch (e: any) { return writeError(c, e); }
   });
   app.delete('/api/product-line/vendors/:id', async (c) => {
-    const denied = await adminGuard(c); if (denied) return denied;
+    try { await requireQuoteScope(c); } catch (e) { return adminScopeError(c, e); }
     try {
       const { deleteVendor } = await import('../../automations/product-line/update');
       const out = await deleteVendor(c.req.param('id') ?? '');

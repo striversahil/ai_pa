@@ -41,7 +41,14 @@ function connect() {
     scheduleRetry();
     return;
   }
-  socket.onopen = () => { attempts = 0; };
+  socket.onopen = () => {
+    attempts = 0;
+    try {
+      console.info('[live] ws open');
+    } catch {
+      /* noop */
+    }
+  };
   socket.onmessage = (ev) => {
     try {
       const data = JSON.parse(String(ev.data)) as LiveEvent;
@@ -50,7 +57,15 @@ function connect() {
       }
     } catch { /* ignore malformed frames */ }
   };
-  socket.onclose = () => { socket = null; scheduleRetry(); };
+  socket.onclose = (ev) => {
+    socket = null;
+    try {
+      console.info(`[live] ws closed code=${ev.code} reason=${ev.reason || 'none'}`);
+    } catch {
+      /* noop */
+    }
+    scheduleRetry();
+  };
   socket.onerror = () => { try { socket?.close(); } catch { /* noop */ } };
 }
 

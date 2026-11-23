@@ -1,6 +1,6 @@
 import type {
-  HrDelegationBoard, HrDelegationTask, HrEmployee, HrHiringPosition, HrPositionDoc,
-  HrSalaryPreview, HrSalaryTemplate, HrTaskLog, HiringDocKind,
+  HrDelegationBoard, HrDelegationTask, HrEmployee, HrHiringPosition, HrLeave,
+  HrMyLeave, HrPositionDoc, HrSalaryPreview, HrSalaryTemplate, HrTaskLog, HiringDocKind,
 } from "./types";
 
 export async function readError(res: Response): Promise<string> {
@@ -169,4 +169,51 @@ export async function listMembers(): Promise<HrEmployee[]> {
   if (!res.ok) throw new Error(await readError(res));
   const body = await res.json();
   return (body?.members ?? []) as HrEmployee[];
+}
+
+// ── Leave applications (employee self-service + HR decision) ────────────────
+// Applying is open to every approved login; the server pins the caller's own
+// roster member. Decisions are HR-scope only and live on the same table, so
+// attendance and payroll read one source of truth.
+
+export async function fetchMyLeave(): Promise<HrMyLeave> {
+  const res = await fetch("/api/leave/mine", { cache: "no-store" });
+  if (!res.ok) throw new Error(await readError(res));
+  const body = await res.json();
+  return {
+    linked: !!body?.linked,
+    self: body?.self ?? null,
+    requests: Array.isArray(body?.requests) ? body.requests : [],
+  };
+}
+
+export async function applyLeaveRequest(payload: Record<string, unknown>): Promise<HrLeave> {
+  const res = await jsonRequest("/api/leave/requests", "POST", payload);
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
+export async function cancelLeaveRequest(id: string): Promise<void> {
+  const res = await jsonRequest(`/api/leave/requests/${id}/cancel`, "POST");
+  if (!res.ok) throw new Error(await readError(res));
+}
+
+/** HR queue — month-free, every status, newest first. */
+export async function fetchLeaveRequests(status: "all" | "pending" | "approved" | "rejected" = "all"): Promise<HrLeave[]> {
+  const res = await fetch(`/api/human-resources/leave-requests?status=${status}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(await readError(res));
+  const body = await res.json();
+  return Array.isArray(body?.requests) ? body.requests : [];
+}
+
+/** Approve or reject. A rejection note is mandatory server-side too. */
+export async function decideLeaveRequest(
+  id: string, action: "approve" | "reject", note: string,
+): Promise<HrLeave> {
+  const res = await jsonRequest(`/api/human-resources/leave-requests/${id}/decide`, "POST", {
+    action,
+    note: note.trim() || null,
+  });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
 }

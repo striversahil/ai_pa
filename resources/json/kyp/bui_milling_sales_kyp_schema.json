@@ -1,0 +1,4149 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://bui.internal/schemas/milling-spares-catalog.schema.json",
+  "title": "BUI Milling Spares Typechecked Catalog & KYP Schema",
+  "description": "Strict Draft-07 JSON Schema enforcing envelope columns and per-product JSONB specs across all 11 milling spare categories (101 products).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "category",
+    "product_key",
+    "unit_of_sale",
+    "moq",
+    "specs"
+  ],
+  "properties": {
+    "category": {
+      "type": "string",
+      "enum": [
+        "conveying_accessories",
+        "jet_filter_accessories",
+        "magnets_and_separators",
+        "miscellaneous_mill_spares",
+        "perforated_sheets",
+        "pipe_and_duct_accessories",
+        "plansifter_accessories",
+        "power_transmission_elements",
+        "purifier_accessories",
+        "roller_mill_accessories",
+        "scourer_and_destoner_wire_mesh"
+      ]
+    },
+    "product_key": {
+      "type": "string",
+      "enum": [
+        "milling_fabric",
+        "plansifter_sleeve",
+        "gun_tacker",
+        "pneumatic_tacker",
+        "felt_seal",
+        "fiber_nylon_rod",
+        "plansifter_wooden_frame",
+        "ss_wire_mesh_plansifter",
+        "staple_pin",
+        "plansifter_wire_rope",
+        "paper_gum_tape",
+        "plansifter_housing",
+        "plansifter_step_sheet",
+        "plansifter_tin_sheet",
+        "double_crimped_mesh",
+        "plansifter_channel",
+        "brass_brush",
+        "plansifter_box",
+        "oval_ball",
+        "rectangular_sieve_cleaner",
+        "triangle_sieve_cleaner",
+        "big_triangle_sieve_cleaner",
+        "blue_sieve_cleaner",
+        "cotton_sieve_cleaner",
+        "rubber_ball",
+        "star_type_cleaner",
+        "belt_fastener",
+        "bucket_bolt",
+        "nylock_nut",
+        "elevator_bucket",
+        "black_rubber_conveyor_belt",
+        "food_grade_conveyor_belt",
+        "textile_conveyor_belt",
+        "hair_belt",
+        "transmission_belt",
+        "purifier_frame",
+        "purifier_clip",
+        "purifier_guide",
+        "vibromotor",
+        "purifier_brush",
+        "purifier_sleeve",
+        "purifier_rod",
+        "purifier_cover",
+        "roller_mill_cleaning_brush",
+        "roller_mill_helical_gear",
+        "roller_mill_viewing_glass",
+        "chilled_cast_iron_rolls",
+        "roller_mill_spring",
+        "roller_mill_housing",
+        "roller_mill_key",
+        "roller_mill_pulley",
+        "chain_sprocket",
+        "roller_chain",
+        "ball_roller_bearing",
+        "bearing_block",
+        "bearing_sleeve",
+        "gearbox",
+        "electric_motor",
+        "oil_seal",
+        "v_belt",
+        "shaft_coupling",
+        "flat_belt_pulley",
+        "plain_bore_v_pulley",
+        "taper_bush_v_pulley",
+        "timing_pulley",
+        "pipe_divider",
+        "down_gravity_pipe",
+        "elbow_bend",
+        "pipe_lock_ring",
+        "spout_cover",
+        "pipe_tee",
+        "u_bolt",
+        "u_clamp",
+        "y_piece",
+        "filter_diaphragm",
+        "jet_filter_bag",
+        "jet_filter_cage",
+        "jet_filter_venturi",
+        "sequential_timer",
+        "solenoid_pulse_valve",
+        "drawer_and_self_cleaning_magnet",
+        "grill_magnet",
+        "hump_magnet",
+        "magnetic_destoner",
+        "online_pipe_magnet",
+        "plate_magnet",
+        "rotary_magnet",
+        "three_stage_magnet",
+        "destoner_wire_mesh",
+        "scourer_wire_mesh",
+        "perforated_sheet",
+        "washer_whizzer_screen",
+        "anti_vibration_mount",
+        "anti_vibration_rubber_pad",
+        "bag_closer",
+        "chakki_stone",
+        "felt_sheet",
+        "filter_cloth",
+        "hammer_mill_beaters",
+        "rota_meter",
+        "worm_hanger"
+      ]
+    },
+    "brand": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "material": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "machine_make_model": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "unit_of_sale": {
+      "type": "string",
+      "enum": [
+        "pcs",
+        "meter",
+        "sq_meter",
+        "kg",
+        "set",
+        "pair",
+        "packet",
+        "box",
+        "roll",
+        "bale",
+        "sheet"
+      ]
+    },
+    "moq": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 1
+    },
+    "has_reference_media": {
+      "type": "boolean",
+      "default": false
+    },
+    "specs": {
+      "type": "object"
+    }
+  },
+  "definitions": {
+    "milling_fabric": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "grade": {
+          "type": "string",
+          "enum": [
+            "GG",
+            "XXX",
+            "MF",
+            "N"
+          ]
+        },
+        "grade_number": {
+          "type": "integer",
+          "minimum": 3
+        },
+        "width_cm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "aperture_um": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "fabric_family": {
+          "type": "string",
+          "enum": [
+            "standard",
+            "milling_forte",
+            "heavy_duty_xxx"
+          ]
+        },
+        "application_stock": {
+          "type": "string",
+          "enum": [
+            "maida",
+            "suji",
+            "chokar",
+            "other"
+          ]
+        }
+      },
+      "required": [
+        "grade",
+        "grade_number",
+        "width_cm"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "grade": {
+                "const": "GG"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "grade_number": {
+                "minimum": 6,
+                "maximum": 74
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "grade": {
+                "const": "XXX"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "grade_number": {
+                "minimum": 3,
+                "maximum": 17
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "grade": {
+                "const": "MF"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "grade_number": {
+                "minimum": 3,
+                "maximum": 13
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "grade": {
+                "const": "N"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "grade_number": {
+                "minimum": 3,
+                "maximum": 25
+              }
+            }
+          }
+        }
+      ],
+      "title": "milling_fabric_specs"
+    },
+    "plansifter_sleeve": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "diameter_inch": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "length_inch": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "dia_measurement_type": {
+          "type": "string",
+          "enum": [
+            "actual",
+            "flat"
+          ]
+        },
+        "finishing": {
+          "type": "string",
+          "enum": [
+            "single_center_ring",
+            "top_bottom_elastic",
+            "ring_dori"
+          ]
+        },
+        "fabric_origin": {
+          "type": "string",
+          "enum": [
+            "indian",
+            "semi_imported",
+            "turkish",
+            "imported"
+          ]
+        },
+        "size_label": {
+          "type": "string",
+          "enum": [
+            "small",
+            "big"
+          ]
+        }
+      },
+      "required": [
+        "diameter_inch",
+        "length_inch",
+        "dia_measurement_type",
+        "finishing"
+      ],
+      "title": "plansifter_sleeve_specs"
+    },
+    "gun_tacker": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "operation_type": {
+          "type": "string",
+          "enum": [
+            "manual"
+          ]
+        },
+        "compatible_pin_model": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "operation_type"
+      ],
+      "title": "gun_tacker_specs"
+    },
+    "pneumatic_tacker": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "operation_type": {
+          "type": "string",
+          "enum": [
+            "pneumatic"
+          ]
+        },
+        "pin_size_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "working_pressure_bar": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "operation_type",
+        "pin_size_mm"
+      ],
+      "title": "pneumatic_tacker_specs"
+    },
+    "felt_seal": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "seal_type": {
+          "type": "string",
+          "enum": [
+            "namda",
+            "nivard_cotton",
+            "glue_backing"
+          ]
+        },
+        "width_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "thickness_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "roll_length_m": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "seal_type",
+        "width_mm",
+        "thickness_mm"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "seal_type": {
+                "const": "nivard_cotton"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "thickness_mm": {
+                "const": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "seal_type": {
+                "const": "glue_backing"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "thickness_mm": {
+                "const": 3
+              }
+            }
+          }
+        }
+      ],
+      "title": "felt_seal_specs"
+    },
+    "fiber_nylon_rod": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rod_material": {
+          "type": "string",
+          "enum": [
+            "fiber",
+            "nylon"
+          ]
+        },
+        "diameter_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "length_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "has_reference_media": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "rod_material",
+        "diameter_mm",
+        "length_mm"
+      ],
+      "title": "fiber_nylon_rod_specs"
+    },
+    "plansifter_wooden_frame": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "length_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 500
+        },
+        "width_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 500
+        },
+        "has_sunmica": {
+          "type": "boolean"
+        },
+        "backing_mesh_type": {
+          "type": "string",
+          "enum": [
+            "perforated_round_6mm",
+            "double_crimped_mesh"
+          ]
+        },
+        "sheet_gauge": {
+          "type": "integer",
+          "enum": [
+            28,
+            32
+          ]
+        }
+      },
+      "required": [
+        "length_mm",
+        "width_mm",
+        "has_sunmica",
+        "backing_mesh_type"
+      ],
+      "title": "plansifter_wooden_frame_specs"
+    },
+    "ss_wire_mesh_plansifter": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ss_grade": {
+          "type": "string",
+          "enum": [
+            "304",
+            "202"
+          ]
+        },
+        "width_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "mesh_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "aperture_um": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "aperture_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "wire_thickness_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "wire_gauge": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "ss_grade",
+        "width_mm"
+      ],
+      "anyOf": [
+        {
+          "required": [
+            "mesh_count"
+          ]
+        },
+        {
+          "required": [
+            "aperture_um"
+          ]
+        },
+        {
+          "required": [
+            "aperture_mm"
+          ]
+        }
+      ],
+      "title": "ss_wire_mesh_plansifter_specs"
+    },
+    "staple_pin": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "leg_length_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "crown_width_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "material": {
+          "type": "string",
+          "enum": [
+            "galvanized",
+            "ss"
+          ]
+        },
+        "tacker_brand_model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "packets_per_box": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 20
+        }
+      },
+      "required": [
+        "leg_length_mm",
+        "crown_width_mm",
+        "material"
+      ],
+      "title": "staple_pin_specs"
+    },
+    "plansifter_wire_rope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "application": {
+          "type": "string",
+          "enum": [
+            "plansifter_suspension",
+            "general_lifting"
+          ]
+        },
+        "diameter_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "length_m": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "material": {
+          "type": "string",
+          "enum": [
+            "ms",
+            "galvanized_ms",
+            "ss"
+          ]
+        },
+        "ss_grade": {
+          "type": "string",
+          "enum": [
+            "304",
+            "316"
+          ]
+        },
+        "strand_construction": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "application",
+        "diameter_mm",
+        "length_m",
+        "material"
+      ],
+      "title": "plansifter_wire_rope_specs"
+    },
+    "paper_gum_tape": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "width_inch": {
+          "type": "number",
+          "enum": [
+            1.0,
+            1.5,
+            2.0
+          ]
+        },
+        "rolls_per_bale": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "roll_length_m": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 25
+        }
+      },
+      "required": [
+        "width_inch"
+      ],
+      "title": "paper_gum_tape_specs"
+    },
+    "plansifter_housing": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "position": {
+          "type": "string",
+          "enum": [
+            "upper",
+            "lower"
+          ]
+        },
+        "plansifter_size": {
+          "type": "string",
+          "minLength": 1
+        },
+        "is_made_to_order": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "required": [
+        "position",
+        "plansifter_size"
+      ],
+      "title": "plansifter_housing_specs"
+    },
+    "plansifter_step_sheet": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "has_hole": {
+          "type": "boolean"
+        },
+        "length_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 500
+        },
+        "width_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 620
+        },
+        "material": {
+          "type": "string",
+          "enum": [
+            "ms",
+            "ss"
+          ]
+        },
+        "thickness_gauge": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 28
+        }
+      },
+      "required": [
+        "has_hole",
+        "length_mm",
+        "width_mm",
+        "material"
+      ],
+      "title": "plansifter_step_sheet_specs"
+    },
+    "plansifter_tin_sheet": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "length_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 490
+        },
+        "width_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 490
+        },
+        "thickness_gauge": {
+          "type": "integer",
+          "enum": [
+            28,
+            32
+          ]
+        },
+        "material": {
+          "type": "string",
+          "enum": [
+            "ms",
+            "ss"
+          ]
+        }
+      },
+      "required": [
+        "length_mm",
+        "width_mm",
+        "thickness_gauge",
+        "material"
+      ],
+      "title": "plansifter_tin_sheet_specs"
+    },
+    "double_crimped_mesh": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "length_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 495
+        },
+        "width_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 495
+        },
+        "opening_mm": {
+          "type": "number",
+          "enum": [
+            8,
+            10,
+            12
+          ]
+        },
+        "wire_thickness_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 1.2
+        }
+      },
+      "required": [
+        "length_mm",
+        "width_mm",
+        "opening_mm"
+      ],
+      "title": "double_crimped_mesh_specs"
+    },
+    "plansifter_channel": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "channel_size": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "channel_size"
+      ],
+      "title": "plansifter_channel_specs"
+    },
+    "brass_brush": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "size_type": {
+          "type": "string",
+          "enum": [
+            "standard_single_size"
+          ]
+        }
+      },
+      "required": [
+        "size_type"
+      ],
+      "title": "brass_brush_specs"
+    },
+    "plansifter_box": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "plansifter_size": {
+          "type": "string",
+          "minLength": 1
+        },
+        "box_section": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "plansifter_size",
+        "box_section"
+      ],
+      "title": "plansifter_box_specs"
+    },
+    "oval_ball": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type_number": {
+          "type": "integer",
+          "enum": [
+            1,
+            2,
+            3
+          ]
+        },
+        "material": {
+          "type": "string",
+          "enum": [
+            "rubber",
+            "nylon",
+            "pvc"
+          ]
+        },
+        "diameter_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "is_food_grade": {
+          "type": "boolean"
+        },
+        "shore_hardness": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type_number",
+        "material"
+      ],
+      "title": "oval_ball_specs"
+    },
+    "rectangular_sieve_cleaner": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "knob_type": {
+          "type": "string",
+          "enum": [
+            "metal",
+            "plastic"
+          ]
+        },
+        "length_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 75
+        },
+        "width_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 52
+        },
+        "thickness_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 9
+        },
+        "material": {
+          "type": "string",
+          "enum": [
+            "pu"
+          ],
+          "default": "pu"
+        }
+      },
+      "required": [
+        "knob_type",
+        "length_mm",
+        "width_mm"
+      ],
+      "title": "rectangular_sieve_cleaner_specs"
+    },
+    "triangle_sieve_cleaner": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "trim_variant": {
+          "type": "string",
+          "enum": [
+            "brush",
+            "studs",
+            "metal_knob",
+            "plastic_knob",
+            "metal_rivet"
+          ]
+        },
+        "brush_quality": {
+          "type": "string",
+          "enum": [
+            "polyurethane",
+            "pu",
+            "pu_internal_nylon_brush"
+          ]
+        },
+        "size_mm": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "trim_variant"
+      ],
+      "title": "triangle_sieve_cleaner_specs"
+    },
+    "big_triangle_sieve_cleaner": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "trim_variant": {
+          "type": "string",
+          "enum": [
+            "brush",
+            "studs"
+          ]
+        },
+        "brush_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "size_mm": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "trim_variant"
+      ],
+      "title": "big_triangle_sieve_cleaner_specs"
+    },
+    "blue_sieve_cleaner": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "trim_variant": {
+          "type": "string",
+          "enum": [
+            "brush",
+            "studs"
+          ]
+        },
+        "size_mm": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "trim_variant",
+        "size_mm"
+      ],
+      "title": "blue_sieve_cleaner_specs"
+    },
+    "cotton_sieve_cleaner": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ply_variant": {
+          "type": "string",
+          "enum": [
+            "2_ply_indian",
+            "4_ply_imported",
+            "6_ply_light_green",
+            "6_ply_dark_green"
+          ]
+        },
+        "length_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 75
+        },
+        "width_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 58
+        },
+        "thickness_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 8
+        },
+        "has_metal_slider": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ply_variant"
+      ],
+      "title": "cotton_sieve_cleaner_specs"
+    },
+    "rubber_ball": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "diameter_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 16
+        },
+        "bounce_grade": {
+          "type": "string",
+          "enum": [
+            "high_bounce",
+            "medium_bounce"
+          ]
+        },
+        "shore_hardness": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "diameter_mm",
+        "bounce_grade"
+      ],
+      "title": "rubber_ball_specs"
+    },
+    "star_type_cleaner": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "trim_variant": {
+          "type": "string",
+          "enum": [
+            "brush",
+            "studs"
+          ]
+        },
+        "size_mm": {
+          "type": "string",
+          "minLength": 1
+        },
+        "material": {
+          "type": "string",
+          "enum": [
+            "pu"
+          ],
+          "default": "pu"
+        }
+      },
+      "required": [
+        "trim_variant"
+      ],
+      "title": "star_type_cleaner_specs"
+    },
+    "belt_fastener": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fastener_family": {
+          "type": "string",
+          "enum": [
+            "standard_bolt",
+            "special_plate",
+            "hinged_plate",
+            "wire_hook",
+            "clipper"
+          ]
+        },
+        "size_code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "belt_width_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "belt_thickness_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "fastener_family",
+        "size_code"
+      ],
+      "title": "belt_fastener_specs"
+    },
+    "bucket_bolt": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "diameter_mm": {
+          "type": "integer",
+          "enum": [
+            6,
+            8,
+            10,
+            12
+          ]
+        },
+        "length_inch": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "material": {
+          "type": "string",
+          "enum": [
+            "gi",
+            "ms",
+            "ss"
+          ]
+        },
+        "head_type": {
+          "type": "string",
+          "enum": [
+            "oval",
+            "countersunk",
+            "round"
+          ]
+        },
+        "includes_nuts_washers": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "diameter_mm",
+        "length_inch",
+        "material"
+      ],
+      "title": "bucket_bolt_specs"
+    },
+    "nylock_nut": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "diameter_mm": {
+          "type": "integer",
+          "enum": [
+            8,
+            10
+          ]
+        },
+        "material": {
+          "type": "string",
+          "enum": [
+            "gi",
+            "ss"
+          ]
+        }
+      },
+      "required": [
+        "diameter_mm"
+      ],
+      "title": "nylock_nut_specs"
+    },
+    "elevator_bucket": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "profile": {
+          "type": "string",
+          "enum": [
+            "aa_type",
+            "shovel_type"
+          ],
+          "default": "aa_type"
+        },
+        "material": {
+          "type": "string",
+          "enum": [
+            "ms",
+            "ss",
+            "pp",
+            "nylon"
+          ]
+        },
+        "length_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "width_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "depth_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "sheet_gauge": {
+          "type": "integer",
+          "enum": [
+            18,
+            16,
+            14,
+            12,
+            10
+          ]
+        },
+        "hole_pattern": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "profile",
+        "material",
+        "length_mm",
+        "width_mm",
+        "depth_mm"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "material": {
+                "enum": [
+                  "ms",
+                  "ss"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "sheet_gauge"
+            ]
+          }
+        }
+      ],
+      "title": "elevator_bucket_specs"
+    },
+    "black_rubber_conveyor_belt": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "width_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "ply_count": {
+          "type": "integer",
+          "enum": [
+            3,
+            4,
+            5
+          ]
+        },
+        "thickness_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "length_m": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "joint_type": {
+          "type": "string",
+          "enum": [
+            "open_end",
+            "endless"
+          ]
+        },
+        "cover_grade": {
+          "type": "string",
+          "minLength": 1
+        },
+        "top_bottom_cover_mm": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "width_mm",
+        "ply_count",
+        "thickness_mm",
+        "length_m",
+        "joint_type"
+      ],
+      "title": "black_rubber_conveyor_belt_specs"
+    },
+    "food_grade_conveyor_belt": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "belt_subtype": {
+          "type": "string",
+          "enum": [
+            "white_rubber",
+            "pvc",
+            "pu",
+            "sandwich"
+          ]
+        },
+        "width_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "thickness_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "length_m": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "joint_type": {
+          "type": "string",
+          "enum": [
+            "open_end",
+            "endless"
+          ]
+        },
+        "ply_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "food_cert": {
+          "type": "string",
+          "enum": [
+            "fda",
+            "fssai",
+            "none"
+          ]
+        },
+        "top_bottom_color": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "belt_subtype",
+        "width_mm",
+        "thickness_mm",
+        "length_m",
+        "joint_type"
+      ],
+      "title": "food_grade_conveyor_belt_specs"
+    },
+    "textile_conveyor_belt": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "belt_material": {
+          "type": "string",
+          "enum": [
+            "cotton",
+            "nylon_cotton",
+            "polyester",
+            "yellow_nylon"
+          ]
+        },
+        "width_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "thickness_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 8
+        },
+        "length_m": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "joint_type": {
+          "type": "string",
+          "enum": [
+            "open_end",
+            "endless"
+          ]
+        },
+        "ply_count": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "belt_material",
+        "width_mm",
+        "thickness_mm",
+        "length_m",
+        "joint_type"
+      ],
+      "title": "textile_conveyor_belt_specs"
+    },
+    "hair_belt": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "application": {
+          "type": "string",
+          "enum": [
+            "inclined_conveying",
+            "flat_machine_drive"
+          ]
+        },
+        "width_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "thickness_mm": {
+          "type": "number",
+          "enum": [
+            8,
+            10
+          ]
+        },
+        "length_m": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "joint_type": {
+          "type": "string",
+          "enum": [
+            "open_end",
+            "endless"
+          ]
+        }
+      },
+      "required": [
+        "application",
+        "width_mm",
+        "thickness_mm",
+        "length_m"
+      ],
+      "title": "hair_belt_specs"
+    },
+    "transmission_belt": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "drive_type": {
+          "type": "string",
+          "enum": [
+            "flat",
+            "v_belt"
+          ]
+        },
+        "width_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "thickness_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "v_section": {
+          "type": "string",
+          "enum": [
+            "A",
+            "B",
+            "C",
+            "Z",
+            "SPA",
+            "SPB",
+            "SPZ"
+          ]
+        },
+        "belt_number": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "drive_type"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "drive_type": {
+                "const": "flat"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "width_mm",
+              "thickness_mm"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "drive_type": {
+                "const": "v_belt"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "v_section",
+              "belt_number"
+            ]
+          }
+        }
+      ],
+      "title": "transmission_belt_specs"
+    },
+    "purifier_frame": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "material": {
+          "type": "string",
+          "enum": [
+            "wooden",
+            "aluminum"
+          ]
+        },
+        "machine_make_model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "length_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "width_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "rod_configuration": {
+          "type": "string",
+          "enum": [
+            "single_rod",
+            "double_rod"
+          ]
+        }
+      },
+      "required": [
+        "material",
+        "machine_make_model"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "material": {
+                "const": "wooden"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "length_mm",
+              "width_mm"
+            ]
+          }
+        }
+      ],
+      "title": "purifier_frame_specs"
+    },
+    "purifier_clip": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "has_reference_media": {
+          "type": "boolean"
+        },
+        "machine_make_model": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "has_reference_media"
+      ],
+      "title": "purifier_clip_specs"
+    },
+    "purifier_guide": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "has_reference_media": {
+          "type": "boolean"
+        },
+        "machine_make_model": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "has_reference_media"
+      ],
+      "title": "purifier_guide_specs"
+    },
+    "vibromotor": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "machine_make_model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "power_hp": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "rpm": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "orientation": {
+          "type": "string",
+          "enum": [
+            "left_facing",
+            "right_facing"
+          ]
+        },
+        "voltage_v": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "1_phase",
+            "3_phase"
+          ]
+        }
+      },
+      "required": [
+        "machine_make_model",
+        "power_hp",
+        "rpm",
+        "orientation"
+      ],
+      "title": "vibromotor_specs"
+    },
+    "purifier_brush": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "length_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "bristle_material": {
+          "type": "string",
+          "enum": [
+            "nylon",
+            "black_hair",
+            "goat_hair",
+            "horse_hair",
+            "other"
+          ]
+        },
+        "machine_make_model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "has_reference_media": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "length_mm",
+        "bristle_material"
+      ],
+      "title": "purifier_brush_specs"
+    },
+    "purifier_sleeve": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "diameter_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "length_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "fabric_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "has_reference_media": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "diameter_mm",
+        "length_mm"
+      ],
+      "title": "purifier_sleeve_specs"
+    },
+    "purifier_rod": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "diameter_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "length_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "material": {
+          "type": "string",
+          "enum": [
+            "ms",
+            "ss"
+          ]
+        }
+      },
+      "required": [
+        "diameter_mm",
+        "length_mm",
+        "material"
+      ],
+      "title": "purifier_rod_specs"
+    },
+    "purifier_cover": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "material": {
+          "type": "string",
+          "enum": [
+            "nylon_mesh"
+          ],
+          "default": "nylon_mesh"
+        },
+        "mesh_grade_gg": {
+          "type": "string",
+          "minLength": 1
+        },
+        "machine_make_model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "has_reference_media": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "material"
+      ],
+      "anyOf": [
+        {
+          "required": [
+            "mesh_grade_gg"
+          ]
+        },
+        {
+          "required": [
+            "machine_make_model"
+          ]
+        },
+        {
+          "required": [
+            "has_reference_media"
+          ]
+        }
+      ],
+      "title": "purifier_cover_specs"
+    },
+    "roller_mill_cleaning_brush": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "bristle_material": {
+          "type": "string",
+          "enum": [
+            "nylon",
+            "peacock_feather",
+            "jute_coconut",
+            "steel_wire"
+          ]
+        },
+        "wood_length_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "brush_type_no": {
+          "type": "integer",
+          "enum": [
+            1,
+            2,
+            3
+          ]
+        },
+        "wood_width_inch": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 2.0
+        },
+        "wood_thickness_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 20
+        },
+        "hair_height_inch": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 1.5
+        }
+      },
+      "required": [
+        "bristle_material",
+        "wood_length_mm"
+      ],
+      "title": "roller_mill_cleaning_brush_specs"
+    },
+    "roller_mill_helical_gear": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "order_mode": {
+          "type": "string",
+          "enum": [
+            "single_gear",
+            "matched_pair"
+          ]
+        },
+        "bore_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 60
+        },
+        "passage_type": {
+          "type": "string",
+          "enum": [
+            "break_passage",
+            "polish_passage"
+          ]
+        },
+        "teeth_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "center_distance_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "module_or_pitch": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "order_mode",
+        "bore_mm"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "order_mode": {
+                "const": "single_gear"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "teeth_count"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "order_mode": {
+                "const": "matched_pair"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "center_distance_mm"
+            ]
+          }
+        }
+      ],
+      "title": "roller_mill_helical_gear_specs"
+    },
+    "roller_mill_viewing_glass": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "has_partition": {
+          "type": "boolean"
+        },
+        "diameter_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "length_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "thickness_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "includes_frame_gasket": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "has_partition",
+        "diameter_mm"
+      ],
+      "title": "roller_mill_viewing_glass_specs"
+    },
+    "chilled_cast_iron_rolls": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "diameter_mm": {
+          "type": "integer",
+          "enum": [
+            250,
+            300
+          ]
+        },
+        "working_length_mm": {
+          "type": "integer",
+          "enum": [
+            1000,
+            1250
+          ]
+        },
+        "surface_finish": {
+          "type": "string",
+          "enum": [
+            "fluted",
+            "smooth_plain"
+          ]
+        },
+        "flutes_per_inch": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "passage_type": {
+          "type": "string",
+          "enum": [
+            "break_passage",
+            "polish_passage"
+          ]
+        },
+        "origin": {
+          "type": "string",
+          "enum": [
+            "indian",
+            "imported_turkey"
+          ]
+        }
+      },
+      "required": [
+        "diameter_mm",
+        "working_length_mm",
+        "surface_finish"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "surface_finish": {
+                "const": "fluted"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "flutes_per_inch"
+            ]
+          }
+        }
+      ],
+      "title": "chilled_cast_iron_rolls_specs"
+    },
+    "roller_mill_spring": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "outer_dia_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "inner_dia_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "wire_thickness_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "free_length_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "loop_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "has_reference_media": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "outer_dia_mm",
+        "inner_dia_mm",
+        "wire_thickness_mm",
+        "free_length_mm",
+        "loop_count"
+      ],
+      "title": "roller_mill_spring_specs"
+    },
+    "roller_mill_housing": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "machine_make_model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bearing_number": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "machine_make_model",
+        "bearing_number"
+      ],
+      "title": "roller_mill_housing_specs"
+    },
+    "roller_mill_key": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "key_type": {
+          "type": "string",
+          "enum": [
+            "taper_key"
+          ],
+          "default": "taper_key"
+        },
+        "has_reference_media": {
+          "type": "boolean"
+        },
+        "length_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "width_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "height_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "key_type",
+        "has_reference_media"
+      ],
+      "title": "roller_mill_key_specs"
+    },
+    "roller_mill_pulley": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pulley_type": {
+          "type": "string",
+          "enum": [
+            "flat",
+            "v_groove"
+          ]
+        },
+        "outer_dia_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "bore_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "groove_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "v_section": {
+          "type": "string",
+          "enum": [
+            "A",
+            "B",
+            "C"
+          ]
+        }
+      },
+      "required": [
+        "pulley_type",
+        "outer_dia_mm",
+        "bore_mm"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "pulley_type": {
+                "const": "v_groove"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "groove_count",
+              "v_section"
+            ]
+          }
+        }
+      ],
+      "title": "roller_mill_pulley_specs"
+    },
+    "chain_sprocket": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "row_type": {
+          "type": "string",
+          "enum": [
+            "simplex",
+            "duplex",
+            "triplex"
+          ]
+        },
+        "teeth_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "chain_pitch_or_code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bore_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "bore_finish": {
+          "type": "string",
+          "enum": [
+            "pilot_bore",
+            "finished_bore_with_keyway"
+          ]
+        },
+        "overall_dia_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "hub_dia_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "row_type",
+        "teeth_count",
+        "chain_pitch_or_code"
+      ],
+      "title": "chain_sprocket_specs"
+    },
+    "roller_chain": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "row_type": {
+          "type": "string",
+          "enum": [
+            "simplex",
+            "duplex",
+            "triplex"
+          ]
+        },
+        "chain_pitch_or_code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "length_value": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "length_unit": {
+          "type": "string",
+          "enum": [
+            "packets_3m",
+            "meters",
+            "links"
+          ]
+        }
+      },
+      "required": [
+        "row_type",
+        "chain_pitch_or_code",
+        "length_value",
+        "length_unit"
+      ],
+      "title": "roller_chain_specs"
+    },
+    "ball_roller_bearing": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "bearing_type": {
+          "type": "string",
+          "enum": [
+            "angular_contact_ball",
+            "cylindrical_roller",
+            "deep_groove_ball",
+            "needle",
+            "self_aligning_ball",
+            "spherical_roller",
+            "taper_roller",
+            "thrust_ball"
+          ]
+        },
+        "bearing_number": {
+          "type": "string",
+          "minLength": 3
+        },
+        "bore_id_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "outer_od_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "width_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "closure": {
+          "type": "string",
+          "enum": [
+            "open",
+            "2RS_sealed",
+            "ZZ_shielded"
+          ]
+        },
+        "bore_profile": {
+          "type": "string",
+          "enum": [
+            "straight",
+            "tapered"
+          ]
+        },
+        "roller_config": {
+          "type": "string",
+          "enum": [
+            "N",
+            "NU",
+            "NJ",
+            "NUP"
+          ]
+        },
+        "contact_angle_deg": {
+          "type": "integer",
+          "enum": [
+            15,
+            25,
+            40
+          ]
+        },
+        "row_count": {
+          "type": "integer",
+          "enum": [
+            1,
+            2
+          ]
+        }
+      },
+      "required": [
+        "bearing_type"
+      ],
+      "anyOf": [
+        {
+          "required": [
+            "bearing_number"
+          ]
+        },
+        {
+          "required": [
+            "bore_id_mm",
+            "outer_od_mm",
+            "width_mm"
+          ]
+        }
+      ],
+      "title": "ball_roller_bearing_specs"
+    },
+    "bearing_block": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "series_code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "shaft_bore_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "housing_material": {
+          "type": "string",
+          "enum": [
+            "cast_iron",
+            "pressed_steel"
+          ]
+        }
+      },
+      "required": [
+        "series_code",
+        "shaft_bore_mm"
+      ],
+      "title": "bearing_block_specs"
+    },
+    "bearing_sleeve": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sleeve_series": {
+          "type": "string",
+          "enum": [
+            "H_metric_mm",
+            "HE_imperial_inch"
+          ]
+        },
+        "sleeve_number": {
+          "type": "string",
+          "minLength": 1
+        },
+        "shaft_bore_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "sleeve_series"
+      ],
+      "anyOf": [
+        {
+          "required": [
+            "sleeve_number"
+          ]
+        },
+        {
+          "required": [
+            "shaft_bore_mm"
+          ]
+        }
+      ],
+      "title": "bearing_sleeve_specs"
+    },
+    "gearbox": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "gearbox_type": {
+          "type": "string",
+          "enum": [
+            "worm",
+            "helical"
+          ]
+        },
+        "spec_mode": {
+          "type": "string",
+          "enum": [
+            "hp_rpm",
+            "inches_ratio"
+          ]
+        },
+        "power_hp": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "output_rpm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "size_inch": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "reduction_ratio": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mounting": {
+          "type": "string",
+          "enum": [
+            "foot",
+            "flange"
+          ]
+        }
+      },
+      "required": [
+        "gearbox_type",
+        "spec_mode"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "spec_mode": {
+                "const": "hp_rpm"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "power_hp",
+              "output_rpm",
+              "mounting"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "spec_mode": {
+                "const": "inches_ratio"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "size_inch",
+              "reduction_ratio"
+            ]
+          }
+        }
+      ],
+      "title": "gearbox_specs"
+    },
+    "electric_motor": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "power_hp": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "rpm": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "power_kw": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "voltage_v": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "1_phase",
+            "3_phase"
+          ]
+        },
+        "mounting": {
+          "type": "string",
+          "enum": [
+            "foot",
+            "flange"
+          ]
+        }
+      },
+      "required": [
+        "power_hp",
+        "rpm"
+      ],
+      "title": "electric_motor_specs"
+    },
+    "oil_seal": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "inner_dia_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "outer_dia_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "thickness_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "rubber_type": {
+          "type": "string",
+          "enum": [
+            "nitrile_black",
+            "neoprene",
+            "silicone",
+            "viton"
+          ],
+          "default": "nitrile_black"
+        },
+        "lip_type": {
+          "type": "string",
+          "enum": [
+            "single_lip",
+            "double_lip"
+          ]
+        },
+        "has_garter_spring": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "inner_dia_mm",
+        "outer_dia_mm",
+        "thickness_mm"
+      ],
+      "title": "oil_seal_specs"
+    },
+    "v_belt": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "section": {
+          "type": "string",
+          "enum": [
+            "A",
+            "B",
+            "C",
+            "D",
+            "Z",
+            "SPA",
+            "SPB",
+            "SPC",
+            "SPZ"
+          ]
+        },
+        "belt_number": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[A-Z]+[0-9]+$"
+        },
+        "pitch_length_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "section",
+        "belt_number"
+      ],
+      "title": "v_belt_specs"
+    },
+    "shaft_coupling": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "coupling_type": {
+          "type": "string",
+          "enum": [
+            "star",
+            "hrc",
+            "pin_bush",
+            "tyre",
+            "muff",
+            "chain",
+            "encoder",
+            "gear"
+          ]
+        },
+        "coupling_number": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bore_1_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "bore_2_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "outer_dia_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "length_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "teeth_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "pitch_inch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "spare_element_only": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "coupling_type"
+      ],
+      "anyOf": [
+        {
+          "required": [
+            "coupling_number"
+          ]
+        },
+        {
+          "required": [
+            "bore_1_mm",
+            "bore_2_mm"
+          ]
+        }
+      ],
+      "title": "shaft_coupling_specs"
+    },
+    "flat_belt_pulley": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "outer_dia_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "face_width_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "bore_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "material": {
+          "type": "string",
+          "enum": [
+            "ci",
+            "ms"
+          ]
+        }
+      },
+      "required": [
+        "outer_dia_mm",
+        "face_width_mm",
+        "bore_mm"
+      ],
+      "title": "flat_belt_pulley_specs"
+    },
+    "plain_bore_v_pulley": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pitch_dia_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "groove_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "v_section": {
+          "type": "string",
+          "enum": [
+            "A",
+            "B",
+            "C",
+            "SPA",
+            "SPB"
+          ]
+        },
+        "bore_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "material": {
+          "type": "string",
+          "enum": [
+            "ci",
+            "ms"
+          ]
+        }
+      },
+      "required": [
+        "pitch_dia_mm",
+        "groove_count",
+        "v_section",
+        "bore_mm"
+      ],
+      "title": "plain_bore_v_pulley_specs"
+    },
+    "taper_bush_v_pulley": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pitch_dia_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "groove_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "v_section": {
+          "type": "string",
+          "enum": [
+            "A",
+            "B",
+            "C",
+            "SPA",
+            "SPB",
+            "SPC",
+            "SPZ"
+          ]
+        },
+        "tlb_bush_number": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bush_finished_bore_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "pitch_dia_mm",
+        "groove_count",
+        "v_section",
+        "tlb_bush_number"
+      ],
+      "title": "taper_bush_v_pulley_specs"
+    },
+    "timing_pulley": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tooth_profile": {
+          "type": "string",
+          "minLength": 1
+        },
+        "teeth_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "belt_width_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "bore_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "has_reference_media": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "tooth_profile",
+        "teeth_count",
+        "belt_width_mm",
+        "bore_mm"
+      ],
+      "title": "timing_pulley_specs"
+    },
+    "pipe_divider": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pipe_dia_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "outlet_count": {
+          "type": "integer",
+          "minimum": 2
+        },
+        "damper_type": {
+          "type": "string",
+          "enum": [
+            "manual",
+            "pneumatic"
+          ]
+        },
+        "material": {
+          "type": "string",
+          "enum": [
+            "gi",
+            "ms",
+            "ss"
+          ]
+        },
+        "sheet_gauge": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "pipe_dia_mm",
+        "outlet_count",
+        "damper_type",
+        "material"
+      ],
+      "title": "pipe_divider_specs"
+    },
+    "down_gravity_pipe": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pipe_dia_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "length_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "material": {
+          "type": "string",
+          "enum": [
+            "gi",
+            "ms",
+            "ss"
+          ]
+        },
+        "bend_count": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        },
+        "sheet_gauge": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "pipe_dia_mm",
+        "length_mm",
+        "material"
+      ],
+      "title": "down_gravity_pipe_specs"
+    },
+    "elbow_bend": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pipe_dia_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "bend_angle_deg": {
+          "type": "integer",
+          "enum": [
+            45,
+            90
+          ]
+        },
+        "material": {
+          "type": "string",
+          "enum": [
+            "gi",
+            "ms",
+            "ss"
+          ]
+        },
+        "bend_radius_type": {
+          "type": "string",
+          "enum": [
+            "standard",
+            "long_bend"
+          ]
+        }
+      },
+      "required": [
+        "pipe_dia_mm",
+        "bend_angle_deg",
+        "material"
+      ],
+      "title": "elbow_bend_specs"
+    },
+    "pipe_lock_ring": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pipe_dia_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "material": {
+          "type": "string",
+          "enum": [
+            "gi",
+            "ms",
+            "ss"
+          ]
+        },
+        "gasket_included": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "pipe_dia_mm",
+        "material"
+      ],
+      "title": "pipe_lock_ring_specs"
+    },
+    "spout_cover": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pipe_dia_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "material": {
+          "type": "string",
+          "enum": [
+            "gi",
+            "ms",
+            "ss",
+            "rubber",
+            "plastic"
+          ]
+        }
+      },
+      "required": [
+        "pipe_dia_mm",
+        "material"
+      ],
+      "title": "spout_cover_specs"
+    },
+    "pipe_tee": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "main_pipe_dia_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "tee_type": {
+          "type": "string",
+          "enum": [
+            "equal",
+            "reducing"
+          ]
+        },
+        "material": {
+          "type": "string",
+          "enum": [
+            "gi",
+            "ms",
+            "ss"
+          ]
+        },
+        "branch_pipe_dia_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "main_pipe_dia_mm",
+        "tee_type",
+        "material"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "tee_type": {
+                "const": "reducing"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "branch_pipe_dia_mm"
+            ]
+          }
+        }
+      ],
+      "title": "pipe_tee_specs"
+    },
+    "u_bolt": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "clamp_pipe_dia_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "material": {
+          "type": "string",
+          "enum": [
+            "gi",
+            "ms",
+            "ss"
+          ]
+        },
+        "rod_thread_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "clamp_pipe_dia_mm",
+        "material"
+      ],
+      "title": "u_bolt_specs"
+    },
+    "u_clamp": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pipe_dia_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "strip_width_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "material": {
+          "type": "string",
+          "enum": [
+            "gi",
+            "ms",
+            "ss"
+          ]
+        }
+      },
+      "required": [
+        "pipe_dia_mm",
+        "strip_width_mm",
+        "material"
+      ],
+      "title": "u_clamp_specs"
+    },
+    "y_piece": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pipe_dia_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "branch_angle_deg": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "material": {
+          "type": "string",
+          "enum": [
+            "gi",
+            "ms",
+            "ss"
+          ]
+        },
+        "outlet_dia_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "pipe_dia_mm",
+        "branch_angle_deg",
+        "material"
+      ],
+      "title": "y_piece_specs"
+    },
+    "filter_diaphragm": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "valve_brand_model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "diaphragm_size_inch": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "material": {
+          "type": "string",
+          "enum": [
+            "nitrile",
+            "viton",
+            "tpe"
+          ]
+        }
+      },
+      "required": [
+        "valve_brand_model",
+        "diaphragm_size_inch"
+      ],
+      "title": "filter_diaphragm_specs"
+    },
+    "jet_filter_bag": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "diameter_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "length_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "fabric_material": {
+          "type": "string",
+          "enum": [
+            "polyester",
+            "ptfe",
+            "nomex"
+          ]
+        },
+        "top_fitting": {
+          "type": "string",
+          "enum": [
+            "snap_ring",
+            "flange",
+            "raw_top"
+          ]
+        },
+        "micron_rating": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "gsm": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "anti_static": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "diameter_mm",
+        "length_mm",
+        "fabric_material",
+        "top_fitting"
+      ],
+      "title": "jet_filter_bag_specs"
+    },
+    "jet_filter_cage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "diameter_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "length_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "material": {
+          "type": "string",
+          "enum": [
+            "gi",
+            "ss"
+          ]
+        },
+        "vertical_wire_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "has_integrated_venturi": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "diameter_mm",
+        "length_mm",
+        "material"
+      ],
+      "title": "jet_filter_cage_specs"
+    },
+    "jet_filter_venturi": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "throat_dia_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "bag_dia_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "material": {
+          "type": "string",
+          "enum": [
+            "aluminum",
+            "gi",
+            "ss",
+            "plastic"
+          ]
+        }
+      },
+      "required": [
+        "throat_dia_mm",
+        "bag_dia_mm",
+        "material"
+      ],
+      "title": "jet_filter_venturi_specs"
+    },
+    "sequential_timer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "channel_outputs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "supply_voltage": {
+          "type": "string",
+          "enum": [
+            "220V_AC",
+            "24V_DC"
+          ]
+        },
+        "enclosure_type": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "channel_outputs",
+        "supply_voltage"
+      ],
+      "title": "sequential_timer_specs"
+    },
+    "solenoid_pulse_valve": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "port_size_inch": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "coil_voltage": {
+          "type": "string",
+          "enum": [
+            "220V_AC",
+            "24V_DC"
+          ]
+        },
+        "port_type": {
+          "type": "string",
+          "enum": [
+            "threaded",
+            "dresser_nut"
+          ]
+        }
+      },
+      "required": [
+        "port_size_inch",
+        "coil_voltage"
+      ],
+      "title": "solenoid_pulse_valve_specs"
+    },
+    "drawer_and_self_cleaning_magnet": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "duct_width_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "duct_height_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "gauss_rating": {
+          "type": "integer",
+          "minimum": 100
+        },
+        "cleaning_mode": {
+          "type": "string",
+          "enum": [
+            "manual_pullout",
+            "self_rotating_auto"
+          ]
+        },
+        "magnetic_rod_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "tier_rows": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "duct_width_mm",
+        "duct_height_mm",
+        "gauss_rating",
+        "cleaning_mode"
+      ],
+      "title": "drawer_and_self_cleaning_magnet_specs"
+    },
+    "grill_magnet": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "duct_width_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "duct_height_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "rod_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "gauss_rating": {
+          "type": "integer",
+          "minimum": 100
+        },
+        "shape": {
+          "type": "string",
+          "enum": [
+            "rectangular",
+            "circular"
+          ]
+        }
+      },
+      "required": [
+        "duct_width_mm",
+        "duct_height_mm",
+        "rod_count",
+        "gauss_rating"
+      ],
+      "title": "grill_magnet_specs"
+    },
+    "hump_magnet": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "duct_size_mm": {
+          "type": "string",
+          "minLength": 1
+        },
+        "gauss_rating": {
+          "type": "integer",
+          "minimum": 100
+        },
+        "flange_type": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "duct_size_mm",
+        "gauss_rating"
+      ],
+      "title": "hump_magnet_specs"
+    },
+    "magnetic_destoner": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "capacity_tph": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "duct_size_mm": {
+          "type": "string",
+          "minLength": 1
+        },
+        "machine_make_model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "gauss_rating": {
+          "type": "integer",
+          "minimum": 100
+        }
+      },
+      "required": [
+        "capacity_tph",
+        "duct_size_mm"
+      ],
+      "title": "magnetic_destoner_specs"
+    },
+    "online_pipe_magnet": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pipe_dia_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "gauss_rating": {
+          "type": "integer",
+          "minimum": 100
+        },
+        "connection_type": {
+          "type": "string",
+          "enum": [
+            "flanged",
+            "clamp"
+          ]
+        }
+      },
+      "required": [
+        "pipe_dia_mm",
+        "gauss_rating"
+      ],
+      "title": "online_pipe_magnet_specs"
+    },
+    "plate_magnet": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "length_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "width_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "gauss_rating": {
+          "type": "integer",
+          "minimum": 100
+        },
+        "thickness_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "has_hinged_housing": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "length_mm",
+        "width_mm",
+        "gauss_rating"
+      ],
+      "title": "plate_magnet_specs"
+    },
+    "rotary_magnet": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "drum_dia_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "duct_size_mm": {
+          "type": "string",
+          "minLength": 1
+        },
+        "gauss_rating": {
+          "type": "integer",
+          "minimum": 100
+        },
+        "includes_drive_motor": {
+          "type": "boolean"
+        },
+        "motor_hp": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "drum_dia_mm",
+        "duct_size_mm",
+        "gauss_rating",
+        "includes_drive_motor"
+      ],
+      "title": "rotary_magnet_specs"
+    },
+    "three_stage_magnet": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "duct_size_mm": {
+          "type": "string",
+          "minLength": 1
+        },
+        "gauss_per_stage": {
+          "type": "integer",
+          "minimum": 100
+        },
+        "stage_count": {
+          "type": "integer",
+          "minimum": 3,
+          "default": 3
+        }
+      },
+      "required": [
+        "duct_size_mm",
+        "gauss_per_stage"
+      ],
+      "title": "three_stage_magnet_specs"
+    },
+    "destoner_wire_mesh": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "deck_length_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "deck_width_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "mesh_or_hole_spec": {
+          "type": "string",
+          "minLength": 1
+        },
+        "material": {
+          "type": "string",
+          "enum": [
+            "ms",
+            "gi",
+            "ss"
+          ]
+        },
+        "machine_make_model": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "deck_length_mm",
+        "deck_width_mm",
+        "mesh_or_hole_spec",
+        "material"
+      ],
+      "title": "destoner_wire_mesh_specs"
+    },
+    "scourer_wire_mesh": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "wire_profile": {
+          "type": "string",
+          "enum": [
+            "flat_and_round",
+            "mat_type",
+            "pointed_and_round",
+            "round_wire"
+          ]
+        },
+        "sheet_length_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "sheet_width_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "mesh_count_or_opening": {
+          "type": "string",
+          "minLength": 1
+        },
+        "wire_gauge": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "material": {
+          "type": "string",
+          "enum": [
+            "ms",
+            "gi",
+            "ss"
+          ]
+        },
+        "machine_make_model": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "wire_profile",
+        "sheet_length_mm",
+        "sheet_width_mm",
+        "mesh_count_or_opening"
+      ],
+      "title": "scourer_wire_mesh_specs"
+    },
+    "perforated_sheet": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "hole_pattern": {
+          "type": "string",
+          "enum": [
+            "round",
+            "square",
+            "triangle",
+            "hexagonal",
+            "oblong_slot",
+            "checkboard",
+            "herring_bone",
+            "dimple",
+            "indented",
+            "lip_shape"
+          ]
+        },
+        "hole_size_mm": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sheet_gauge": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sheet_length_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "sheet_width_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "material": {
+          "type": "string",
+          "enum": [
+            "ms",
+            "gi",
+            "ss"
+          ]
+        },
+        "checkboard_hole_shape": {
+          "type": "string",
+          "enum": [
+            "round",
+            "square"
+          ]
+        },
+        "machine_make_model": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "hole_pattern",
+        "hole_size_mm",
+        "sheet_gauge",
+        "sheet_length_mm",
+        "sheet_width_mm",
+        "material"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "hole_pattern": {
+                "const": "checkboard"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "checkboard_hole_shape"
+            ]
+          }
+        }
+      ],
+      "title": "perforated_sheet_specs"
+    },
+    "washer_whizzer_screen": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "machine_make_model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cylinder_dia_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "screen_length_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "hole_spec_mm": {
+          "type": "string",
+          "minLength": 1
+        },
+        "material": {
+          "type": "string",
+          "enum": [
+            "ss",
+            "gi",
+            "ms"
+          ]
+        },
+        "sheet_gauge": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "machine_make_model",
+        "cylinder_dia_mm",
+        "screen_length_mm",
+        "hole_spec_mm",
+        "material"
+      ],
+      "title": "washer_whizzer_screen_specs"
+    },
+    "anti_vibration_mount": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "load_per_mount_kg": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "stud_bolt_size_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "mounting_height_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "machine_make_model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mount_style": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "load_per_mount_kg",
+        "stud_bolt_size_mm",
+        "mounting_height_mm"
+      ],
+      "title": "anti_vibration_mount_specs"
+    },
+    "anti_vibration_rubber_pad": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "length_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "width_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "thickness_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "load_per_pad_kg": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "surface_pattern": {
+          "type": "string",
+          "enum": [
+            "plain",
+            "ribbed",
+            "sandwich"
+          ]
+        }
+      },
+      "required": [
+        "length_mm",
+        "width_mm",
+        "thickness_mm",
+        "load_per_pad_kg"
+      ],
+      "title": "anti_vibration_rubber_pad_specs"
+    },
+    "bag_closer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "operation_type": {
+          "type": "string",
+          "enum": [
+            "hand_operated",
+            "pedestal_machine"
+          ]
+        },
+        "thread_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "needle_type": {
+          "type": "string",
+          "enum": [
+            "single_needle",
+            "double_needle"
+          ]
+        }
+      },
+      "required": [
+        "operation_type",
+        "thread_type"
+      ],
+      "title": "bag_closer_specs"
+    },
+    "chakki_stone": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "diameter_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "thickness_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "stone_position": {
+          "type": "string",
+          "enum": [
+            "top_runner",
+            "bottom_bed",
+            "pair"
+          ]
+        },
+        "machine_make_model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "stone_type": {
+          "type": "string",
+          "enum": [
+            "emery",
+            "natural"
+          ]
+        }
+      },
+      "required": [
+        "diameter_mm",
+        "thickness_mm",
+        "stone_position"
+      ],
+      "title": "chakki_stone_specs"
+    },
+    "felt_sheet": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "length_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "width_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "thickness_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "density_or_hardness": {
+          "type": "string",
+          "minLength": 1
+        },
+        "material": {
+          "type": "string",
+          "enum": [
+            "wool_felt",
+            "synthetic_felt"
+          ]
+        }
+      },
+      "required": [
+        "length_mm",
+        "width_mm",
+        "thickness_mm"
+      ],
+      "title": "felt_sheet_specs"
+    },
+    "filter_cloth": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "micron_or_mesh": {
+          "type": "string",
+          "minLength": 1
+        },
+        "width_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "length_m": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "material": {
+          "type": "string",
+          "enum": [
+            "polyester",
+            "ptfe",
+            "cotton",
+            "polypropylene"
+          ]
+        },
+        "gsm": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "micron_or_mesh",
+        "width_mm",
+        "length_m",
+        "material"
+      ],
+      "title": "filter_cloth_specs"
+    },
+    "hammer_mill_beaters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "length_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "width_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "thickness_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "material": {
+          "type": "string",
+          "enum": [
+            "ms",
+            "manganese_steel",
+            "ss",
+            "hardened_alloy"
+          ]
+        },
+        "hole_spacing_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "hole_dia_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "machine_make_model": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "length_mm",
+        "width_mm",
+        "thickness_mm",
+        "material",
+        "hole_spacing_mm"
+      ],
+      "title": "hammer_mill_beaters_specs"
+    },
+    "rota_meter": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "medium": {
+          "type": "string",
+          "enum": [
+            "water",
+            "air",
+            "oil",
+            "other"
+          ]
+        },
+        "flow_min": {
+          "type": "number",
+          "minimum": 0
+        },
+        "flow_max": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "flow_unit": {
+          "type": "string",
+          "enum": [
+            "LPM",
+            "LPH",
+            "CFM",
+            "M3_HR"
+          ]
+        },
+        "line_size_inch": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "connection_type": {
+          "type": "string",
+          "enum": [
+            "threaded",
+            "flanged"
+          ]
+        }
+      },
+      "required": [
+        "medium",
+        "flow_min",
+        "flow_max",
+        "flow_unit",
+        "line_size_inch"
+      ],
+      "title": "rota_meter_specs"
+    },
+    "worm_hanger": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "shaft_dia_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "machine_make_model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bush_material": {
+          "type": "string",
+          "enum": [
+            "cast_iron",
+            "bronze",
+            "nylon",
+            "teflon"
+          ]
+        },
+        "hanger_style": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "shaft_dia_mm",
+        "machine_make_model"
+      ],
+      "title": "worm_hanger_specs"
+    }
+  }
+}

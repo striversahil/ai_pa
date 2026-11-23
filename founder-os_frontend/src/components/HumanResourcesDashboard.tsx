@@ -64,7 +64,7 @@ export default function HumanResourcesDashboard({ onNavigate }: { onNavigate?: (
     "hiring-kit": null,
     delegation: data ? data.meta.counts.open : null,
     attendance: null,
-    leaves: null,
+    leaves: data ? (data.leaves?.pendingCount ?? 0) : null,
     payroll: null,
     expenses: data ? data.expenses.summary.fixedCount + data.expenses.summary.variableCount + data.expenses.summary.fieldStaffCount : null,
     inventory: data ? data.inventory.summary.itemCount : null,

@@ -12,6 +12,7 @@ import { mirrorRosterRow } from "../../../modules/core/sync";
 import { HrError } from "../errors";
 import { appendTaskLog, completedInWindow } from "../task-logs";
 import { reopenRequiresReason } from "../delegation-parse";
+import { listPendingLeaveRequests } from "../leave-requests";
 import { normId, emailTokens, expenseJson, fundTxnJson, splitTaskBuckets } from "./pure";
 
 export async function resolveSelfHumanResourcesMember(
@@ -73,7 +74,7 @@ export async function computeDashboard(today: string, month: string, scope: HrSc
   const nowTime = istTimeStr();
   const isAdmin = !scope || scope.isAdmin;
   const self = scope?.scope ?? null;
-  const [rosterRaw, taskRaw, expenseRaw, fundRaw, lifetimeOfficeRaw, inventory] = await Promise.all([
+  const [rosterRaw, taskRaw, expenseRaw, fundRaw, lifetimeOfficeRaw, inventory, leaveRequests] = await Promise.all([
     prisma.humanResourcesMember.findMany({ where: { deleted: false }, orderBy: { order: 'asc' } }) as Promise<any[]>,
     prisma.humanResourcesTask.findMany({
       where: { deleted: false },
@@ -98,6 +99,11 @@ export async function computeDashboard(today: string, month: string, scope: HrSc
       take: 5000,
     }).catch(() => []) as Promise<any[]>,
     getInventorySnapshot(month).catch(() => ({ month, items: [], summary: { itemCount: 0, lowStockCount: 0, outOfStockCount: 0, movementCount: 0, stockValue: 0 } })),
+    // Leave applications waiting for an HR decision — the tab badge. Never
+    // queried for a self-scoped viewer: staff must not see each other's leave.
+    isAdmin
+      ? listPendingLeaveRequests().catch(() => ({ pendingCount: 0, pending: [] }))
+      : Promise.resolve({ pendingCount: 0, pending: [] }),
   ]);
 
   const visibleRows = taskRaw
@@ -189,6 +195,7 @@ export async function computeDashboard(today: string, month: string, scope: HrSc
       },
     },
     inventory,
+    leaves: leaveRequests,
   };
 }
 

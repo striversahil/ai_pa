@@ -19,6 +19,9 @@ import {
 } from '../../automations/human-resources/templates';
 import { attendanceSummary, listAttendance, saveAttendance } from '../../automations/human-resources/attendance';
 import { createLeave, deleteLeave, listLeaves, updateLeave } from '../../automations/human-resources/leaves';
+import {
+  decideLeaveRequest, listLeaveRequests,
+} from '../../automations/human-resources/leave-requests';
 import { createHoliday, deleteHoliday, listHolidays, updateHoliday } from '../../automations/human-resources/holidays';
 import { generatePayroll, listPayroll, setSlipStatus, updateSlipLines } from '../../automations/human-resources/payroll';
 import {
@@ -240,7 +243,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
     if (a.error) return a.error;
     try {
       return c.json({ leaves: await listLeaves({
-        month: c.req.query('month'), memberId: c.req.query('memberId'),
+        month: c.req.query('month'), memberId: c.req.query('memberId'), status: c.req.query('status'),
       }) });
     } catch (e) { return errorResponse(c, e); }
   });
@@ -274,6 +277,36 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
       await deleteLeave(c.req.param('id') ?? '', actorLabel(a.me));
       notifyLive(c, { type: LiveEvent.HumanResources });
       return c.json({ ok: true });
+    } catch (e) { return errorResponse(c, e); }
+  });
+
+  // ── Employee leave applications: queue + approve/reject ─────────────────
+  // Month-free on purpose: a pending request must never hide because HR is
+  // looking at another month. Employees apply from /leave (routes/my-leave.ts).
+  app.get('/api/human-resources/leave-requests', async (c) => {
+    const a = await access(c);
+    if (a.error) return a.error;
+    try {
+      return c.json({ requests: await listLeaveRequests(c.req.query('status')) });
+    } catch (e) { return errorResponse(c, e); }
+  });
+
+  app.post('/api/human-resources/leave-requests/:id/decide', async (c) => {
+    const a = await access(c);
+    if (a.error) return a.error;
+    const body = await readBody(c);
+    try {
+      const self = await resolveSelfHumanResourcesMember(null, a.me as any).catch(() => null);
+      const row = await decideLeaveRequest({
+        id: c.req.param('id') ?? '',
+        action: body?.action,
+        note: body?.note,
+        actor: actorLabel(a.me),
+        approverMemberId: self?.selfId ?? null,
+        isRoot: !!(a.me as any)?.isRoot,
+      });
+      notifyLive(c, { type: LiveEvent.HumanResources });
+      return c.json(row);
     } catch (e) { return errorResponse(c, e); }
   });
 

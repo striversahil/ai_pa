@@ -26,6 +26,7 @@ const SessionView = dynamic(() => import("../views/session/SessionView"), { ssr:
 const WorkspaceBuilderView = dynamic(() => import("../views/workspace/WorkspaceView"), { ssr: false });
 const ChatRoom = dynamic(() => import("../components/ChatRoom"), { ssr: false });
 const DelegationView = dynamic(() => import("../components/delegation/DelegationView"), { ssr: false });
+const LeaveApplicationView = dynamic(() => import("../components/my-leave/LeaveApplicationView"), { ssr: false });
 const EmailDashboard = dynamic(() => import("../components/EmailDashboard"), { ssr: false });
 const SettingsDashboard = dynamic(() => import("../components/SettingsDashboard"), { ssr: false });
 
@@ -171,6 +172,7 @@ function AppInner() {
           <>
           {activeView === "briefing" && <FounderAssistant />}
           {activeView === "delegation" && <DelegationView />}
+          {activeView === "leave" && <LeaveApplicationView />}
           {activeView === "whatsapp" && <WhatsAppDashboard />}
           {activeView === "chat" && <ChatRoom />}
           {activeView === "email" && <EmailDashboard />}

@@ -130,10 +130,22 @@ Shared kits: `@/components/ui` (Badge, Card, KpiCard, Skeleton, EmptyState/Error
 - `types.ts` — types: `EnquiryList`
 
 ### `components/product-line-dashboard/`
-- `ModalFoot.tsx` — components: `ModalFoot`
-- `ModalShell.tsx` — components: `ModalShell`
 - `helpers.ts` — functions/values: `panel`, `field`, `label`, `primaryBtn`, `ghostBtn`, `dangerBtn`, `iconBtn`, `api`, `fmtINR`, `isHttpUrl`, `isPhotoValue`, `isNum`, `shortDate`, `HUES`, `hueFor`, `attrLabel`, `specSummary`
 - `types.ts` — types: `ProductRow`, `GuideRow`, `VendorRow`, `RateRow`, `Payload`, `Detail`
+
+### `components/product-line/` (2026-11-23)
+- `ProductsTab.tsx`, `ProductEditor.tsx`, `SpecsEditor.tsx`, `SpecRowEditor.tsx` — the editable catalogue
+- `CategoryManager.tsx` — add / rename-everywhere / delete-if-empty categories
+- `RatesSheet.tsx`, `RatesFilters.tsx`, `RateDrawer.tsx` — vendor rates as a spreadsheet
+- `PromptDrawer.tsx` — the saved rate-intake prompt (copy for a chat agent)
+- `RateImporter.tsx` — paste the agent's `{rates:[…]}` back as typed quotes
+- `VendorsTab.tsx`, `Skeletons.tsx`
+
+### `product-line/` (domain)
+- `api.ts` — `productLineApi`, `downloadKypSchema`
+- `hooks.ts` — `usePayload`, `useCatalog`, `useRates` (draft + `run()`), `useRateDetail`, `usePrompt`
+- `filters.ts` — `RateFilters`, `toQuery`, `missingFields`, `MISSING_OPTIONS`, `RATES_PAGE_MAX`
+- `types.ts` — `KypProduct`, `KypSpec`, `LiveCatalog`, `RateRow`, `RateDetail`, `Paged`
 
 ### `components/sales-controller-panel/`
 - `ExportDataSection.tsx` — components: `ExportDataSection`

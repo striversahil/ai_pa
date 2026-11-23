@@ -1,0 +1,5881 @@
+{
+  "source_file": "pasted-text.txt (BUI milling KYP sheet extract, rows starting [154])",
+  "schema": "bui_milling_vendor_kyp_schema.json (draft-07)",
+  "categories_covered": [
+    "conveying_accessories"
+  ],
+  "conversion_rules": [
+    "inches/foot dimensions converted to mm (x25.4 / x0.3048); fractions 1/4,1/2,3/4 decoded",
+    "bucket weights interpreted as grams and recorded as weight_per_unit_kg",
+    "discount text \"LESS n%\" parsed to discount_percent: n",
+    "unit strings: PCS/per pc -> pcs; PER MTR/per mtr/meter -> meter; per-mm pricing is NOT a schema unit and is flagged",
+    "dates normalized to YYYY-MM-DD; numeric D/M-vs-M/D ambiguity flagged and M/D assumed",
+    "delivery \"ready\"/\"reday\" -> 0 days; ranges -> lower bound (flagged); \"1 week\" -> 7 days",
+    "empty MOQ -> schema default 1 (flagged); empty vendor_type/date_added/delivery_time_days reported as missing_required",
+    "belt joint_type not stated -> open_end assumed (flagged); food RUBBER -> belt_subtype white_rubber (flagged); PLASTIC bucket -> material pp (flagged)",
+    "source info not representable in schema (covers, cleats, applications, food-grade note, dual sizes) captured per record in validation_report.dropped_source_info"
+  ],
+  "validation_summary": {
+    "total_records": 132,
+    "valid": 8,
+    "invalid": 124,
+    "by_product_key": {
+      "elevator_bucket": 71,
+      "food_grade_conveyor_belt": 27,
+      "black_rubber_conveyor_belt": 34
+    },
+    "failure_reason_counts": {
+      "delivery_time_days": 101,
+      "vendor_name": 6,
+      "contact_person": 6,
+      "contact_number_1": 6,
+      "location": 15,
+      "vendor_type": 15,
+      "date_added": 72,
+      "profile \"z_type\" not in enum": 4,
+      "specs.profile": 38,
+      "unit_of_sale \"per mm\" not in enum": 9,
+      "specs.length_m": 16,
+      "unit_of_sale \"PER MM X PER MTR\" not in enum": 4,
+      "vendor_type \"IMPORTER & EXPORTER\" not in enum": 2,
+      "specs.thickness_mm": 2,
+      "specs.ply_count": 7
+    }
+  },
+  "records": [
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "MEMCO",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 14,
+      "moq": 1,
+      "discount_percent": 15,
+      "package_quantity": 300,
+      "specs": {
+        "length_mm": 90,
+        "width_mm": 90,
+        "depth_mm": 65,
+        "profile": "shovel_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "ALWIN",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 22,
+      "moq": 1,
+      "discount_percent": 28,
+      "package_quantity": 400,
+      "vendor_name": "GOKAL INDUSTRIES",
+      "contact_person": "PALLAV BANSAL",
+      "contact_number_1": "9501941440",
+      "location": "Ludhiana",
+      "address": "24-A, Industrial Area-A Extension, Transport Nagar, Ludhiana, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 105,
+        "width_mm": 95,
+        "depth_mm": 60,
+        "profile": "shovel_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "Jindal",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 22,
+      "moq": 1,
+      "weight_per_unit_kg": 0.065,
+      "package_quantity": 400,
+      "vendor_name": "AGGARWAL CONCAST (P) LTD.",
+      "contact_person": "MANISH",
+      "contact_number_1": "9316916882",
+      "contact_number_2": "93579 16882",
+      "location": "Ludhiana",
+      "address": "VILLAGE CHANDRAN, CHANDIGARH ROAD, LUDHIANA, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 105,
+        "width_mm": 95,
+        "depth_mm": 60,
+        "profile": "shovel_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "PREM",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 27,
+      "moq": 1,
+      "discount_percent": 50,
+      "vendor_name": "M/S PREM INDUISTRIAL CORPORATION",
+      "contact_person": "NITIN JAIN",
+      "contact_number_1": "98979 81981",
+      "contact_number_2": "9897044651",
+      "location": "AGRA",
+      "address": "\"10/2-A, MOTI BAGH, HATHRAS ROAD, AGRA, Agra, Uttar\\nPradesh, 282005\"",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 101.6,
+        "width_mm": 95.25,
+        "depth_mm": 76.2,
+        "profile": "shovel_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "MEMCO",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 15.5,
+      "moq": 1,
+      "discount_percent": 15,
+      "package_quantity": 200,
+      "specs": {
+        "length_mm": 105,
+        "width_mm": 95,
+        "depth_mm": 65,
+        "profile": "shovel_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "ALWIN",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 33,
+      "moq": 1,
+      "discount_percent": 28,
+      "package_quantity": 200,
+      "vendor_name": "GOKAL INDUSTRIES",
+      "contact_person": "PALLAV BANSAL",
+      "contact_number_1": "9501941440",
+      "location": "Ludhiana",
+      "address": "24-A, Industrial Area-A Extension, Transport Nagar, Ludhiana, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 130,
+        "width_mm": 110,
+        "depth_mm": 75,
+        "profile": "shovel_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "Jindal",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 33,
+      "moq": 1,
+      "weight_per_unit_kg": 0.12,
+      "package_quantity": 200,
+      "vendor_name": "AGGARWAL CONCAST (P) LTD.",
+      "contact_person": "MANISH",
+      "contact_number_1": "9316916882",
+      "contact_number_2": "93579 16882",
+      "location": "Ludhiana",
+      "address": "VILLAGE CHANDRAN, CHANDIGARH ROAD, LUDHIANA, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 130,
+        "width_mm": 110,
+        "depth_mm": 75,
+        "profile": "shovel_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "PREM",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 39.5,
+      "moq": 1,
+      "discount_percent": 50,
+      "vendor_name": "M/S PREM INDUISTRIAL CORPORATION",
+      "contact_person": "NITIN JAIN",
+      "contact_number_1": "98979 81981",
+      "contact_number_2": "9897044651",
+      "location": "AGRA",
+      "address": "\"10/2-A, MOTI BAGH, HATHRAS ROAD, AGRA, Agra, Uttar\\nPradesh, 282005\"",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 127,
+        "width_mm": 120.65,
+        "depth_mm": 82.55,
+        "profile": "shovel_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "MEMCO",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 22,
+      "moq": 1,
+      "discount_percent": 15,
+      "package_quantity": 140,
+      "specs": {
+        "length_mm": 135,
+        "width_mm": 115,
+        "depth_mm": 75,
+        "profile": "shovel_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "ALWIN",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 41,
+      "moq": 1,
+      "discount_percent": 28,
+      "package_quantity": 200,
+      "vendor_name": "GOKAL INDUSTRIES",
+      "contact_person": "PALLAV BANSAL",
+      "contact_number_1": "9501941440",
+      "location": "Ludhiana",
+      "address": "24-A, Industrial Area-A Extension, Transport Nagar, Ludhiana, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 152,
+        "width_mm": 133,
+        "depth_mm": 90,
+        "profile": "shovel_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "Jindal",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 41,
+      "moq": 1,
+      "weight_per_unit_kg": 0.17,
+      "package_quantity": 200,
+      "vendor_name": "AGGARWAL CONCAST (P) LTD.",
+      "contact_person": "MANISH",
+      "contact_number_1": "9316916882",
+      "contact_number_2": "93579 16882",
+      "location": "Ludhiana",
+      "address": "VILLAGE CHANDRAN, CHANDIGARH ROAD, LUDHIANA, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 152,
+        "width_mm": 133,
+        "depth_mm": 90,
+        "profile": "shovel_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "PREM",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 48,
+      "moq": 1,
+      "discount_percent": 50,
+      "vendor_name": "M/S PREM INDUISTRIAL CORPORATION",
+      "contact_person": "NITIN JAIN",
+      "contact_number_1": "98979 81981",
+      "contact_number_2": "9897044651",
+      "location": "AGRA",
+      "address": "\"10/2-A, MOTI BAGH, HATHRAS ROAD, AGRA, Agra, Uttar\\nPradesh, 282005\"",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 152.4,
+        "width_mm": 127,
+        "depth_mm": 95.25,
+        "profile": "shovel_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "MEMCO",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 32,
+      "moq": 1,
+      "discount_percent": 15,
+      "package_quantity": 100,
+      "specs": {
+        "length_mm": 160,
+        "width_mm": 135,
+        "depth_mm": 90,
+        "profile": "shovel_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "ALWIN",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 50,
+      "moq": 1,
+      "discount_percent": 28,
+      "package_quantity": 200,
+      "vendor_name": "GOKAL INDUSTRIES",
+      "contact_person": "PALLAV BANSAL",
+      "contact_number_1": "9501941440",
+      "location": "Ludhiana",
+      "address": "24-A, Industrial Area-A Extension, Transport Nagar, Ludhiana, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 178,
+        "width_mm": 133,
+        "depth_mm": 90,
+        "profile": "shovel_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "Jindal",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 50,
+      "moq": 1,
+      "weight_per_unit_kg": 0.2,
+      "package_quantity": 200,
+      "vendor_name": "AGGARWAL CONCAST (P) LTD.",
+      "contact_person": "MANISH",
+      "contact_number_1": "9316916882",
+      "contact_number_2": "93579 16882",
+      "location": "Ludhiana",
+      "address": "VILLAGE CHANDRAN, CHANDIGARH ROAD, LUDHIANA, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 178,
+        "width_mm": 133,
+        "depth_mm": 90,
+        "profile": "shovel_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "PREM",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 65.5,
+      "moq": 1,
+      "discount_percent": 50,
+      "vendor_name": "M/S PREM INDUISTRIAL CORPORATION",
+      "contact_person": "NITIN JAIN",
+      "contact_number_1": "98979 81981",
+      "contact_number_2": "9897044651",
+      "location": "AGRA",
+      "address": "\"10/2-A, MOTI BAGH, HATHRAS ROAD, AGRA, Agra, Uttar\\nPradesh, 282005\"",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 177.8,
+        "width_mm": 127,
+        "depth_mm": 88.9,
+        "profile": "shovel_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "MEMCO",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 42,
+      "moq": 1,
+      "discount_percent": 15,
+      "package_quantity": 100,
+      "specs": {
+        "length_mm": 180,
+        "width_mm": 135,
+        "depth_mm": 90,
+        "profile": "shovel_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "ALWIN",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 65,
+      "moq": 1,
+      "discount_percent": 28,
+      "package_quantity": 200,
+      "vendor_name": "GOKAL INDUSTRIES",
+      "contact_person": "PALLAV BANSAL",
+      "contact_number_1": "9501941440",
+      "location": "Ludhiana",
+      "address": "24-A, Industrial Area-A Extension, Transport Nagar, Ludhiana, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 210,
+        "width_mm": 133,
+        "depth_mm": 100,
+        "profile": "shovel_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "Jindal",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 65,
+      "moq": 1,
+      "weight_per_unit_kg": 0.25,
+      "package_quantity": 144,
+      "vendor_name": "AGGARWAL CONCAST (P) LTD.",
+      "contact_person": "MANISH",
+      "contact_number_1": "9316916882",
+      "contact_number_2": "93579 16882",
+      "location": "Ludhiana",
+      "address": "VILLAGE CHANDRAN, CHANDIGARH ROAD, LUDHIANA, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 210,
+        "width_mm": 133,
+        "depth_mm": 100,
+        "profile": "shovel_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "PREM",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 90,
+      "moq": 1,
+      "discount_percent": 50,
+      "vendor_name": "M/S PREM INDUISTRIAL CORPORATION",
+      "contact_person": "NITIN JAIN",
+      "contact_number_1": "98979 81981",
+      "contact_number_2": "9897044651",
+      "location": "AGRA",
+      "address": "\"10/2-A, MOTI BAGH, HATHRAS ROAD, AGRA, Agra, Uttar\\nPradesh, 282005\"",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 203.2,
+        "width_mm": 139.7,
+        "depth_mm": 107.95,
+        "profile": "shovel_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "MEMCO",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 72,
+      "moq": 1,
+      "discount_percent": 15,
+      "package_quantity": 50,
+      "vendor_name": "MEMCO",
+      "contact_person": "mihir",
+      "contact_number_1": "98200 25253",
+      "location": "mazgaon",
+      "address": "221, Ajay Ind. Est., B-Anjirwadi, Dr. Mascarenhas Road, Mazgaon, Mumbai – 400010.",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 210,
+        "width_mm": 180,
+        "depth_mm": 100,
+        "profile": "shovel_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "MEMCO",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 84,
+      "moq": 1,
+      "discount_percent": 15,
+      "package_quantity": 50,
+      "vendor_name": "MEMCO",
+      "contact_person": "mihir",
+      "contact_number_1": "98200 25253",
+      "location": "mazgaon",
+      "address": "221, Ajay Ind. Est., B-Anjirwadi, Dr. Mascarenhas Road, Mazgaon, Mumbai – 400010.",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 240,
+        "width_mm": 180,
+        "depth_mm": 100,
+        "profile": "shovel_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "MEMCO",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 27,
+      "moq": 1,
+      "discount_percent": 15,
+      "package_quantity": 120,
+      "vendor_name": "MEMCO",
+      "contact_person": "mihir",
+      "contact_number_1": "98200 25253",
+      "location": "mazgaon",
+      "address": "221, Ajay Ind. Est., B-Anjirwadi, Dr. Mascarenhas Road, Mazgaon, Mumbai – 400010.",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 140,
+        "width_mm": 135,
+        "depth_mm": 80,
+        "profile": "shovel_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "MEMCO",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 60,
+      "moq": 1,
+      "discount_percent": 15,
+      "package_quantity": 80,
+      "vendor_name": "MEMCO",
+      "contact_person": "mihir",
+      "contact_number_1": "98200 25253",
+      "location": "mazgaon",
+      "address": "221, Ajay Ind. Est., B-Anjirwadi, Dr. Mascarenhas Road, Mazgaon, Mumbai – 400010.",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 185,
+        "width_mm": 155,
+        "depth_mm": 110,
+        "profile": "shovel_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "MEMCO",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 100,
+      "moq": 1,
+      "discount_percent": 15,
+      "package_quantity": 60,
+      "vendor_name": "MEMCO",
+      "contact_person": "mihir",
+      "contact_number_1": "98200 25253",
+      "location": "mazgaon",
+      "address": "221, Ajay Ind. Est., B-Anjirwadi, Dr. Mascarenhas Road, Mazgaon, Mumbai – 400010.",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 250,
+        "width_mm": 175,
+        "depth_mm": 130,
+        "profile": "shovel_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "MEMCO",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 130,
+      "moq": 1,
+      "discount_percent": 15,
+      "package_quantity": 50,
+      "vendor_name": "MEMCO",
+      "contact_person": "mihir",
+      "contact_number_1": "98200 25253",
+      "location": "mazgaon",
+      "address": "221, Ajay Ind. Est., B-Anjirwadi, Dr. Mascarenhas Road, Mazgaon, Mumbai – 400010.",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 290,
+        "width_mm": 175,
+        "depth_mm": 130,
+        "profile": "shovel_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "MEMCO",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 225,
+      "moq": 1,
+      "discount_percent": 15,
+      "package_quantity": 25,
+      "vendor_name": "MEMCO",
+      "contact_person": "mihir",
+      "contact_number_1": "98200 25253",
+      "location": "mazgaon",
+      "address": "221, Ajay Ind. Est., B-Anjirwadi, Dr. Mascarenhas Road, Mazgaon, Mumbai – 400010.",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 340,
+        "width_mm": 230,
+        "depth_mm": 165,
+        "profile": "shovel_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "MEMCO",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 275,
+      "moq": 1,
+      "discount_percent": 15,
+      "package_quantity": 20,
+      "vendor_name": "MEMCO",
+      "contact_person": "mihir",
+      "contact_number_1": "98200 25253",
+      "location": "mazgaon",
+      "address": "221, Ajay Ind. Est., B-Anjirwadi, Dr. Mascarenhas Road, Mazgaon, Mumbai – 400010.",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 380,
+        "width_mm": 230,
+        "depth_mm": 165,
+        "profile": "shovel_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "MEMCO",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 650,
+      "moq": 1,
+      "discount_percent": 15,
+      "package_quantity": 10,
+      "vendor_name": "MEMCO",
+      "contact_person": "mihir",
+      "contact_number_1": "98200 25253",
+      "location": "mazgaon",
+      "address": "221, Ajay Ind. Est., B-Anjirwadi, Dr. Mascarenhas Road, Mazgaon, Mumbai – 400010.",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 520,
+        "width_mm": 230,
+        "depth_mm": 165,
+        "profile": "shovel_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "MEMCO",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 200,
+      "moq": 1,
+      "discount_percent": 15,
+      "package_quantity": 20,
+      "vendor_name": "MEMCO",
+      "contact_person": "mihir",
+      "contact_number_1": "98200 25253",
+      "location": "mazgaon",
+      "address": "221, Ajay Ind. Est., B-Anjirwadi, Dr. Mascarenhas Road, Mazgaon, Mumbai – 400010.",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 265,
+        "width_mm": 200,
+        "depth_mm": 200,
+        "profile": "z_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "MEMCO",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 185,
+      "moq": 1,
+      "discount_percent": 15,
+      "package_quantity": 16,
+      "vendor_name": "MEMCO",
+      "contact_person": "mihir",
+      "contact_number_1": "98200 25253",
+      "location": "mazgaon",
+      "address": "221, Ajay Ind. Est., B-Anjirwadi, Dr. Mascarenhas Road, Mazgaon, Mumbai – 400010.",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 330,
+        "width_mm": 170,
+        "depth_mm": 100,
+        "profile": "z_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "MEMCO",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 1000,
+      "moq": 1,
+      "discount_percent": 15,
+      "package_quantity": 10,
+      "vendor_name": "MEMCO",
+      "contact_person": "mihir",
+      "contact_number_1": "98200 25253",
+      "location": "mazgaon",
+      "address": "221, Ajay Ind. Est., B-Anjirwadi, Dr. Mascarenhas Road, Mazgaon, Mumbai – 400010.",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 670,
+        "width_mm": 170,
+        "depth_mm": 100,
+        "profile": "z_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "MEMCO",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 175,
+      "moq": 1,
+      "discount_percent": 15,
+      "package_quantity": 32,
+      "vendor_name": "MEMCO",
+      "contact_person": "mihir",
+      "contact_number_1": "98200 25253",
+      "location": "mazgaon",
+      "address": "221, Ajay Ind. Est., B-Anjirwadi, Dr. Mascarenhas Road, Mazgaon, Mumbai – 400010.",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 395,
+        "width_mm": 130,
+        "depth_mm": 70,
+        "profile": "z_type",
+        "material": "pp"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "ALWIN",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 170,
+      "moq": 1,
+      "discount_percent": 28,
+      "weight_per_unit_kg": 0.325,
+      "package_quantity": 100,
+      "vendor_name": "GOKAL INDUSTRIES",
+      "contact_person": "PALLAV BANSAL",
+      "contact_number_1": "9501941440",
+      "location": "Ludhiana",
+      "address": "24-A, Industrial Area-A Extension, Transport Nagar, Ludhiana, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 127,
+        "width_mm": 120.65,
+        "depth_mm": 88.9,
+        "sheet_gauge": 18,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "JINDAL",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 170,
+      "moq": 1,
+      "weight_per_unit_kg": 0.325,
+      "package_quantity": 100,
+      "vendor_name": "AGGARWAL CONCAST (P) LTD.",
+      "contact_person": "MANISH",
+      "contact_number_1": "9316916882",
+      "contact_number_2": "93579 16882",
+      "location": "Ludhiana",
+      "address": "VILLAGE CHANDRAN, CHANDIGARH ROAD, LUDHIANA, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 127,
+        "width_mm": 120.65,
+        "depth_mm": 88.9,
+        "sheet_gauge": 18,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "ALWIN",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 210,
+      "moq": 1,
+      "discount_percent": 28,
+      "weight_per_unit_kg": 0.385,
+      "package_quantity": 100,
+      "vendor_name": "GOKAL INDUSTRIES",
+      "contact_person": "PALLAV BANSAL",
+      "contact_number_1": "9501941440",
+      "location": "Ludhiana",
+      "address": "24-A, Industrial Area-A Extension, Transport Nagar, Ludhiana, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 127,
+        "width_mm": 120.65,
+        "depth_mm": 88.9,
+        "sheet_gauge": 16,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "JINDAL",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 210,
+      "moq": 1,
+      "weight_per_unit_kg": 0.385,
+      "package_quantity": 100,
+      "vendor_name": "AGGARWAL CONCAST (P) LTD.",
+      "contact_person": "MANISH",
+      "contact_number_1": "9316916882",
+      "contact_number_2": "93579 16882",
+      "location": "Ludhiana",
+      "address": "VILLAGE CHANDRAN, CHANDIGARH ROAD, LUDHIANA, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 127,
+        "width_mm": 120.65,
+        "depth_mm": 88.9,
+        "sheet_gauge": 16,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "ALWIN",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 170,
+      "moq": 1,
+      "discount_percent": 28,
+      "weight_per_unit_kg": 0.3,
+      "package_quantity": 100,
+      "vendor_name": "GOKAL INDUSTRIES",
+      "contact_person": "PALLAV BANSAL",
+      "contact_number_1": "9501941440",
+      "location": "Ludhiana",
+      "address": "24-A, Industrial Area-A Extension, Transport Nagar, Ludhiana, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 152.4,
+        "width_mm": 101.6,
+        "depth_mm": 82.55,
+        "sheet_gauge": 18,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "JINDAL",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 170,
+      "moq": 1,
+      "weight_per_unit_kg": 0.3,
+      "package_quantity": 100,
+      "vendor_name": "AGGARWAL CONCAST (P) LTD.",
+      "contact_person": "MANISH",
+      "contact_number_1": "9316916882",
+      "contact_number_2": "93579 16882",
+      "location": "Ludhiana",
+      "address": "VILLAGE CHANDRAN, CHANDIGARH ROAD, LUDHIANA, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 152.4,
+        "width_mm": 101.6,
+        "depth_mm": 82.55,
+        "sheet_gauge": 18,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "ALWIN",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 210,
+      "moq": 1,
+      "discount_percent": 28,
+      "weight_per_unit_kg": 0.325,
+      "package_quantity": 100,
+      "vendor_name": "GOKAL INDUSTRIES",
+      "contact_person": "PALLAV BANSAL",
+      "contact_number_1": "9501941440",
+      "location": "Ludhiana",
+      "address": "24-A, Industrial Area-A Extension, Transport Nagar, Ludhiana, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 152.4,
+        "width_mm": 101.6,
+        "depth_mm": 82.55,
+        "sheet_gauge": 16,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "JINDAL",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 210,
+      "moq": 1,
+      "weight_per_unit_kg": 0.325,
+      "package_quantity": 100,
+      "vendor_name": "AGGARWAL CONCAST (P) LTD.",
+      "contact_person": "MANISH",
+      "contact_number_1": "9316916882",
+      "contact_number_2": "93579 16882",
+      "location": "Ludhiana",
+      "address": "VILLAGE CHANDRAN, CHANDIGARH ROAD, LUDHIANA, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 152.4,
+        "width_mm": 101.6,
+        "depth_mm": 82.55,
+        "sheet_gauge": 16,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "ALWIN",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 195,
+      "moq": 1,
+      "discount_percent": 28,
+      "weight_per_unit_kg": 0.375,
+      "package_quantity": 100,
+      "vendor_name": "GOKAL INDUSTRIES",
+      "contact_person": "PALLAV BANSAL",
+      "contact_number_1": "9501941440",
+      "location": "Ludhiana",
+      "address": "24-A, Industrial Area-A Extension, Transport Nagar, Ludhiana, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 152.4,
+        "width_mm": 120.65,
+        "depth_mm": 88.9,
+        "sheet_gauge": 18,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "JINDAL",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 195,
+      "moq": 1,
+      "weight_per_unit_kg": 0.375,
+      "package_quantity": 100,
+      "vendor_name": "AGGARWAL CONCAST (P) LTD.",
+      "contact_person": "MANISH",
+      "contact_number_1": "9316916882",
+      "contact_number_2": "93579 16882",
+      "location": "Ludhiana",
+      "address": "VILLAGE CHANDRAN, CHANDIGARH ROAD, LUDHIANA, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 152.4,
+        "width_mm": 120.65,
+        "depth_mm": 88.9,
+        "sheet_gauge": 18,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "ALWIN",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 245,
+      "moq": 1,
+      "discount_percent": 28,
+      "weight_per_unit_kg": 0.45,
+      "package_quantity": 100,
+      "vendor_name": "GOKAL INDUSTRIES",
+      "contact_person": "PALLAV BANSAL",
+      "contact_number_1": "9501941440",
+      "location": "Ludhiana",
+      "address": "24-A, Industrial Area-A Extension, Transport Nagar, Ludhiana, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 152.4,
+        "width_mm": 120.65,
+        "depth_mm": 88.9,
+        "sheet_gauge": 16,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "JINDAL",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 245,
+      "moq": 1,
+      "weight_per_unit_kg": 0.45,
+      "package_quantity": 100,
+      "vendor_name": "AGGARWAL CONCAST (P) LTD.",
+      "contact_person": "MANISH",
+      "contact_number_1": "9316916882",
+      "contact_number_2": "93579 16882",
+      "location": "Ludhiana",
+      "address": "VILLAGE CHANDRAN, CHANDIGARH ROAD, LUDHIANA, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 152.4,
+        "width_mm": 120.65,
+        "depth_mm": 88.9,
+        "sheet_gauge": 16,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "ALWIN",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 200,
+      "moq": 1,
+      "discount_percent": 28,
+      "weight_per_unit_kg": 0.44,
+      "package_quantity": 100,
+      "vendor_name": "GOKAL INDUSTRIES",
+      "contact_person": "PALLAV BANSAL",
+      "contact_number_1": "9501941440",
+      "location": "Ludhiana",
+      "address": "24-A, Industrial Area-A Extension, Transport Nagar, Ludhiana, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 177.8,
+        "width_mm": 120.65,
+        "depth_mm": 88.9,
+        "sheet_gauge": 18,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "JINDAL",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 200,
+      "moq": 1,
+      "weight_per_unit_kg": 0.44,
+      "package_quantity": 100,
+      "vendor_name": "AGGARWAL CONCAST (P) LTD.",
+      "contact_person": "MANISH",
+      "contact_number_1": "9316916882",
+      "contact_number_2": "93579 16882",
+      "location": "Ludhiana",
+      "address": "VILLAGE CHANDRAN, CHANDIGARH ROAD, LUDHIANA, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 177.8,
+        "width_mm": 120.65,
+        "depth_mm": 88.9,
+        "sheet_gauge": 18,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "ALWIN",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 250,
+      "moq": 1,
+      "discount_percent": 28,
+      "weight_per_unit_kg": 0.525,
+      "package_quantity": 100,
+      "vendor_name": "GOKAL INDUSTRIES",
+      "contact_person": "PALLAV BANSAL",
+      "contact_number_1": "9501941440",
+      "location": "Ludhiana",
+      "address": "24-A, Industrial Area-A Extension, Transport Nagar, Ludhiana, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 177.8,
+        "width_mm": 120.65,
+        "depth_mm": 88.9,
+        "sheet_gauge": 16,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "JINDAL",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 250,
+      "moq": 1,
+      "weight_per_unit_kg": 0.525,
+      "package_quantity": 100,
+      "vendor_name": "AGGARWAL CONCAST (P) LTD.",
+      "contact_person": "MANISH",
+      "contact_number_1": "9316916882",
+      "contact_number_2": "93579 16882",
+      "location": "Ludhiana",
+      "address": "VILLAGE CHANDRAN, CHANDIGARH ROAD, LUDHIANA, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 177.8,
+        "width_mm": 120.65,
+        "depth_mm": 88.9,
+        "sheet_gauge": 16,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "ALWIN",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 200,
+      "moq": 1,
+      "discount_percent": 28,
+      "weight_per_unit_kg": 0.4,
+      "package_quantity": 72,
+      "vendor_name": "GOKAL INDUSTRIES",
+      "contact_person": "PALLAV BANSAL",
+      "contact_number_1": "9501941440",
+      "location": "Ludhiana",
+      "address": "24-A, Industrial Area-A Extension, Transport Nagar, Ludhiana, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 203.2,
+        "width_mm": 101.6,
+        "depth_mm": 82.55,
+        "sheet_gauge": 18,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "JINDAL",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 200,
+      "moq": 1,
+      "weight_per_unit_kg": 0.4,
+      "package_quantity": 72,
+      "vendor_name": "AGGARWAL CONCAST (P) LTD.",
+      "contact_person": "MANISH",
+      "contact_number_1": "9316916882",
+      "contact_number_2": "93579 16882",
+      "location": "Ludhiana",
+      "address": "VILLAGE CHANDRAN, CHANDIGARH ROAD, LUDHIANA, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 203.2,
+        "width_mm": 101.6,
+        "depth_mm": 95.25,
+        "sheet_gauge": 18,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "ALWIN",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 225,
+      "moq": 1,
+      "discount_percent": 28,
+      "weight_per_unit_kg": 0.575,
+      "package_quantity": 72,
+      "vendor_name": "GOKAL INDUSTRIES",
+      "contact_person": "PALLAV BANSAL",
+      "contact_number_1": "9501941440",
+      "location": "Ludhiana",
+      "address": "24-A, Industrial Area-A Extension, Transport Nagar, Ludhiana, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 203.2,
+        "width_mm": 133.35,
+        "depth_mm": 114.3,
+        "sheet_gauge": 18,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "JINDAL",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 225,
+      "moq": 1,
+      "weight_per_unit_kg": 0.575,
+      "package_quantity": 72,
+      "vendor_name": "AGGARWAL CONCAST (P) LTD.",
+      "contact_person": "MANISH",
+      "contact_number_1": "9316916882",
+      "contact_number_2": "93579 16882",
+      "location": "Ludhiana",
+      "address": "VILLAGE CHANDRAN, CHANDIGARH ROAD, LUDHIANA, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 203.2,
+        "width_mm": 133.35,
+        "depth_mm": 114.3,
+        "sheet_gauge": 18,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "ALWIN",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 250,
+      "moq": 1,
+      "discount_percent": 28,
+      "weight_per_unit_kg": 0.48,
+      "package_quantity": 72,
+      "vendor_name": "GOKAL INDUSTRIES",
+      "contact_person": "PALLAV BANSAL",
+      "contact_number_1": "9501941440",
+      "location": "Ludhiana",
+      "address": "24-A, Industrial Area-A Extension, Transport Nagar, Ludhiana, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 203.2,
+        "width_mm": 101.6,
+        "depth_mm": 82.55,
+        "sheet_gauge": 16,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "JINDAL",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 250,
+      "moq": 1,
+      "weight_per_unit_kg": 0.48,
+      "package_quantity": 72,
+      "vendor_name": "AGGARWAL CONCAST (P) LTD.",
+      "contact_person": "MANISH",
+      "contact_number_1": "9316916882",
+      "contact_number_2": "93579 16882",
+      "location": "Ludhiana",
+      "address": "VILLAGE CHANDRAN, CHANDIGARH ROAD, LUDHIANA, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 203.2,
+        "width_mm": 101.6,
+        "depth_mm": 95.25,
+        "sheet_gauge": 16,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "ALWIN",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 295,
+      "moq": 1,
+      "discount_percent": 28,
+      "weight_per_unit_kg": 0.725,
+      "package_quantity": 60,
+      "vendor_name": "GOKAL INDUSTRIES",
+      "contact_person": "PALLAV BANSAL",
+      "contact_number_1": "9501941440",
+      "location": "Ludhiana",
+      "address": "24-A, Industrial Area-A Extension, Transport Nagar, Ludhiana, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 203.2,
+        "width_mm": 133.35,
+        "depth_mm": 114.3,
+        "sheet_gauge": 16,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "JINDAL",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 295,
+      "moq": 1,
+      "weight_per_unit_kg": 0.725,
+      "package_quantity": 60,
+      "vendor_name": "AGGARWAL CONCAST (P) LTD.",
+      "contact_person": "MANISH",
+      "contact_number_1": "9316916882",
+      "contact_number_2": "93579 16882",
+      "location": "Ludhiana",
+      "address": "VILLAGE CHANDRAN, CHANDIGARH ROAD, LUDHIANA, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 203.2,
+        "width_mm": 133.35,
+        "depth_mm": 114.3,
+        "sheet_gauge": 16,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "ALWIN",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 285,
+      "moq": 1,
+      "discount_percent": 28,
+      "weight_per_unit_kg": 0.7,
+      "package_quantity": 48,
+      "vendor_name": "GOKAL INDUSTRIES",
+      "contact_person": "PALLAV BANSAL",
+      "contact_number_1": "9501941440",
+      "location": "Ludhiana",
+      "address": "24-A, Industrial Area-A Extension, Transport Nagar, Ludhiana, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 228.6,
+        "width_mm": 152.4,
+        "depth_mm": 127,
+        "sheet_gauge": 18,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "JINDAL",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 285,
+      "moq": 1,
+      "weight_per_unit_kg": 0.7,
+      "package_quantity": 48,
+      "vendor_name": "AGGARWAL CONCAST (P) LTD.",
+      "contact_person": "MANISH",
+      "contact_number_1": "9316916882",
+      "contact_number_2": "93579 16882",
+      "location": "Ludhiana",
+      "address": "VILLAGE CHANDRAN, CHANDIGARH ROAD, LUDHIANA, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 228.6,
+        "width_mm": 152.4,
+        "depth_mm": 127,
+        "sheet_gauge": 18,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "ALWIN",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 335,
+      "moq": 1,
+      "discount_percent": 28,
+      "weight_per_unit_kg": 0.85,
+      "package_quantity": 48,
+      "vendor_name": "GOKAL INDUSTRIES",
+      "contact_person": "PALLAV BANSAL",
+      "contact_number_1": "9501941440",
+      "location": "Ludhiana",
+      "address": "24-A, Industrial Area-A Extension, Transport Nagar, Ludhiana, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 228.6,
+        "width_mm": 152.4,
+        "depth_mm": 127,
+        "sheet_gauge": 16,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "JINDAL",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 335,
+      "moq": 1,
+      "weight_per_unit_kg": 0.85,
+      "package_quantity": 48,
+      "specs": {
+        "length_mm": 228.6,
+        "width_mm": 152.4,
+        "depth_mm": 127,
+        "sheet_gauge": 16,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "ALWIN",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 330,
+      "moq": 1,
+      "discount_percent": 28,
+      "weight_per_unit_kg": 0.8,
+      "package_quantity": 48,
+      "vendor_name": "GOKAL INDUSTRIES",
+      "contact_person": "PALLAV BANSAL",
+      "contact_number_1": "9501941440",
+      "location": "Ludhiana",
+      "address": "24-A, Industrial Area-A Extension, Transport Nagar, Ludhiana, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 254,
+        "width_mm": 152.4,
+        "depth_mm": 127,
+        "sheet_gauge": 18,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "JINDAL",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 330,
+      "moq": 1,
+      "weight_per_unit_kg": 0.8,
+      "package_quantity": 48,
+      "vendor_name": "AGGARWAL CONCAST (P) LTD.",
+      "contact_person": "MANISH",
+      "contact_number_1": "9316916882",
+      "contact_number_2": "93579 16882",
+      "location": "Ludhiana",
+      "address": "VILLAGE CHANDRAN, CHANDIGARH ROAD, LUDHIANA, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 254,
+        "width_mm": 152.4,
+        "depth_mm": 127,
+        "sheet_gauge": 18,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "ALWIN",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 370,
+      "moq": 1,
+      "discount_percent": 28,
+      "weight_per_unit_kg": 0.975,
+      "package_quantity": 48,
+      "vendor_name": "GOKAL INDUSTRIES",
+      "contact_person": "PALLAV BANSAL",
+      "contact_number_1": "9501941440",
+      "location": "Ludhiana",
+      "address": "24-A, Industrial Area-A Extension, Transport Nagar, Ludhiana, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 254,
+        "width_mm": 152.4,
+        "depth_mm": 127,
+        "sheet_gauge": 16,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "JINDAL",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 370,
+      "moq": 1,
+      "weight_per_unit_kg": 0.975,
+      "package_quantity": 48,
+      "vendor_name": "AGGARWAL CONCAST (P) LTD.",
+      "contact_person": "MANISH",
+      "contact_number_1": "9316916882",
+      "contact_number_2": "93579 16882",
+      "location": "Ludhiana",
+      "address": "VILLAGE CHANDRAN, CHANDIGARH ROAD, LUDHIANA, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 254,
+        "width_mm": 152.4,
+        "depth_mm": 127,
+        "sheet_gauge": 16,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "ALWIN",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 430,
+      "moq": 1,
+      "discount_percent": 28,
+      "weight_per_unit_kg": 1.225,
+      "package_quantity": 36,
+      "vendor_name": "GOKAL INDUSTRIES",
+      "contact_person": "PALLAV BANSAL",
+      "contact_number_1": "9501941440",
+      "location": "Ludhiana",
+      "address": "24-A, Industrial Area-A Extension, Transport Nagar, Ludhiana, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 304.8,
+        "width_mm": 152.4,
+        "depth_mm": 127,
+        "sheet_gauge": 16,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "JINDAL",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 430,
+      "moq": 1,
+      "weight_per_unit_kg": 1.225,
+      "package_quantity": 36,
+      "vendor_name": "AGGARWAL CONCAST (P) LTD.",
+      "contact_person": "MANISH",
+      "contact_number_1": "9316916882",
+      "contact_number_2": "93579 16882",
+      "location": "Ludhiana",
+      "address": "VILLAGE CHANDRAN, CHANDIGARH ROAD, LUDHIANA, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 304.8,
+        "width_mm": 152.4,
+        "depth_mm": 127,
+        "sheet_gauge": 16,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "ALWIN",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 575,
+      "moq": 1,
+      "discount_percent": 28,
+      "weight_per_unit_kg": 1.5,
+      "package_quantity": 25,
+      "vendor_name": "GOKAL INDUSTRIES",
+      "contact_person": "PALLAV BANSAL",
+      "contact_number_1": "9501941440",
+      "location": "Ludhiana",
+      "address": "24-A, Industrial Area-A Extension, Transport Nagar, Ludhiana, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 304.8,
+        "width_mm": 203.2,
+        "depth_mm": 152.4,
+        "sheet_gauge": 16,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "JINDAL",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 575,
+      "moq": 1,
+      "weight_per_unit_kg": 1.5,
+      "package_quantity": 25,
+      "vendor_name": "AGGARWAL CONCAST (P) LTD.",
+      "contact_person": "MANISH",
+      "contact_number_1": "9316916882",
+      "contact_number_2": "93579 16882",
+      "location": "Ludhiana",
+      "address": "VILLAGE CHANDRAN, CHANDIGARH ROAD, LUDHIANA, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 304.8,
+        "width_mm": 203.2,
+        "depth_mm": 152.4,
+        "sheet_gauge": 16,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "ALWIN",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 575,
+      "moq": 1,
+      "discount_percent": 28,
+      "weight_per_unit_kg": 1.5,
+      "package_quantity": 25,
+      "vendor_name": "GOKAL INDUSTRIES",
+      "contact_person": "PALLAV BANSAL",
+      "contact_number_1": "9501941440",
+      "location": "Ludhiana",
+      "address": "24-A, Industrial Area-A Extension, Transport Nagar, Ludhiana, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 355.6,
+        "width_mm": 177.8,
+        "depth_mm": 127,
+        "sheet_gauge": 16,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "elevator_bucket",
+      "brand": "JINDAL",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 575,
+      "moq": 1,
+      "weight_per_unit_kg": 1.5,
+      "package_quantity": 25,
+      "vendor_name": "AGGARWAL CONCAST (P) LTD.",
+      "contact_person": "MANISH",
+      "contact_number_1": "9316916882",
+      "contact_number_2": "93579 16882",
+      "location": "Ludhiana",
+      "address": "VILLAGE CHANDRAN, CHANDIGARH ROAD, LUDHIANA, Ludhiana, Punjab",
+      "vendor_type": "manufacturer",
+      "specs": {
+        "length_mm": 355.6,
+        "width_mm": 177.8,
+        "depth_mm": 127,
+        "sheet_gauge": 16,
+        "material": "ss"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "food_grade_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 1850,
+      "moq": 30,
+      "delivery_time_days": 5,
+      "vendor_name": "HP TRADING",
+      "contact_person": "PRAKUL",
+      "contact_number_1": "98109 89680",
+      "location": "DELHI",
+      "address": "AJMERI GATE, DELHI",
+      "vendor_type": "trader",
+      "date_added": "2026-09-29",
+      "specs": {
+        "width_mm": 400,
+        "thickness_mm": 10,
+        "ply_count": 4,
+        "length_m": 30,
+        "joint_type": "open_end",
+        "belt_subtype": "white_rubber"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "food_grade_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 1120,
+      "moq": 100,
+      "delivery_time_days": 0,
+      "vendor_name": "MAHALAXMI BELTING",
+      "contact_person": "MAYANK BANSAL",
+      "contact_number_1": "99994 44471",
+      "location": "SONIPAT",
+      "address": "SONIPAT , HARYANA",
+      "vendor_type": "manufacturer",
+      "date_added": "2026-09-29",
+      "specs": {
+        "width_mm": 400,
+        "thickness_mm": 10,
+        "ply_count": 4,
+        "length_m": 30,
+        "joint_type": "open_end",
+        "belt_subtype": "white_rubber"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "food_grade_conveyor_belt",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 27700,
+      "moq": 1,
+      "delivery_time_days": 0,
+      "vendor_name": "AK INDUSTRIAL SOLUTION",
+      "contact_person": "VINEET",
+      "contact_number_1": "7827355345",
+      "address": "UDYOG KUNJ, GHAZIABAD,",
+      "vendor_type": "trader",
+      "date_added": "2026-09-29",
+      "specs": {
+        "width_mm": 914.4,
+        "thickness_mm": 4,
+        "length_m": 9.754,
+        "joint_type": "endless",
+        "belt_subtype": "pvc"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "food_grade_conveyor_belt",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 23600,
+      "moq": 1,
+      "delivery_time_days": 2,
+      "vendor_name": "HP TRADING",
+      "contact_person": "PRAKUL",
+      "contact_number_1": "98109 89680",
+      "location": "DELHI",
+      "address": "AJMERI GATE, DELHI",
+      "vendor_type": "trader",
+      "date_added": "2026-09-28",
+      "specs": {
+        "width_mm": 914.4,
+        "thickness_mm": 4,
+        "length_m": 9.754,
+        "joint_type": "endless",
+        "belt_subtype": "white_rubber"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "food_grade_conveyor_belt",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 12300,
+      "moq": 1,
+      "delivery_time_days": 0,
+      "vendor_name": "MAHALAXMI BELTING",
+      "contact_person": "MAYANK BANSAL",
+      "contact_number_1": "99994 44471",
+      "location": "SONIPAT",
+      "address": "SONIPAT , HARYANA",
+      "vendor_type": "manufacturer",
+      "date_added": "2026-09-23",
+      "specs": {
+        "width_mm": 550,
+        "thickness_mm": 5,
+        "length_m": 4.877,
+        "joint_type": "endless",
+        "belt_subtype": "pvc"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "food_grade_conveyor_belt",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 14300,
+      "moq": 1,
+      "delivery_time_days": 3,
+      "vendor_name": "KS conveyor belts",
+      "contact_person": "kartikay sharma",
+      "contact_number_1": "7838533309",
+      "contact_number_2": "8178256654",
+      "location": "delhi",
+      "address": "143, Shree Vijay Kumar Gupta Marg, Anand Nagar, New Delhi, North West Delhi, Delhi",
+      "vendor_type": "trader",
+      "date_added": "2026-09-23",
+      "specs": {
+        "width_mm": 550,
+        "thickness_mm": 5,
+        "length_m": 4.877,
+        "joint_type": "endless",
+        "belt_subtype": "pvc"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "food_grade_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 665,
+      "moq": 1,
+      "vendor_name": "MODERN CONVEYORS",
+      "contact_person": "HARVINDER SINGH",
+      "contact_number_1": "9417291027",
+      "location": "Jalandar",
+      "address": "DHADA INDUSTRIAL AREA, PLOT No. 112, KANGNIWAL, POST- HAZARA, OLD HOSHIARPUR ROAD, JALANDHAR, Jalandhar, Punjab",
+      "vendor_type": "manufacturer",
+      "date_added": "2026-09-05",
+      "specs": {
+        "width_mm": 225,
+        "thickness_mm": 10,
+        "ply_count": 4,
+        "length_m": 50,
+        "joint_type": "open_end",
+        "belt_subtype": "white_rubber"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "food_grade_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 167.64,
+      "moq": 1,
+      "vendor_name": "MODERN CONVEYORS",
+      "contact_person": "HARVINDER SINGH",
+      "contact_number_1": "9417291027",
+      "location": "Jalandar",
+      "address": "DHADA INDUSTRIAL AREA, PLOT No. 112, KANGNIWAL, POST- HAZARA, OLD HOSHIARPUR ROAD, JALANDHAR, Jalandhar, Punjab",
+      "vendor_type": "manufacturer",
+      "date_added": "2026-08-14",
+      "specs": {
+        "width_mm": 76.2,
+        "thickness_mm": 7.5,
+        "ply_count": 3,
+        "length_m": 100,
+        "joint_type": "open_end",
+        "belt_subtype": "white_rubber"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "food_grade_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 223.52,
+      "moq": 1,
+      "vendor_name": "MODERN CONVEYORS",
+      "contact_person": "HARVINDER SINGH",
+      "contact_number_1": "9417291027",
+      "location": "Jalandar",
+      "address": "DHADA INDUSTRIAL AREA, PLOT No. 112, KANGNIWAL, POST- HAZARA, OLD HOSHIARPUR ROAD, JALANDHAR, Jalandhar, Punjab",
+      "vendor_type": "manufacturer",
+      "date_added": "2026-08-14",
+      "specs": {
+        "width_mm": 101.6,
+        "thickness_mm": 7.5,
+        "ply_count": 3,
+        "length_m": 100,
+        "joint_type": "open_end",
+        "belt_subtype": "white_rubber"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "food_grade_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 279.4,
+      "moq": 1,
+      "vendor_name": "MODERN CONVEYORS",
+      "contact_person": "HARVINDER SINGH",
+      "contact_number_1": "9417291027",
+      "location": "Jalandar",
+      "address": "DHADA INDUSTRIAL AREA, PLOT No. 112, KANGNIWAL, POST- HAZARA, OLD HOSHIARPUR ROAD, JALANDHAR, Jalandhar, Punjab",
+      "vendor_type": "manufacturer",
+      "date_added": "2026-08-14",
+      "specs": {
+        "width_mm": 127,
+        "thickness_mm": 7.5,
+        "ply_count": 3,
+        "length_m": 100,
+        "joint_type": "open_end",
+        "belt_subtype": "white_rubber"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "food_grade_conveyor_belt",
+      "price_per_unit": 2.67,
+      "moq": 100,
+      "delivery_time_days": 15,
+      "vendor_name": "MODERN CONVEYORS",
+      "contact_person": "HARVINDER SINGH",
+      "contact_number_1": "9417291027",
+      "location": "Jalandar",
+      "address": "DHADA INDUSTRIAL AREA, PLOT No. 112, KANGNIWAL, POST- HAZARA, OLD HOSHIARPUR ROAD, JALANDHAR, Jalandhar, Punjab",
+      "vendor_type": "manufacturer",
+      "date_added": "2026-24-09",
+      "specs": {
+        "width_mm": 225,
+        "thickness_mm": 9,
+        "ply_count": 4,
+        "length_m": 100,
+        "joint_type": "open_end",
+        "belt_subtype": "white_rubber"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "food_grade_conveyor_belt",
+      "price_per_unit": 2.9,
+      "moq": 1,
+      "delivery_time_days": 6,
+      "vendor_name": "KOS TRADES",
+      "contact_person": "vivek",
+      "contact_number_1": "9990866999",
+      "contact_number_2": "9718828384",
+      "location": "delhi",
+      "address": "SHOP NO. 209, PLOT NO.-27, SAGAR PLAZA-II, ROAD NO.-44, COMMUNITY CENTER, RANI BAGH, PITAMPURA, North West Delhi, Delhi, 110034",
+      "vendor_type": "trader",
+      "date_added": "2026-24-09",
+      "specs": {
+        "width_mm": 225,
+        "thickness_mm": 9,
+        "ply_count": 4,
+        "length_m": 100,
+        "joint_type": "open_end",
+        "belt_subtype": "white_rubber"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "food_grade_conveyor_belt",
+      "price_per_unit": 2.8,
+      "moq": 1,
+      "delivery_time_days": 15,
+      "vendor_name": "MAHALAXMI BELTING",
+      "contact_person": "MAYANK BANSAL",
+      "contact_number_1": "99994 44471",
+      "location": "SONIPAT",
+      "address": "SONIPAT , HARYANA",
+      "vendor_type": "manufacturer",
+      "date_added": "2026-24-09",
+      "specs": {
+        "width_mm": 225,
+        "thickness_mm": 10,
+        "ply_count": 4,
+        "length_m": 100,
+        "joint_type": "open_end",
+        "belt_subtype": "white_rubber"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "food_grade_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 700,
+      "moq": 1,
+      "delivery_time_days": 6,
+      "vendor_name": "HP TRADING",
+      "contact_person": "PRAKUL",
+      "contact_number_1": "98109 89680",
+      "location": "DELHI",
+      "address": "AJMERI GATE, DELHI",
+      "vendor_type": "trader",
+      "date_added": "2026-24-09",
+      "specs": {
+        "width_mm": 225,
+        "thickness_mm": 9,
+        "ply_count": 4,
+        "length_m": 100,
+        "joint_type": "open_end",
+        "belt_subtype": "white_rubber"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "food_grade_conveyor_belt",
+      "price_per_unit": 2.67,
+      "moq": 100,
+      "delivery_time_days": 15,
+      "vendor_name": "MODERN CONVEYORS",
+      "contact_person": "HARVINDER SINGH",
+      "contact_number_1": "9417291027",
+      "location": "Jalandar",
+      "address": "DHADA INDUSTRIAL AREA, PLOT No. 112, KANGNIWAL, POST- HAZARA, OLD HOSHIARPUR ROAD, JALANDHAR, Jalandhar, Punjab",
+      "vendor_type": "manufacturer",
+      "date_added": "2026-24-09",
+      "specs": {
+        "width_mm": 200,
+        "thickness_mm": 9,
+        "ply_count": 4,
+        "length_m": 100,
+        "joint_type": "open_end",
+        "belt_subtype": "white_rubber"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "food_grade_conveyor_belt",
+      "price_per_unit": 2.9,
+      "moq": 1,
+      "delivery_time_days": 6,
+      "vendor_name": "KOS TRADES",
+      "contact_person": "vivek",
+      "contact_number_1": "9990866999",
+      "contact_number_2": "9718828384",
+      "location": "delhi",
+      "address": "SHOP NO. 209, PLOT NO.-27, SAGAR PLAZA-II, ROAD NO.-44, COMMUNITY CENTER, RANI BAGH, PITAMPURA, North West Delhi, Delhi, 110034",
+      "vendor_type": "trader",
+      "date_added": "2026-24-09",
+      "specs": {
+        "width_mm": 200,
+        "thickness_mm": 9,
+        "ply_count": 4,
+        "length_m": 100,
+        "joint_type": "open_end",
+        "belt_subtype": "white_rubber"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "food_grade_conveyor_belt",
+      "price_per_unit": 2.8,
+      "moq": 1,
+      "delivery_time_days": 15,
+      "vendor_name": "MAHALAXMI BELTING",
+      "contact_person": "MAYANK BANSAL",
+      "contact_number_1": "99994 44471",
+      "location": "SONIPAT",
+      "address": "SONIPAT , HARYANA",
+      "vendor_type": "manufacturer",
+      "date_added": "2026-24-09",
+      "specs": {
+        "width_mm": 200,
+        "thickness_mm": 10,
+        "ply_count": 4,
+        "length_m": 100,
+        "joint_type": "open_end",
+        "belt_subtype": "white_rubber"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "food_grade_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 580,
+      "moq": 1,
+      "delivery_time_days": 6,
+      "vendor_name": "HP TRADING",
+      "contact_person": "PRAKUL",
+      "contact_number_1": "98109 89680",
+      "location": "DELHI",
+      "address": "AJMERI GATE, DELHI",
+      "vendor_type": "trader",
+      "date_added": "2026-24-09",
+      "specs": {
+        "width_mm": 200,
+        "thickness_mm": 9,
+        "ply_count": 4,
+        "length_m": 100,
+        "joint_type": "open_end",
+        "belt_subtype": "white_rubber"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "food_grade_conveyor_belt",
+      "price_per_unit": 2.67,
+      "moq": 100,
+      "delivery_time_days": 15,
+      "vendor_name": "MODERN CONVEYORS",
+      "contact_person": "HARVINDER SINGH",
+      "contact_number_1": "9417291027",
+      "location": "Jalandar",
+      "address": "DHADA INDUSTRIAL AREA, PLOT No. 112, KANGNIWAL, POST- HAZARA, OLD HOSHIARPUR ROAD, JALANDHAR, Jalandhar, Punjab",
+      "vendor_type": "manufacturer",
+      "date_added": "2026-24-09",
+      "specs": {
+        "width_mm": 150,
+        "thickness_mm": 9,
+        "ply_count": 4,
+        "length_m": 100,
+        "joint_type": "open_end",
+        "belt_subtype": "white_rubber"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "food_grade_conveyor_belt",
+      "price_per_unit": 2.9,
+      "moq": 1,
+      "delivery_time_days": 6,
+      "vendor_name": "KOS TRADES",
+      "contact_person": "vivek",
+      "contact_number_1": "9990866999",
+      "contact_number_2": "9718828384",
+      "location": "delhi",
+      "address": "SHOP NO. 209, PLOT NO.-27, SAGAR PLAZA-II, ROAD NO.-44, COMMUNITY CENTER, RANI BAGH, PITAMPURA, North West Delhi, Delhi, 110034",
+      "vendor_type": "trader",
+      "date_added": "2026-24-09",
+      "specs": {
+        "width_mm": 150,
+        "thickness_mm": 9,
+        "ply_count": 4,
+        "length_m": 100,
+        "joint_type": "open_end",
+        "belt_subtype": "white_rubber"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "food_grade_conveyor_belt",
+      "price_per_unit": 2.8,
+      "moq": 1,
+      "delivery_time_days": 15,
+      "vendor_name": "MAHALAXMI BELTING",
+      "contact_person": "MAYANK BANSAL",
+      "contact_number_1": "99994 44471",
+      "location": "SONIPAT",
+      "address": "SONIPAT , HARYANA",
+      "vendor_type": "manufacturer",
+      "date_added": "2026-24-09",
+      "specs": {
+        "width_mm": 150,
+        "thickness_mm": 10,
+        "ply_count": 4,
+        "length_m": 100,
+        "joint_type": "open_end",
+        "belt_subtype": "white_rubber"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "food_grade_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 435,
+      "moq": 1,
+      "delivery_time_days": 6,
+      "vendor_name": "HP TRADING",
+      "contact_person": "PRAKUL",
+      "contact_number_1": "98109 89680",
+      "location": "DELHI",
+      "address": "AJMERI GATE, DELHI",
+      "vendor_type": "trader",
+      "date_added": "2026-24-09",
+      "specs": {
+        "width_mm": 150,
+        "thickness_mm": 9,
+        "ply_count": 4,
+        "length_m": 100,
+        "joint_type": "open_end",
+        "belt_subtype": "white_rubber"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "food_grade_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 394,
+      "moq": 1,
+      "vendor_name": "MODERN CONVEYORS",
+      "contact_person": "HARVINDER SINGH",
+      "contact_number_1": "9417291027",
+      "location": "Jalandar",
+      "address": "DHADA INDUSTRIAL AREA, PLOT No. 112, KANGNIWAL, POST- HAZARA, OLD HOSHIARPUR ROAD, JALANDHAR, Jalandhar, Punjab",
+      "vendor_type": "manufacturer",
+      "date_added": "2026-08-13",
+      "specs": {
+        "width_mm": 175,
+        "thickness_mm": 7.5,
+        "ply_count": 3,
+        "length_m": 150,
+        "joint_type": "open_end",
+        "belt_subtype": "white_rubber"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "food_grade_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 415,
+      "moq": 1,
+      "vendor_name": "BOMBAY SALES",
+      "contact_person": "DAVINDER KAPOOR",
+      "contact_number_1": "870 061 2662",
+      "address": "GB, ROAD , DELHI",
+      "vendor_type": "trader",
+      "date_added": "2026-08-13",
+      "specs": {
+        "width_mm": 175,
+        "thickness_mm": 7.5,
+        "ply_count": 3,
+        "length_m": 150,
+        "joint_type": "open_end",
+        "belt_subtype": "white_rubber"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "food_grade_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 460,
+      "moq": 1,
+      "vendor_name": "KS conveyor belts",
+      "contact_person": "kartikay sharma",
+      "contact_number_1": "7838533309",
+      "contact_number_2": "8178256654",
+      "location": "delhi",
+      "address": "143, Shree Vijay Kumar Gupta Marg, Anand Nagar, New Delhi, North West Delhi, Delhi",
+      "vendor_type": "trader",
+      "date_added": "2026-08-13",
+      "specs": {
+        "width_mm": 177.8,
+        "thickness_mm": 8,
+        "ply_count": 3,
+        "length_m": 150,
+        "joint_type": "open_end",
+        "belt_subtype": "white_rubber"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "food_grade_conveyor_belt",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 4200,
+      "moq": 1,
+      "delivery_time_days": 2,
+      "vendor_name": "HP TRADING",
+      "contact_person": "PRAKUL",
+      "contact_number_1": "98109 89680",
+      "location": "DELHI",
+      "address": "AJMERI GATE, DELHI",
+      "vendor_type": "trader",
+      "date_added": "2026-08-01",
+      "specs": {
+        "width_mm": 230,
+        "thickness_mm": 2,
+        "joint_type": "endless",
+        "belt_subtype": "white_rubber"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "price_per_unit": 1.35,
+      "moq": 30,
+      "delivery_time_days": 3,
+      "vendor_name": "punjshree",
+      "contact_person": "SAURABH",
+      "contact_number_1": "78919 19199",
+      "contact_number_2": "99288 86200",
+      "address": "jaipur , rajasthan",
+      "vendor_type": "manufacturer",
+      "date_added": "2026-05-10",
+      "specs": {
+        "width_mm": 600,
+        "ply_count": 3,
+        "thickness_mm": 8,
+        "joint_type": "open_end"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "price_per_unit": 1.25,
+      "moq": 1,
+      "delivery_time_days": 3,
+      "vendor_name": "MB BELTING",
+      "contact_person": "ALPEZ",
+      "contact_number_1": "9909082421",
+      "contact_number_2": "9909082485",
+      "address": "8-A , NH LALPAR MORBI , GUJRAT , INDIA ,",
+      "date_added": "2026-05-10",
+      "specs": {
+        "width_mm": 600,
+        "ply_count": 3,
+        "thickness_mm": 8,
+        "joint_type": "open_end"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "price_per_unit": 1.96,
+      "moq": 30,
+      "delivery_time_days": 3,
+      "vendor_name": "punjshree",
+      "contact_person": "SAURABH",
+      "contact_number_1": "78919 19199",
+      "contact_number_2": "99288 86200",
+      "address": "jaipur , rajasthan",
+      "vendor_type": "manufacturer",
+      "date_added": "2026-05-10",
+      "specs": {
+        "width_mm": 600,
+        "ply_count": 4,
+        "thickness_mm": 10,
+        "joint_type": "open_end"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "price_per_unit": 1.8,
+      "moq": 1,
+      "delivery_time_days": 3,
+      "vendor_name": "MB BELTING",
+      "contact_person": "ALPEZ",
+      "contact_number_1": "9909082421",
+      "contact_number_2": "9909082485",
+      "address": "8-A , NH LALPAR MORBI , GUJRAT , INDIA ,",
+      "date_added": "2026-05-10",
+      "specs": {
+        "width_mm": 600,
+        "ply_count": 4,
+        "thickness_mm": 10,
+        "joint_type": "open_end"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 4900,
+      "moq": 1,
+      "delivery_time_days": 3,
+      "vendor_name": "HP TRADING",
+      "contact_person": "PRAKUL",
+      "contact_number_1": "98109 89680",
+      "location": "DELHI",
+      "address": "AJMERI GATE, DELHI",
+      "vendor_type": "trader",
+      "date_added": "2026-09-18",
+      "specs": {
+        "width_mm": 1400,
+        "ply_count": 4,
+        "joint_type": "open_end"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 35000,
+      "moq": 1,
+      "vendor_name": "HP TRADING",
+      "contact_person": "PRAKUL",
+      "contact_number_1": "98109 89680",
+      "location": "DELHI",
+      "address": "AJMERI GATE, DELHI",
+      "vendor_type": "trader",
+      "date_added": "2026-08-17",
+      "specs": {
+        "width_mm": 1290,
+        "length_m": 5,
+        "thickness_mm": 10,
+        "joint_type": "endless"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 960,
+      "moq": 1,
+      "vendor_name": "HP TRADING",
+      "contact_person": "PRAKUL",
+      "contact_number_1": "98109 89680",
+      "location": "DELHI",
+      "address": "AJMERI GATE, DELHI",
+      "vendor_type": "trader",
+      "date_added": "2026-08-29",
+      "specs": {
+        "length_m": 1.72,
+        "width_mm": 320,
+        "thickness_mm": 2,
+        "joint_type": "open_end"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "food_grade_conveyor_belt",
+      "unit_of_sale": "pcs",
+      "price_per_unit": 1016,
+      "moq": 1,
+      "vendor_name": "KS conveyor belts",
+      "contact_person": "kartikay sharma",
+      "contact_number_1": "7838533309",
+      "contact_number_2": "8178256654",
+      "location": "delhi",
+      "address": "143, Shree Vijay Kumar Gupta Marg, Anand Nagar, New Delhi, North West Delhi, Delhi",
+      "vendor_type": "trader",
+      "date_added": "2026-08-29",
+      "specs": {
+        "length_m": 1.72,
+        "width_mm": 320,
+        "thickness_mm": 2,
+        "joint_type": "open_end",
+        "belt_subtype": "pvc"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 780,
+      "moq": 1,
+      "vendor_name": "HP TRADING",
+      "contact_person": "PRAKUL",
+      "contact_number_1": "98109 89680",
+      "location": "DELHI",
+      "address": "AJMERI GATE, DELHI",
+      "vendor_type": "trader",
+      "date_added": "2026-09-18",
+      "specs": {
+        "width_mm": 300,
+        "thickness_mm": 10,
+        "length_m": 15,
+        "joint_type": "open_end"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 900,
+      "moq": 1,
+      "vendor_name": "HP TRADING",
+      "contact_person": "PRAKUL",
+      "contact_number_1": "98109 89680",
+      "location": "DELHI",
+      "address": "AJMERI GATE, DELHI",
+      "vendor_type": "trader",
+      "date_added": "2026-09-23",
+      "specs": {
+        "width_mm": 600,
+        "ply_count": 3,
+        "thickness_mm": 7.5,
+        "length_m": 600,
+        "joint_type": "open_end"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 810,
+      "moq": 1,
+      "vendor_name": "punjshree",
+      "contact_person": "SAURABH",
+      "contact_number_1": "78919 19199",
+      "contact_number_2": "99288 86200",
+      "address": "jaipur , rajasthan",
+      "vendor_type": "manufacturer",
+      "date_added": "2026-09-23",
+      "specs": {
+        "width_mm": 600,
+        "ply_count": 3,
+        "thickness_mm": 8,
+        "length_m": 600,
+        "joint_type": "open_end"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 1050,
+      "moq": 1,
+      "vendor_name": "PUNJSHREE",
+      "contact_person": "SAURABH",
+      "contact_number_1": "78919 19199",
+      "contact_number_2": "99288 86200",
+      "location": "Jaipur",
+      "address": "jaipur , rajasthan",
+      "date_added": "2026-10-21",
+      "specs": {
+        "width_mm": 600,
+        "ply_count": 3,
+        "thickness_mm": 8,
+        "joint_type": "open_end"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 1350,
+      "moq": 1,
+      "delivery_time_days": 7,
+      "vendor_name": "PUNJSHREE",
+      "contact_person": "SAURABH",
+      "contact_number_1": "78919 19199",
+      "contact_number_2": "99288 86200",
+      "location": "Jaipur",
+      "address": "jaipur , rajasthan",
+      "date_added": "2026-11-02",
+      "specs": {
+        "width_mm": 600,
+        "ply_count": 4,
+        "thickness_mm": 10,
+        "joint_type": "open_end"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 1155,
+      "moq": 1,
+      "vendor_name": "ARORA BELTING STORE",
+      "contact_person": "vivek",
+      "contact_number_1": "9814300456",
+      "location": "ludhiana",
+      "address": "B-6, NEW MARKET, OPP RAILWAY STATION, Ludhiana, Punjab",
+      "vendor_type": "trader",
+      "date_added": "2026-08-04",
+      "specs": {
+        "width_mm": 600,
+        "ply_count": 4,
+        "thickness_mm": 10,
+        "length_m": 25,
+        "joint_type": "open_end"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 1800,
+      "moq": 1,
+      "vendor_name": "HP TRADING",
+      "contact_person": "PRAKUL",
+      "contact_number_1": "98109 89680",
+      "location": "DELHI",
+      "address": "AJMERI GATE, DELHI",
+      "vendor_type": "trader",
+      "specs": {
+        "width_mm": 600,
+        "ply_count": 4,
+        "thickness_mm": 11,
+        "joint_type": "open_end"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 1170,
+      "moq": 1,
+      "vendor_name": "PUNJSHREE",
+      "contact_person": "SAURABH",
+      "contact_number_1": "78919 19199",
+      "contact_number_2": "99288 86200",
+      "location": "Jaipur",
+      "address": "jaipur , rajasthan",
+      "date_added": "2026-09-23",
+      "specs": {
+        "width_mm": 600,
+        "ply_count": 4,
+        "length_m": 50,
+        "thickness_mm": 10,
+        "joint_type": "open_end"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 775,
+      "moq": 1,
+      "vendor_name": "HP TRADING",
+      "contact_person": "PRAKUL",
+      "contact_number_1": "98109 89680",
+      "location": "DELHI",
+      "address": "AJMERI GATE, DELHI",
+      "vendor_type": "trader",
+      "date_added": "2026-08-13",
+      "specs": {
+        "width_mm": 508,
+        "thickness_mm": 8,
+        "ply_count": 3,
+        "length_m": 300,
+        "joint_type": "open_end"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 1320,
+      "moq": 1,
+      "vendor_name": "HP TRADING",
+      "contact_person": "PRAKUL",
+      "contact_number_1": "98109 89680",
+      "location": "DELHI",
+      "address": "AJMERI GATE, DELHI",
+      "vendor_type": "trader",
+      "date_added": "2026-08-17",
+      "specs": {
+        "width_mm": 457.2,
+        "thickness_mm": 11,
+        "length_m": 15.24,
+        "joint_type": "open_end"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 720,
+      "moq": 1,
+      "vendor_name": "HP TRADING",
+      "contact_person": "PRAKUL",
+      "contact_number_1": "98109 89680",
+      "location": "DELHI",
+      "address": "AJMERI GATE, DELHI",
+      "vendor_type": "trader",
+      "date_added": "2026-08-11",
+      "specs": {
+        "thickness_mm": 7.5,
+        "length_m": 50,
+        "width_mm": 450,
+        "joint_type": "open_end"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 1150,
+      "moq": 50,
+      "vendor_name": "PUNJSHREE",
+      "contact_person": "SAURABH",
+      "contact_number_1": "78919 19199",
+      "contact_number_2": "99288 86200",
+      "location": "Jaipur",
+      "address": "jaipur , rajasthan",
+      "vendor_type": "manufacturer",
+      "date_added": "2026-09-25",
+      "specs": {
+        "width_mm": 457.2,
+        "thickness_mm": 12,
+        "length_m": 12,
+        "joint_type": "open_end"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 975,
+      "moq": 1,
+      "vendor_name": "HP TRADING",
+      "contact_person": "PRAKUL",
+      "contact_number_1": "98109 89680",
+      "location": "DELHI",
+      "address": "AJMERI GATE, DELHI",
+      "vendor_type": "trader",
+      "date_added": "2026-08-12",
+      "specs": {
+        "thickness_mm": 7.5,
+        "ply_count": 3,
+        "length_m": 30.48,
+        "width_mm": 650,
+        "joint_type": "open_end"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 320,
+      "moq": 1,
+      "vendor_name": "HP TRADING",
+      "contact_person": "PRAKUL",
+      "contact_number_1": "98109 89680",
+      "location": "DELHI",
+      "address": "AJMERI GATE, DELHI",
+      "vendor_type": "trader",
+      "date_added": "2026-09-24",
+      "specs": {
+        "thickness_mm": 10,
+        "ply_count": 4,
+        "width_mm": 125,
+        "joint_type": "open_end"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 200,
+      "moq": 1,
+      "vendor_name": "HP TRADING",
+      "contact_person": "PRAKUL",
+      "contact_number_1": "98109 89680",
+      "location": "DELHI",
+      "address": "AJMERI GATE, DELHI",
+      "vendor_type": "trader",
+      "date_added": "2026-09-26",
+      "specs": {
+        "width_mm": 127,
+        "ply_count": 3,
+        "thickness_mm": 8,
+        "length_m": 100,
+        "joint_type": "open_end"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 320,
+      "moq": 1,
+      "delivery_time_days": 3,
+      "vendor_name": "HP TRADING",
+      "contact_person": "PRAKUL",
+      "contact_number_1": "98109 89680",
+      "location": "Delhi",
+      "address": "AJMERI GATE, DELHI",
+      "date_added": "2026-09-25",
+      "specs": {
+        "width_mm": 127,
+        "ply_count": 4,
+        "thickness_mm": 10,
+        "joint_type": "open_end"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 250,
+      "moq": 1,
+      "delivery_time_days": 3,
+      "vendor_name": "PUNJSHREE",
+      "contact_person": "SAURABH",
+      "contact_number_1": "78919 19199",
+      "contact_number_2": "99288 86200",
+      "location": "Jaipur",
+      "address": "jaipur , rajasthan",
+      "date_added": "2026-09-25",
+      "specs": {
+        "width_mm": 127,
+        "ply_count": 4,
+        "thickness_mm": 10,
+        "joint_type": "open_end"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 360,
+      "moq": 1,
+      "delivery_time_days": 3,
+      "vendor_name": "HP TRADING",
+      "contact_person": "PRAKUL",
+      "contact_number_1": "98109 89680",
+      "location": "Delhi",
+      "address": "AJMERI GATE, DELHI",
+      "date_added": "2026-09-25",
+      "specs": {
+        "width_mm": 127,
+        "ply_count": 4,
+        "thickness_mm": 12,
+        "joint_type": "open_end"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 380,
+      "moq": 1,
+      "delivery_time_days": 3,
+      "vendor_name": "HP TRADING",
+      "contact_person": "PRAKUL",
+      "contact_number_1": "98109 89680",
+      "location": "Delhi",
+      "address": "AJMERI GATE, DELHI",
+      "date_added": "2026-09-25",
+      "specs": {
+        "width_mm": 127,
+        "ply_count": 5,
+        "thickness_mm": 10,
+        "joint_type": "open_end"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 315,
+      "moq": 1,
+      "delivery_time_days": 3,
+      "vendor_name": "PUNJSHREE",
+      "contact_person": "SAURABH",
+      "contact_number_1": "78919 19199",
+      "contact_number_2": "99288 86200",
+      "location": "Jaipur",
+      "address": "jaipur , rajasthan",
+      "date_added": "2026-09-25",
+      "specs": {
+        "width_mm": 127,
+        "ply_count": 5,
+        "thickness_mm": 10,
+        "joint_type": "open_end"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 400,
+      "moq": 1,
+      "delivery_time_days": 3,
+      "vendor_name": "HP TRADING",
+      "contact_person": "PRAKUL",
+      "contact_number_1": "98109 89680",
+      "location": "Delhi",
+      "address": "AJMERI GATE, DELHI",
+      "date_added": "2026-09-25",
+      "specs": {
+        "width_mm": 127,
+        "ply_count": 5,
+        "thickness_mm": 12,
+        "joint_type": "open_end"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 1715,
+      "moq": 1,
+      "vendor_name": "HP TRADING",
+      "contact_person": "PRAKUL",
+      "contact_number_1": "98109 89680",
+      "location": "DELHI",
+      "address": "AJMERI GATE, DELHI",
+      "vendor_type": "trader",
+      "date_added": "2026-09-24",
+      "specs": {
+        "thickness_mm": 10,
+        "length_m": 100,
+        "width_mm": 600,
+        "joint_type": "open_end"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 240,
+      "moq": 1,
+      "vendor_name": "HP TRADING",
+      "contact_person": "PRAKUL",
+      "contact_number_1": "98109 89680",
+      "location": "DELHI",
+      "address": "AJMERI GATE, DELHI",
+      "vendor_type": "trader",
+      "date_added": "2026-09-26",
+      "specs": {
+        "width_mm": 152.4,
+        "ply_count": 3,
+        "thickness_mm": 8,
+        "length_m": 100,
+        "joint_type": "open_end"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 202.5,
+      "moq": 1,
+      "vendor_name": "punjshree",
+      "contact_person": "SAURABH",
+      "contact_number_1": "78919 19199",
+      "contact_number_2": "99288 86200",
+      "address": "jaipur , rajasthan",
+      "vendor_type": "manufacturer",
+      "date_added": "2026-10-05",
+      "specs": {
+        "width_mm": 152.4,
+        "ply_count": 3,
+        "length_m": 100,
+        "joint_type": "open_end"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 1320,
+      "moq": 1,
+      "vendor_name": "HP TRADING",
+      "contact_person": "PRAKUL",
+      "contact_number_1": "98109 89680",
+      "location": "DELHI",
+      "address": "AJMERI GATE, DELHI",
+      "vendor_type": "trader",
+      "date_added": "2026-08-07",
+      "specs": {
+        "width_mm": 609.6,
+        "ply_count": 4,
+        "length_m": 12.192,
+        "thickness_mm": 9,
+        "joint_type": "open_end"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 1500,
+      "moq": 1,
+      "vendor_name": "HP TRADING",
+      "contact_person": "PRAKUL",
+      "contact_number_1": "98109 89680",
+      "location": "DELHI",
+      "address": "AJMERI GATE, DELHI",
+      "vendor_type": "trader",
+      "date_added": "2026-08-07",
+      "specs": {
+        "width_mm": 609.6,
+        "ply_count": 4,
+        "length_m": 12.192,
+        "thickness_mm": 10,
+        "joint_type": "open_end"
+      }
+    },
+    {
+      "category": "conveying_accessories",
+      "product_key": "black_rubber_conveyor_belt",
+      "unit_of_sale": "meter",
+      "price_per_unit": 810,
+      "moq": 1,
+      "vendor_name": "punjshree",
+      "contact_person": "SAURABH",
+      "contact_number_1": "78919 19199",
+      "contact_number_2": "99288 86200",
+      "address": "jaipur , rajasthan",
+      "vendor_type": "manufacturer",
+      "date_added": "2026-09-30",
+      "specs": {
+        "width_mm": 609.6,
+        "ply_count": 3,
+        "thickness_mm": 8,
+        "length_m": 100,
+        "joint_type": "open_end"
+      }
+    }
+  ],
+  "validation_report": [
+    {
+      "index": 0,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "vendor_name",
+        "contact_person",
+        "contact_number_1",
+        "location",
+        "vendor_type",
+        "date_added"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [],
+      "record_valid": false
+    },
+    {
+      "index": 1,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [
+        "BLUE COLOUR"
+      ],
+      "source_notes": [],
+      "record_valid": false
+    },
+    {
+      "index": 2,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 65 interpreted as grams; recorded as 0.065 kg"
+      ],
+      "dropped_source_info": [
+        "BLUE COLOUR"
+      ],
+      "source_notes": [],
+      "record_valid": false
+    },
+    {
+      "index": 3,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 4,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "vendor_name",
+        "contact_person",
+        "contact_number_1",
+        "location",
+        "vendor_type",
+        "date_added"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [],
+      "record_valid": false
+    },
+    {
+      "index": 5,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [
+        "BLUE COLOUR"
+      ],
+      "source_notes": [],
+      "record_valid": false
+    },
+    {
+      "index": 6,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 120 interpreted as grams; recorded as 0.12 kg"
+      ],
+      "dropped_source_info": [
+        "BLUE COLOUR"
+      ],
+      "source_notes": [],
+      "record_valid": false
+    },
+    {
+      "index": 7,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 8,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "vendor_name",
+        "contact_person",
+        "contact_number_1",
+        "location",
+        "vendor_type",
+        "date_added"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [],
+      "record_valid": false
+    },
+    {
+      "index": 9,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [
+        "BLUE COLOUR"
+      ],
+      "source_notes": [],
+      "record_valid": false
+    },
+    {
+      "index": 10,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 170 interpreted as grams; recorded as 0.17 kg"
+      ],
+      "dropped_source_info": [
+        "BLUE COLOUR"
+      ],
+      "source_notes": [],
+      "record_valid": false
+    },
+    {
+      "index": 11,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 12,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "vendor_name",
+        "contact_person",
+        "contact_number_1",
+        "location",
+        "vendor_type",
+        "date_added"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [],
+      "record_valid": false
+    },
+    {
+      "index": 13,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [
+        "BLUE COLOUR"
+      ],
+      "source_notes": [],
+      "record_valid": false
+    },
+    {
+      "index": 14,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 200 interpreted as grams; recorded as 0.2 kg"
+      ],
+      "dropped_source_info": [
+        "BLUE COLOUR"
+      ],
+      "source_notes": [],
+      "record_valid": false
+    },
+    {
+      "index": 15,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 16,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "vendor_name",
+        "contact_person",
+        "contact_number_1",
+        "location",
+        "vendor_type",
+        "date_added"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [],
+      "record_valid": false
+    },
+    {
+      "index": 17,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [
+        "BLUE COLOUR"
+      ],
+      "source_notes": [],
+      "record_valid": false
+    },
+    {
+      "index": 18,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 250 interpreted as grams; recorded as 0.25 kg"
+      ],
+      "dropped_source_info": [
+        "BLUE COLOUR"
+      ],
+      "source_notes": [],
+      "record_valid": false
+    },
+    {
+      "index": 19,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 20,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [],
+      "record_valid": false
+    },
+    {
+      "index": 21,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [],
+      "record_valid": false
+    },
+    {
+      "index": 22,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [],
+      "record_valid": false
+    },
+    {
+      "index": 23,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [],
+      "record_valid": false
+    },
+    {
+      "index": 24,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [],
+      "record_valid": false
+    },
+    {
+      "index": 25,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [],
+      "record_valid": false
+    },
+    {
+      "index": 26,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [],
+      "record_valid": false
+    },
+    {
+      "index": 27,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [],
+      "record_valid": false
+    },
+    {
+      "index": 28,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [],
+      "record_valid": false
+    },
+    {
+      "index": 29,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added"
+      ],
+      "enum_violations": [
+        "profile \"z_type\" not in enum"
+      ],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [
+        "with Pin"
+      ],
+      "source_notes": [],
+      "record_valid": false
+    },
+    {
+      "index": 30,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added"
+      ],
+      "enum_violations": [
+        "profile \"z_type\" not in enum"
+      ],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [
+        "with Bush"
+      ],
+      "source_notes": [
+        "dual dimension \"330 (400)\" in source; used first value",
+        "dual dimension \"170 (200)\" in source; used first value"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 31,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added"
+      ],
+      "enum_violations": [
+        "profile \"z_type\" not in enum"
+      ],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [
+        "with Bush"
+      ],
+      "source_notes": [
+        "dual dimension \"670 (740)\" in source; used first value",
+        "dual dimension \"170 (215)\" in source; used first value"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 32,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added"
+      ],
+      "enum_violations": [
+        "profile \"z_type\" not in enum"
+      ],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [
+        "with Bush"
+      ],
+      "source_notes": [
+        "dual dimension \"395 (420)\" in source; used first value"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 33,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 325 interpreted as grams; recorded as 0.325 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 34,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 325 interpreted as grams; recorded as 0.325 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 35,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 385 interpreted as grams; recorded as 0.385 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 36,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 385 interpreted as grams; recorded as 0.385 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 37,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 300 interpreted as grams; recorded as 0.3 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 38,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 300 interpreted as grams; recorded as 0.3 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 39,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 325 interpreted as grams; recorded as 0.325 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 40,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 325 interpreted as grams; recorded as 0.325 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 41,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 375 interpreted as grams; recorded as 0.375 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 42,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 375 interpreted as grams; recorded as 0.375 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 43,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 450 interpreted as grams; recorded as 0.45 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 44,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 450 interpreted as grams; recorded as 0.45 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 45,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 440 interpreted as grams; recorded as 0.44 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 46,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 440 interpreted as grams; recorded as 0.44 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 47,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 525 interpreted as grams; recorded as 0.525 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 48,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 525 interpreted as grams; recorded as 0.525 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 49,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 400 interpreted as grams; recorded as 0.4 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 50,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 400 interpreted as grams; recorded as 0.4 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 51,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 575 interpreted as grams; recorded as 0.575 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 52,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 575 interpreted as grams; recorded as 0.575 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 53,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 480 interpreted as grams; recorded as 0.48 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 54,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 480 interpreted as grams; recorded as 0.48 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 55,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 725 interpreted as grams; recorded as 0.725 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 56,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 725 interpreted as grams; recorded as 0.725 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 57,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 700 interpreted as grams; recorded as 0.7 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 58,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 700 interpreted as grams; recorded as 0.7 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 59,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 850 interpreted as grams; recorded as 0.85 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 60,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "vendor_name",
+        "contact_person",
+        "contact_number_1",
+        "location",
+        "vendor_type",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 850 interpreted as grams; recorded as 0.85 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 61,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 800 interpreted as grams; recorded as 0.8 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 62,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 800 interpreted as grams; recorded as 0.8 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 63,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 975 interpreted as grams; recorded as 0.975 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 64,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 975 interpreted as grams; recorded as 0.975 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 65,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 1225 interpreted as grams; recorded as 1.225 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 66,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 1225 interpreted as grams; recorded as 1.225 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 67,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 1500 interpreted as grams; recorded as 1.5 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 68,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 1500 interpreted as grams; recorded as 1.5 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 69,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 1500 interpreted as grams; recorded as 1.5 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 70,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.profile"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "weight 1500 interpreted as grams; recorded as 1.5 kg"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "source dimensions in inches; converted to mm (x25.4)"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 71,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [],
+      "enum_violations": [],
+      "assumptions": [],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end",
+        "material \"RUBBER\" food grade mapped to belt_subtype white_rubber"
+      ],
+      "record_valid": true
+    },
+    {
+      "index": 72,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [],
+      "enum_violations": [],
+      "assumptions": [],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end",
+        "material \"RUBBER\" food grade mapped to belt_subtype white_rubber"
+      ],
+      "record_valid": true
+    },
+    {
+      "index": 73,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "location"
+      ],
+      "enum_violations": [],
+      "assumptions": [],
+      "dropped_source_info": [],
+      "source_notes": [],
+      "record_valid": false
+    },
+    {
+      "index": 74,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [],
+      "enum_violations": [],
+      "assumptions": [
+        "source range \"2-3 days\", took lower bound"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "thickness range 4-5 MM in source; took lower bound",
+        "material \"RUBBER\" food grade mapped to belt_subtype white_rubber"
+      ],
+      "record_valid": true
+    },
+    {
+      "index": 75,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [],
+      "enum_violations": [],
+      "assumptions": [],
+      "dropped_source_info": [
+        "Cliet =55 mm",
+        "Distance between tow Clint 250mm"
+      ],
+      "source_notes": [],
+      "record_valid": true
+    },
+    {
+      "index": 76,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [],
+      "enum_violations": [],
+      "assumptions": [],
+      "dropped_source_info": [
+        "Cliet =60 mm",
+        "Distance between tow Clint 250mm"
+      ],
+      "source_notes": [],
+      "record_valid": true
+    },
+    {
+      "index": 77,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "date \"9/5/2026\" format ambiguous (M/D vs D/M); recorded as M/D 2026-09-05"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end",
+        "material \"RUBBER\" food grade mapped to belt_subtype white_rubber"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 78,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end",
+        "material \"RUBBER\" food grade mapped to belt_subtype white_rubber"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 79,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end",
+        "material \"RUBBER\" food grade mapped to belt_subtype white_rubber"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 80,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end",
+        "material \"RUBBER\" food grade mapped to belt_subtype white_rubber"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 81,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "fail: \"per mm\" not a valid enum unit",
+        "specs": "pass"
+      },
+      "missing_required": [],
+      "enum_violations": [
+        "unit_of_sale \"per mm\" not in enum"
+      ],
+      "assumptions": [],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end",
+        "material \"RUBBER\" food grade mapped to belt_subtype white_rubber"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 82,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "fail: \"per mm\" not a valid enum unit",
+        "specs": "pass"
+      },
+      "missing_required": [],
+      "enum_violations": [
+        "unit_of_sale \"per mm\" not in enum"
+      ],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end",
+        "material \"RUBBER\" food grade mapped to belt_subtype white_rubber"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 83,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "fail: \"per mm\" not a valid enum unit",
+        "specs": "pass"
+      },
+      "missing_required": [],
+      "enum_violations": [
+        "unit_of_sale \"per mm\" not in enum"
+      ],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end",
+        "material \"RUBBER\" food grade mapped to belt_subtype white_rubber"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 84,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end",
+        "material \"RUBBER\" food grade mapped to belt_subtype white_rubber"
+      ],
+      "record_valid": true
+    },
+    {
+      "index": 85,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "fail: \"per mm\" not a valid enum unit",
+        "specs": "pass"
+      },
+      "missing_required": [],
+      "enum_violations": [
+        "unit_of_sale \"per mm\" not in enum"
+      ],
+      "assumptions": [],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end",
+        "material \"RUBBER\" food grade mapped to belt_subtype white_rubber"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 86,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "fail: \"per mm\" not a valid enum unit",
+        "specs": "pass"
+      },
+      "missing_required": [],
+      "enum_violations": [
+        "unit_of_sale \"per mm\" not in enum"
+      ],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end",
+        "material \"RUBBER\" food grade mapped to belt_subtype white_rubber"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 87,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "fail: \"per mm\" not a valid enum unit",
+        "specs": "pass"
+      },
+      "missing_required": [],
+      "enum_violations": [
+        "unit_of_sale \"per mm\" not in enum"
+      ],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end",
+        "material \"RUBBER\" food grade mapped to belt_subtype white_rubber"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 88,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end",
+        "material \"RUBBER\" food grade mapped to belt_subtype white_rubber"
+      ],
+      "record_valid": true
+    },
+    {
+      "index": 89,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "fail: \"per mm\" not a valid enum unit",
+        "specs": "pass"
+      },
+      "missing_required": [],
+      "enum_violations": [
+        "unit_of_sale \"per mm\" not in enum"
+      ],
+      "assumptions": [],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end",
+        "material \"RUBBER\" food grade mapped to belt_subtype white_rubber"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 90,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "fail: \"per mm\" not a valid enum unit",
+        "specs": "pass"
+      },
+      "missing_required": [],
+      "enum_violations": [
+        "unit_of_sale \"per mm\" not in enum"
+      ],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end",
+        "material \"RUBBER\" food grade mapped to belt_subtype white_rubber"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 91,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "fail: \"per mm\" not a valid enum unit",
+        "specs": "pass"
+      },
+      "missing_required": [],
+      "enum_violations": [
+        "unit_of_sale \"per mm\" not in enum"
+      ],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end",
+        "material \"RUBBER\" food grade mapped to belt_subtype white_rubber"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 92,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end",
+        "material \"RUBBER\" food grade mapped to belt_subtype white_rubber"
+      ],
+      "record_valid": true
+    },
+    {
+      "index": 93,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end",
+        "material \"RUBBER\" food grade mapped to belt_subtype white_rubber"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 94,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "location"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end",
+        "material \"RUBBER\" food grade mapped to belt_subtype white_rubber"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 95,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end",
+        "material \"RUBBER\" food grade mapped to belt_subtype white_rubber"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 96,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "specs.length_m"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "date \"8/1/2026\" format ambiguous (M/D vs D/M); recorded as M/D 2026-08-01"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "material \"RUBBER\" food grade mapped to belt_subtype white_rubber"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 97,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "fail: \"PER MM X PER MTR\" not a valid enum unit",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "location",
+        "specs.length_m"
+      ],
+      "enum_violations": [
+        "unit_of_sale \"PER MM X PER MTR\" not in enum"
+      ],
+      "assumptions": [
+        "source range \"3-4 DAYS\", took lower bound",
+        "date \"05/10/2026\" format ambiguous (M/D vs D/M); recorded as M/D 2026-05-10"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 98,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "fail: \"PER MM X PER MTR\" not a valid enum unit",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "location",
+        "specs.length_m"
+      ],
+      "enum_violations": [
+        "unit_of_sale \"PER MM X PER MTR\" not in enum",
+        "vendor_type \"IMPORTER & EXPORTER\" not in enum"
+      ],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "source range \"3-4 DAYS\", took lower bound",
+        "date \"05/10/2026\" format ambiguous (M/D vs D/M); recorded as M/D 2026-05-10"
+      ],
+      "dropped_source_info": [
+        "vendor_type \"IMPORTER & EXPORTER\" dropped"
+      ],
+      "source_notes": [
+        "joint not stated in source; assumed open_end"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 99,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "fail: \"PER MM X PER MTR\" not a valid enum unit",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "location",
+        "specs.length_m"
+      ],
+      "enum_violations": [
+        "unit_of_sale \"PER MM X PER MTR\" not in enum"
+      ],
+      "assumptions": [
+        "source range \"3-4 DAYS\", took lower bound",
+        "date \"05/10/2026\" format ambiguous (M/D vs D/M); recorded as M/D 2026-05-10"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 100,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "fail: \"PER MM X PER MTR\" not a valid enum unit",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "location",
+        "specs.length_m"
+      ],
+      "enum_violations": [
+        "unit_of_sale \"PER MM X PER MTR\" not in enum",
+        "vendor_type \"IMPORTER & EXPORTER\" not in enum"
+      ],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "source range \"3-4 DAYS\", took lower bound",
+        "date \"05/10/2026\" format ambiguous (M/D vs D/M); recorded as M/D 2026-05-10"
+      ],
+      "dropped_source_info": [
+        "vendor_type \"IMPORTER & EXPORTER\" dropped"
+      ],
+      "source_notes": [
+        "joint not stated in source; assumed open_end"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 101,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "specs.thickness_mm",
+        "specs.length_m"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "source range \"3-4 Days\", took lower bound"
+      ],
+      "dropped_source_info": [
+        "Top Cover: 3 mm",
+        "Bottom Cover: 1.5 mm",
+        "Cover Grade: M24"
+      ],
+      "source_notes": [
+        "joint not stated in source; assumed open_end",
+        "material \"nylon rubber\" noted"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 102,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "specs.ply_count"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [],
+      "record_valid": false
+    },
+    {
+      "index": 103,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "specs.ply_count"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [
+        "1 pcs"
+      ],
+      "source_notes": [
+        "unlabeled dimensions interpreted as length x width x thickness (largest = length)",
+        "joint not stated in source; assumed open_end"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 104,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [
+        "1 pcs",
+        "black"
+      ],
+      "source_notes": [
+        "unlabeled dimensions interpreted as length x width x thickness (largest = length)",
+        "joint not stated in source; assumed open_end",
+        "listed under Black Rubber Belt but material is PVC; classified as food_grade_conveyor_belt/pvc"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 105,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "specs.ply_count"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 106,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 107,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "location"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 108,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "vendor_type",
+        "specs.length_m"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [
+        "HR-120*",
+        "discount column value \"Net Price\" is not a percentage; dropped"
+      ],
+      "source_notes": [
+        "joint not stated in source; assumed open_end"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 109,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "vendor_type",
+        "specs.length_m"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "\"DELIVERY IN 1 WEEK\" -> 7 days"
+      ],
+      "dropped_source_info": [
+        "HR-120*",
+        "discount column value \"Net Price\" is not a percentage; dropped"
+      ],
+      "source_notes": [
+        "joint not stated in source; assumed open_end"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 110,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "date \"08-04-2026\" format ambiguous (M/D vs D/M); recorded as M/D 2026-08-04"
+      ],
+      "dropped_source_info": [
+        "APPLICATION - SUGAR INDUSTRIES"
+      ],
+      "source_notes": [
+        "joint not stated in source; assumed open_end"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 111,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "date_added",
+        "specs.length_m"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [
+        "Application - Stone Crusher"
+      ],
+      "source_notes": [
+        "joint not stated in source; assumed open_end"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 112,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "vendor_type"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [
+        "discount column value \"Net Price\" is not a percentage; dropped"
+      ],
+      "source_notes": [
+        "joint not stated in source; assumed open_end"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 113,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 114,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "specs.ply_count"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 115,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "specs.ply_count"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "date \"08-11-2026\" format ambiguous (M/D vs D/M); recorded as M/D 2026-08-11"
+      ],
+      "dropped_source_info": [
+        "3MM TOP",
+        "1.5MM BOTTOM"
+      ],
+      "source_notes": [
+        "joint not stated in source; assumed open_end"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 116,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "specs.ply_count"
+      ],
+      "enum_violations": [],
+      "assumptions": [],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 117,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "date \"08-12-2026\" format ambiguous (M/D vs D/M); recorded as M/D 2026-08-12"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 118,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "specs.length_m"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [
+        "Rice mill plant"
+      ],
+      "source_notes": [
+        "joint not stated in source; assumed open_end"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 119,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 120,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "vendor_type",
+        "specs.length_m"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [
+        "discount column value \"Net Price\" is not a percentage; dropped"
+      ],
+      "source_notes": [
+        "joint not stated in source; assumed open_end"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 121,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "vendor_type",
+        "specs.length_m"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [
+        "discount column value \"Net Price\" is not a percentage; dropped"
+      ],
+      "source_notes": [
+        "joint not stated in source; assumed open_end"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 122,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "vendor_type",
+        "specs.length_m"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [
+        "discount column value \"Net Price\" is not a percentage; dropped"
+      ],
+      "source_notes": [
+        "joint not stated in source; assumed open_end"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 123,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "vendor_type",
+        "specs.length_m"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [
+        "discount column value \"Net Price\" is not a percentage; dropped"
+      ],
+      "source_notes": [
+        "joint not stated in source; assumed open_end"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 124,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "vendor_type",
+        "specs.length_m"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [
+        "discount column value \"Net Price\" is not a percentage; dropped"
+      ],
+      "source_notes": [
+        "joint not stated in source; assumed open_end"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 125,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "vendor_type",
+        "specs.length_m"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [
+        "discount column value \"Net Price\" is not a percentage; dropped"
+      ],
+      "source_notes": [
+        "joint not stated in source; assumed open_end"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 126,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "specs.ply_count"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [
+        "150 temp",
+        "For Poha"
+      ],
+      "source_notes": [
+        "joint not stated in source; assumed open_end"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 127,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 128,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "fail"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "location",
+        "specs.thickness_mm"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "date \"10/5/2026\" format ambiguous (M/D vs D/M); recorded as M/D 2026-10-05"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 129,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "date \"08-07-2026\" format ambiguous (M/D vs D/M); recorded as M/D 2026-08-07"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 130,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied",
+        "date \"08-07-2026\" format ambiguous (M/D vs D/M); recorded as M/D 2026-08-07"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end"
+      ],
+      "record_valid": false
+    },
+    {
+      "index": 131,
+      "checks": {
+        "price_per_unit": "pass",
+        "unit_of_sale": "pass",
+        "specs": "pass"
+      },
+      "missing_required": [
+        "delivery_time_days",
+        "location"
+      ],
+      "enum_violations": [],
+      "assumptions": [
+        "MOQ empty in source; schema default 1 applied"
+      ],
+      "dropped_source_info": [],
+      "source_notes": [
+        "joint not stated in source; assumed open_end"
+      ],
+      "record_valid": false
+    }
+  ]
+}

@@ -3,7 +3,7 @@ import {
   isValidDate, normalizeTime, nullableText, text,
 } from './parse';
 import {
-  ATTENDANCE_STATUSES, LEAVE_TYPES,
+  ATTENDANCE_STATUSES, LEAVE_DURATIONS, LEAVE_TYPES,
   type AttendanceRowInput, type HolidayInput, type LeaveInput,
 } from './types';
 
@@ -38,11 +38,20 @@ export function cleanLeave(raw: Record<string, any>): LeaveInput {
   const memberId = text(raw.memberId, 100);
   if (!memberId) throw new HrError('memberId is required');
   const leaveType = LEAVE_TYPES.includes(raw.leaveType) ? raw.leaveType : 'other';
+  const durationType = (LEAVE_DURATIONS as readonly string[]).includes(String(raw.durationType))
+    ? String(raw.durationType) as LeaveInput['durationType']
+    : 'full_day';
   const startDate = String(raw.startDate ?? '').slice(0, 10);
   const endDate = String(raw.endDate ?? raw.startDate ?? '').slice(0, 10);
   if (!isValidDate(startDate)) throw new HrError('startDate must be YYYY-MM-DD');
   if (!isValidDate(endDate)) throw new HrError('endDate must be YYYY-MM-DD');
   if (endDate < startDate) throw new HrError('endDate cannot be before startDate');
+  if (durationType !== 'full_day' && endDate !== startDate) {
+    throw new HrError('a half day or short leave is recorded for one date');
+  }
+  const fromTime = normalizeTime(raw.fromTime);
+  const toTime = normalizeTime(raw.toTime);
+  if (fromTime && toTime && toTime <= fromTime) throw new HrError('toTime must be after fromTime');
   const paid = raw.paid === undefined ? leaveType !== 'unpaid' : Boolean(raw.paid);
   return {
     memberId,
@@ -51,6 +60,10 @@ export function cleanLeave(raw: Record<string, any>): LeaveInput {
     startDate,
     endDate,
     reason: nullableText(raw.reason, 1000),
+    durationType,
+    fromTime,
+    toTime,
+    days: 0,
   };
 }
 

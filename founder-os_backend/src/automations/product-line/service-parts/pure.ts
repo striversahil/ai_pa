@@ -79,6 +79,7 @@ export function toRateRow(
     packageDims: r.packageDims != null ? String(r.packageDims) : null,
     moq: r.moq != null ? String(r.moq) : null,
     deliveryDays: r.deliveryDays != null ? Number(r.deliveryDays) : null,
+    deliveryMaxDays: r.deliveryMaxDays != null ? Number(r.deliveryMaxDays) : null,
     imageUrl: r.imageUrl ? String(r.imageUrl) : null,
     videoUrl: r.videoUrl ? String(r.videoUrl) : null,
     quotedAt: String(r.quotedAt ?? ''),

@@ -10,8 +10,8 @@
 // chips + optional typed extra), or text/number/date inputs. Back/Skip/Next
 // through the sequence, Submit posts the answers as a chat message the next
 // turn files or reads.
-// Backend mirrors: founder-os_backend/src/modules/enquiries/chat.ts
-// (ask_specs/ask_question) + automations/product-line/copilot.ts.
+// Backend mirror: founder-os_backend/src/modules/enquiries/chat.ts
+// (ask_specs/ask_question).
 import React, { useState } from "react";
 
 export interface SpecQuestion {

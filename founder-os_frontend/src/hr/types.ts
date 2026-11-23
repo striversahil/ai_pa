@@ -36,6 +36,24 @@ export const LEAVE_TYPE_LABEL: Record<LeaveType, string> = {
   other: "Other",
 };
 
+/** How much of a working day a leave takes (mirrors the backend enum). */
+export const LEAVE_DURATIONS = ["full_day", "half_day", "short"] as const;
+export type LeaveDuration = (typeof LEAVE_DURATIONS)[number];
+export const LEAVE_DURATION_LABEL: Record<LeaveDuration, string> = {
+  full_day: "Full day",
+  half_day: "Half day",
+  short: "Short leave",
+};
+
+/** Employee application lifecycle (migration 0153). */
+export const LEAVE_STATUSES = ["pending", "approved", "rejected"] as const;
+export type LeaveStatus = (typeof LEAVE_STATUSES)[number];
+export const LEAVE_STATUS_LABEL: Record<LeaveStatus, string> = {
+  pending: "Pending",
+  approved: "Approved",
+  rejected: "Rejected",
+};
+
 export const COMPONENT_TYPES = ["earning", "deduction"] as const;
 export type ComponentType = (typeof COMPONENT_TYPES)[number];
 export const COMPONENT_CALC_TYPES = ["fixed", "percent_basic", "percent_gross", "formula", "balance"] as const;
@@ -226,7 +244,30 @@ export interface HrLeave {
   endDate: string;
   days: number;
   reason: string | null;
+  /** Application lifecycle (backend migration 0153). HR-recorded rows are
+   *  already `approved`, so old payloads stay valid. */
+  status?: LeaveStatus;
+  durationType?: LeaveDuration;
+  requestedBy?: string | null;
+  fromTime?: string | null;
+  toTime?: string | null;
+  decidedBy?: string | null;
+  decidedAt?: string | null;
+  decisionNote?: string | null;
+  updatedAt?: string | null;
   createdAt: string | null;
+}
+
+/** GET /api/leave/mine — the employee's own application history. */
+export interface HrMyLeave {
+  linked: boolean;
+  self: {
+    id: string;
+    name: string;
+    designation: string | null;
+    matchedBy: string | null;
+  } | null;
+  requests: HrLeave[];
 }
 
 export interface HrHoliday {
@@ -496,6 +537,9 @@ export interface HrDashboardData {
     summary: HrFundSummary;
   };
   inventory: HrInventorySnapshot;
+  /** Leave applications waiting for an HR decision — the tab badge. Empty for
+   *  a self-scoped viewer (staff never see each other's leave). */
+  leaves: { pendingCount: number; pending: HrLeave[] };
 }
 
 // ── Delegation board (employee self-service) ────────────────────────────────

@@ -44,6 +44,8 @@ export interface RateRow {
   vendorType: string | null;
   productId: string | null;
   productName: string | null;
+  /** Product category (denormalised for the rates sheet). */
+  category?: string | null;
   attrKey: string;
   attrValues: Record<string, string>;
   pricePerUnit: number | null;
@@ -55,6 +57,8 @@ export interface RateRow {
   packageDims: string | null;
   moq: string | null;
   deliveryDays: number | null;
+  /** Schema v2 `delivery_time_max_days` (upper bound of a quoted range). */
+  deliveryMaxDays: number | null;
   imageUrl: string | null;
   videoUrl: string | null;
   quotedAt: string;

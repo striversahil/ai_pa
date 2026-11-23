@@ -121,7 +121,18 @@ export const ATTENDANCE_STATUSES = ['present', 'half_day', 'absent', 'holiday'] 
 export type AttendanceStatus = (typeof ATTENDANCE_STATUSES)[number];
 
 export const LEAVE_TYPES = ['casual', 'sick', 'earned', 'unpaid', 'other'] as const;
+
 export type LeaveType = (typeof LEAVE_TYPES)[number];
+
+/** How much of a working day a leave takes. `short` is a recorded time window
+ *  that does not move pay; `half_day` is worth 0.5 working days. */
+export const LEAVE_DURATIONS = ['full_day', 'half_day', 'short'] as const;
+export type LeaveDuration = (typeof LEAVE_DURATIONS)[number];
+
+/** Employee application lifecycle (migration 0153). HR-recorded leaves are
+ *  created already `approved`, so attendance/payroll behaviour is unchanged. */
+export const LEAVE_REQUEST_STATUSES = ['pending', 'approved', 'rejected'] as const;
+export type LeaveRequestStatus = (typeof LEAVE_REQUEST_STATUSES)[number];
 
 export const COMPONENT_TYPES = ['earning', 'deduction'] as const;
 export type ComponentType = (typeof COMPONENT_TYPES)[number];
@@ -211,6 +222,10 @@ export interface LeaveInput {
   startDate: string;
   endDate: string;
   reason: string | null;
+  durationType: LeaveDuration;
+  fromTime: string | null;
+  toTime: string | null;
+  days: number;
 }
 
 export interface HolidayInput {

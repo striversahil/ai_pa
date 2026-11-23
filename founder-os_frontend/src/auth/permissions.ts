@@ -139,6 +139,12 @@ export function canView(me: AuthUserMe | null, viewOrSlug: string): boolean {
     // to the caller's own roster record, so no scope grant is required.
     return me.scopes.length > 0 || me.roles.length > 0;
   }
+  if (viewOrSlug === "leave") {
+    // Personal leave applications (full day / half day / short): every approved
+    // member, same rule as Delegation. The backend pins the caller's own roster
+    // member; HR decisions stay behind the `human-resources` scope.
+    return me.scopes.length > 0 || me.roles.length > 0;
+  }
   if (viewOrSlug === "admin") {
     // Admin panel: full admins plus user-managers (e.g. MIS holders of the
     // user-admin scope) plus HR holders of the human-resources scope (they get

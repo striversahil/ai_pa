@@ -914,18 +914,48 @@ model VendorRate {
   packageDims     String?
   moq             String?
   deliveryDays    Int?
+  /// Schema v2 `delivery_time_max_days` (mig 0155): upper bound when a vendor
+  /// quotes a lead-time range (1–2 days → deliveryDays 1, deliveryMaxDays 2).
+  deliveryMaxDays Int?
   imageUrl        String?  // vendor-quoted item photo (uploaded KV path or https URL)
   videoUrl        String?  // vendor manufacturing video (https URL)
   quotedAt        DateTime     @default(now())
   enquiryRef      String?
   notes           String?      // vendor extras matching no KYP key (delivery notes, stray details) — never spec keys
   missingSpecs    String?      // JSON text: required checklist questions unanswered at filing
+  /// Bulk import trace: the RateBatch this quote arrived in (null = entered one
+  /// at a time). Deleting the batch deletes its quotes (mig 0160).
+  batchId         String?
+  sourceRef       String?      // free provenance (sheet name, enquiry, agent)
   active          Boolean      @default(true)
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
 
   @@index([productId, attrKey])
   @@index([vendorId])
+  @@index([batchId])
+}
+
+/// One bulk paste of vendor rates (founder decision 2026-11-23 v3): the audit
+/// trail behind `VendorRate.batchId`, so a paste can be reviewed, filtered and
+/// undone as a unit. `failures` is JSON text; the row stays after a delete with
+/// status = 'deleted' so the trace survives the undo.
+model RateBatch {
+  id           String   @id @default(uuid())
+  source       String   @default("ai_paste")
+  actorId      String?
+  actorName    String?
+  label        String?
+  rowCount     Int      @default(0)
+  createdCount Int      @default(0)
+  failedCount  Int      @default(0)
+  vendorNames  String?
+  failures     String?
+  status       String   @default("done")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([createdAt])
 }
 
 // ── Accounts (recurring compliance taskbar: senior / junior + MIS control) ──
@@ -1470,6 +1500,18 @@ model HumanResourcesLeave {
   endDate   String               // YYYY-MM-DD IST
   days      Float                @default(0)
   reason    String?
+  // Employee application lifecycle (migration 0152). 'approved' default keeps
+  // every pre-existing HR-recorded leave exactly as it behaved before.
+  status       String  @default("approved") // pending | approved | rejected
+  durationType String  @default("full_day") // full_day | half_day | short
+  /** Login label of the employee who applied (NULL for HR-recorded leaves). */
+  requestedBy  String?
+  fromTime     String? // HH:mm IST — short leave / half day window
+  toTime       String? // HH:mm IST
+  decidedBy    String?
+  decidedAt    DateTime?
+  /** Mandatory reason when a request is rejected. */
+  decisionNote String?
   createdBy String?
   updatedBy String?
   deleted   Boolean              @default(false)
@@ -1478,6 +1520,7 @@ model HumanResourcesLeave {
 
   @@index([memberId, startDate])
   @@index([startDate, endDate, deleted])
+  @@index([status, startDate])
 }
 
 model HumanResourcesHoliday {

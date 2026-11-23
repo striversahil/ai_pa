@@ -4,10 +4,12 @@ import { cleanLeave } from './attendance-parse';
 import { leaveWorkingDays, monthRange } from './calendar';
 import { holidaySet } from './holidays';
 import { invalidateHumanResourcesCache } from './cache';
+import { dateRangesOverlap, leaveDaysFor } from './leave-requests-parse';
 
 export function leaveJson(row: any, holidays?: Set<string>) {
+  const durationType = row.durationType ?? 'full_day';
   const days = holidays
-    ? leaveWorkingDays(String(row.startDate), String(row.endDate), holidays)
+    ? leaveDaysFor(durationType, leaveWorkingDays(String(row.startDate), String(row.endDate), holidays))
     : Number(row.days) || 0;
   return {
     id: String(row.id),
@@ -19,13 +21,27 @@ export function leaveJson(row: any, holidays?: Set<string>) {
     endDate: row.endDate ?? null,
     days,
     reason: row.reason ?? null,
+    // Employee application lifecycle (migration 0153). HR-recorded rows are
+    // created already approved, so older views keep their meaning.
+    status: row.status ?? 'approved',
+    durationType,
+    requestedBy: row.requestedBy ?? null,
+    fromTime: row.fromTime ?? null,
+    toTime: row.toTime ?? null,
+    decidedBy: row.decidedBy ?? null,
+    decidedAt: row.decidedAt ?? null,
+    decisionNote: row.decisionNote ?? null,
+    updatedAt: row.updatedAt ?? null,
     createdAt: row.createdAt ?? null,
   };
 }
 
-export async function listLeaves(input: { month?: string; memberId?: string } = {}) {
+export async function listLeaves(
+  input: { month?: string; memberId?: string; status?: string } = {},
+) {
   const where: any = { deleted: false };
   if (input.memberId) where.memberId = input.memberId;
+  if (input.status && input.status !== 'all') where.status = input.status;
   const rows = await prisma.humanResourcesLeave.findMany({
     where, orderBy: [{ startDate: 'desc' }],
   }) as any[];
@@ -43,26 +59,48 @@ export async function listLeaves(input: { month?: string; memberId?: string } = 
   return filtered.map((r) => leaveJson({ ...r, member: byId.get(String(r.memberId)) }, holidays));
 }
 
-async function validateLeave(input: ReturnType<typeof cleanLeave>, exceptId?: string) {
+/** Overlap + working-day validation shared by HR recording and employee
+ *  applications. Rejected rows never block a new request. */
+export async function validateLeave(
+  input: { memberId: string; startDate: string; endDate: string; durationType: string },
+  exceptId?: string,
+): Promise<number> {
   const member: any = await prisma.humanResourcesMember.findUnique({ where: { id: input.memberId } });
   if (!member || member.deleted) throw new HrError('employee not found');
   const rows = await prisma.humanResourcesLeave.findMany({
     where: { memberId: input.memberId, deleted: false },
   }) as any[];
   const overlap = rows.find((r) => String(r.id) !== String(exceptId ?? '')
-    && input.startDate <= String(r.endDate) && input.endDate >= String(r.startDate));
-  if (overlap) throw new HrError('this leave overlaps an existing leave');
+    && String(r.status ?? 'approved') !== 'rejected'
+    && dateRangesOverlap(input, r));
+  if (overlap) {
+    throw new HrError(String(overlap.status ?? 'approved') === 'pending'
+      ? 'a leave request for these dates is already awaiting an HR decision'
+      : 'this employee already has leave approved on these dates');
+  }
   const holidays = await holidaySet(input.startDate, input.endDate);
-  const days = leaveWorkingDays(input.startDate, input.endDate, holidays);
-  if (days <= 0) throw new HrError('leave has no working days (only weekly offs/holidays)');
-  return days;
+  const workingDays = leaveWorkingDays(input.startDate, input.endDate, holidays);
+  if (workingDays <= 0 && input.durationType !== 'short') {
+    throw new HrError('leave has no working days (only weekly offs/holidays)');
+  }
+  return leaveDaysFor(input.durationType, workingDays);
 }
 
+/** HR records leave directly: it is approved on the spot, exactly like before
+ *  migration 0153 (status default kept for old clients). */
 export async function createLeave(input: Record<string, any>, actor: string | null) {
   const data = cleanLeave(input);
   const days = await validateLeave(data);
   const row: any = await prisma.humanResourcesLeave.create({
-    data: { ...data, days, createdBy: actor, updatedBy: actor },
+    data: {
+      ...data,
+      days,
+      status: 'approved',
+      decidedBy: actor,
+      decidedAt: new Date(),
+      createdBy: actor,
+      updatedBy: actor,
+    },
   });
   await invalidateHumanResourcesCache();
   return leaveJson(row);

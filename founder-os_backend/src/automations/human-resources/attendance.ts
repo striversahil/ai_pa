@@ -40,7 +40,9 @@ export async function listAttendance(date: string) {
       where: { deleted: false, active: true }, orderBy: { order: 'asc' },
     }) as Promise<any[]>,
     prisma.humanResourcesAttendance.findMany({ where: { date, deleted: false } }) as Promise<any[]>,
-    prisma.humanResourcesLeave.findMany({ where: { deleted: false } }) as Promise<any[]>,
+    // Only APPROVED leave auto-marks the day — a pending application must never
+    // look like leave (migration 0153).
+    prisma.humanResourcesLeave.findMany({ where: { deleted: false, status: 'approved' } }) as Promise<any[]>,
     prisma.humanResourcesHoliday.findFirst({ where: { date } }) as Promise<any>,
   ]);
   const recordBy = new Map(records.map((r) => [String(r.memberId), r]));
@@ -59,6 +61,8 @@ export async function listAttendance(date: string) {
       leave: leave ? {
         id: String(leave.id), leaveType: leave.leaveType, paid: leave.paid !== false,
         startDate: leave.startDate, endDate: leave.endDate, reason: leave.reason ?? null,
+        durationType: leave.durationType ?? 'full_day',
+        fromTime: leave.fromTime ?? null, toTime: leave.toTime ?? null,
       } : null,
       holiday: holiday ? { id: String(holiday.id), name: holiday.name } : null,
     };
@@ -114,7 +118,7 @@ export async function attendanceSummary(month: string) {
     prisma.humanResourcesAttendance.findMany({
       where: { date: { gte: start, lte: end }, deleted: false },
     }) as Promise<any[]>,
-    prisma.humanResourcesLeave.findMany({ where: { deleted: false } }) as Promise<any[]>,
+    prisma.humanResourcesLeave.findMany({ where: { deleted: false, status: 'approved' } }) as Promise<any[]>,
     prisma.humanResourcesHoliday.findMany({ where: { date: { gte: start, lte: end } } }) as Promise<any[]>,
   ]);
   const holidayDates = new Set(holidays.map((h) => String(h.date)));

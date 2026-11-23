@@ -119,7 +119,13 @@ describe('product-line rates are paged, never capped', () => {
   it('rates list + detail go through the paged endpoint', () => {
     assert.ok(route.includes("app.get('/api/product-line/rates'") && route.includes('parsePageQuery'), 'paged GET endpoint');
     assert.ok(route.includes('getProductSummary'), 'detail endpoint must not ship every rate');
-    assert.ok(dash.includes('usePagedQuery'), 'dashboard uses the shared paged hook');
+    // 2026-11-23: the rates SHEET pages through @/product-line/hooks#useRates
+    // (repeatable ?spec= filters + a 500-row cap), instead of the generic hook.
+    const hook = read(join(FRONTEND_SRC, 'product-line', 'hooks.ts'));
+    const sheet = read(join(FRONTEND_SRC, 'components', 'product-line', 'RatesSheet.tsx'));
+    assert.ok(dash.includes('useRates') && hook.includes('export function useRates'), 'dashboard uses the paged rates hook');
+    assert.ok(hook.includes('/product-line/rates?') && hook.includes('useLiveQuery'), 'hook pages the rates endpoint');
+    assert.ok(route.includes('RATES_PAGE_MAX') && sheet.includes('RATES_PAGE_MAX'), 'sheet cap is shared, not a magic number');
     assert.ok(!/data\?\.rates|detail\.rates/.test(dash), 'no client-side whole rate list');
   });
 });

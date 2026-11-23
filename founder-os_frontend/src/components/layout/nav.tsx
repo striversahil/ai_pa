@@ -1,11 +1,12 @@
 import type { LucideIcon } from "lucide-react";
-import { Sparkles, MessageCircle, Workflow, ShieldCheck, MessagesSquare, Mail, Settings, ListChecks, LayoutGrid } from "lucide-react";
+import { Sparkles, MessageCircle, Workflow, ShieldCheck, MessagesSquare, Mail, Settings, ListChecks, LayoutGrid, CalendarDays } from "lucide-react";
 
 export type ViewType =
   | "session"
   | "workspace"
   | "briefing"
   | "delegation"
+  | "leave"
   | "whatsapp"
   | "automations"
   | "chat"
@@ -32,6 +33,10 @@ export const NAV_ITEMS: NavItem[] = [
   { view: "automations", label: "Automations", icon: Workflow, mobile: true },
   // Employee delegation board — every approved login, HR or not.
   { view: "delegation", label: "Delegation", icon: ListChecks, mobile: true },
+  // Personal leave applications (full day / half day / short) — every approved
+  // login; the server scopes the payload to the caller's own roster member.
+  // Sidebar-only on purpose: the mobile bottom bar already holds six views.
+  { view: "leave", label: "Leave", icon: CalendarDays, mobile: false },
   { view: "chat", label: "Chat", icon: MessagesSquare, mobile: true },
   { view: "briefing", label: "Founder AI", icon: Sparkles, mobile: true },
   { view: "whatsapp", label: "WhatsApp", icon: MessageCircle, mobile: true },
@@ -61,6 +66,7 @@ export function navTargetPath(t: NavTarget): string {
     workspace: "/workspace",
     briefing: "/briefing",
     delegation: "/delegation",
+    leave: "/leave",
     whatsapp: "/whatsapp",
     automations: "/automations",
     chat: "/chat",
