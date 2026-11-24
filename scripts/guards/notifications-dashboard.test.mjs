@@ -210,6 +210,54 @@ describe('the seeded real rule', () => {
   });
 });
 
+// The rule must grade PEOPLE, not call rows: a seat with no dialer rows in the
+// hour is exactly who needs the escalation (founder bug 2026-11-24 — only the
+// agents whose phones had synced calls ever appeared).
+describe('the target-20 rule grades every on-duty telecaller', () => {
+  const files = readdirSync(join(BACKEND_DIR, 'migrations')).filter((f) => f.startsWith('0167'));
+  const raw = files.length ? be(`migrations/${files[0]}`) : '';
+  // Keep only the executable SQL — the header explains the old bug and names it.
+  const sql = raw.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n');
+
+  it('is driven by the HR register, not by DeviceCall', () => {
+    assert.ok(files.length > 0, 'migration 0167 must exist');
+    assert.match(sql, /FROM HumanResourcesMember m/);
+    assert.match(sql, /LEFT JOIN calls c ON c\.tid = t\.id/);
+    assert.doesNotMatch(sql, /HAVING/i, 'a HAVING clause hides the people who did not dial');
+  });
+
+  it('returns the engine row contract (employee_key + value + level)', () => {
+    assert.match(sql, /m\.id AS employee_key/);
+    assert.match(sql, /COALESCE\(c\.connected, 0\) AS value/);
+    assert.match(sql, /END AS level/);
+  });
+
+  it('grades against the 20/hour target with the founder ladder', () => {
+    for (const [band, level] of [['20', 1], ['15', 2], ['10', 3], ['5', 4]]) {
+      assert.match(sql, new RegExp(`>= ${band} THEN ${level}`), `band >= ${band} must map to level ${level}`);
+    }
+    assert.match(sql, /ELSE 5/);
+  });
+
+  it('skips the absent and the closed day', () => {
+    assert.match(sql, /FROM HumanResourcesLeave l[\s\S]{0,300}l\.status = ''approved''/);
+    assert.match(sql, /l\.durationType = ''full_day''/);
+    assert.match(sql, /FROM HumanResourcesAttendance a[\s\S]{0,200}a\.status = ''absent''/);
+    assert.match(sql, /FROM HumanResourcesHoliday h WHERE h\.date = \?3/);
+    assert.match(sql, /FROM SalesHoliday s WHERE s\.day = \?3/);
+    assert.match(sql, /strftime\(''%w'', \?3\) <> ''0''/);
+  });
+
+  it('only grades an hour inside the working band', () => {
+    assert.match(sql, /% 1440\) BETWEEN 600 AND 1260/);
+  });
+
+  it('is idempotent and never flips the founder\'s Live/Paused choice', () => {
+    assert.match(sql, /instr\(upper\("sqlText"\), 'HUMANRESOURCESMEMBER'\) = 0/);
+    assert.doesNotMatch(sql, /"enabled"\s*=/);
+  });
+});
+
 describe('zero-row runs stay explainable', () => {
   it('the dry run hands the console its real rows, the cron never does', () => {
     const engine = be('src/modules/notifications/engine.ts');
