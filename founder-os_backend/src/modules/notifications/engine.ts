@@ -30,7 +30,7 @@ import {
 } from "./store";
 import { indexSeats, loadSeats, matchAudience, seatForRow } from "./targets";
 import { renderTemplate } from "./template";
-import { istDayKey, windowFor } from "./window";
+import { istDayKey, windowFor, type RunWindow } from "./window";
 import type {
   NotificationLevelDef,
   NotificationRule,
@@ -52,6 +52,9 @@ export interface EvaluateOptions {
   dryRun?: boolean;
   /** false = rolling window ending at `slot` (Test / Run now). Default true. */
   align?: boolean;
+  /** Explicit window override (Test "sample" mode: widen the lookback so a
+   *  quiet hour still shows real rows + headers). */
+  window?: { startIso: string; endIso: string };
 }
 
 function clock(iso: string): string {
@@ -106,7 +109,15 @@ async function latestNotificationId(db: any, employeeKey: string, title: string,
 
 export async function evaluateRule(db: any, rule: NotificationRule, opts: EvaluateOptions): Promise<NotificationRunResult> {
   const dryRun = !!opts.dryRun;
-  const win = windowFor(rule.cadence, opts.slot, { align: opts.align !== false });
+  const win: RunWindow = opts.window
+    ? {
+        start: new Date(opts.window.startIso),
+        end: new Date(opts.window.endIso),
+        startIso: new Date(opts.window.startIso).toISOString(),
+        endIso: new Date(opts.window.endIso).toISOString(),
+        key: `${new Date(opts.window.startIso).toISOString()}..${new Date(opts.window.endIso).toISOString()}`,
+      }
+    : windowFor(rule.cadence, opts.slot, { align: opts.align !== false });
   const windowKey = `${rule.key}:${win.key}`;
   const result: NotificationRunResult = {
     ruleKey: rule.key,

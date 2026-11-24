@@ -62,7 +62,7 @@ describe('test vs run', () => {
 
   it('the test route is dry, the run route is not', () => {
     const routes = be('src/worker/routes/notifications.ts');
-    assert.match(routes, /\/test'[\s\S]{0,900}dryRun: true/);
+    assert.match(routes, /\/test'[\s\S]{0,2000}dryRun: true/);
     assert.match(routes, /\/run'[\s\S]{0,900}evaluateRule\(db, rule, \{[\s\S]{0,200}align: false/);
     assert.doesNotMatch(routes, /\/run'[\s\S]{0,600}dryRun: true/);
   });
@@ -206,6 +206,35 @@ describe('the seeded real rule', () => {
   it('seeds paused, so nothing fires before the founder runs it', () => {
     assert.match(sql, /INSERT OR IGNORE/);
     assert.match(sql, /'telecaller-hourly-connected-call',\s*\n\s*'Telecaller Hourly Connected Call',\s*\n\s*'[^']*',\s*\n\s*0,/);
+  });
+});
+
+describe('zero-row runs stay explainable', () => {
+  it('the engine accepts an explicit window (Test sample mode)', () => {
+    const engine = be('src/modules/notifications/engine.ts');
+    assert.match(engine, /window\?: \{ startIso: string; endIso: string \}/);
+    assert.match(engine, /const win: RunWindow = opts\.window/);
+  });
+
+  it('the test route widens the window without dispatching', () => {
+    const routes = be('src/worker/routes/notifications.ts');
+    assert.match(routes, /lookbackHours/);
+    assert.match(routes, /dryRun: true, align: false, window/);
+    assert.doesNotMatch(routes, /lookbackHours[\s\S]{0,400}notifyUsers/);
+  });
+
+  it('labels the evaluated window in IST', () => {
+    const label = feHelpers.windowLabel('2026-11-24T00:48:00.000Z', '2026-11-24T01:48:00.000Z');
+    assert.match(label, /06:18[–-]07:18 IST/);
+    assert.equal(feHelpers.windowLabel(null, null), '—');
+    assert.equal(feHelpers.windowLabel('nope', 'nope'), '—');
+  });
+
+  it('the drawer explains 0 rows and offers a 7-day sample', () => {
+    const drawer = fe('components/notifications-console/RuleDrawer.tsx');
+    assert.match(drawer, /returned no rows for/);
+    assert.match(drawer, /Sample last 7 days/);
+    assert.match(drawer, /Test \(no send\)/);
   });
 });
 

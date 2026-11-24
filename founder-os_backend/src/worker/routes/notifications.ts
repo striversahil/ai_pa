@@ -273,12 +273,21 @@ export function registerNotificationRoutes(app: Hono<{ Bindings: Bindings }>): v
       if (!base) return c.json({ error: 'save the rule first' }, 400);
       const draft = body?.rule ? { ...base, nextDueAt: base.nextDueAt } : base;
       const config = await loadNotificationConfig(db);
+      // "Sample" windows: a quiet hour legitimately has 0 rows, which makes the
+      // dry run useless for seeing columns/message shape. lookbackHours > 0
+      // widens the window (still a dry run — nothing is written or sent).
+      const lookbackHours = Math.max(0, Math.min(24 * 90, Number(body?.lookbackHours) || 0));
+      const now = new Date();
+      const window = lookbackHours > 0
+        ? { startIso: new Date(now.getTime() - lookbackHours * 3_600_000).toISOString(), endIso: now.toISOString() }
+        : undefined;
       const result = await evaluateRule(db, draft, {
-        slot: new Date(), levels: config.levels, settings: config.settings, dryRun: true, align: false,
+        slot: now, levels: config.levels, settings: config.settings, dryRun: true, align: false, window,
       });
       return c.json({
         result,
         tokens: templateTokens(`${draft.titleTpl} ${draft.bodyTpl}`),
+        lookbackHours,
         nextDueAt: nextDueAt(draft.cadence, new Date())?.toISOString() ?? null,
       });
     } catch (e) {

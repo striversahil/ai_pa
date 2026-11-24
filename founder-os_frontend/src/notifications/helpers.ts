@@ -97,6 +97,22 @@ export function rulePositions(rules: NotificationRule[]): RulePositionSummary[] 
   return [...by.values()].sort((a, b) => a.position.localeCompare(b.position));
 }
 
+/** `06:48–07:48 IST · 24 Nov` — the window a run actually evaluated. Critical
+ *  context when a rule reports 0 rows: "no data" and "wrong window" look the
+ *  same without it. */
+export function windowLabel(startIso: string | null | undefined, endIso: string | null | undefined): string {
+  if (!startIso || !endIso) return "—";
+  try {
+    const start = new Date(startIso);
+    const end = new Date(endIso);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return "—";
+    const day = new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short" }).format(start);
+    return `${fmtIstTime(start.toISOString())}–${fmtIstTime(end.toISOString())} IST · ${day}`;
+  } catch {
+    return `${startIso} → ${endIso}`;
+  }
+}
+
 /** `{hourly_connected_call}` — uppercase, non-word chars to underscores.
  *  mirror: founder-os_backend/src/modules/notifications/columns.ts#columnToken
  *  (guarded in scripts/guards/notifications.test.mjs). */

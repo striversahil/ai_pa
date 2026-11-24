@@ -39,10 +39,15 @@ export interface TestRuleResponse {
   result: NotificationRunResult;
   tokens: string[];
   nextDueAt: string | null;
+  /** How far back the dry run looked (0 = the rule's own window). */
+  lookbackHours?: number;
 }
 
-export const testNotificationRule = (key: string, rule?: Partial<NotificationRule>) =>
-  api.post<TestRuleResponse>(`/notification-rules/${encodeURIComponent(key)}/test`, rule ? { rule } : {});
+export const testNotificationRule = (key: string, rule?: Partial<NotificationRule>, lookbackHours = 0) =>
+  api.post<TestRuleResponse>(
+    `/notification-rules/${encodeURIComponent(key)}/test`,
+    { ...(rule ? { rule } : {}), ...(lookbackHours > 0 ? { lookbackHours } : {}) },
+  );
 
 export const runNotificationRule = (key: string) =>
   api.post<{ result: NotificationRunResult }>(`/notification-rules/${encodeURIComponent(key)}/run`);

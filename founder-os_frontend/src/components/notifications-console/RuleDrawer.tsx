@@ -9,14 +9,24 @@
 // Test writes NOTHING; Run now dispatches for real (manual cadence's only
 // trigger). Level 1 rows are never toasted by the engine.
 import React, { useMemo, useState } from "react";
-import { Button, ConfirmDialog, Drawer, SearchMultiSelect } from "@/components/ui";
+import { Button, ConfirmDialog, Drawer, SearchMultiSelect, SearchSelect } from "@/components/ui";
 import { deleteNotificationRule, runNotificationRule, saveNotificationRule, testNotificationRule, type TestRuleResponse } from "@/notifications/api";
 import { BUILTIN_TOKENS, renderTemplate } from "@/notifications/template";
-import { cadenceLabel, clockToMinute, columnToken, emptyRule, minuteToClock, relTime, WEEKDAYS } from "@/notifications/helpers";
+import { cadenceLabel, clockToMinute, columnToken, emptyRule, minuteToClock, relTime, windowLabel, WEEKDAYS } from "@/notifications/helpers";
 import type { NotificationLevelDef, NotificationOptions, NotificationRule, NotificationThreshold } from "@/notifications/types";
 import { LevelDot } from "@/components/notifications/LevelDot";
 import { Field, Section, inputCls, monoCls } from "./ui";
 const OPS: Array<NotificationThreshold["op"]> = ["lt", "lte", "gt", "gte", "eq"];
+
+/** Dry-run lookbacks. A quiet hour legitimately returns 0 rows, which hides the
+ *  columns and the message shape — widening ONLY the Test window makes the rule
+ *  inspectable without touching what the cron evaluates. */
+const LOOKBACKS = [
+  { value: "0", label: "Current window (rule cadence)" },
+  { value: "24", label: "Last 24 hours (sample)" },
+  { value: "168", label: "Last 7 days (sample)" },
+  { value: "720", label: "Last 30 days (sample)" },
+];
 
 export function RuleDrawer({
   rule, isNew, options, levels, onClose, onSaved,
@@ -33,6 +43,7 @@ export function RuleDrawer({
   const [busy, setBusy] = useState<"save" | "test" | "run" | "delete" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [lookback, setLookback] = useState("0");
 
   const set = (patch: Partial<NotificationRule>) => setDraft((d) => ({ ...d, ...patch }));
   const setAudience = (key: keyof NotificationRule["audience"], value: string[]) =>
@@ -76,7 +87,7 @@ export function RuleDrawer({
         return;
       }
       if (kind === "test") {
-        const res = await testNotificationRule(isNew ? "new" : rule.key, draft);
+        const res = await testNotificationRule(isNew ? "new" : rule.key, draft, Number(lookback) || 0);
         setTest(res);
         return;
       }
@@ -113,6 +124,16 @@ export function RuleDrawer({
     >
       <div className="space-y-4 p-4">
         {error ? <p className="rounded-lg border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 px-3 py-2 text-[11px] font-bold text-[var(--color-danger)]">{error}</p> : null}
+
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--border-card)] bg-[var(--surface-sunken)]/40 px-3 py-2">
+          <span className="text-[10px] font-bold uppercase tracking-wide text-[var(--text-tertiary)]">Test window</span>
+          <div className="w-60">
+            <SearchSelect value={lookback} options={LOOKBACKS} onChange={setLookback} clearLabel={null} />
+          </div>
+          <span className="text-[10px] text-[var(--text-tertiary)]">
+            Only affects <b>Test (no send)</b> — the cron always uses the cadence. Widen it to see real rows, headers and the rendered message.
+          </span>
+        </div>
 
         <Section title="Basics">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -295,9 +316,31 @@ export function RuleDrawer({
           <Section
             title={test.result.dryRun ? "Test result — nothing sent" : "Run result — sent"}
             desc={test.result.dryRun
-              ? `${test.result.scanned} row(s) scanned · ${test.result.matched} in audience · ${test.result.results.length} would be notified · 0 sent (dry run) · columns: ${(test.result.columns ?? []).join(", ") || "none"}`
-              : `${test.result.scanned} row(s) scanned · ${test.result.matched} in audience · ${test.result.dispatched} notified · ${test.result.skipped} skipped`}
+              ? `${test.result.scanned} row(s) scanned · ${test.result.matched} in audience · ${test.result.results.length} would be notified · 0 sent (dry run) · window ${windowLabel(test.result.windowStart, test.result.windowEnd)}`
+              : `${test.result.scanned} row(s) scanned · ${test.result.matched} in audience · ${test.result.dispatched} notified · ${test.result.skipped} skipped · window ${windowLabel(test.result.windowStart, test.result.windowEnd)}`}
           >
+            {test.result.scanned === 0 ? (
+              <div className="rounded-lg border border-[var(--color-warning)]/40 bg-[var(--color-warning)]/10 p-2.5">
+                <p className="text-[11px] font-bold text-[var(--color-warning)]">
+                  The query ran fine but returned no rows for {windowLabel(test.result.windowStart, test.result.windowEnd)}.
+                </p>
+                <p className="mt-1 text-[10px] text-[var(--text-secondary)]">
+                  Either the source table is quiet (nothing was written in this window — check that the feed is syncing) or the window is too
+                  narrow. Sample a wider window to prove the query and see its headers and message shape.
+                </p>
+                <div className="mt-1.5 flex flex-wrap gap-2">
+                  <Button size="sm" variant="secondary" disabled={!!busy} onClick={() => { setLookback("168"); void (async () => {
+                    setBusy("test"); setError(null);
+                    try { setTest(await testNotificationRule(isNew ? "new" : rule.key, draft, 168)); }
+                    catch (e: any) { setError(e?.message ?? "Test failed"); }
+                    finally { setBusy(null); }
+                  })(); }}>
+                    Sample last 7 days
+                  </Button>
+                  <span className="self-center text-[10px] text-[var(--text-tertiary)]">Nothing is sent by a test.</span>
+                </div>
+              </div>
+            ) : null}
             {test.result.errors.length > 0 ? (
               <ul className="space-y-0.5 text-[11px] font-semibold text-[var(--color-danger)]">
                 {test.result.errors.map((e) => <li key={e}>• {e}</li>)}
