@@ -1073,7 +1073,9 @@ events out to every component via an in-process event bus — no per-dashboard s
   proof-doc chips load for the returned page only; "dispatch-floor" = today's dispatches +
   overdue returns everything on page 1, and its tab badge is `counts.tabFloor` — the
   `queues.ts#floorRowFlags` union the list renders, never `floorToday + overdue` (an order with
-  both an overdue and a today line counted twice). Next Enquiries history → rest. Guard `list-paging`.
+  both an overdue and a today line counted twice); the Unscheduled / Scheduled / Dispatched cards
+  read `tab*` for the same reason (one SO sits in several tabs, so a lifecycle bucket can never be
+  the number beside a list). Next Enquiries history → rest. Guard `list-paging`.
 - Backend `src/live.ts` defines `LiveEvent` (canonical type names) and `broadcastLive(c, type,
   extra?)`, which `notifyLive` now delegates to. **Every data-write path calls `broadcastLive`**:
   runner writes (`/api/runner/digests`, `tasks`, `pending-items`, `messages/mark-processed`,

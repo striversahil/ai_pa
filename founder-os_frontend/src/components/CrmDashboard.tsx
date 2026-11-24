@@ -109,13 +109,17 @@ export default function CrmDashboard() {
           </button>
         </div>
       </header>
+      {/* A card whose stage HAS a tab reads that tab's total, so the number
+          always equals the SOs the list renders. The lifecycle buckets are
+          pipeline stages that overlap (one SO sits in several tabs), so they
+          never back a card; "Partially sched." is the one stage without a tab. */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         <Kpi label="Due today" value={counts?.floorToday ?? 0} hint={itemHint(counts?.dueTodayItems)} accent="text-indigo-600 dark:text-indigo-400" icon={Truck} />
         <Kpi label="Overdue" value={counts?.overdue ?? 0} hint={itemHint(counts?.overdueItems)} accent="text-rose-600 dark:text-rose-400" icon={AlertTriangle} />
-        <Kpi label="Unscheduled" value={counts?.unscheduled ?? 0} accent="text-red-600 dark:text-red-400" icon={CalendarClock} />
-        <Kpi label="Partially sched." value={counts?.partiallyScheduled ?? 0} accent="text-amber-600 dark:text-amber-400" icon={Clock} />
-        <Kpi label="Scheduled" value={counts?.scheduled ?? 0} accent="text-sky-600 dark:text-sky-400" icon={CalendarClock} />
-        <Kpi label="Dispatched" value={counts?.dispatched ?? 0} accent="text-emerald-600 dark:text-emerald-400" icon={CheckCircle2} />
+        <Kpi label="Unscheduled" value={counts?.tabUnscheduled ?? 0} accent="text-red-600 dark:text-red-400" icon={CalendarClock} />
+        <Kpi label="Partially sched." value={counts?.partiallyScheduled ?? 0} title="Mixed stage: some lines are dated or dispatched while others are still open, so these SOs also appear in the other tabs." accent="text-amber-600 dark:text-amber-400" icon={Clock} />
+        <Kpi label="Scheduled" value={counts?.tabScheduled ?? 0} accent="text-sky-600 dark:text-sky-400" icon={CalendarClock} />
+        <Kpi label="Dispatched" value={counts?.tabDispatched ?? 0} accent="text-emerald-600 dark:text-emerald-400" icon={CheckCircle2} />
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <nav className="flex flex-wrap gap-1 rounded-xl border border-zinc-200 bg-white p-1 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/60">
@@ -202,9 +206,9 @@ export default function CrmDashboard() {
   );
 }
 
-function Kpi({ label, value, hint, accent, icon: Icon }: { label: string; value: number; hint?: string; accent: string; icon: LucideIcon }) {
+function Kpi({ label, value, hint, title, accent, icon: Icon }: { label: string; value: number; hint?: string; title?: string; accent: string; icon: LucideIcon }) {
   return (
-    <div className="rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/60">
+    <div title={title} className="rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/60">
       <div className="flex items-center justify-between">
         <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">{label}</span>
         <Icon className={`h-3.5 w-3.5 ${accent}`} />

@@ -11,6 +11,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { BACKEND_DIR, FRONTEND_SRC, bundleToFile } from './_bundle.mjs';
 
 const be = await import(bundleToFile(join(BACKEND_DIR, 'src', 'modules', 'crm', 'scheduling.ts')));
@@ -578,5 +579,34 @@ describe('crm floor counters (floorRowFlags)', () => {
       + rows.filter((o) => beQ.floorRowFlags(o, TODAY).overdue).length;
     assert.equal(tabFloor, 3);
     assert.equal(sumOfCards, 4);
+  });
+});
+
+// ── The KPI cards read the tab totals, never the lifecycle buckets: one SO
+// sits in several tabs (per-item membership), so a bucket can never be the
+// number beside a list. Reading the source instead of rendering it keeps the
+// check honest without a React runtime.
+describe('crm dispatch cards mirror the tab counters', () => {
+  const src = readFileSync(join(FRONTEND_SRC, 'components', 'CrmDashboard.tsx'), 'utf8');
+  const lines = src.split('\n');
+  const cardLine = (label) => lines.find((l) => l.includes(`label="${label}"`)) || '';
+
+  it('the stage cards read the tab totals', () => {
+    assert.match(cardLine('Unscheduled'), /counts\?\.tabUnscheduled/);
+    assert.match(cardLine('Scheduled'), /counts\?\.tabScheduled/);
+    assert.match(cardLine('Dispatched'), /counts\?\.tabDispatched/);
+  });
+  it('never renders a lifecycle bucket as a card', () => {
+    for (const [label, key] of [['Unscheduled', 'unscheduled'], ['Scheduled', 'scheduled'], ['Dispatched', 'dispatched']]) {
+      assert.equal(cardLine(label).includes(`counts?.${key}`), false, `${label} card must read tab${key}`);
+    }
+  });
+  it('the tab badge and the card read the same counter', () => {
+    for (const key of ['unscheduled', 'scheduled', 'dispatched']) {
+      const tab = `tab${key[0].toUpperCase()}${key.slice(1)}`;
+      const badges = lines.filter((l) => l.trimStart().startsWith(`${key}: counts?.`));
+      assert.equal(badges.length, 1, `one badge line for ${key}`);
+      assert.match(badges[0], new RegExp(`counts\\?\\.${tab}\\b`));
+    }
   });
 });

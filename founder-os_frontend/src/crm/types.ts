@@ -183,6 +183,9 @@ export interface CrmOrder {
 
 export interface CrmSummary {
   total: number;
+  /** Lifecycle stage per order — the pipeline view. The dashboard's
+   *  Unscheduled / Scheduled / Dispatched cards read the `tab*` totals
+   *  below instead, because one order legitimately sits in several tabs. */
   unscheduled: number;
   partiallyScheduled: number;
   scheduled: number;
