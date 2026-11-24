@@ -520,3 +520,63 @@ describe('crm lifecycle mirror', () => {
     );
   });
 });
+
+// ── Floor counters: `floorRowFlags` feeds BOTH the KPI cards and the tab
+// badge, so the badge (a union) can never disagree with the rendered list.
+describe('crm floor counters (floorRowFlags)', () => {
+  const base = { lifecycle: 'scheduled', sourceState: 'active' };
+  const cases = [
+    { name: 'no items', items: ITEM_SETS.empty },
+    { name: 'due today only', items: ITEM_SETS.allScheduled },
+    { name: 'overdue only', items: ITEM_SETS.overdue },
+    { name: 'overdue and due today', items: ITEM_SETS.overdueAndToday },
+    { name: 'dispatched only', items: ITEM_SETS.allDispatched },
+    { name: 'today line already removed', items: [item({ id: 'a', removedAt: '2026-11-01', dispatchState: 'scheduled', tentativeDispatchDate: TODAY })] },
+  ];
+  for (const c of cases) {
+    it(`backend and frontend agree: ${c.name}`, () => {
+      const order = { ...base, items: c.items };
+      assert.deepEqual(feQ.floorRowFlags(order, TODAY), beQ.floorRowFlags(order, TODAY));
+    });
+  }
+  it('counts an order that is overdue AND due today once on the floor', () => {
+    const order = { ...base, items: ITEM_SETS.overdueAndToday };
+    const f = beQ.floorRowFlags(order, TODAY);
+    assert.equal(f.dueToday, true);
+    assert.equal(f.overdue, true);
+    // The badge is the union (1), never floorToday + overdue (2).
+    assert.equal(f.onFloor, true);
+    assert.equal(feQ.floorRowFlags(order, TODAY).onFloor, true);
+  });
+  it('never counts removed lines', () => {
+    const order = { ...base, items: [{ ...item({ dispatchState: 'scheduled', tentativeDispatchDate: TODAY }), removedAt: '2026-11-01' }] };
+    const f = beQ.floorRowFlags(order, TODAY);
+    assert.equal(f.dueToday, false);
+    assert.equal(f.dueTodayItems, 0);
+    assert.equal(f.onFloor, false);
+    assert.deepEqual(feQ.floorRowFlags(order, TODAY), f);
+  });
+  it('never counts cancelled or source-deleted orders', () => {
+    for (const o of [
+      { lifecycle: 'cancelled', sourceState: 'active', items: ITEM_SETS.overdueAndToday },
+      { lifecycle: 'scheduled', sourceState: 'deleted_source', items: ITEM_SETS.overdueAndToday },
+    ]) {
+      const f = beQ.floorRowFlags(o, TODAY);
+      assert.equal(f.dueToday, false);
+      assert.equal(f.overdue, false);
+      assert.equal(f.onFloor, false);
+      assert.deepEqual(feQ.floorRowFlags(o, TODAY), f);
+    }
+  });
+  it('the summary badge key is a tab total, not a sum of two cards', () => {
+    // tabFloor is what `CrmDashboard` renders; keep the contract explicit so a
+    // future `floorToday + overdue` regression fails here instead of in prod.
+    const order = { ...base, items: ITEM_SETS.overdueAndToday };
+    const rows = [order, { ...base, items: ITEM_SETS.overdue }, { ...base, items: ITEM_SETS.allScheduled }];
+    const tabFloor = rows.filter((o) => beQ.floorRowFlags(o, TODAY).onFloor).length;
+    const sumOfCards = rows.filter((o) => beQ.floorRowFlags(o, TODAY).dueToday).length
+      + rows.filter((o) => beQ.floorRowFlags(o, TODAY).overdue).length;
+    assert.equal(tabFloor, 3);
+    assert.equal(sumOfCards, 4);
+  });
+});

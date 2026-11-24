@@ -1063,7 +1063,9 @@ events out to every component via an in-process event bus — no per-dashboard s
   read per-item state, so they filter the ONE cached floor scan in memory — the scan is now
   uncapped (`scanFloor`, shared with `dispatchSummary`), so search + totals cover every order;
   proof-doc chips load for the returned page only; "dispatch-floor" = today's dispatches +
-  overdue returns everything on page 1). Next Enquiries history → rest. Guard `list-paging`.
+  overdue returns everything on page 1, and its tab badge is `counts.tabFloor` — the
+  `queues.ts#floorRowFlags` union the list renders, never `floorToday + overdue` (an order with
+  both an overdue and a today line counted twice). Next Enquiries history → rest. Guard `list-paging`.
 - Backend `src/live.ts` defines `LiveEvent` (canonical type names) and `broadcastLive(c, type,
   extra?)`, which `notifyLive` now delegates to. **Every data-write path calls `broadcastLive`**:
   runner writes (`/api/runner/digests`, `tasks`, `pending-items`, `messages/mark-processed`,

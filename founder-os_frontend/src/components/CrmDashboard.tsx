@@ -61,7 +61,9 @@ export default function CrmDashboard() {
 
   const badges = useMemo<Record<View, number>>(
     () => ({
-      "dispatch-floor": (counts?.floorToday ?? 0) + (counts?.overdue ?? 0),
+      // The badge is the server's floor UNION (due today OR overdue) — the same
+      // predicate the list renders — never floorToday + overdue.
+      "dispatch-floor": counts?.tabFloor ?? 0,
       // Tab membership is per ITEM (see crm/queue.ts), so these come from the
       // server's tab totals — never from the lifecycle buckets, which would
       // hide a partially dispatched order that still has undated items.
@@ -108,8 +110,8 @@ export default function CrmDashboard() {
         </div>
       </header>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-        <Kpi label="Due today" value={counts?.floorToday ?? 0} accent="text-indigo-600 dark:text-indigo-400" icon={Truck} />
-        <Kpi label="Overdue" value={counts?.overdue ?? 0} accent="text-rose-600 dark:text-rose-400" icon={AlertTriangle} />
+        <Kpi label="Due today" value={counts?.floorToday ?? 0} hint={itemHint(counts?.dueTodayItems)} accent="text-indigo-600 dark:text-indigo-400" icon={Truck} />
+        <Kpi label="Overdue" value={counts?.overdue ?? 0} hint={itemHint(counts?.overdueItems)} accent="text-rose-600 dark:text-rose-400" icon={AlertTriangle} />
         <Kpi label="Unscheduled" value={counts?.unscheduled ?? 0} accent="text-red-600 dark:text-red-400" icon={CalendarClock} />
         <Kpi label="Partially sched." value={counts?.partiallyScheduled ?? 0} accent="text-amber-600 dark:text-amber-400" icon={Clock} />
         <Kpi label="Scheduled" value={counts?.scheduled ?? 0} accent="text-sky-600 dark:text-sky-400" icon={CalendarClock} />
@@ -200,16 +202,27 @@ export default function CrmDashboard() {
   );
 }
 
-function Kpi({ label, value, accent, icon: Icon }: { label: string; value: number; accent: string; icon: LucideIcon }) {
+function Kpi({ label, value, hint, accent, icon: Icon }: { label: string; value: number; hint?: string; accent: string; icon: LucideIcon }) {
   return (
     <div className="rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/60">
       <div className="flex items-center justify-between">
         <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">{label}</span>
         <Icon className={`h-3.5 w-3.5 ${accent}`} />
       </div>
-      <div className={`mt-1 text-xl font-semibold tabular-nums ${accent}`}>{value}</div>
+      <div className={`mt-1 flex items-baseline gap-1.5 text-xl font-semibold tabular-nums ${accent}`}>
+        {value}
+        {hint && <span className="text-[10px] font-medium tabular-nums text-zinc-400 dark:text-zinc-500">{hint}</span>}
+      </div>
     </div>
   );
+}
+
+/** Orders stay the headline (one card = one order, like every other KPI);
+ *  this is the item count the order pills show, so a two-line order reads
+ *  "1 · 2 items" instead of a number that looks too small. */
+function itemHint(items?: number): string | undefined {
+  if (!items || items <= 0) return undefined;
+  return `${items} item${items === 1 ? "" : "s"}`;
 }
 
 function SkeletonList() {

@@ -2,12 +2,12 @@
 // store.ts re-exports everything public here, so existing imports keep working.
 import { istToday, soKey, CANCELLED_STATUSES } from "../types";
 import type { CrmOrderRow, CrmItemRow, View, EventKind, Lifecycle, ItemState } from "../types";
-import { orderFlags, orderMatchesView, salesBucket } from "../queues";
+import { floorRowFlags, orderFlags, orderMatchesView, salesBucket } from "../queues";
 import type { ViewOrder } from "../queues";
 import { prisma } from "../../../shared/prisma";
 import { normalizeRegionFilter, regionMatches, buildEstimateRegionIndex, resolveOrderRegion } from "../region";
 import type { EstimateRegionIndex } from "../region";
-import { deriveLifecycle, effectiveQty, validateSchedule, validateReschedule, validateDispatch, resolveDispatchQty, validateAmend, validateCancelItems, validateLocalCancel, isOverdueItem, NO_INVOICE_PREFIX, isNoInvoiceId } from "../scheduling";
+import { deriveLifecycle, effectiveQty, validateSchedule, validateReschedule, validateDispatch, resolveDispatchQty, validateAmend, validateCancelItems, validateLocalCancel, NO_INVOICE_PREFIX, isNoInvoiceId } from "../scheduling";
 import type { DispatchProof, ItemLike, ScheduleEntry, RescheduleEntry, DispatchEntry, AmendQtyChange, AmendRemove, AmendAdd } from "../scheduling";
 import { logger } from "../../../shared/logger";
 import { ITEM_BATCH, toItemView, str, toOrderView, num, iso, proofFile, CrmError, isPdfFile, isImageFile, assertWorkable, PROOF_DOC_SLOTS, PROOF_DOC_RULES, REGION_LOOKUP_BATCH, dayAdd, FLOOR_WINDOW_DAYS, SCORE_STAGES, STAGE_COMPLETION, isCompleteInZoho, orderStage, STAGE_DEPT, ORDER_COLS, sqlValue, ITEM_COLS, isChargeLine, lineKeyFor } from "./pure";
@@ -1984,6 +1984,13 @@ export async function dispatchSummary(
     tabScheduled: 0,
     tabDispatched: 0,
     tabCancelled: 0,
+    /** "Today's Dispatches" rows — the UNION of due-today and overdue, so
+     *  the badge equals the list. (floorToday + overdue counted an order
+     *  holding both a today line and an overdue one twice.) */
+    tabFloor: 0,
+    /** Items behind floorToday / overdue — the KPI cards' "N items" hint. */
+    dueTodayItems: 0,
+    overdueItems: 0,
   };
   const regions: Record<string, { incomplete: number; completed: number; total: number }> = {};
   const bucketOf = (r: any, items: any[]) => {
@@ -2021,11 +2028,16 @@ export async function dispatchSummary(
     else if (lifecycle === 'dispatched') counts.dispatched++;
     else if (lifecycle === 'cancelled') counts.cancelled++;
     if (bucket) counts[bucket]++;
-    if (lifecycle !== 'cancelled') {
-      if (rowItems.some((it) => it.dispatchState === 'scheduled' && it.tentativeDispatchDate === today)) counts.floorToday++;
-      if (rowItems.some((it) => isOverdueItem(it as ItemLike, today))) counts.overdue++;
-    }
     const shape = { lifecycle, sourceState: 'active', items: rowItems } as unknown as ViewOrder;
+    // Floor counters come from ONE helper shared with the tab badge: it skips
+    // removed lines (the old inline test counted them) and its union can
+    // never disagree with the rows the list renders.
+    const floor = floorRowFlags(shape, today);
+    if (floor.dueToday) counts.floorToday++;
+    if (floor.overdue) counts.overdue++;
+    if (floor.onFloor) counts.tabFloor++;
+    counts.dueTodayItems += floor.dueTodayItems;
+    counts.overdueItems += floor.overdueItems;
     if (orderMatchesView(shape, 'unscheduled', today)) counts.tabUnscheduled++;
     if (orderMatchesView(shape, 'scheduled', today)) counts.tabScheduled++;
     if (orderMatchesView(shape, 'dispatched', today)) counts.tabDispatched++;

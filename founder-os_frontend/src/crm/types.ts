@@ -198,6 +198,12 @@ export interface CrmSummary {
   tabDispatched: number;
   /** Fully floor-cancelled + partially line-cancelled orders. */
   tabCancelled: number;
+  /** "Today's Dispatches" rows — due today OR overdue, counted ONCE (the tab
+   *  badge). Never `floorToday + overdue`: those overlap on one order. */
+  tabFloor: number;
+  /** Items behind the two cards above (their "N items" hint). */
+  dueTodayItems?: number;
+  overdueItems?: number;
   /** Unified Sales → Dispatch buckets (after the viewer's region filter). */
   incomplete?: number;
   completed?: number;

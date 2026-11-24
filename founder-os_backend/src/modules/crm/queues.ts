@@ -6,7 +6,7 @@
 // The dashboard is a dispatch floor, so the tabs are workflow states, not Zoho
 // statuses. Accounts / procurement data survives as search + filters inside
 // "All SOs" rather than as separate desks.
-import { countDueToday, isOrderOverdue, type ItemLike } from './scheduling';
+import { countDueToday, isOrderOverdue, isOverdueItem, type ItemLike } from './scheduling';
 import type { Lifecycle, View } from './types';
 
 export interface ViewOrder {
@@ -154,5 +154,40 @@ export function orderFlags(order: ViewOrder, today: string): OrderFlags {
       order.sourceState === 'active' &&
       order.lifecycle !== 'cancelled' &&
       open.some((it) => it.dispatchState === 'scheduled'),
+  };
+}
+
+/**
+ * Floor counters for ONE order — the single source for the "Due today" /
+ * "Overdue" KPI cards AND the "Today's Dispatches" tab badge.
+ *
+ * `dueToday` and `overdue` describe different LINES, so one order can satisfy
+ * both; they must never be added together (that over-counted the badge while
+ * the list — a union — rendered the order once). `onFloor` is that union, so
+ * the badge equals the rendered rows by construction. Only live (active,
+ * non-cancelled) orders count, and removed lines never do.
+ *
+ * MIRROR: founder-os_frontend/src/crm/queue.ts — change both together.
+ */
+export interface FloorRowFlags {
+  dueToday: boolean;
+  overdue: boolean;
+  /** Item counts behind the two booleans (the KPI cards' "N items" hint). */
+  dueTodayItems: number;
+  overdueItems: number;
+  /** True when the order belongs in the "Today's Dispatches" list. */
+  onFloor: boolean;
+}
+
+export function floorRowFlags(order: ViewOrder, today: string): FloorRowFlags {
+  const live = order.sourceState === 'active' && order.lifecycle !== 'cancelled';
+  const open = (order.items || []).filter((it) => !(it as any)?.removedAt);
+  const flags = orderFlags(order, today);
+  return {
+    dueToday: live && flags.dueToday > 0,
+    overdue: live && flags.overdue,
+    dueTodayItems: live ? flags.dueToday : 0,
+    overdueItems: live ? open.filter((it) => isOverdueItem(it, today)).length : 0,
+    onFloor: orderMatchesView(order, 'dispatch-floor', today),
   };
 }
