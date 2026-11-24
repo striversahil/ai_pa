@@ -127,7 +127,10 @@ describe('sales board — writes stay out of the read path', () => {
 describe('sales board — the board query is one request', () => {
   it('the dashboard asks for the board WITH every region pipeline', () => {
     const src = read(DASHBOARD);
-    assert.ok(src.includes('?period=${period}&follow_ups=1'), 'the board request must carry follow_ups=1');
+    // The board carries its filter window (preset OR custom from/to) and every
+    // region's pipeline in ONE request — never one request per slice.
+    assert.ok(src.includes('?${periodQuery}&follow_ups=1'), 'the board request must carry follow_ups=1');
+    assert.equal(src.split('?${periodQuery}&follow_ups=1').length - 1, 1, 'exactly one board request carries the pipelines');
   });
 
   it('no per-region prefetch fan-out remains', () => {
@@ -141,7 +144,7 @@ describe('sales board — the board query is one request', () => {
 
   it('a failed refetch no longer blanks the loaded board', () => {
     const src = read(DASHBOARD);
-    assert.match(src, /deps: \[period\], clearOnError: false/, 'the board must keep its last good numbers on error');
+    assert.match(src, /deps: \[periodQuery\], clearOnError: false/, 'the board must keep its last good numbers on error');
   });
 
   it('the region cards do not remount on every period change', () => {

@@ -5,10 +5,13 @@ import { useLiveQuery } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
 import type { CustomerAgeingRow, LiveInvoice, DebtorsTrackerPayload } from "@/debtors-tracker/types";
 import { deleteCollection, getDebtorsTrackerData, recordReceivablesExport, resetDebtorsTracker, runReminderDryRun } from "@/debtors-tracker/api";
+import { isLiveRange, loadStoredRange, normalizeRange, storeRange, type DebtorsRange } from "@/debtors-tracker/range";
 import { buildOverdueReceivableRows, downloadOverdueReceivablesCsv } from "@/debtors-tracker/receivables-export";
 import { TabBar } from "@/components/ui/TabBar";
 import ImportModal, { type ImportKind } from "./debtors-tracker/ImportModal";
 import DashboardModals from "./debtors-tracker/DashboardModals";
+import RangeBar from "./debtors-tracker/RangeBar";
+import DashboardHeader from "./debtors-tracker/DashboardHeader";
 import AccountsTab from "./debtors-tracker/tabs/AccountsTab";
 import SummaryTab from "./debtors-tracker/tabs/SummaryTab";
 import AgeingTab from "./debtors-tracker/tabs/AgeingTab";
@@ -35,13 +38,35 @@ export default function DebtorsTrackerDashboard() {
    * writes and ignoring events inside the echo window keeps it to one fetch.
    */
   const lastMutatedRef = useRef(0);
-  const dash = useLiveQuery<DebtorsTrackerPayload>(getDebtorsTrackerData, {
-    events: () => Date.now() - lastMutatedRef.current > ECHO_SUPPRESS_MS,
+  /**
+   * "As of" range. `to` is the snapshot the whole dashboard shows, `from` the
+   * comparison point (then vs now). Both null = today's live view.
+   * Loaded after mount so the static export never hydrates from localStorage.
+   */
+  const [range, setRangeState] = useState<DebtorsRange>({ from: null, to: null });
+  useEffect(() => {
+    const stored = loadStoredRange();
+    if (!isLiveRange(stored)) setRangeState(stored);
+  }, []);
+  const setRange = (next: DebtorsRange) => {
+    const normalized = normalizeRange(next);
+    setRangeState(normalized);
+    storeRange(normalized);
+  };
+  const fetchData = () => getDebtorsTrackerData({ asOf: range.to, from: range.from });
+  const dash = useLiveQuery<DebtorsTrackerPayload>(fetchData, {
+    deps: [range.from, range.to],
+    events: (e) => e.type === "debtors" && Date.now() - lastMutatedRef.current > ECHO_SUPPRESS_MS,
   });
   const refreshAfterMutation = () => {
     lastMutatedRef.current = Date.now();
     dash.refresh();
   };
+  /** Historical snapshots are read-only — say so instead of opening an editor. */
+  const lockNotice = () => setToast("Switch back to today to edit — historical snapshots are read-only.");
+  const openInvoice = (inv: LiveInvoice) => (locked ? lockNotice() : setEditing(inv));
+  const openContact = (row: CustomerAgeingRow) => (locked ? lockNotice() : setContact(row));
+  const openSituation = (row: CustomerAgeingRow) => (locked ? lockNotice() : setSituation(row));
 
   const [view, setView] = useState<View | null>(null);
   const [importKind, setImportKind] = useState<ImportKind | null>(null);
@@ -59,6 +84,9 @@ export default function DebtorsTrackerDashboard() {
   const data = dash.data ?? null;
   const loading = dash.loading && !data;
   const errorMsg = dash.error ? String(dash.error) : null;
+  /** Historical snapshots are read-only: money edits must be made on live data. */
+  const locked = !!data?.meta.isHistorical;
+  const canEdit = canAccounts && !locked;
 
   // Count shown on the header button; the click re-fetches before exporting.
   const overdueRows = useMemo(
@@ -75,12 +103,12 @@ export default function DebtorsTrackerDashboard() {
       { key: "ledger", label: "Ledger", icon: "📖", count: data?.summary.customerCount },
       { key: "reminders", label: "Reminders", icon: "📲", count: data?.reminders.filter((r) => r.runDay === data.meta.reminderRunDay).length },
     ];
-    if (canAccounts) base.push({ key: "accounts", label: "Accounts", icon: "⚙️" });
+    if (canAccounts && !locked) base.push({ key: "accounts", label: "Accounts", icon: "⚙️" });
     return base;
-  }, [canAccounts, data]);
+  }, [canAccounts, locked, data]);
 
   // First-time accounts users land on the paste screen; sales land on Summary.
-  const defaultView: View = canAccounts && (!data || data.summary.invoiceCount === 0) ? "accounts" : "summary";
+  const defaultView: View = canAccounts && !locked && (!data || data.summary.invoiceCount === 0) ? "accounts" : "summary";
   const activeView: View = view && tabs.some((t) => t.key === view) ? view : defaultView;
 
   useEffect(() => {
@@ -88,6 +116,16 @@ export default function DebtorsTrackerDashboard() {
     const timer = setTimeout(() => setToast(null), 6000);
     return () => clearTimeout(timer);
   }, [toast]);
+
+  // Switching to a historical snapshot closes any editor opened on live data —
+  // a save there would apply today's numbers to a past view.
+  useEffect(() => {
+    if (!locked) return;
+    setEditing(null);
+    setContact(null);
+    setSituation(null);
+    setImportKind(null);
+  }, [locked]);
 
   const lastImportAt = useMemo(() => {
     const dates = (data?.invoices ?? []).map((i) => i.lastImportAt).filter(Boolean) as string[];
@@ -125,6 +163,7 @@ export default function DebtorsTrackerDashboard() {
   };
 
   const followUp = (customerName: string) => {
+    if (locked) return lockNotice();
     const inv = (data?.invoices ?? [])
       .filter((i) => i.customerName === customerName && i.balance > 0.005)
       .sort((a, b) => (b.daysOverdue ?? -1e9) - (a.daysOverdue ?? -1e9))[0];
@@ -133,6 +172,7 @@ export default function DebtorsTrackerDashboard() {
   };
 
   const runReminders = async () => {
+    if (locked) return lockNotice();
     setReminderRunning(true);
     try {
       await runReminderDryRun();
@@ -159,7 +199,7 @@ export default function DebtorsTrackerDashboard() {
     try {
       let payload = data;
       try {
-        payload = await getDebtorsTrackerData();
+        payload = await getDebtorsTrackerData({ asOf: range.to, from: range.from });
       } catch {
         // Keep the live payload already on screen.
       }
@@ -193,48 +233,26 @@ export default function DebtorsTrackerDashboard() {
 
   return (
     <div className="mx-auto w-full max-w-[1500px] space-y-5 px-4 py-6 text-zinc-900 md:px-8 dark:text-zinc-100">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Debtors Tracker</h1>
-          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-            Debtors, ageing, live collections and reminder previews for the accounts desk and sales follow-up.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => void downloadOverdueCsv()}
-            disabled={!data || overdueRows.length === 0 || exporting}
-            title={
-              !data
-                ? "Loading live receivables…"
-                : overdueRows.length === 0
-                  ? "No clients with overdue, unpaid bills"
-                  : `Download ${overdueRows.length} client${overdueRows.length === 1 ? "" : "s"} with overdue bills as CSV`
-            }
-            className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-zinc-300 disabled:text-zinc-600 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500"
-          >
-            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14" />
-            </svg>
-            {exporting ? "Preparing…" : "Download as CSV"}
-            {!exporting && overdueRows.length > 0 && (
-              <span className="rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] font-bold tabular-nums">
-                {overdueRows.length}
-              </span>
-            )}
-          </button>
-          {data && (
-            <div className="flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-500 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400">
-              <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-              </span>
-              Live · as of {data.meta.asOfIST}
-            </div>
-          )}
-        </div>
-      </header>
+      <DashboardHeader
+        hasData={!!data}
+        overdueCount={overdueRows.length}
+        exporting={exporting}
+        onExport={() => void downloadOverdueCsv()}
+        asOfIST={data?.meta.asOfIST ?? ""}
+        historical={locked}
+      />
+
+      {data && (
+        <RangeBar
+          range={range}
+          onChange={setRange}
+          coverage={data.meta.coverage}
+          isHistorical={!!data.meta.isHistorical}
+          asOfIST={data.meta.asOfIST}
+          rangeFrom={data.meta.rangeFrom}
+          caveats={data.meta.caveats}
+        />
+      )}
 
       <div className="w-full shrink-0">
         <TabBar items={tabs} active={activeView} onChange={setView} />
@@ -268,7 +286,7 @@ export default function DebtorsTrackerDashboard() {
 
       {loading && <LoadingSkeleton />}
 
-      {data && activeView === "accounts" && canAccounts && (
+      {data && activeView === "accounts" && canEdit && (
         <AccountsTab
           invoiceCount={data.summary.invoiceCount}
           collectionCount={data.summary.collectionCount}
@@ -287,6 +305,7 @@ export default function DebtorsTrackerDashboard() {
           customers={data.customers}
           receiptAgeing={data.receiptAgeing}
           asOfIST={data.meta.asOfIST}
+          compare={data.compare ?? null}
         />
       )}
       {data && activeView === "ageing" && (
@@ -294,10 +313,10 @@ export default function DebtorsTrackerDashboard() {
           customers={data.customers}
           topPicks={data.topPicks ?? []}
           topN={data.topN ?? 20}
-          canAccounts={canAccounts}
+          canAccounts={canEdit}
           onGoToAccounts={() => setView("accounts")}
-          onEditContact={setContact}
-          onEditSituation={setSituation}
+          onEditContact={openContact}
+          onEditSituation={openSituation}
           onFollowUp={followUp}
           onViewLedger={setLedgerCustomer}
           onTopChanged={() => refreshAfterMutation()}
@@ -306,9 +325,9 @@ export default function DebtorsTrackerDashboard() {
       {data && activeView === "invoices" && (
         <InvoicesTab
           invoices={data.invoices}
-          onEdit={setEditing}
+          onEdit={openInvoice}
           onGoToAccounts={() => setView("accounts")}
-          canAccounts={canAccounts}
+          canAccounts={canEdit}
           onChanged={() => refreshAfterMutation()}
         />
       )}
@@ -317,7 +336,7 @@ export default function DebtorsTrackerDashboard() {
           collections={data.collections}
           onDelete={removeCollection}
           onGoToAccounts={() => setView("accounts")}
-          canDelete={canAccounts}
+          canDelete={canEdit}
         />
       )}
       {data && activeView === "ledger" && (
@@ -328,7 +347,7 @@ export default function DebtorsTrackerDashboard() {
           reminders={data.reminders}
           customers={data.customers}
           meta={data.meta}
-          canAccounts={canAccounts}
+          canAccounts={canEdit}
           onRun={runReminders}
           running={reminderRunning}
         />
@@ -341,6 +360,7 @@ export default function DebtorsTrackerDashboard() {
         situation={situation}
         ledgerCustomer={ledgerCustomer}
         canAccounts={canAccounts}
+        asOf={data?.meta.isHistorical ? data.meta.asOfIST : null}
         onCloseImport={() => setImportKind(null)}
         onCloseEditing={() => setEditing(null)}
         onCloseContact={() => setContact(null)}

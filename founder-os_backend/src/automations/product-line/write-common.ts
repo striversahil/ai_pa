@@ -54,6 +54,19 @@ export function parseAliasesInput(v: unknown): string | null {
 }
 
 export async function touched(productId?: string): Promise<void> {
+  await touchedMany(productId ? [productId] : []);
+}
+
+/**
+ * One invalidation wave for MANY product ids.
+ *
+ * A bulk paste touches dozens of products at once; calling `touched()` per row
+ * fired 4 shared KV deletes + 2 per-product deletes for EVERY quote (300 rows →
+ * ~1,800 KV round trips, the other half of why the import button crawled).
+ * Here it is 4 shared deletes plus 2 per DISTINCT product, once.
+ */
+export async function touchedMany(productIds: readonly string[] = []): Promise<void> {
+  const ids = [...new Set((productIds ?? []).map(String).filter(Boolean))];
   // One wave, not five round trips: every del is independent, so they fire
   // together. This runs per write — on a 20-row Confirm it used to be
   // 100 sequential KV deletes.
@@ -66,9 +79,10 @@ export async function touched(productId?: string): Promise<void> {
     // rates cache is per-product. Unconditional — correctness over micro-opt.
     invalidateProductIndex().catch(() => {}),
     invalidateVendorIndex().catch(() => {}),
-    ...(productId
-      ? [invalidateProductDetailCache(productId), invalidateProductRatesCache(productId).catch(() => {})]
-      : []),
+    ...ids.flatMap((pid) => [
+      invalidateProductDetailCache(pid),
+      invalidateProductRatesCache(pid).catch(() => {}),
+    ]),
   ]);
 }
 

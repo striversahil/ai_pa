@@ -42,15 +42,18 @@ const quoteGuard = asyncHandler(async (req, res, next) => {
   }
 });
 
+// Mirror of worker/routes/product-line-guards.ts#writeError — keep the two in
+// step (Express is the alt runtime, same messages).
 const writeError = (res: any, e: any) => {
-  const msg = String(e?.message ?? 'write failed');
-  if (/already exists/i.test(msg)) return res.status(409).json({ error: msg.slice(0, 300) });
+  const raw = e && typeof e === 'object' && 'message' in e ? (e as any).message : e;
+  const msg = String(raw ?? '').replace(/\s+/g, ' ').trim().slice(0, 300) || 'write failed';
+  if (/already exists/i.test(msg)) return res.status(409).json({ error: msg });
   const nn = msg.match(/NOT NULL constraint failed:\s*[\w"]+\.([\w"]+)/i);
-  if (nn) return res.status(400).json({ error: `${nn[1]} is required` });
+  if (nn) return res.status(400).json({ error: `${nn[1]} is required (${msg})` });
   const uq = msg.match(/UNIQUE constraint failed:\s*[\w"]+\.([\w"]+)/i);
-  if (uq) return res.status(409).json({ error: `this ${uq[1]} already exists` });
-  if (/no such table|no such column/i.test(msg)) return res.status(503).json({ error: 'database not ready — try again in a minute' });
-  res.status(400).json({ error: 'could not save — check the fields and retry' });
+  if (uq) return res.status(409).json({ error: `this ${uq[1]} already exists (${msg})` });
+  if (/no such table|no such column/i.test(msg)) return res.status(503).json({ error: `database not ready — ${msg}` });
+  res.status(400).json({ error: msg });
 };
 
 router.get('/products/:id', asyncHandler(async (req, res) => {

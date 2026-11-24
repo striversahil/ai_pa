@@ -14,7 +14,7 @@ import { prisma } from '../../shared/prisma';
 import { getLiveCatalog, findLiveProduct, type LiveCatalog, type LiveProduct } from './catalog-live';
 import { UNIT_ENUM } from './kyp-schema';
 import { prepareRateSpecs } from './rate-specs';
-import { createRate } from './update';
+import { writeImportRows } from './rate-import-write';
 import { createBatch, finishBatch } from './rate-batch';
 import { extractJsonPayload, rowsOf } from './rate-import-parse';
 
@@ -119,7 +119,7 @@ function resolveProduct(catalog: LiveCatalog, row: any): LiveProduct {
 }
 
 /** Everything the row must satisfy, checked WITHOUT writing anything. */
-async function validateRow(product: LiveProduct, row: any): Promise<{ price: number; unit: string }> {
+async function validateRow(product: LiveProduct, row: any, catalog?: LiveCatalog | null): Promise<{ price: number; unit: string }> {
   const unit = text(row?.unit, 120);
   if (unit && !(UNIT_ENUM as readonly string[]).includes(unit)) {
     throw new Error(`unit "${unit}" is not allowed — use one of: ${(UNIT_ENUM as readonly string[]).join(', ')}`);
@@ -144,7 +144,7 @@ async function validateRow(product: LiveProduct, row: any): Promise<{ price: num
     deliveryDays: delivery,
     deliveryMaxDays: deliveryMax,
     quotedAt: text(row?.quoted_at ?? row?.quotedAt, 40) || undefined,
-  });
+  }, catalog);
   return { price, unit };
 }
 
@@ -215,7 +215,7 @@ export async function previewImport(payload: unknown): Promise<ImportPreview> {
         cand.rows += 1;
         newVendors.set(key, cand);
       }
-      const checked = await validateRow(product, row);
+      const checked = await validateRow(product, row, catalog);
       price = checked.price;
       unit = checked.unit;
     } catch (e: any) {
@@ -263,6 +263,9 @@ export async function importRates(
     source?: string;
   } = {},
 ): Promise<ImportResult> {
+  // The preview already resolved + typechecked every row; the write pass trusts
+  // its analysis but re-validates specs through the same catalogue snapshot so
+  // a quote can never land untyped.
   const preview = await previewImport(payload);
   const rows = rowsOf(payload);
   const decisions = new Map<string, VendorDecision>();
@@ -278,103 +281,39 @@ export async function importRates(
     rowCount: preview.total,
   });
 
-  const vendorCache = new Map<string, string>();
-  const created: string[] = [];
-  const vendorsCreated: string[] = [];
-  const failed: ImportFailure[] = [];
-  let createdCount = 0;
-
-  /** name → vendorId, or a thrown reason the row is skipped. */
-  const vendorIdFor = async (name: string): Promise<string> => {
-    const key = decisionKey(name);
-    const cached = vendorCache.get(key);
-    if (cached) return cached;
-    const decision = decisions.get(key);
-    const known = await (prisma as any).vendor.findFirst({ where: { name } }).catch(() => null);
-    if (known) {
-      vendorCache.set(key, String(known.id));
-      return String(known.id);
-    }
-    if (!decision || decision.action === 'skip') {
-      throw new Error(decision?.action === 'skip' ? 'vendor skipped' : 'vendor not confirmed — decide create or skip');
-    }
-    if (decision.action === 'map') {
-      if (!decision.vendorId) throw new Error('map decision needs a vendorId');
-      vendorCache.set(key, String(decision.vendorId));
-      return String(decision.vendorId);
-    }
-    const row = await (prisma as any).vendor.create({
-      data: {
-        name: text(decision.name, 300),
-        location: text(decision.location, 300) || null,
-        contactPerson: text(decision.contactPerson, 300) || null,
-        contactPhone1: text(decision.contactPhone1, 120) || null,
-        contactPhone2: text(decision.contactPhone2, 120) || null,
-        address: text(decision.address, 1000) || null,
-        yearEstablished:
-          decision.yearEstablished === null || decision.yearEstablished === undefined
-            ? null
-            : Math.floor(Number(decision.yearEstablished)) || null,
-        vendorType: text(decision.vendorType, 120) || 'manufacturer',
-        active: true,
-      },
-    });
-    const id = String((row as any).id);
-    vendorCache.set(key, id);
-    vendorsCreated.push(text(decision.name, 300));
-    created.push(id);
-    return id;
-  };
-
-  for (let i = 0; i < rows.length; i += 1) {
-    const row = rows[i];
-    const analysis = preview.rows[i];
-    if (!analysis.ok) {
-      failed.push({ row: i + 1, product: analysis.productKey ?? undefined, vendor: analysis.vendor, error: analysis.error ?? 'invalid row' });
-      continue;
-    }
-    try {
-      const vendorId = await vendorIdFor(analysis.vendor);
-      await createRate({
-        vendorId,
-        productId: analysis.productKey ? resolveProduct(await getLiveCatalog(), row).id : null,
-        attrValues: row?.specs ?? row?.attrValues ?? row?.attributes ?? {},
-        pricePerUnit: analysis.price,
-        discountPercent: num(row?.discount_percent ?? row?.discountPercent),
-        unit: analysis.unit,
-        moq: row?.moq ?? null,
-        weightPerUnit: num(row?.weight_per_unit ?? row?.weightPerUnit),
-        packageQty: text(row?.package_qty ?? row?.packageQty, 300) || null,
-        packageDims: text(row?.package_dims ?? row?.packageDims, 300) || null,
-        deliveryDays: num(row?.delivery_days ?? row?.deliveryDays),
-        deliveryMaxDays: num(row?.delivery_max_days ?? row?.deliveryMaxDays),
-        quotedAt: text(row?.quoted_at ?? row?.quotedAt, 40) || undefined,
-        enquiryRef: text(row?.enquiry_ref ?? row?.enquiryRef, 300) || null,
-        notes: text(row?.notes, 2000) || null,
-        imageUrl: text(row?.image_url ?? row?.imageUrl, 2000) || null,
-        videoUrl: text(row?.video_url ?? row?.videoUrl, 2000) || null,
-        active: row?.active === false ? false : true,
-        batchId,
-        sourceRef: opts.label ? text(opts.label, 200) : null,
-      });
-      createdCount += 1;
-    } catch (e: any) {
-      failed.push({
-        row: i + 1,
-        product: analysis.productKey ?? undefined,
-        vendor: analysis.vendor,
-        error: String(e?.message ?? 'could not import').slice(0, 300),
-      });
-    }
-  }
+  // ONE catalogue read + ONE vendor read for the whole paste (they used to be
+  // per row), then every INSERT goes out in a handful of D1 batches.
+  const [catalog, known] = await Promise.all([getLiveCatalog(), existingVendors()]);
+  const written = await writeImportRows({
+    rows,
+    analyses: preview.rows.map((r) => ({
+      ok: r.ok,
+      error: r.error,
+      productKey: r.productKey,
+      vendor: r.vendor,
+      price: r.price,
+      unit: r.unit,
+    })),
+    catalog,
+    knownVendors: known,
+    decisions,
+    batchId,
+    label: opts.label ?? null,
+  });
 
   const vendorNames = [...new Set([...preview.matchedVendors.map((m) => m.name), ...preview.newVendors.map((v) => v.name)])];
   await finishBatch(batchId, {
-    createdCount,
-    failedCount: failed.length,
+    createdCount: written.created,
+    failedCount: written.failed.length,
     vendorNames,
-    failures: failed,
+    failures: written.failed,
   });
 
-  return { batchId, created: createdCount, failed, vendorsCreated, total: preview.total };
+  return {
+    batchId,
+    created: written.created,
+    failed: written.failed,
+    vendorsCreated: written.vendorsCreated,
+    total: preview.total,
+  };
 }

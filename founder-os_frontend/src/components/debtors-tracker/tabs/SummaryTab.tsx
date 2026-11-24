@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { CustomerAgeingRow, LiveCollection, ReceiptAgeingSplit, SummaryRow } from "@/debtors-tracker/types";
+import type { CustomerAgeingRow, DebtorsAsOfCompare, LiveCollection, ReceiptAgeingSplit, SummaryRow } from "@/debtors-tracker/types";
 import { formatCompactINR, formatINR, isAdvanceReceipt, shortDate } from "@/debtors-tracker/types";
 import { AGEING_BUCKETS as BUCKETS } from "@/debtors-tracker/buckets";
 import { debtorRegionLabel, matchesDebtorRegion, summarizeDebtorRegions, type DebtorRegionFilter } from "@/debtors-tracker/regions";
@@ -13,15 +13,18 @@ import { SectionHeading } from "./summary-tab/SectionHeading";
 import { RegionStrip } from "./summary-tab/RegionStrip";
 import { MetricCard } from "./summary-tab/MetricCard";
 import { AdvanceQuadrant } from "./summary-tab/AdvanceQuadrant";
+import ComparisonSection from "./summary-tab/ComparisonSection";
 
 export default function SummaryTab({
-  summary, collections, customers, asOfIST, receiptAgeing,
+  summary, collections, customers, asOfIST, receiptAgeing, compare,
 }: {
   summary: SummaryRow;
   collections: LiveCollection[];
   customers: CustomerAgeingRow[];
   asOfIST: string;
   receiptAgeing?: ReceiptAgeingSplit | null;
+  /** Present only when the range picker has a comparison date. */
+  compare?: DebtorsAsOfCompare | null;
 }) {
   // Region scoping is client-side over the customer rows (they carry region);
   // receipts carry no region, so the Collections section below stays global.
@@ -110,6 +113,7 @@ export default function SummaryTab({
 
   return (
     <div className="space-y-10">
+      {compare && <ComparisonSection compare={compare} />}
       <section className="space-y-4">
         <SectionHeading
           eyebrow="Receivables"

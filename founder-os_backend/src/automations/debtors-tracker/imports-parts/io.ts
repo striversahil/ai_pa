@@ -10,6 +10,7 @@ import { ensureCustomers, isValidRegionInput, normalizeRegion } from "../custome
 import { invalidateDebtorsCache } from "../cache";
 import { relinkOrphanAttachments } from "../attachments";
 import { realInvoiceMatches, findAdvancePlaceholder, advanceDuplicateIds } from "../dedupe";
+import { recordReceivedDelta } from "../received-events";
 import type { UnmatchedIndex } from "./types";
 import { pickUnmatched, invKeyOf, compositeKey, custKeyOf, resolveBaseReceived, collectionDedupKey, pickInvoiceForCollection, INVOICE_EDITABLE_FIELDS } from "./pure";
 
@@ -147,6 +148,8 @@ export async function importDebtors(text: string, importedBy: string): Promise<D
         },
       });
       const createdRow = { id: newId, invoiceNo, customerName, deleted: false };
+      // History: the sheet figure became known today (as-of views sum these).
+      await recordReceivedDelta({ invoiceId: newId, day: now, amountDelta: baseReceived, importedBy });
       byComposite.set(key, createdRow);
       if (!byInvoiceNo.has(invKeyOf(invoiceNo))) byInvoiceNo.set(invKeyOf(invoiceNo), []);
       byInvoiceNo.get(invKeyOf(invoiceNo))!.push(createdRow);
@@ -157,6 +160,7 @@ export async function importDebtors(text: string, importedBy: string): Promise<D
 
     // Existing row (active or soft-deleted) — update or restore.
     const invoiceId = String(existing.id);
+    const previousBase = round2(Number(existing.baseReceived) || 0);
     let ledgerAtImport = ledgerTotalsWork.get(invoiceId) || 0;
     const matches = pickUnmatched(unmatchedByInvoiceNo, invoiceNo, customerName);
     for (const c of matches) {
@@ -170,6 +174,9 @@ export async function importDebtors(text: string, importedBy: string): Promise<D
     if (matches.length) unmatchedByInvoiceNo.delete(invKeyOf(invoiceNo));
     ledgerTotalsWork.set(invoiceId, ledgerAtImport);
     const baseReceived = resolveBaseReceived(row, existing);
+    // Stamp ONLY the movement, so the as-of ledger can sum what the sheet
+    // knew on any given day (a re-paste that changes nothing writes nothing).
+    await recordReceivedDelta({ invoiceId, day: now, amountDelta: round2(baseReceived - previousBase), importedBy });
     const snapshot = ledgerAtImport > 0 ? Math.min(baseReceived, ledgerAtImport) : 0;
     const wasDeleted = !!existing.deleted;
 
@@ -517,7 +524,7 @@ export async function deleteInvoice(id: string): Promise<void> {
   }
   await prisma.debtorInvoice.update({
     where: { id },
-    data: { deleted: true, updatedAt: new Date() },
+    data: { deleted: true, deletedAt: todayIST(), updatedAt: new Date() },
   });
   await invalidateDebtorsCache();
 }
@@ -527,15 +534,19 @@ export async function deleteCollection(id: string): Promise<void> {
   if (!existing) throw new DebtorsTrackerError('Collection not found', 404);
   await prisma.paymentCollection.update({
     where: { id },
-    data: { deleted: true },
+    data: { deleted: true, deletedAt: todayIST() },
   });
   await invalidateDebtorsCache();
 }
 
-/** Wipe the tracker ledgers (contacts survive; reminders are derived). */
+/** Wipe the tracker ledgers (contacts survive; reminders + history are derived). */
 export async function resetDebtorsTracker(): Promise<{ invoices: number; collections: number; reminders: number }> {
   const reminders = await prisma.paymentReminder.deleteMany({});
   const collections = await prisma.paymentCollection.deleteMany({});
+  // Sheet-received history belongs to the wiped invoices — drop it with them.
+  try {
+    await (prisma as any).debtorInvoiceReceivedEvent?.deleteMany({});
+  } catch { /* pre-migration / storage hiccup */ }
   const invoices = await prisma.debtorInvoice.deleteMany({});
   await invalidateDebtorsCache();
   return {

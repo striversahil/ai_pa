@@ -334,6 +334,7 @@ const ID_FIELDS: Record<string, string> = {
   LinkedinPost: 'id',
   DebtorInvoice: 'id',
   DebtorInvoiceAttachment: 'id',
+  DebtorInvoiceReceivedEvent: 'id',
   DispatchCashEntry: 'id',
   PaymentCollection: 'id',
   PaymentCustomer: 'id',
@@ -1220,6 +1221,8 @@ export class D1PrismaClient {
   // Debtors Tracker (migration 0069).
   get debtorInvoice() { return this.model('DebtorInvoice'); }
   get debtorInvoiceAttachment() { return this.model('DebtorInvoiceAttachment'); }
+  // Dated sheet-received deltas (migration 0162) — as-of history.
+  get debtorInvoiceReceivedEvent() { return this.model('DebtorInvoiceReceivedEvent'); }
   get dispatchCashEntry() { return this.model('DispatchCashEntry'); }
   get paymentCollection() { return this.model('PaymentCollection'); }
   get paymentCustomer() { return this.model('PaymentCustomer'); }

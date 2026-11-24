@@ -1807,6 +1807,9 @@ model DebtorInvoice {
   importedBy        String   @default("")
   lastImportAt      String?
   deleted           Boolean  @default(false)
+  /** IST day of the soft delete (migration 0161) — as-of views keep the row
+   *  visible before this day and hide it from then on. Null on live rows. */
+  deletedAt         String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @default(now())
 
@@ -1882,11 +1885,30 @@ model PaymentCollection {
   dedupKey          String   @unique
   importedBy        String   @default("")
   deleted           Boolean  @default(false)
+  /** IST day of the soft delete (migration 0161). Null = live / legacy. */
+  deletedAt         String?
   createdAt         DateTime @default(now())
 
   @@index([customerName])
   @@index([collectionDate])
   @@index([resolvedInvoiceId])
+}
+
+// Dated deltas of the ageing sheet's cumulative "Amount Received" per invoice
+// (migration 0162). Append-only: every import records how much the pasted
+// figure moved, so an as-of view can sum what the sheet knew on a given day.
+model DebtorInvoiceReceivedEvent {
+  id          String   @id @default(uuid())
+  invoiceId   String
+  /** IST day the figure became known (the import day). */
+  day         String
+  amountDelta Float    @default(0)
+  /** import | backfill | manual */
+  source      String   @default("import")
+  importedBy  String   @default("")
+  createdAt   DateTime @default(now())
+
+  @@index([invoiceId, day])
 }
 
 // Customer contact master for the Debtors Tracker. Keyed by the normalized

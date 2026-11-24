@@ -74,12 +74,17 @@ export function registerDebtorsTrackerRoutes(app: Hono<{ Bindings: Bindings }>):
 /** Register the same handlers under the canonical and legacy prefixes. */
 function registerDebtorsTrackerPrefix(app: Hono<{ Bindings: Bindings }>, prefix: string): void {
   // ── Data: KV-cached payload (sales or accounts) ──
+  // `?asOf=YYYY-MM-DD&from=YYYY-MM-DD` = historical (read-only) snapshot;
+  // no params = today's live payload, byte-identical to before the feature.
   app.get(`${prefix}/data`, async (c) => {
     try {
       await requireTrackerRead(c);
     } catch (e) { return scopeError(c, e); }
     try {
-      return c.json(await getDebtorsTrackerData());
+      return c.json(await getDebtorsTrackerData({
+        asOf: c.req.query('asOf') ?? null,
+        from: c.req.query('from') ?? null,
+      }));
     } catch (e) { return errorResponse(c, e); }
   });
 
@@ -370,12 +375,15 @@ function registerDebtorsTrackerPrefix(app: Hono<{ Bindings: Bindings }>, prefix:
   });
 
   // ── Complete customer statement (sales or accounts) ──
+  // `?asOf=` rebuilds the statement at that date (same rules as the payload).
   app.get(`${prefix}/customers/:customerKey/ledger`, async (c) => {
     try {
       await requireTrackerRead(c);
     } catch (e) { return scopeError(c, e); }
     try {
-      return c.json(await getCustomerLedger(c.req.param('customerKey')));
+      return c.json(await getCustomerLedger(c.req.param('customerKey'), {
+        asOf: c.req.query('asOf') ?? null,
+      }));
     } catch (e) { return errorResponse(c, e); }
   });
 

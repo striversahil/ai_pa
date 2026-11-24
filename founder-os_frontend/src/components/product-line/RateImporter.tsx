@@ -15,7 +15,7 @@ import { AlertTriangle, CheckCircle2, ClipboardPaste, Copy, History, Plus, Uploa
 import { Drawer } from "@/components/ui";
 import { field, fmtINR, ghostBtn, iconBtn, label, panel, primaryBtn } from "../product-line-dashboard/helpers";
 import { productLineApi } from "@/product-line/api";
-import type { ImportPreview, NewVendorCandidate, VendorDecision, VendorRow } from "@/product-line/types";
+import type { ImportPreview, ImportResult, NewVendorCandidate, VendorDecision, VendorRow } from "@/product-line/types";
 
 const errMsg = (e: unknown) => String((e as any)?.message ?? "import failed");
 const VENDOR_TYPES = ["manufacturer", "distributor", "trader"];
@@ -39,7 +39,7 @@ export function RateImporter({ vendors, onClose, onChanged, onCopyPrompt, onOpen
   const [choices, setChoices] = useState<Record<string, Choice>>({});
   const [drafts, setDrafts] = useState<Record<string, NewVendorCandidate>>({});
   const [mapTo, setMapTo] = useState<Record<string, string>>({});
-  const [result, setResult] = useState<{ batchId: string; created: number; failed: number } | null>(null);
+  const [result, setResult] = useState<ImportResult | null>(null);
 
   const reset = () => {
     setPreview(null);
@@ -126,7 +126,7 @@ export function RateImporter({ vendors, onClose, onChanged, onCopyPrompt, onOpen
     setErr(null);
     try {
       const out = await productLineApi.importRates(text, decisions, label.trim() || undefined);
-      setResult({ batchId: out.batchId, created: out.created, failed: out.failed.length });
+      setResult(out);
       onChanged();
     } catch (e) {
       setErr(errMsg(e));
@@ -325,11 +325,34 @@ export function RateImporter({ vendors, onClose, onChanged, onCopyPrompt, onOpen
           <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/5 p-3 space-y-2">
             <div className="flex items-center gap-2 text-xs font-bold text-emerald-700">
               <CheckCircle2 size={14} /> {result.created} vendor rates imported
-              {result.failed ? <span className="text-[var(--color-danger)]">· {result.failed} rejected</span> : null}
+              {result.failed.length ? <span className="text-[var(--color-danger)]">· {result.failed.length} rejected</span> : null}
             </div>
             <div className="text-[10.5px] text-[var(--text-tertiary)]">
               Saved as batch <span className="font-mono">{result.batchId}</span> — open the batch log to review or undo it.
             </div>
+
+            {/* Why a row did not land — the same text the batch log keeps. */}
+            {result.failed.length ? (
+              <div className="rounded-xl border border-[var(--color-danger)]/40 overflow-hidden">
+                <div className="px-2.5 py-1.5 text-[9.5px] font-extrabold uppercase tracking-wider text-[var(--color-danger)] bg-[color-mix(in_srgb,var(--color-danger)_10%,transparent)] border-b border-[var(--border-card)]">
+                  Rejected rows — why
+                </div>
+                <div className="max-h-48 overflow-y-auto divide-y divide-[var(--border-card)]/50">
+                  <div className="grid grid-cols-[28px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.7fr)] gap-2 px-2.5 py-1 text-[9px] font-bold uppercase tracking-wider text-[var(--text-tertiary)]">
+                    <span>#</span><span>Vendor</span><span>Product</span><span>Reason</span>
+                  </div>
+                  {result.failed.map((f) => (
+                    <div key={f.row} className="grid grid-cols-[28px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.7fr)] gap-2 px-2.5 py-1 items-start">
+                      <span className="text-[10px] tabular-nums text-[var(--text-tertiary)]">{f.row}</span>
+                      <span className="text-[10.5px] text-[var(--text-secondary)] break-words">{f.vendor || "—"}</span>
+                      <span className="text-[10.5px] text-[var(--text-secondary)] break-words">{f.product || "—"}</span>
+                      <span className="text-[10.5px] font-semibold text-[var(--color-danger)] break-words">{f.error}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
             <button type="button" className={ghostBtn} onClick={onOpenBatches}>
               <History size={13} /> Open batch log
             </button>

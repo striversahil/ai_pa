@@ -1,7 +1,6 @@
 import { prisma } from '../../shared/prisma';
 import {
   fail,
-  mediaUrl,
   parseAliasesInput,
   slugAttrKey,
   str,
@@ -13,6 +12,7 @@ import {
   invalidateProductRatesCache,
 } from './service';
 import { dropRateSpecs, applySpecsToData, syncRateSpecs, refreshMissingSpecs } from './rate-specs';
+import { baseRateFor, rateRowData } from './rate-row';
 import {
   assertGuideDeletable,
   guideTypedData,
@@ -238,89 +238,12 @@ export async function deleteVendor(id: string): Promise<{ ok: true }> {
 }
 
 // ── Rates ───────────────────────────────────────────────────────────────────
-function numOrNull(v: unknown): number | null {
-  if (v === undefined || v === null || v === '') return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-}
-
-function rateData(body: any, isCreate: boolean): { data: Record<string, unknown>; productId: string | null } {
-  const data: Record<string, unknown> = {};
-  let productId: string | null = null;
-  if (body?.vendorId !== undefined || isCreate) {
-    const v = str(body?.vendorId);
-    if (!v) fail('vendor required');
-    data.vendorId = v;
-  }
-  if (body?.productId !== undefined || isCreate) {
-    const v = str(body?.productId);
-    productId = v || null;
-    data.productId = v || null;
-  }
-  if (body?.attrValues !== undefined) {
-    const raw = body.attrValues;
-    const obj = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
-    const clean: Record<string, string> = {};
-    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
-      const key = String(k).trim().slice(0, 120);
-      const val = String(v ?? '').trim().slice(0, 500);
-      if (key && val) clean[key] = val;
-    }
-    data.attrValues = JSON.stringify(clean);
-    data.attrKey = Object.entries(clean).sort(([a], [b]) => (a < b ? -1 : 1)).map(([k, v]) => `${k}=${v}`).join('|').slice(0, 2000);
-  } else if (isCreate) {
-    data.attrValues = '{}';
-    data.attrKey = '';
-  }
-  if (body?.pricePerUnit !== undefined) data.pricePerUnit = numOrNull(body.pricePerUnit);
-  if (body?.unit !== undefined) data.unit = str(body.unit, 120);
-  if (body?.discountPercent !== undefined) {
-    const d = numOrNull(body.discountPercent);
-    if (d !== null && (d < 0 || d > 100)) fail('discount must be 0–100%');
-    data.discountPercent = d;
-  }
-  if (body?.weightPerUnit !== undefined) data.weightPerUnit = numOrNull(body.weightPerUnit);
-  if (body?.packageQty !== undefined) data.packageQty = str(body.packageQty, 300) || null;
-  if (body?.packageDims !== undefined) data.packageDims = str(body.packageDims, 300) || null;
-  if (body?.moq !== undefined) data.moq = str(body.moq, 300) || null;
-  if (body?.deliveryDays !== undefined) {
-    const dd = numOrNull(body.deliveryDays);
-    data.deliveryDays = dd === null ? null : Math.max(0, Math.floor(dd));
-  }
-  if (body?.deliveryMaxDays !== undefined) {
-    const dm = numOrNull(body.deliveryMaxDays);
-    data.deliveryMaxDays = dm === null ? null : Math.max(0, Math.floor(dm));
-  }
-  // Quote media: vendor's item photo + manufacturing video (per quote, not product).
-  if (body?.imageUrl !== undefined) data.imageUrl = mediaUrl(body.imageUrl);
-  if (body?.videoUrl !== undefined) data.videoUrl = mediaUrl(body.videoUrl);
-  if (body?.quotedAt !== undefined && String(body.quotedAt).trim()) {
-    const t = new Date(String(body.quotedAt));
-    if (isNaN(t.getTime())) fail('quoted date invalid');
-    data.quotedAt = t.toISOString();
-  } else if (isCreate) {
-    // D1 has no column default — the shim only auto-fills createdAt/updatedAt.
-    data.quotedAt = new Date().toISOString();
-  }
-  if (body?.enquiryRef !== undefined) data.enquiryRef = str(body.enquiryRef, 300) || null;
-  if (body?.notes !== undefined) data.notes = str(body.notes, 2000) || null;
-  // Bulk-import trace: the RateBatch this quote arrived in (mig 0160).
-  if (body?.batchId !== undefined) data.batchId = str(body.batchId, 120) || null;
-  if (body?.sourceRef !== undefined) data.sourceRef = str(body.sourceRef, 300) || null;
-  if (body?.missingSpecs !== undefined) {
-    const ms = Array.isArray(body.missingSpecs) ? body.missingSpecs.map(String).filter(Boolean).slice(0, 50) : [];
-    data.missingSpecs = JSON.stringify(ms);
-  }
-  if (body?.active !== undefined) data.active = body.active !== false;
-  return { data, productId };
-}
 
 export async function createRate(body: any): Promise<any> {
-  const { data, productId } = rateData(body, true);
+  const { data, productId } = rateRowData(body, true);
   if (body?.pricePerUnit !== undefined && body.pricePerUnit !== null && body.pricePerUnit !== '') {
     const price = Number(body.pricePerUnit);
-    const disc = Number(body?.discountPercent ?? 0) || 0;
-    if (Number.isFinite(price)) data.baseRate = Math.round(price * (1 - Math.min(100, Math.max(0, disc)) / 100) * 100) / 100;
+    if (Number.isFinite(price)) data.baseRate = baseRateFor(price, body?.discountPercent);
   }
   const vendor = await (prisma as any).vendor.findUnique({ where: { id: String((data as any).vendorId) } }).catch(() => null);
   if (!vendor) fail('vendor not found');
@@ -346,12 +269,12 @@ export async function createRate(body: any): Promise<any> {
 
 export async function updateRate(id: string, body: any): Promise<any> {
   const rid = String(id);
-  const { data } = rateData(body, false);
+  const { data } = rateRowData(body, false);
   if (body?.pricePerUnit !== undefined || body?.discountPercent !== undefined) {
     const cur = await (prisma as any).vendorRate.findUnique({ where: { id: rid } }).catch(() => null);
     const price = body?.pricePerUnit !== undefined ? Number(body.pricePerUnit) : Number((cur as any)?.pricePerUnit);
     const disc = body?.discountPercent !== undefined ? Number(body.discountPercent) : Number((cur as any)?.discountPercent ?? 0);
-    if (Number.isFinite(price)) data.baseRate = Math.round(price * (1 - Math.min(100, Math.max(0, disc || 0)) / 100) * 100) / 100;
+    if (Number.isFinite(price)) data.baseRate = baseRateFor(price, disc);
     else data.baseRate = null;
   }
   if (Object.keys(data).length === 0) fail('nothing to update');

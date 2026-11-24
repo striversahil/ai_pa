@@ -50,10 +50,12 @@ function SummaryCard({ label, value, hint, tone }: { label: string; value: strin
 
 /** Complete invoice + receipt statement for one company (used by modal + Ledger tab). */
 export default function CustomerLedgerView({
-  customer, onClose,
+  customer, onClose, asOf,
 }: {
   customer: CustomerAgeingRow | null;
   onClose?: () => void;
+  /** Show the statement at this date (historical mode); null = today. */
+  asOf?: string | null;
 }) {
   const key = customer?.customerKey ?? "";
   const [ledger, setLedger] = useState<CustomerLedger | null>(null);
@@ -66,12 +68,12 @@ export default function CustomerLedgerView({
     setLoading(true);
     setLedger(null);
     setErr(null);
-    getCustomerLedger(key)
+    getCustomerLedger(key, { asOf: asOf ?? null })
       .then((data) => { if (!cancelled) setLedger(data); })
       .catch((e: any) => { if (!cancelled) setErr(e?.message ?? "Could not load ledger"); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [key]);
+  }, [key, asOf]);
 
   const unapplied = useMemo(
     () => new Set(ledger?.unappliedReceiptIds ?? []),

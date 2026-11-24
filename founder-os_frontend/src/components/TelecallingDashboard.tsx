@@ -36,6 +36,10 @@ export { adaptDashData, fmtNum } from "./telecalling-dashboard/helpers";
 export default function TelecallingDashboard() {
   const [view, setView] = useState<View>("dashboard");
   const [period, setPeriod] = useState<"today" | "week" | "lastweek" | "month" | "lastmonth" | "year" | "lastyear">("week");
+  // Custom from -> to window (null = a preset is active). The server validates
+  // and clamps it, then echoes the APPLIED window back in meta.periodFrom/To.
+  const [range, setRange] = useState<{ from: string; to: string } | null>(null);
+  const periodQuery = range ? `from=${range.from}&to=${range.to}` : `period=${period}`;
   const PERIOD_OPTIONS: { key: typeof period; label: string }[] = [
     { key: "today", label: "Today" },
     { key: "week", label: "This Week" },
@@ -51,11 +55,11 @@ export default function TelecallingDashboard() {
       // the region tabs used to fan out one `?region=` request each (5 requests,
       // each running a full leaderboard aggregation server-side) on every load
       // and every live event. Region switching is now a local read.
-      const res = await fetch(`${workspaceDataUrl("telecalling")}?period=${period}&follow_ups=1`);
+      const res = await fetch(`${workspaceDataUrl("telecalling")}?${periodQuery}&follow_ups=1`);
       if (!res.ok) throw new Error(`Failed to load leaderboard (HTTP ${res.status})`);
       return adaptDashData(await res.json());
     },
-    { events: TELECALLING_EVENTS, deps: [period], clearOnError: false },
+    { events: TELECALLING_EVENTS, deps: [periodQuery], clearOnError: false },
   );
 
   // Lead Conversion is the default view with no period filtering — it hits the
@@ -330,7 +334,11 @@ export default function TelecallingDashboard() {
         }}
         period={period}
         periods={PERIOD_OPTIONS}
-        onPeriod={(k) => setPeriod(k as typeof period)}
+        onPeriod={(k) => { setRange(null); setPeriod(k as typeof period); }}
+        custom={range}
+        customClamped={!!dash.data?.meta?.periodClamped}
+        onCustom={(from, to) => setRange({ from, to })}
+        onClearCustom={() => setRange(null)}
         loading={dash.loading}
         showControls={view === "dashboard"}
       />

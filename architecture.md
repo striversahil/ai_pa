@@ -489,6 +489,41 @@ extended, not rebuilt:
   "Sync year" button. Rows are keyed `templateId::slot`, which also fixes the duplicate-key and
   cross-lane remark bugs of the old grid. Guard `accounts-thread`.
 
+### 3.2f Debtors Tracker point-in-time views (2026-11-24, migrations 0161/0162)
+
+The Debtors Tracker stores only current state, so an "as of" view is **derived, never stored**:
+`GET /api/debtors-tracker/data?asOf=YYYY-MM-DD&from=YYYY-MM-DD` rebuilds the entire dashboard
+(same payload shape) as it stood on `asOf`, and `from` adds a then-vs-now block. No parameters =
+today, and that path is byte-identical to the pre-feature computation (guard-asserted).
+
+- **Rules** (`automations/debtors-tracker/as-of.ts`, pure): an invoice is visible when
+  `invoiceDate ≤ asOf` (else `createdAt`); a receipt when `collectionDate ≤ asOf`. Ageing is
+  re-derived at `asOf` (`daysBetween(due || invoiceDate, asOf)` → the same buckets), and
+  `buildLiveInvoices(rows, colls, asOf, { asOf })` applies it. Advances at that date reduce
+  `netDue` exactly as today.
+- **Received money** is the honest part: `receipt = Σ matched collections ≤ asOf`, and the pasted
+  sheet's cumulative "Amount Received" counts only from the import that recorded it
+  (`lastImportAt`), or from `DebtorInvoiceReceivedEvent` rows once they exist. `importDebtors`
+  appends the **delta** on every paste (migration 0162, backfilled from `lastImportAt`), so sheet
+  history is exact after the first import that shipped this. Money is never invented: before either
+  stamp it is treated as unknown (higher receivable, never a fake receipt).
+- **Soft deletes** stamp `deletedAt` (0161) so a bill deleted **after** `asOf` still shows at that
+  date; legacy deleted rows stay invisible everywhere.
+- **Comparison**: `compare = { then, now, movement, migration }` where
+  `movement` reconciles exactly — `receivableChange = invoicedInRange − collectedInRange −
+  sheetAdjustments` (advances reported separately because they move `netDue`, not gross), plus
+  bills booked/settled, customers added/settled, aged-deeper/shallower, paid. `migration` is the
+  invoice bucket transition list (then → now).
+- **Read-only by design**: `meta.isHistorical` disables imports, edits, pins and the reminder run
+  in the UI, and a banner states the limits. Region, CRM situation and promises are current-only
+  (no history table) — the payload says so in `meta.caveats`.
+- **Cache**: per-(asOf,from) variants fold `cacheRevs(['debtors'])`; every write calls
+  `bumpRev('debtors')` (`invalidateDebtorsCache`) instead of a prefix delete.
+- **UI**: shared `components/ui/DateRangePicker` (presets + two dates; reused by other dashboards,
+  never forked), `components/debtors-tracker/RangeBar` (picker + historical banner),
+  `tabs/summary-tab/ComparisonSection` (then vs now, ageing shift, movement). The customer Ledger
+  endpoint takes the same `?asOf=`. Guard: `scripts/guards/debtors-as-of.test.mjs`.
+
 ### 3.3 Trigger dispatch
 `POST /api/trigger/:slug` runs the matching automation (auth required). On the Worker,
 cron-driven automations are reached via GitHub Actions → `curl /api/trigger/:slug`.
@@ -824,6 +859,8 @@ founder-os_frontend/src/
     ├── ZohoEstimates + zoho/{EstimateCard, CommentsTimeline, DailyMovementTracker,
     │   CallingPriorityChecklist, ActiveFilters, KpiCards, ZohoEstimatesHeader, types, utils}
     ├── TelecallingDashboard           # leaderboard + At-Risk + Lead Conversion/Generation
+    │                                  #   filter = presets (?period=) OR custom ?from=&to=
+    │                                  #   (pure.ts#resolvePeriod; 93-day cap; meta.periodKind)
     ├── EnquiryTracker + Enquiry{List,Detail,Modal,RowItem}  # live sales pipeline
     ├── NeodoveTelecallerDashboard, WaEngineDashboard, DppPricesDashboard
     ├── CrmDashboard                   # dispatch floor (schedule → dispatch → reschedule; D1 rows)
@@ -940,6 +977,19 @@ safety nets).
   the DO replies `pong`.
 - `/broadcast` (internal, POST): iterates `state.getWebSockets()` and sends the JSON
   event to every connected client, then hibernates again.
+- **The Pages Function proxy must pass the upgrade through** (`founder-os_frontend/functions/api/[[path]].ts`):
+  browsers open the socket on the app's own origin, so every frame crosses that proxy.
+  A 101 response carries the socket on `res.webSocket` and **cannot be rebuilt** —
+  `new Response(body, { status: 101 })` throws (the constructor only accepts 200–599) and a
+  101 without `webSocket` never completes the handshake. The proxy therefore returns
+  `new Response(null, { status: 101, webSocket: res.webSocket })` *before* its normal
+  streamed-body branch. Until 2026-11-24 it rebuilt every response, so the handshake
+  threw and the entire app was fetch-once: own writes still felt instant (optimistic
+  echoes) and views with a `pollMs` safety net still caught up, but a surface with no
+  local echo and no poll — the enquiry **Queries** inbox — only updated on a manual
+  reload. Guard: `scripts/guards/live-transport.test.mjs` (upgrade branch present *and*
+  before the streamed branch, route forwards `c.req.raw`, DO answers 101, client feeds
+  the shared bus, cross-desk inboxes poll).
 
 ### 11.2 Broadcast contract
 Every data-write endpoint calls the `notifyLive(c, event)` helper, which fire-and-forgets
@@ -1316,6 +1366,7 @@ Never sideways between route modules or between `views/automations` and `views/s
 |---|---|
 | `rewrite-ratchet` + `rewrite-baseline.json` | 18 duplication/boundary metrics from `scripts/dup-audit.mjs` never grow (raw FE fetch, local INR/date formatters, ad-hoc modals, auth/body boilerplate, files > 400 lines, registry leaks) |
 | `queue-mirror`, `crm-lifecycle`, `enquiry-rates-union` | backend↔frontend predicate/lifecycle mirrors stay identical |
+| `sales-range` | the Sales board's custom `from→to` window: one resolver (`resolvePeriod`), cache key from the resolved dates, 93-day cap |
 | `format-canonical` | one home for money/date formatting |
 | `workspace-catalog`, `workspace-scoping` | the §16 catalog + viewer scoping |
 | `notifications` | §20 escalation palette, BE↔FE level/template mirrors, authored-SQL firewall, IST windows |
@@ -1473,6 +1524,28 @@ D1 is the working copy of the KYP catalogue, and the dashboard owns it:
   numbers every unanswered field and says to open the row. `batchId` filters the sheet from the batch log.
 - **Overlays** — one state machine in `ProductLineDashboard` (`prompt | import | batches | rate`), so
   opening a panel closes whatever was open; every delete goes through the shared `ConfirmDialog`.
+
+### 19.4 Paste write path is batched, INSERT-only (2026-11-23)
+
+- **Why** — `POST /rates/import` used to call `createRate()` per row. Each row cost ~13 network round
+  trips (vendor read, product read, INSERT, the D1 shim's post-insert SELECT, a spec-index batch, six KV
+  cache invalidations, two KV catalogue reads), so a 300-quote paste was ~3,900 sequential round trips.
+- **Plan** — `rate-import-plan.ts` is the pure planner: `rateInsertStatement` (one `INSERT INTO
+  VendorRate`), `specIndexInsertStatements` (one `INSERT INTO VendorRateSpec` per answer), `planRateRow`,
+  `chunkPlannedRows` (chunks by STATEMENT count, `IMPORT_STATEMENT_CHUNK = 50`, never splits a quote) and
+  `vendorInsertStatement`. `bindValue` coerces booleans→1/0, Dates→ISO, objects→JSON for D1 params. No
+  SELECT/UPDATE/DELETE is ever planned — a paste only inserts.
+- **Row body** — `rate-row.ts` owns the VendorRate column mapping (`numOrNull`, `baseRateFor`, and
+  `rateRowData`, which `update.ts` now reuses), so one row and one paste cannot drift.
+- **Write** — `rate-import-write.ts#writeImportRows` creates the approved vendors in one `db.batch()`
+  (falling back row-by-row so a single bad vendor is attributed), validates every row through the same
+  `applySpecsToData` the drawer uses against ONE preloaded `LiveCatalog`, ships the planned statements in
+  chunks (a failed chunk is retried row-by-row so the reason lands on that quote), then runs ONE cache wave
+  via `touchedMany` for the distinct products. `prepareRateSpecs`/`applySpecsToData` accept the preloaded
+  catalogue so validation no longer costs a KV read per row.
+- **Result** — a 300-quote, 8-spec paste is 2,700 statements in ~60 D1 batches: planning ~5 ms, payload
+  ~570 KB, ~69 round trips instead of ~3,900. Guard `kyp-schema` asserts the plan stays INSERT-only, that
+  chunking never splits a quote, and that vendor creation happens only from an explicit `create` decision.
 
 ## 20. Notifications — rule-driven, position-wise escalation (2026-11-24)
 

@@ -23,3 +23,6 @@ export { Drawer } from "./Drawer";
 // any audience/filter list that can grow past a handful of options.
 export { SearchSelect, SearchMultiSelect } from "./SearchSelect";
 export type { SearchOption } from "./SearchSelect";
+// Date range (as-of snapshot vs comparison) — one home for every dashboard.
+export { default as DateRangePicker } from "./DateRangePicker";
+export type { DateRangeValue, DateRangePreset, DateRangePickerProps } from "./DateRangePicker";

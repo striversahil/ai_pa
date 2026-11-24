@@ -90,10 +90,12 @@ CSV/print); Invoices and Collections use the Excel-dense table variant.
 ## Endpoints
 
 Read (any tracker scope):
-- `GET  /api/debtors-tracker/data` — KV-cached payload (summary, customers,
-  invoices, collections, reminders, meta).
-- `GET  /api/debtors-tracker/customers/:customerKey/ledger` — full customer
-  statement, reconciled to the dashboards.
+- `GET  /api/debtors-tracker/data[?asOf=&from=]` — KV-cached payload (summary,
+  customers, invoices, collections, reminders, meta). `asOf` rebuilds the whole
+  snapshot at that date; `from` adds `compare` (then vs now + movement).
+  No params = today (unchanged). Historical is read-only.
+- `GET  /api/debtors-tracker/customers/:customerKey/ledger[?asOf=]` — full
+  customer statement, reconciled to the dashboard at the same date.
 - `GET  /api/automations/debtors-tracker/data` — generic dashboard route.
 
 Accounts-only:
@@ -119,6 +121,8 @@ customer/day. GH runner/weekly jobs are not involved.
 ## Files
 
 - `types.ts` — shapes + identity helpers
+- `as-of.ts` — point-in-time rules (visible-at, sheet cutoff, movement, coverage)
+- `received-events.ts` — dated deltas of the sheet's "Amount Received"
 - `customer-ledger.ts` — complete customer statement builder
 - `parse.ts` — pure TSV paste parsers (Excel clipboard)
 - `shared.ts` — date/money/bucket helpers
@@ -131,7 +135,10 @@ customer/day. GH runner/weekly jobs are not involved.
 - `index.ts` / `rule.json` — automation registration (manual trigger)
 
 MIGRATIONS: `0069` base tracker · `0070` customer contacts · `0075`
-customer region · `0076` client contact/region seed.
-MIRROR: `founder-os_frontend/src/debtors-tracker/{types,parse,api}.ts`
+customer region · `0076` client contact/region seed · `0161` soft-delete stamp
+(`deletedAt`) · `0162` `DebtorInvoiceReceivedEvent` (dated sheet-received
+history for as-of views).
+MIRROR: `founder-os_frontend/src/debtors-tracker/{types,parse,api,range}.ts`
 (regenerate the parse mirror whenever backend `parse.ts` changes),
-`components/DebtorsTrackerDashboard.tsx` and `components/debtors-tracker/*`.
+`components/DebtorsTrackerDashboard.tsx`, `components/debtors-tracker/*` and the
+shared `components/ui/DateRangePicker`.

@@ -16,6 +16,12 @@ export async function handler(_ctx: AutomationContext): Promise<void> {
 }
 
 /** Dashboard data provider — GET /api/automations/debtors-tracker/data */
-export async function data(_ctx?: AutomationContext): Promise<unknown> {
-  return getDebtorsTrackerData();
+export async function data(ctx?: AutomationContext): Promise<unknown> {
+  // `?asOf=&from=` ride through the workspace data route (`ctx.subject` is the
+  // query object — see AutomationEngine.getData). No params = today.
+  const query = (ctx?.subject ?? {}) as Record<string, unknown>;
+  return getDebtorsTrackerData({
+    asOf: (query.asOf as string | undefined) ?? null,
+    from: (query.from as string | undefined) ?? null,
+  });
 }

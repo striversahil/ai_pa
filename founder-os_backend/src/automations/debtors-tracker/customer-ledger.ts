@@ -17,6 +17,7 @@ import { customerKeyOf } from './customers';
 import { DebtorsTrackerError } from './errors';
 import { buildLiveInvoices } from './ledger';
 import { isAdvanceCollection, round2, todayIST } from './shared';
+import { collectionVisibleAt, invoiceVisibleAt, parseAsOfParams, rowVisibleAt } from './as-of';
 import type { CustomerLedger, CustomerLedgerEntry } from './types';
 
 type LedgerLine = CustomerLedgerEntry & { sortDate: string; sortOrder: number };
@@ -28,19 +29,33 @@ const dateOnly = (value: unknown): string | null => {
   return match ? match[1] : null;
 };
 
-export async function getCustomerLedger(customerKey: string): Promise<CustomerLedger> {
+export async function getCustomerLedger(
+  customerKey: string,
+  opts: { asOf?: string | null } = {},
+): Promise<CustomerLedger> {
   const key = String(customerKey || '').trim().toLowerCase();
   if (!key) throw new DebtorsTrackerError('Customer key is required', 400);
 
+  const today = todayIST();
+  const params = parseAsOfParams({ asOf: opts.asOf }, today);
+  if (params.error) throw new DebtorsTrackerError(params.error, 400);
+  const asOf = params.asOf;
+  const historical = params.historical;
+
   const [contact, invoiceRows, collectionRows, pdfByInvoice] = await Promise.all([
     prisma.paymentCustomer.findFirst({ where: { customerKey: key } }),
-    prisma.debtorInvoice.findMany({ where: { deleted: false } }),
-    prisma.paymentCollection.findMany({ where: { deleted: false } }),
+    prisma.debtorInvoice.findMany({}),
+    prisma.paymentCollection.findMany({}),
     loadPrimaryPdfByInvoice().catch(() => new Map()),
   ]);
 
-  const invoices = (invoiceRows as any[]).filter((row) => customerKeyOf(row.customerName) === key);
-  const collections = (collectionRows as any[]).filter((row) => customerKeyOf(row.customerName) === key);
+  // One visibility rule for both the live and historical statement.
+  const invoices = (invoiceRows as any[])
+    .filter((row) => customerKeyOf(row.customerName) === key && rowVisibleAt(row, asOf))
+    .filter((row) => !historical || invoiceVisibleAt(row, asOf));
+  const collections = (collectionRows as any[])
+    .filter((row) => customerKeyOf(row.customerName) === key && rowVisibleAt(row, asOf))
+    .filter((row) => !historical || collectionVisibleAt(row, asOf));
   if (!contact && invoices.length === 0 && collections.length === 0) {
     throw new DebtorsTrackerError('Customer not found', 404);
   }
@@ -48,8 +63,12 @@ export async function getCustomerLedger(customerKey: string): Promise<CustomerLe
   const customerName = String(
     contact?.customerName || invoices[0]?.customerName || collections[0]?.customerName || '',
   );
-  const today = todayIST();
-  const { liveInvoices } = buildLiveInvoices(invoices, collections, today);
+  const { liveInvoices } = buildLiveInvoices(
+    invoices,
+    collections,
+    asOf,
+    historical ? { asOf } : undefined,
+  );
   const invoiceIds = new Set(liveInvoices.map((invoice) => String(invoice.id)));
 
   const lines: LedgerLine[] = [];
@@ -161,7 +180,7 @@ export async function getCustomerLedger(customerKey: string): Promise<CustomerLe
     phone: String(contact?.phone || ''),
     email: String(contact?.email || ''),
     region: String(contact?.region || ''),
-    asOfIST: today,
+    asOfIST: asOf,
     entries: lines.map(({ sortDate: _sortDate, sortOrder: _sortOrder, ...line }) => line),
     totals: {
       invoiceCount: liveInvoices.length,
