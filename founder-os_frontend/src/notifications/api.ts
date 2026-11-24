@@ -13,6 +13,7 @@ import type {
   NotificationSettings,
   NotificationLevelDef,
   NotificationOptions,
+  NotificationSchema,
 } from "./types";
 
 const PANEL_LIMIT = 200;
@@ -48,3 +49,13 @@ export const runNotificationRule = (key: string) =>
 
 export const saveNotificationSettings = (body: { levels?: NotificationLevelDef[]; settings?: NotificationSettings }) =>
   api.put<{ levels: NotificationLevelDef[]; settings: NotificationSettings }>("/notification-settings", body);
+
+/** AI authoring: the saved prompt + the live D1 schema (both root/admin). */
+export const fetchNotificationPrompt = () =>
+  api.get<{ text: string; defaultPrompt: string }>("/notification-prompt");
+
+export const saveNotificationPrompt = (text: string) =>
+  api.put<{ text: string; defaultPrompt: string }>("/notification-prompt", { text });
+
+export const fetchNotificationSchema = () =>
+  api.get<NotificationSchema>("/notification-schema");

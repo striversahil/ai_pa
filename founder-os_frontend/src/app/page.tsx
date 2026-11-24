@@ -33,6 +33,7 @@ const DelegationView = dynamic(() => import("../components/delegation/Delegation
 const LeaveApplicationView = dynamic(() => import("../components/my-leave/LeaveApplicationView"), { ssr: false });
 const EmailDashboard = dynamic(() => import("../components/EmailDashboard"), { ssr: false });
 const SettingsDashboard = dynamic(() => import("../components/SettingsDashboard"), { ssr: false });
+const NotificationsDashboard = dynamic(() => import("../views/notifications/NotificationsDashboard"), { ssr: false });
 
 export default function Home() {
   return (
@@ -153,7 +154,12 @@ function AppInner() {
         </div>
       </header>
 
-      <NotificationOverlay />
+      {/* The bell/panel overlay lives OUTSIDE <main>, so it needs its own
+          boundary: a rendering error there used to escape to Next's "This page
+          couldn't load" screen and take the whole app down. */}
+      <ErrorBoundary>
+        <NotificationOverlay />
+      </ErrorBoundary>
       <ViewAsBanner />
 
       <MobileDrawer
@@ -192,6 +198,7 @@ function AppInner() {
           {activeView === "chat" && <ChatRoom />}
           {activeView === "email" && <EmailDashboard />}
           {activeView === "settings" && <SettingsDashboard />}
+          {activeView === "notifications" && <NotificationsDashboard />}
           {activeView === "session" && (
             <WorkspaceHostProvider basePath="/session" navigate={navigate}>
               <SessionView slug={sub} />

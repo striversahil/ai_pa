@@ -9,14 +9,13 @@
 // Test writes NOTHING; Run now dispatches for real (manual cadence's only
 // trigger). Level 1 rows are never toasted by the engine.
 import React, { useMemo, useState } from "react";
-import { Button, ConfirmDialog, Drawer } from "@/components/ui";
+import { Button, ConfirmDialog, Drawer, SearchMultiSelect } from "@/components/ui";
 import { deleteNotificationRule, runNotificationRule, saveNotificationRule, testNotificationRule, type TestRuleResponse } from "@/notifications/api";
 import { BUILTIN_TOKENS, renderTemplate } from "@/notifications/template";
-import { cadenceLabel, clockToMinute, emptyRule, minuteToClock, relTime, WEEKDAYS } from "@/notifications/helpers";
+import { cadenceLabel, clockToMinute, columnToken, emptyRule, minuteToClock, relTime, WEEKDAYS } from "@/notifications/helpers";
 import type { NotificationLevelDef, NotificationOptions, NotificationRule, NotificationThreshold } from "@/notifications/types";
 import { LevelDot } from "@/components/notifications/LevelDot";
-import { Chips, Field, Section, inputCls, monoCls } from "./ui";
-
+import { Field, Section, inputCls, monoCls } from "./ui";
 const OPS: Array<NotificationThreshold["op"]> = ["lt", "lte", "gt", "gte", "eq"];
 
 export function RuleDrawer({
@@ -56,7 +55,16 @@ export function RuleDrawer({
     return { title: renderTemplate(draft.titleTpl || draft.name || "Notification", sample), body: renderTemplate(draft.bodyTpl, sample) };
   }, [draft.titleTpl, draft.bodyTpl, draft.name, options.people, options.positions, draft.audience.positions, levels]);
 
-  const appendToken = (token: string) => set({ bodyTpl: `${draft.bodyTpl}${draft.bodyTpl.endsWith(" ") || !draft.bodyTpl ? "" : " "}{${token}}` });
+  const appendToken = (token: string, field: "bodyTpl" | "titleTpl" = "bodyTpl") =>
+    setDraft((d) => {
+      const cur = String(d[field] ?? "");
+      const sep = cur === "" || cur.endsWith(" ") ? "" : " ";
+      return { ...d, [field]: `${cur}${sep}{${token}}` };
+    });
+  // Real headers of the authored SQL (from the last Test) — offered as tokens
+  // so the message never depends on hand-typed mustache keys. Identity/level
+  // columns are engine plumbing, not message material.
+  const detected = (test?.result.columns ?? []).filter((c) => !/^(telecaller_id|employee_key|value|level|severity)$/i.test(c));
 
   const call = async (kind: "save" | "test" | "run" | "delete") => {
     setBusy(kind); setError(null);
@@ -97,8 +105,8 @@ export function RuleDrawer({
       width="max-w-3xl"
       headerRight={
         <>
-          <Button size="sm" variant="secondary" disabled={!!busy} onClick={() => void call("test")}>{busy === "test" ? "Testing…" : "Test"}</Button>
-          {!isNew && <Button size="sm" variant="secondary" disabled={!!busy} onClick={() => void call("run")}>{busy === "run" ? "Running…" : "Run now"}</Button>}
+          <Button size="sm" variant="secondary" disabled={!!busy} onClick={() => void call("test")}>{busy === "test" ? "Testing…" : "Test (no send)"}</Button>
+          {!isNew && <Button size="sm" variant="secondary" disabled={!!busy} onClick={() => void call("run")}>{busy === "run" ? "Running…" : "Run now (sends)"}</Button>}
           <Button size="sm" variant="primary" disabled={!!busy} onClick={() => void call("save")}>{busy === "save" ? "Saving…" : "Save"}</Button>
         </>
       }
@@ -121,19 +129,49 @@ export function RuleDrawer({
           </label>
         </Section>
 
-        <Section title="Audience (position-wise)" desc="A row only dispatches when its person sits in this audience. Positions are the HR designation (chart title).">
-          <Field label="Positions"><Chips options={options.positions.map((p) => ({ value: p }))} selected={draft.audience.positions ?? []} onChange={(v) => setAudience("positions", v)} /></Field>
+        <Section title="Audience (position-wise)" desc="A row only dispatches when its person sits in this audience. Positions are the HR designation (chart title). Everything is a searchable dropdown; an empty list means no filter.">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <Field label="Departments"><Chips options={options.departments.map((p) => ({ value: p }))} selected={draft.audience.departments ?? []} onChange={(v) => setAudience("departments", v)} /></Field>
-            <Field label="Regions (sales roster)"><Chips options={options.regions.map((p) => ({ value: p }))} selected={draft.audience.regions ?? []} onChange={(v) => setAudience("regions", v)} /></Field>
-            <Field label="Roster types"><Chips options={options.rosterTypes.map((p) => ({ value: p }))} selected={draft.audience.rosterTypes ?? []} onChange={(v) => setAudience("rosterTypes", v)} /></Field>
-            <Field label="Roles"><Chips options={options.roles.map((r) => ({ value: r.key, label: r.position ? `${r.key} · ${r.position}` : r.key }))} selected={draft.audience.roles ?? []} onChange={(v) => setAudience("roles", v)} /></Field>
+            <Field label="Positions" hint="Primary selector — drives the position summary in the rules list.">
+              <SearchMultiSelect
+                values={draft.audience.positions ?? []} onChange={(v) => setAudience("positions", v)}
+                options={options.positions.map((p) => ({ value: p, label: p, hint: `${options.people.filter((x) => x.position === p).length} seated` }))}
+                placeholder="Add position" emptyText="No position filter — every seat the other filters allow" maxHeight="max-h-32"
+              />
+            </Field>
+            <Field label="Roles">
+              <SearchMultiSelect
+                values={draft.audience.roles ?? []} onChange={(v) => setAudience("roles", v)}
+                options={options.roles.map((r) => ({ value: r.key, label: r.key, hint: r.position || "" }))}
+                placeholder="Add role" emptyText="No role filter" maxHeight="max-h-32"
+              />
+            </Field>
+            <Field label="Departments">
+              <SearchMultiSelect
+                values={draft.audience.departments ?? []} onChange={(v) => setAudience("departments", v)}
+                options={options.departments.map((p) => ({ value: p, label: p }))}
+                placeholder="Add department" emptyText="No department filter" maxHeight="max-h-32"
+              />
+            </Field>
+            <Field label="Regions (sales roster)">
+              <SearchMultiSelect
+                values={draft.audience.regions ?? []} onChange={(v) => setAudience("regions", v)}
+                options={options.regions.map((p) => ({ value: p, label: p }))}
+                placeholder="Add region" emptyText="No region filter" maxHeight="max-h-32"
+              />
+            </Field>
+            <Field label="Roster types">
+              <SearchMultiSelect
+                values={draft.audience.rosterTypes ?? []} onChange={(v) => setAudience("rosterTypes", v)}
+                options={options.rosterTypes.map((p) => ({ value: p, label: p }))}
+                placeholder="Add roster type" emptyText="No roster-type filter" maxHeight="max-h-32"
+              />
+            </Field>
           </div>
-          <Field label="Specific people (optional — narrows the filter above)">
-            <Chips
-              options={options.people.slice(0, 40).map((p) => ({ value: p.employeeKey, label: `${p.name}${p.position ? ` · ${p.position}` : ""}` }))}
-              selected={draft.audience.employees ?? []}
-              onChange={(v) => setAudience("employees", v)}
+          <Field label="Specific people (optional — narrows the filters above)" hint="Search by name, position or department. Leave empty to address the whole audience.">
+            <SearchMultiSelect
+              values={draft.audience.employees ?? []} onChange={(v) => setAudience("employees", v)}
+              options={options.people.map((p) => ({ value: p.employeeKey, label: p.name, hint: [p.position, p.department].filter(Boolean).join(" · ") }))}
+              placeholder="Add person" emptyText="Nobody singled out — the audience filters decide" maxHeight="max-h-40"
             />
           </Field>
         </Section>
@@ -191,12 +229,27 @@ export function RuleDrawer({
           <Field label="Body template">
             <textarea className={`${inputCls} min-h-[5rem]`} value={draft.bodyTpl} onChange={(e) => set({ bodyTpl: e.target.value })} placeholder="{AGENT_NAME} heads up you only have {HOURLY_CONNECTED_CALL} in last hour…" />
           </Field>
-          <div className="flex flex-wrap gap-1">
-            {BUILTIN_TOKENS.map((t) => (
-              <button key={t} type="button" onClick={() => appendToken(t)} className="rounded-md border border-dashed border-[var(--border-card)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-secondary)] hover:border-[var(--color-brand-indigo)] hover:text-[var(--color-brand-indigo)]">
-                {`{${t}}`}
-              </button>
-            ))}
+          <div className="space-y-1">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--text-tertiary)]">
+              {detected.length > 0 ? "Detected from your SQL — click to add to the body" : "Built-in tokens — run Test to detect your own columns"}
+            </p>
+            {detected.length > 0 ? (
+              <div className="flex flex-wrap gap-1">
+                {detected.map((c) => (
+                  <button key={c} type="button" onClick={() => appendToken(columnToken(c))}
+                    className="rounded-md border border-[var(--color-brand-indigo)]/40 bg-[var(--color-brand-indigo)]/5 px-1.5 py-0.5 font-mono text-[10px] text-[var(--color-brand-indigo)] hover:bg-[var(--color-brand-indigo)]/15">
+                    {`{${columnToken(c)}}`}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            <div className="flex flex-wrap gap-1">
+              {BUILTIN_TOKENS.map((t) => (
+                <button key={t} type="button" onClick={() => appendToken(t)} className="rounded-md border border-dashed border-[var(--border-card)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-secondary)] hover:border-[var(--color-brand-indigo)] hover:text-[var(--color-brand-indigo)]">
+                  {`{${t}}`}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="rounded-lg border border-[var(--border-card)] bg-[var(--bg-card)] p-2.5">
             <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--text-tertiary)]">Preview (sample values)</p>
@@ -227,10 +280,11 @@ export function RuleDrawer({
           </div>
           {draft.cadence.kind === "weekly" ? (
             <Field label="Days">
-              <Chips
-                options={WEEKDAYS.map((d, i) => ({ value: String(i), label: d }))}
-                selected={(draft.cadence.days ?? []).map(String)}
+              <SearchMultiSelect
+                values={(draft.cadence.days ?? []).map(String)}
                 onChange={(v) => set({ cadence: { ...draft.cadence, days: v.map(Number) } })}
+                options={WEEKDAYS.map((d, i) => ({ value: String(i), label: d }))}
+                placeholder="Add day" emptyText="Every day" maxHeight="max-h-32"
               />
             </Field>
           ) : null}
@@ -238,7 +292,12 @@ export function RuleDrawer({
         </Section>
 
         {test ? (
-          <Section title={`Test result${test.result.dryRun ? " (nothing written)" : ""}`} desc={`${test.result.scanned} row(s) · ${test.result.matched} in audience · ${test.result.dispatched} dispatched · ${test.result.skipped} skipped`}>
+          <Section
+            title={test.result.dryRun ? "Test result — nothing sent" : "Run result — sent"}
+            desc={test.result.dryRun
+              ? `${test.result.scanned} row(s) scanned · ${test.result.matched} in audience · ${test.result.results.length} would be notified · 0 sent (dry run) · columns: ${(test.result.columns ?? []).join(", ") || "none"}`
+              : `${test.result.scanned} row(s) scanned · ${test.result.matched} in audience · ${test.result.dispatched} notified · ${test.result.skipped} skipped`}
+          >
             {test.result.errors.length > 0 ? (
               <ul className="space-y-0.5 text-[11px] font-semibold text-[var(--color-danger)]">
                 {test.result.errors.map((e) => <li key={e}>• {e}</li>)}

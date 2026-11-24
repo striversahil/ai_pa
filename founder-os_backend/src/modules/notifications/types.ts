@@ -117,6 +117,9 @@ export interface NotificationRunResult {
   windowStart: string;
   windowEnd: string;
   windowKey: string;
+  /** The SQL's REAL result headers, in SELECT order — what the console offers as
+   *  `{TOKEN}`s after a dry run (see ./columns.ts). */
+  columns: string[];
   scanned: number;
   matched: number;
   dispatched: number;

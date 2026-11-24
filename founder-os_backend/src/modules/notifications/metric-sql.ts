@@ -48,6 +48,27 @@ export function windowParams(startIso: string, endIso: string, day: string): str
   return [startIso, endIso, day];
 }
 
+/**
+ * How many positional parameters the statement actually uses.
+ *
+ * D1/SQLite reject a bind whose count does not match the statement exactly
+ * ("Wrong number of parameter bindings"), so bind `?1..?N` only up to the
+ * highest index the SQL mentions. This is what made a perfectly good rule fail
+ * with only `?1` and `?2` in it while the runner offered three values.
+ *
+ * Supports `?N` (highest index wins) and bare `?` (positional, counted).
+ */
+export function paramCount(sql: string): number {
+  const text = String(sql ?? '');
+  const bare = text.replace(/\?\d+/g, '').match(/\?/g)?.length ?? 0;
+  let maxIndexed = 0;
+  for (const m of text.matchAll(/\?(\d+)/g)) {
+    const n = Number(m[1]);
+    if (Number.isFinite(n) && n > maxIndexed) maxIndexed = n;
+  }
+  return maxIndexed + bare;
+}
+
 export interface MetricQueryResult {
   rows: Record<string, unknown>[];
   truncated: boolean;
@@ -62,7 +83,7 @@ export async function runMetricSql(
 ): Promise<MetricQueryResult> {
   if (!db || typeof db.prepare !== "function") return { rows: [], truncated: false };
   const stmt = db.prepare(sql);
-  const bound = typeof stmt.bind === "function" ? stmt.bind(...params) : stmt;
+  const bound = typeof stmt.bind === "function" ? stmt.bind(...params.slice(0, Math.min(paramCount(sql), params.length))) : stmt;
   const res: any = await bound.all();
   const rows = ((res?.results ?? []) as any[]).map((r) => ({ ...(r as Record<string, unknown>) }));
   const truncated = rows.length > maxRows;

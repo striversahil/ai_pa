@@ -100,6 +100,8 @@ export interface NotificationRunResult {
   windowStart: string;
   windowEnd: string;
   windowKey: string;
+  /** The query's REAL result headers (in SELECT order) — offered as {TOKEN}s. */
+  columns?: string[];
   scanned: number;
   matched: number;
   dispatched: number;
@@ -147,4 +149,18 @@ export interface NotificationConsolePayload {
   settings: NotificationSettings;
   options: NotificationOptions;
   deliveries: NotificationDelivery[];
+  prompt?: { text: string; defaultPrompt: string };
+}
+
+/** One table of the live D1 schema offered to the AI authoring flow. */
+export interface NotificationSchemaTable {
+  table: string;
+  note: string;
+  columns: Array<{ name: string; type: string }>;
+}
+
+export interface NotificationSchema {
+  tables: NotificationSchemaTable[];
+  text: string;
+  generatedAt: string;
 }

@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { Sparkles, MessageCircle, Workflow, ShieldCheck, MessagesSquare, Mail, Settings, ListChecks, LayoutGrid, CalendarDays } from "lucide-react";
+import { Sparkles, MessageCircle, Workflow, ShieldCheck, MessagesSquare, Mail, Settings, ListChecks, LayoutGrid, CalendarDays, Bell } from "lucide-react";
 
 export type ViewType =
   | "session"
@@ -12,6 +12,7 @@ export type ViewType =
   | "chat"
   | "admin"
   | "email"
+  | "notifications"
   | "settings";
 
 export interface NavItem {
@@ -31,6 +32,9 @@ export const NAV_ITEMS: NavItem[] = [
   { view: "workspace", label: "Positions", icon: LayoutGrid, mobile: false },
   // Automation REGISTRY console (admin only — canView gates it).
   { view: "automations", label: "Automations", icon: Workflow, mobile: true },
+  // Notification engine: rules, dispatches, palette and the AI-authoring
+  // material. Root/admin only (canView gates it; the API refuses others).
+  { view: "notifications", label: "Notifications", icon: Bell, mobile: false },
   // Employee delegation board — every approved login, HR or not.
   { view: "delegation", label: "Delegation", icon: ListChecks, mobile: true },
   // Personal leave applications (full day / half day / short) — every approved
@@ -72,6 +76,7 @@ export function navTargetPath(t: NavTarget): string {
     chat: "/chat",
     admin: "/admin",
     email: "/email",
+    notifications: "/notifications",
     settings: "/settings",
   };
   return paths[t.view];

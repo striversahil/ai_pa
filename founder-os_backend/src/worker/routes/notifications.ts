@@ -29,11 +29,15 @@ import {
   listDeliveries,
   listRules,
   loadNotificationConfig,
+  loadPrompt,
   readPanel,
   saveNotificationConfig,
+  savePrompt,
   saveRule,
   unreadCount,
 } from '../../modules/notifications/store';
+import { DEFAULT_NOTIFICATION_PROMPT } from '../../modules/notifications/prompt';
+import { loadNotificationSchema } from '../../modules/notifications/schema';
 import { loadSeats, loadRolesByEmail } from '../../modules/notifications/targets';
 import { nextDueAt } from '../../modules/notifications/window';
 import { templateTokens, BUILTIN_TOKENS } from '../../modules/notifications/template';
@@ -204,6 +208,7 @@ export function registerNotificationRoutes(app: Hono<{ Bindings: Bindings }>): v
         settings: config.settings,
         options: await optionsPayload(db),
         deliveries: await listDeliveries(db, 200),
+        prompt: { text: await loadPrompt(db), defaultPrompt: DEFAULT_NOTIFICATION_PROMPT },
       });
     } catch (e) {
       return writeError(c, e, 'rules unavailable');
@@ -313,6 +318,43 @@ export function registerNotificationRoutes(app: Hono<{ Bindings: Bindings }>): v
       return c.json({ levels: config.levels, settings: config.settings });
     } catch (e) {
       return writeError(c, e, 'save settings failed');
+    }
+  });
+
+  /** The saved AI prompt (root/admin): author rules by describing them to an
+   *  agent instead of writing SQL by hand. Blank clears back to the default. */
+  app.get('/api/notification-prompt', async (c) => {
+    try {
+      const { denied } = await author(c);
+      if (denied) return denied;
+      return c.json({ text: await loadPrompt(dbOf(c)), defaultPrompt: DEFAULT_NOTIFICATION_PROMPT });
+    } catch (e) {
+      return writeError(c, e, 'prompt unavailable');
+    }
+  });
+
+  app.put('/api/notification-prompt', async (c) => {
+    try {
+      const { denied } = await author(c);
+      if (denied) return denied;
+      const body = await readBody<any>(c);
+      const text = await savePrompt(dbOf(c), body?.text ?? body?.prompt ?? '');
+      notifyLive(c, { type: LiveEvent.Notifications });
+      return c.json({ text, defaultPrompt: DEFAULT_NOTIFICATION_PROMPT });
+    } catch (e) {
+      return writeError(c, e, 'could not save the prompt');
+    }
+  });
+
+  /** The LIVE D1 schema (business tables only, KV-cached 10 min) — copyable into
+   *  an AI agent together with the prompt above. */
+  app.get('/api/notification-schema', async (c) => {
+    try {
+      const { denied } = await author(c);
+      if (denied) return denied;
+      return c.json(await loadNotificationSchema(dbOf(c)));
+    } catch (e) {
+      return writeError(c, e, 'schema unavailable');
     }
   });
 

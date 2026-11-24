@@ -129,6 +129,10 @@ export function canView(me: AuthUserMe | null, viewOrSlug: string): boolean {
   // ROOT ONLY — same contract as email. The backend /api/settings endpoints
   // enforce the same check independently.
   if (viewOrSlug === "settings") return me.isRoot;
+  // Notification engine dashboard (rules, deliveries, palette, AI authoring):
+  // root/admin only — the backend endpoints enforce the same gate. Everyone else
+  // gets their own notifications through the bell, not this console.
+  if (viewOrSlug === "notifications") return me.isRoot || me.isAdmin;
   if (me.isAdmin) return true;
   // The Automations REGISTRY page is root/admin-only. Non-root users reach
   // their dashboards individually (useDashboardNav) — never the full registry.

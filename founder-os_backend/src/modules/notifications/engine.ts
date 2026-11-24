@@ -17,6 +17,7 @@
 // an hourly rule. Deterministic — no LLM, no network.
 // ─────────────────────────────────────────────────────────────────────────────
 import { notifyUsers } from "../core/notify";
+import { resultColumns } from "./columns";
 import { escalatedLevel, levelColorNameOf, levelDefOf, levelForValue, levelLabelOf } from "./levels";
 import { runMetricSql } from "./metric-sql";
 import {
@@ -113,6 +114,7 @@ export async function evaluateRule(db: any, rule: NotificationRule, opts: Evalua
     windowStart: win.startIso,
     windowEnd: win.endIso,
     windowKey,
+    columns: [],
     scanned: 0,
     matched: 0,
     dispatched: 0,
@@ -135,6 +137,9 @@ export async function evaluateRule(db: any, rule: NotificationRule, opts: Evalua
     return result;
   }
   result.scanned = rows.length;
+  // The real headers of the authored query — the console turns these into
+  // insertable message tokens (no hand-typed mustache keys).
+  result.columns = resultColumns(rows);
   if (rows.length === 0) return result;
 
   // Audience once per run (position-wise dispatch).

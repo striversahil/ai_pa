@@ -1281,6 +1281,7 @@ Never sideways between route modules or between `views/automations` and `views/s
 | `format-canonical` | one home for money/date formatting |
 | `workspace-catalog`, `workspace-scoping` | the §16 catalog + viewer scoping |
 | `notifications` | §20 escalation palette, BE↔FE level/template mirrors, authored-SQL firewall, IST windows |
+| `notifications-dashboard` | §20 bell hook order, Test-vs-Run dispatch, rule filters, column tokens, AI prompt/schema, own nav surface, seeded rule |
 | `view-as` | §21 root-only impersonation: no root→root/self, overlay is never root, write gate blocks every non-read, cookie shape, viewer/context wiring |
 | `d1-parity`, `gateway-js-parity`, `gateway-pool` | D1 shim registries; TS gateway ↔ JS runner port |
 | `core-guard.mjs` (not in the suite) | locked ERP core signature |
@@ -1494,6 +1495,37 @@ escalation. Channels beyond in-app (WhatsApp/web push) stay on `core_notificatio
 `latestNotificationId()` reads the just-written `core_notification` row back by (employee, title, body,
 since) because the locked `notifyUsers` contract returns a count, not ids — the clean fix is a core change
 request to accept an `id` in `NotifyItem`.
+
+**Own dashboard (2026-11-24).** The console moved out of Settings into a top-level nav view
+`notifications` (`/notifications`, root/admin) — `views/notifications/NotificationsDashboard.tsx` hosting
+`components/notifications-console/`. Four tabs: Rules · Deliveries · Levels & caps · **AI assist**. The rules
+list is filterable by search, position and live/paused, and carries a per-position `N live · M paused`
+summary so the collapsed view answers “who is covered and is it on?”. Every audience selector (position,
+role, department, region, roster type, specific people) is a searchable dropdown
+(`components/ui/SearchSelect.tsx`) — a rule can list dozens of seats, and chips turned that into a wall.
+
+**Test = dry run, Run now = dispatch.** `POST /notification-rules/:key/test` returns the real result headers,
+every scanned row, the rendered message per person and the audience match — and stops before `notifyUsers`
+(guarded). `…/run` does the real thing. The dry run also feeds **header detection**: `result.columns`
+(`modules/notifications/columns.ts`) is the authored SQL's actual SELECT list, which the drawer offers as
+`{TOKEN}` buttons (identity/level columns hidden — they are engine plumbing), so templates are never typed
+blind.
+
+**AI assist.** The founder describes an escalation in words and an agent writes the rule. Two copyable
+artefacts: the saved **prompt** (Setting `notifications:prompt`, default `modules/notifications/prompt.ts` —
+states the row contract, the `?1/?2/?3` parameters, the level scale and the template rules) and the **live
+schema** (`GET /api/notification-schema` → `sqlite_master` + `PRAGMA table_info` over the business tables
+picked by `schema-catalog.ts`, KV-cached 10 min, ~45 tables). Names come from the DB, so a rename can never
+make the pasted schema lie.
+
+**Parameter binding fix.** `metric-sql#runMetricSql` now binds only the placeholders the statement uses
+(`paramCount` = highest `?N` + bare `?`). Before this, the seeded rule (`?1/?2` only) failed every sweep with
+D1's “Wrong number of parameter bindings” — a live rule that looked healthy and never fired.
+
+**The first real rule.** Migration 0164 seeds `telecaller-hourly-connected-call` (DeviceCall, previous full
+IST hour, `HAVING COUNT(*) >= 5` so a break/partial hour cannot grade someone); 0165 upgrades the row the
+founder had already created in the console (guarded on “still the sample”), leaving their Live/Paused choice
+alone. Empty windows are expected until the Auto-Dialer/phone sync writes `DeviceCall` again.
 
 ## 21. Root "view as" — read-only impersonation (2026-11-24)
 

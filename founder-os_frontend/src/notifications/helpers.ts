@@ -65,6 +65,70 @@ export function ruleStatusLabel(rule: NotificationRule): { text: string; tone: "
   }
 }
 
+// ── Rules list: position + status filtering (console collapsed view) ──────────
+
+const NO_POSITION = "(all positions)";
+
+/** The position a rule speaks to (its first audience position), for grouping. */
+export function rulePosition(rule: NotificationRule): string {
+  const p = (rule.audience?.positions ?? []).map((x) => String(x ?? "").trim()).filter(Boolean);
+  return p[0] ?? NO_POSITION;
+}
+
+export interface RulePositionSummary {
+  position: string;
+  live: number;
+  paused: number;
+  total: number;
+}
+
+/** One row per position with its live/paused counts — the at-a-glance header of
+ *  the rules list, so every position's state is visible while collapsed. */
+export function rulePositions(rules: NotificationRule[]): RulePositionSummary[] {
+  const by = new Map<string, RulePositionSummary>();
+  for (const r of rules ?? []) {
+    const position = rulePosition(r);
+    const row = by.get(position) ?? { position, live: 0, paused: 0, total: 0 };
+    row.total++;
+    if (r.enabled) row.live++;
+    else row.paused++;
+    by.set(position, row);
+  }
+  return [...by.values()].sort((a, b) => a.position.localeCompare(b.position));
+}
+
+/** `{hourly_connected_call}` — uppercase, non-word chars to underscores.
+ *  mirror: founder-os_backend/src/modules/notifications/columns.ts#columnToken
+ *  (guarded in scripts/guards/notifications.test.mjs). */
+export function columnToken(column: string): string {
+  return String(column ?? "")
+    .trim()
+    .replace(/[^A-Za-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toUpperCase();
+}
+
+export interface RuleFilter {
+  q?: string;
+  position?: string;
+  status?: "all" | "live" | "paused";
+}
+
+/** Collapsed-view filter: free text over name/key/description, one position
+ *  ("" = all), and live/paused. Pure — guarded by the notifications test. */
+export function filterRules(rules: NotificationRule[], f: RuleFilter | null | undefined): NotificationRule[] {
+  const q = String(f?.q ?? "").trim().toLowerCase();
+  const position = String(f?.position ?? "").trim();
+  const status = f?.status ?? "all";
+  return (rules ?? []).filter((r) => {
+    if (position && rulePosition(r) !== position) return false;
+    if (status === "live" && !r.enabled) return false;
+    if (status === "paused" && r.enabled) return false;
+    if (!q) return true;
+    return `${r.name} ${r.key} ${r.description ?? ""} ${audienceLabel(r.audience)}`.toLowerCase().includes(q);
+  });
+}
+
 /** Empty rule scaffold for the drawer's "New rule". */
 export function emptyRule(): NotificationRule {
   return {

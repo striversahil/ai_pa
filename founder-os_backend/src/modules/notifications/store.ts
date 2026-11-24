@@ -7,6 +7,7 @@
 // escalation metadata (hlp_notification_delivery) onto the audit rows.
 // ─────────────────────────────────────────────────────────────────────────────
 import { normalizeLevels } from "./levels";
+import { normalizePrompt } from "./prompt";
 import {
   DEFAULT_NOTIFICATION_SETTINGS,
   type NotificationLevelDef,
@@ -119,6 +120,28 @@ export async function saveNotificationConfig(db: any, patch: { levels?: unknown;
       "notifications:settings", JSON.stringify(settings), now,
     );
   }
+}
+
+/** The saved AI prompt (Setting `notifications:prompt`). Empty = code default. */
+export async function loadPrompt(db: any): Promise<string> {
+  const rows = await all(db, `SELECT "value" FROM "Setting" WHERE "key" = ?`, "notifications:prompt").catch(() => []);
+  return String(rows[0]?.value ?? "");
+}
+
+/** Save (or clear, when blank) the AI prompt. Returns the stored text. */
+export async function savePrompt(db: any, value: unknown): Promise<string> {
+  const text = normalizePrompt(value);
+  if (!text) {
+    await run(db, `DELETE FROM "Setting" WHERE "key" = ?`, "notifications:prompt").catch(() => undefined);
+    return "";
+  }
+  await run(
+    db,
+    `INSERT INTO "Setting" ("key", "value", "updatedAt") VALUES (?, ?, ?)
+     ON CONFLICT("key") DO UPDATE SET "value" = excluded."value", "updatedAt" = excluded."updatedAt"`,
+    "notifications:prompt", text, new Date().toISOString(),
+  );
+  return text;
 }
 
 // ── Rules ───────────────────────────────────────────────────────────────────

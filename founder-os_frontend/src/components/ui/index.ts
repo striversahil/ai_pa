@@ -19,3 +19,7 @@ export { default as Modal } from "../Modal";
 export { default as ConfirmDialog } from "./ConfirmDialog";
 export { default as Popover } from "./Popover";
 export { Drawer } from "./Drawer";
+// Searchable dropdowns (single + multi) — use these instead of chip walls for
+// any audience/filter list that can grow past a handful of options.
+export { SearchSelect, SearchMultiSelect } from "./SearchSelect";
+export type { SearchOption } from "./SearchSelect";

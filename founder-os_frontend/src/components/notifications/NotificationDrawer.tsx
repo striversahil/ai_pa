@@ -49,14 +49,18 @@ function Row({ item, onRead, readOnly }: { item: NotificationPanelItem; onRead: 
 export function NotificationDrawer() {
   const { panelOpen, closePanel, items, unread, loading, refreshing, error, markRead, markAllRead, maxRows, levels, viewOnly } = useNotifications();
   const [filter, setFilter] = useState<Filter>("all");
-  if (!panelOpen) return null;
-
+  // NOTE: every hook must run BEFORE the `panelOpen` early return. Calling
+  // useMemo after it made the first open render more hooks than the previous
+  // render → React threw, and because NotificationOverlay sits outside the
+  // page ErrorBoundary the whole app died ("This page couldn't load").
   const filtered = useMemo(() => {
     if (filter === "all") return items;
     if (filter === "unread") return items.filter((n) => n.status === "QUEUED");
     const level = Number(filter);
     return items.filter((n) => n.level === level);
   }, [items, filter]);
+
+  if (!panelOpen) return null;
 
   return (
     <Drawer

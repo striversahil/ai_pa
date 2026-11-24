@@ -18,8 +18,9 @@ import { RulesTab } from "./RulesTab";
 import { DeliveriesTab } from "./DeliveriesTab";
 import { LevelsTab } from "./LevelsTab";
 import { RuleDrawer } from "./RuleDrawer";
+import { PromptSchemaTab } from "./PromptSchemaTab";
 
-type Tab = "rules" | "deliveries" | "levels";
+type Tab = "rules" | "deliveries" | "levels" | "assist";
 
 export function NotificationConsole() {
   const dash = useLiveQuery<NotificationConsolePayload>(fetchNotificationConsole, { events: ["notifications"] });
@@ -38,7 +39,7 @@ export function NotificationConsole() {
         <h2 className="text-lg font-extrabold text-[var(--text-primary)]">Notifications</h2>
         <p className="text-[11px] text-[var(--text-secondary)]">
           Position-wise escalations: one SQL query decides who is in trouble and how badly, the cron dispatches it as an instant toast plus an
-          inbox row (newest 200 kept in the bell).
+          inbox row (newest 200 kept in the bell). Author it by hand — or copy the prompt + live schema from <b>AI assist</b> and let an agent write it.
         </p>
       </div>
 
@@ -58,6 +59,7 @@ export function NotificationConsole() {
               { key: "rules", label: `Rules ${payload.rules.length}` },
               { key: "deliveries", label: `Deliveries ${payload.deliveries.length}` },
               { key: "levels", label: "Levels & caps" },
+              { key: "assist", label: "AI assist" },
             ]}
           />
 
@@ -100,6 +102,14 @@ export function NotificationConsole() {
                   setBusy(null);
                 }
               }}
+            />
+          ) : null}
+
+          {tab === "assist" ? (
+            <PromptSchemaTab
+              prompt={payload.prompt?.text ?? ""}
+              defaultPrompt={payload.prompt?.defaultPrompt ?? ""}
+              onPromptSaved={() => dash.refresh()}
             />
           ) : null}
 
