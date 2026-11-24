@@ -296,7 +296,9 @@ export function registerNotificationRoutes(app: Hono<{ Bindings: Bindings }>): v
     }
   });
 
-  /** Real run, on demand (also the manual cadence's only trigger). */
+  /** Real run, on demand (also the manual cadence's only trigger). Accepts the
+   *  same `lookbackHours` as Test, so a quiet hour can still be exercised for
+   *  real (dispatch) — an explicit founder action, window stated in the result. */
   app.post('/api/notification-rules/:key/run', async (c) => {
     try {
       const { denied } = await author(c);
@@ -304,12 +306,18 @@ export function registerNotificationRoutes(app: Hono<{ Bindings: Bindings }>): v
       const db = dbOf(c);
       const rule = await getRule(db, String(c.req.param('key') ?? ''));
       if (!rule) return c.json({ error: 'no such rule' }, 404);
+      const body = await readBody<any>(c);
+      const lookbackHours = Math.max(0, Math.min(24 * 90, Number(body?.lookbackHours) || 0));
+      const now = new Date();
+      const window = lookbackHours > 0
+        ? { startIso: new Date(now.getTime() - lookbackHours * 3_600_000).toISOString(), endIso: now.toISOString() }
+        : undefined;
       const config = await loadNotificationConfig(db);
       const result = await evaluateRule(db, rule, {
-        slot: new Date(), levels: config.levels, settings: config.settings, align: false,
+        slot: now, levels: config.levels, settings: config.settings, align: false, window,
       });
       if (result.dispatched > 0) notifyLive(c, { type: LiveEvent.Notifications, ruleKey: rule.key, count: result.dispatched });
-      return c.json({ result });
+      return c.json({ result, lookbackHours });
     } catch (e) {
       return writeError(c, e, 'run failed');
     }

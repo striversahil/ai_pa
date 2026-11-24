@@ -223,6 +223,12 @@ describe('zero-row runs stay explainable', () => {
     assert.doesNotMatch(routes, /lookbackHours[\s\S]{0,400}notifyUsers/);
   });
 
+  it('the run route honours the same window and still dispatches', () => {
+    const routes = be('src/worker/routes/notifications.ts');
+    assert.match(routes, /\/run'[\s\S]{0,900}lookbackHours/);
+    assert.match(routes, /\/run'[\s\S]{0,1400}notifyLive/);
+  });
+
   it('labels the evaluated window in IST', () => {
     const label = feHelpers.windowLabel('2026-11-24T00:48:00.000Z', '2026-11-24T01:48:00.000Z');
     assert.match(label, /06:18[–-]07:18 IST/);

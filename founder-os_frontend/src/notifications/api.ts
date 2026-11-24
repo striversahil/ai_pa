@@ -49,8 +49,11 @@ export const testNotificationRule = (key: string, rule?: Partial<NotificationRul
     { ...(rule ? { rule } : {}), ...(lookbackHours > 0 ? { lookbackHours } : {}) },
   );
 
-export const runNotificationRule = (key: string) =>
-  api.post<{ result: NotificationRunResult }>(`/notification-rules/${encodeURIComponent(key)}/run`);
+export const runNotificationRule = (key: string, lookbackHours = 0) =>
+  api.post<{ result: NotificationRunResult; lookbackHours?: number }>(
+    `/notification-rules/${encodeURIComponent(key)}/run`,
+    lookbackHours > 0 ? { lookbackHours } : {},
+  );
 
 export const saveNotificationSettings = (body: { levels?: NotificationLevelDef[]; settings?: NotificationSettings }) =>
   api.put<{ levels: NotificationLevelDef[]; settings: NotificationSettings }>("/notification-settings", body);

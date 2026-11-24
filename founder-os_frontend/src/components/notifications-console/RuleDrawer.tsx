@@ -94,8 +94,8 @@ export function RuleDrawer({
       const saved = await saveNotificationRule(isNew ? "new" : rule.key, draft);
       onSaved(saved.rule);
       if (kind === "run") {
-        const res = await runNotificationRule(saved.rule.key);
-        setTest({ result: res.result, tokens: [], nextDueAt: saved.rule.nextDueAt });
+        const res = await runNotificationRule(saved.rule.key, Number(lookback) || 0);
+        setTest({ result: res.result, tokens: [], nextDueAt: saved.rule.nextDueAt, lookbackHours: res.lookbackHours });
       }
     } catch (e: any) {
       setError(e?.message ?? "Request failed");
@@ -126,12 +126,12 @@ export function RuleDrawer({
         {error ? <p className="rounded-lg border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 px-3 py-2 text-[11px] font-bold text-[var(--color-danger)]">{error}</p> : null}
 
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--border-card)] bg-[var(--surface-sunken)]/40 px-3 py-2">
-          <span className="text-[10px] font-bold uppercase tracking-wide text-[var(--text-tertiary)]">Test window</span>
+          <span className="text-[10px] font-bold uppercase tracking-wide text-[var(--text-tertiary)]">Test / Run window</span>
           <div className="w-60">
             <SearchSelect value={lookback} options={LOOKBACKS} onChange={setLookback} clearLabel={null} />
           </div>
           <span className="text-[10px] text-[var(--text-tertiary)]">
-            Only affects <b>Test (no send)</b> — the cron always uses the cadence. Widen it to see real rows, headers and the rendered message.
+            Applies to <b>Test (no send)</b> and <b>Run now (sends)</b> — the cron always uses the cadence. Widen it when the hour is quiet.
           </span>
         </div>
 
