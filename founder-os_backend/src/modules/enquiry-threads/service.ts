@@ -9,18 +9,29 @@
 // about suppliers or the procurement desk can leak through free text.
 import type { MeResponse } from '../auth/types';
 import {
-  canSee, createThread, deskAllowed, isDesk, reopenThread, replyThread, resolveThread, serveForDesk, stampSalesCopy,
+  canSee, createThread, deskAllowed, isDesk, looksLikeEmail, prettifyAuthorName, reopenThread, replyThread,
+  resolveThread, serveForDesk, stampSalesCopy, DESK_LABEL,
 } from './pure';
 import {
-  countOpenByEnquiry, getThread, insertThread, listInbox, listThreadsForEnquiry, readItemName, readItemVendors, saveThreadState,
+  countOpenByEnquiry, getThread, insertThread, listInbox, listThreadsForEnquiry, readItemName, readItemVendors,
+  readMemberName, saveThreadState,
 } from './store';
 import type { EnquiryThread, ThreadActor, ThreadDesk, ThreadResult } from './types';
 
 type D1 = any;
 type Res<T> = ThreadResult<T>;
 
-function actorFor(me: MeResponse, desk: ThreadDesk): ThreadActor {
-  return { desk, name: String((me as any)?.user?.name || (me as any)?.user?.email || '').trim() };
+/** Who is writing, as a NAME. The auth profile name is trusted only when it is
+ *  not an address; otherwise the HR register supplies the person's real name
+ *  (matched on the login email), and the email is humanized as a last resort —
+ *  a thread must never be attributed to `someone@company.com`. */
+async function actorFor(db: D1, me: MeResponse, desk: ThreadDesk): Promise<ThreadActor> {
+  const email = String((me as any)?.user?.email ?? '').trim();
+  const raw = String((me as any)?.user?.name ?? '').trim();
+  if (raw && !looksLikeEmail(raw)) return { desk, name: raw.slice(0, 120) };
+  const member = await readMemberName(db, email);
+  const name = member || prettifyAuthorName(raw || email) || DESK_LABEL[desk];
+  return { desk, name: name.slice(0, 120) };
 }
 
 function gate(me: MeResponse | null, rawDesk: unknown): Res<ThreadDesk> {
@@ -63,7 +74,7 @@ export async function startThread(db: D1, me: MeResponse | null, body: any): Pro
   if (!item.exists) return { ok: false, status: 404, error: 'enquiry not found' };
   const r = createThread({
     enquiryId, itemIndex, itemName: item.name || String(body?.itemName ?? ''),
-    actor: actorFor(me as MeResponse, g.value), to: body.to, text: body?.text, now: new Date().toISOString(),
+    actor: await actorFor(db, me as MeResponse, g.value), to: body.to, text: body?.text, now: new Date().toISOString(),
     attachments: body?.attachments, category: body?.category,
   });
   if (r.ok) await insertThread(db, r.value);
@@ -96,7 +107,7 @@ export async function actOnThread(db: D1, me: MeResponse | null, id: string, bod
   const thread = await getThread(db, id);
   // Invisible threads 404 (never 403) so their existence is not confirmed.
   if (!thread || !canSee(thread, g.value)) return { ok: false, status: 404, error: 'thread not found' };
-  const actor = actorFor(me as MeResponse, g.value);
+  const actor = await actorFor(db, me as MeResponse, g.value);
   const now = new Date().toISOString();
   const r = op === 'reply' ? replyThread(thread, actor, body?.text, now, body?.attachments)
     : op === 'resolve' ? resolveThread(thread, actor, now)

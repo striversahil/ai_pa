@@ -26,6 +26,31 @@ import {
 
 export const DESK_LABEL: Record<ThreadDesk, string> = { sales: 'Sales', procurement: 'Procurement', management: 'Management' };
 
+/** A login email used as a display name (`sahil@acme.com`). */
+export function looksLikeEmail(v: unknown): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v ?? '').trim());
+}
+
+/** Human shape for an email-shaped name — `sahil.sharma@acme.com` → `Sahil
+ *  Sharma`. LAST resort only: the real name comes from the HR register. */
+export function prettifyAuthorName(raw: unknown): string {
+  const s = String(raw ?? '').trim();
+  if (!s) return '';
+  if (!looksLikeEmail(s)) return s.slice(0, 120);
+  const local = s.split('@')[0] ?? '';
+  return local.split(/[._\-+\s]+/).filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ').slice(0, 120);
+}
+
+/** What a message shows as its author (founder rule 2026-11-24): a Management
+ *  reply is never attributed to a person — Sales (and every other desk) sees
+ *  only `Management`, no name and no initials (the DB keeps the real author for
+ *  audit). Every other desk shows the person, never an email-shaped string. */
+export function displayAuthorName(by: ThreadDesk, raw: unknown): string {
+  if (by === 'management') return DESK_LABEL.management;
+  return prettifyAuthorName(raw) || DESK_LABEL[by];
+}
+
 const SALES_SCOPES = ['enquiry-tracker', 'telecalling', 'sales', 'sales-head'];
 
 export function isDesk(v: unknown): v is ThreadDesk {
@@ -108,20 +133,23 @@ export function serveForDesk(thread: EnquiryThread, desk: ThreadDesk): EnquiryTh
     parentThreadId: desk === 'management' ? thread.parentThreadId : null,
     waitingOnAll: waitingOnAllFor(thread, desk),
   };
+  // Authorship is projected on the way out (never stored scrubbed): Management
+  // stays anonymous everywhere, an email-shaped name is humanized.
+  const author = (m: ThreadMessage): ThreadMessage => ({ ...m, authorName: displayAuthorName(m.by, m.authorName) });
   if (desk !== 'sales') {
     return {
       ...base,
       messages: thread.messages.map((m) =>
-        m.by === 'procurement' && thread.channel === 'sales' ? { ...m, masked: true } : m),
+        author(m.by === 'procurement' && thread.channel === 'sales' ? { ...m, masked: true } : m)),
     };
   }
   // Sales: procurement does not exist on this conversation.
   return {
     ...base,
     messages: thread.messages.map((m) => {
-      if (m.by !== 'procurement') return m;
+      if (m.by !== 'procurement') return author(m);
       return {
-        id: m.id, at: m.at, by: 'management' as ThreadDesk, authorName: 'Management',
+        id: m.id, at: m.at, by: 'management' as ThreadDesk, authorName: DESK_LABEL.management,
         text: m.salesText ?? m.text,
         ...(m.system ? { system: true } : {}),
         ...(m.attachments?.length

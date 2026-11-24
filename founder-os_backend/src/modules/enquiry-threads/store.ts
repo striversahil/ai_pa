@@ -78,6 +78,24 @@ export async function getThread(db: D1, id: string): Promise<EnquiryThread | nul
   return r ? rowToThread(r) : null;
 }
 
+/** The person's real name from the HR register, matched on the login email
+ *  (explicit `loginEmail` wins over the contact `email`). Used when the auth
+ *  profile carries no usable name — an author must never read as an address. */
+export async function readMemberName(db: D1, email: string): Promise<string> {
+  const e = String(email ?? '').trim().toLowerCase();
+  if (!e) return '';
+  try {
+    const r: any = await db
+      .prepare(
+        `SELECT name FROM HumanResourcesMember
+          WHERE lower(loginEmail) = ? OR lower(email) = ?
+          ORDER BY CASE WHEN lower(loginEmail) = ? THEN 0 ELSE 1 END LIMIT 1`,
+      )
+      .bind(e, e, e).first();
+    return String(r?.name ?? '').trim();
+  } catch { return ''; }
+}
+
 /** Item name snapshot without loading the (multi-MB) items blob. */
 export async function readItemName(db: D1, enquiryId: string, itemIndex: number): Promise<{ exists: boolean; name: string }> {
   const r = await db

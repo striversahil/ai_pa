@@ -18,6 +18,7 @@ const mod = await import(bundleToFile(join(BACKEND_DIR, 'src', 'modules', 'enqui
 const {
   channelBetween, serveForDesk, canSee, createThread, replyThread, resolveThread, reopenThread,
   deskAllowed, summarizeForDesk, waitingOnAllFor, scrubVendors, stampSalesCopy,
+  displayAuthorName, prettifyAuthorName, looksLikeEmail,
 } = mod;
 
 const me = (scopes, extra = {}) => ({ user: { id: 'u', email: 'x@y', name: 'X' }, scopes, roles: [], isRoot: false, isAdmin: false, ...extra });
@@ -227,6 +228,60 @@ describe('enquiry conversations — procurement speaks as Management', () => {
     const thread = { ...withFile, messages: [stamped] };
     assert.equal(serveForDesk(thread, 'sales').messages[0].attachments[0].name, 'our supplier quote.pdf');
     assert.equal(serveForDesk(thread, 'management').messages[0].attachments[0].name, 'Shree Steel Works quote.pdf');
+  });
+});
+
+describe('authorship — Management is anonymous, everyone else is a person (2026-11-24)', () => {
+  const authored = (desk, name, to, category) => createThread({
+    enquiryId: 'e9', itemIndex: 0, itemName: 'Item', actor: { desk, name }, to, text: 'hi', now: NOW, category,
+  }).value;
+  const lastAuthor = (t, desk) => serveForDesk(t, desk)?.messages.at(-1)?.authorName;
+
+  it('a Management reply never names the person — for any desk', () => {
+    // Sales opens a product query (the only shape procurement may also see), then
+    // management answers it with a personal name attached.
+    const base = mk('sales', 'management', 'q', 'product_query').value;
+    const t = replyThread(base, { desk: 'management', name: 'Sahil Sharma' }, 'answer', '2026-11-21T11:00:00.000Z').value;
+    for (const desk of ['sales', 'procurement', 'management']) {
+      assert.equal(lastAuthor(t, desk), 'Management', `${desk} must not see the management author name`);
+    }
+    // still `by: management` so the row keeps its routing/colour
+    assert.equal(serveForDesk(t, 'sales')?.messages.at(-1)?.by, 'management');
+  });
+
+  it('procurement answering a product query is still published as Management', () => {
+    const base = mk('sales', 'management', 'q', 'product_query').value;
+    const t = replyThread(base, { desk: 'procurement', name: 'Ramesh Gupta' }, 'answer', '2026-11-21T11:00:00.000Z').value;
+    assert.equal(lastAuthor(t, 'sales'), 'Management');
+  });
+
+  it('an email-shaped author is humanized on the desks that do show a person', () => {
+    const t = authored('sales', 'sahil.sharma@acme.com', 'management');
+    assert.equal(lastAuthor(t, 'management'), 'Sahil Sharma');
+    assert.equal(lastAuthor(t, 'sales'), 'Sahil Sharma');
+  });
+
+  it('a real name is served untouched', () => {
+    const t = authored('sales', 'Ravi Kumar', 'management');
+    assert.equal(lastAuthor(t, 'management'), 'Ravi Kumar');
+    assert.equal(lastAuthor(t, 'sales'), 'Ravi Kumar');
+  });
+
+  it('helpers: email detection, humanizing, desk fallback', () => {
+    assert.equal(looksLikeEmail('a@b.co'), true);
+    assert.equal(looksLikeEmail('Ravi Kumar'), false);
+    assert.equal(prettifyAuthorName('a.b-c_d@x.io'), 'A B C D');
+    assert.equal(prettifyAuthorName('Ravi Kumar'), 'Ravi Kumar');
+    assert.equal(displayAuthorName('management', 'Sahil Sharma'), 'Management');
+    assert.equal(displayAuthorName('sales', ''), 'Sales');
+  });
+
+  it('the real name is resolved from the HR register, never from the address', () => {
+    const svc = readFileSync(join(BACKEND_DIR, 'src', 'modules', 'enquiry-threads', 'service.ts'), 'utf8');
+    assert.ok(svc.includes('readMemberName'), 'actor names must fall back to the HR register');
+    assert.ok(!/\.name \|\| \(me as any\)\?\.user\?\.email/.test(svc), 'the email must never be the display name');
+    const store = readFileSync(join(BACKEND_DIR, 'src', 'modules', 'enquiry-threads', 'store.ts'), 'utf8');
+    assert.match(store, /lower\(loginEmail\) = \?/, 'match on the explicit login email first');
   });
 });
 
