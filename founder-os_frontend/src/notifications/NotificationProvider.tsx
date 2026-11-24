@@ -13,6 +13,7 @@
 // · Level 1 = "Normal / Resolved" — it is in the panel/audit but never toasted.
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useAuth } from "@/auth/AuthContext";
 import { useLiveQuery } from "@/hooks/useLiveData";
 import { fetchNotifications, markAllNotificationsRead, markNotificationRead } from "./api";
 import { DEFAULT_LEVELS } from "./levels";
@@ -26,6 +27,8 @@ export interface NotificationContextValue {
   refreshing: boolean;
   error: unknown;
   canAuthor: boolean;
+  /** True while root is viewing as someone else: the panel is theirs, read-only. */
+  viewOnly: boolean;
   unlinked: boolean;
   maxRows: number;
   refresh: () => void;
@@ -43,10 +46,19 @@ const NotificationContext = createContext<NotificationContextValue | null>(null)
 const TOAST_MAX = 3;
 
 export function NotificationProvider({ children }: { children: React.ReactNode }) {
+  // Mounted with key={me.user.id} (app/page.tsx): entering/leaving root "view
+  // as" REMOUNTS this provider, so the first payload is the new person's inbox,
+  // its history seeds `seen` (no backlog toast burst) and the bell count is
+  // never the previous identity's.
   const q = useLiveQuery<NotificationsPayload>(fetchNotifications, {
     events: ["notifications"],
     pollMs: 30_000,
   });
+  const { me } = useAuth();
+  // Read-only impersonation: their inbox is a museum while root is inside. The
+  // API refuses the write anyway (VIEW_AS_READONLY) — this keeps the UI honest
+  // instead of optimistically marking rows and then reverting on the 403.
+  const viewOnly = !!me?.actingAs;
   const [panelOpen, setPanelOpen] = useState(false);
   const [toasts, setToasts] = useState<NotificationPanelItem[]>([]);
   const seen = useRef<Set<string> | null>(null);
@@ -72,6 +84,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   }, []);
 
   const markRead = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+    if (viewOnly) return; // viewing someone else — never touch their unread state
     q.setData((prev) => {
       if (!prev) return prev;
       const hit = prev.notifications.find((n) => n.id === id);
@@ -82,19 +96,19 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         notifications: prev.notifications.map((n) => (n.id === id ? { ...n, status: "READ" as const } : n)),
       };
     });
-    setToasts((prev) => prev.filter((t) => t.id !== id));
     void markNotificationRead(id).catch(() => q.refresh());
-  }, [q]);
+  }, [q, viewOnly]);
 
   const markAllRead = useCallback(() => {
+    setToasts([]);
+    if (viewOnly) return;
     q.setData((prev) => (prev ? {
       ...prev,
       unread: 0,
       notifications: prev.notifications.map((n) => ({ ...n, status: "READ" as const })),
     } : prev));
-    setToasts([]);
     void markAllNotificationsRead().catch(() => q.refresh());
-  }, [q]);
+  }, [q, viewOnly]);
 
   const value = useMemo<NotificationContextValue>(() => ({
     items,
@@ -104,6 +118,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     refreshing: q.refreshing,
     error: q.error,
     canAuthor: !!q.data?.canAuthor,
+    viewOnly,
     unlinked: !!q.data?.unlinked,
     maxRows: q.data?.limit ?? 200,
     refresh: q.refresh,
@@ -114,7 +129,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     dismissToast,
     markRead,
     markAllRead,
-  }), [items, q.data, q.loading, q.refreshing, q.error, q.refresh, panelOpen, toasts, dismissToast, markRead, markAllRead]);
+  }), [items, q.data, q.loading, q.refreshing, q.error, q.refresh, panelOpen, toasts, dismissToast, markRead, markAllRead, viewOnly]);
 
   return <NotificationContext.Provider value={value}>{children}</NotificationContext.Provider>;
 }
@@ -126,7 +141,7 @@ export function useNotifications(): NotificationContextValue {
     // screen preview) must never crash the page.
     return {
       items: [], unread: 0, levels: DEFAULT_LEVELS as NotificationLevelDef[], loading: false, refreshing: false,
-      error: null, canAuthor: false, unlinked: false, maxRows: 200, refresh: () => {},
+      error: null, canAuthor: false, viewOnly: false, unlinked: false, maxRows: 200, refresh: () => {},
       panelOpen: false, openPanel: () => {}, closePanel: () => {}, toasts: [], dismissToast: () => {},
       markRead: () => {}, markAllRead: () => {},
     };

@@ -16,6 +16,8 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { BACKEND_DIR, FRONTEND_SRC, bundleToFile } from './_bundle.mjs';
 
+const fsRoot = join(FRONTEND_SRC, '..', '..');
+
 const pure = await import(pathToFileURL(bundleToFile(join(BACKEND_DIR, 'src/modules/auth/view-as-pure.ts'))).href);
 
 const read = (p) => readFileSync(p, 'utf8');
@@ -152,5 +154,30 @@ describe('view-as: wiring', () => {
   it('mirrors actingAs on the frontend (MeResponse ↔ AuthUserMe)', () => {
     assert.match(be('src/modules/auth/types.ts'), /actingAs\?: \{ id: string; email: string; name: string \}/);
     assert.match(read(join(FRONTEND_SRC, 'auth/permissions.ts')), /actingAs\?: \{ id: string; email: string; name: string \}/);
+  });
+});
+
+describe('view-as: the notification bell follows the impersonated identity', () => {
+  const provider = read(join(FRONTEND_SRC, 'notifications/NotificationProvider.tsx'));
+  const drawer = read(join(FRONTEND_SRC, 'components/notifications/NotificationDrawer.tsx'));
+
+  it('remounts the provider on identity change (no previous inbox left on screen)', () => {
+    // Without this key the bell keeps root's payload for up to a poll and the
+    // target's backlog all looks "new" → a toast burst on entry.
+    const page = read(join(FRONTEND_SRC, 'app/page.tsx'));
+    assert.match(page, /<NotificationProvider key=\{me\.user\.id\}>/);
+  });
+
+  it('still seeds the toast baseline from the first payload (history never toasts)', () => {
+    assert.match(provider, /seen\.current === null/);
+    assert.match(provider, /First paint/);
+  });
+
+  it('never marks THEIR notifications read while viewing as', () => {
+    assert.match(provider, /const viewOnly = !!me\?\.actingAs/);
+    assert.match(provider, /if \(viewOnly\) return; \/\/ viewing someone else/);
+    assert.match(provider, /viewOnly,/);
+    assert.match(drawer, /readOnly=\{viewOnly\}/);
+    assert.match(drawer, /viewOnly \? null :/); // no "Mark all read" button
   });
 });

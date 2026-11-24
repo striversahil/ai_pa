@@ -115,11 +115,12 @@ function AppInner() {
   if (!me) return <LoginScreen />;
 
   return (
-    <NotificationProvider>
-    {/* key on the identity: entering/leaving root "view as" remounts the shell, so
-        every dashboard refetches as the new viewer instead of keeping the
-        previous person's data on screen. Ordinary me refreshes keep the id. */}
-    <div key={me.user.id} className="flex min-h-screen font-sans antialiased text-[var(--text-primary)]">
+    <NotificationProvider key={me.user.id}>
+    {/* Entering/leaving root "view as" remounts the shell AND the notification
+        provider on the new identity, so every dashboard refetches as the new
+        viewer and the bell shows THAT person's inbox (history seeds the toast
+        baseline — no backlog burst). Ordinary me refreshes keep the same id. */}
+    <div className="flex min-h-screen font-sans antialiased text-[var(--text-primary)]">
       <Sidebar activeView={activeView} activeSlug={sub} onNavigate={navigateTo} theme={theme} onSetTheme={setTheme} accent={accent} onSetAccent={setAccent} me={me ? me.user : null} onLogout={logout} canView={canView} chatUnread={chatUnread} />
 
       <div className="flex min-w-0 flex-1 flex-col">

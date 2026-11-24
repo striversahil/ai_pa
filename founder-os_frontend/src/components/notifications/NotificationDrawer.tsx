@@ -14,14 +14,15 @@ import type { NotificationPanelItem } from "@/notifications/types";
 
 type Filter = "all" | "unread" | "2" | "3" | "4" | "5";
 
-function Row({ item, onRead }: { item: NotificationPanelItem; onRead: (id: string) => void }) {
+function Row({ item, onRead, readOnly }: { item: NotificationPanelItem; onRead: (id: string) => void; readOnly?: boolean }) {
   const unread = item.status === "QUEUED";
   return (
     <li>
       <button
         type="button"
-        onClick={() => unread && onRead(item.id)}
-        className={`w-full border-l-2 px-4 py-3 text-left transition-colors hover:bg-[var(--surface-sunken)] ${unread ? "bg-[var(--surface-sunken)]" : ""}`}
+        onClick={() => !readOnly && unread && onRead(item.id)}
+        title={readOnly ? "Read-only — this is someone else's inbox" : undefined}
+        className={`w-full border-l-2 px-4 py-3 text-left transition-colors ${readOnly ? "cursor-default" : "hover:bg-[var(--surface-sunken)]"} ${unread ? "bg-[var(--surface-sunken)]" : ""}`}
         style={{ borderLeftColor: item.colorHex || "transparent" }}
       >
         <div className="flex items-start gap-2">
@@ -46,7 +47,7 @@ function Row({ item, onRead }: { item: NotificationPanelItem; onRead: (id: strin
 }
 
 export function NotificationDrawer() {
-  const { panelOpen, closePanel, items, unread, loading, refreshing, error, markRead, markAllRead, maxRows, levels } = useNotifications();
+  const { panelOpen, closePanel, items, unread, loading, refreshing, error, markRead, markAllRead, maxRows, levels, viewOnly } = useNotifications();
   const [filter, setFilter] = useState<Filter>("all");
   if (!panelOpen) return null;
 
@@ -60,11 +61,11 @@ export function NotificationDrawer() {
   return (
     <Drawer
       title="Notifications"
-      subtitle={`${unread} unread · showing newest ${Math.min(items.length, maxRows)} of max ${maxRows}`}
+      subtitle={`${unread} unread · showing newest ${Math.min(items.length, maxRows)} of max ${maxRows}${viewOnly ? " · read-only" : ""}`}
       onClose={closePanel}
       width="max-w-xl"
       headerRight={
-        <Button size="sm" variant="ghost" onClick={markAllRead} disabled={unread === 0}>Mark all read</Button>
+        viewOnly ? null : <Button size="sm" variant="ghost" onClick={markAllRead} disabled={unread === 0}>Mark all read</Button>
       }
     >
       <div className="border-b border-[var(--border-card)] px-3 py-2">
@@ -95,11 +96,13 @@ export function NotificationDrawer() {
         </div>
       ) : (
         <ul className="divide-y divide-[var(--border-card)]">
-          {filtered.map((n) => <Row key={n.id} item={n} onRead={markRead} />)}
+          {filtered.map((n) => <Row key={n.id} item={n} onRead={markRead} readOnly={viewOnly} />)}
         </ul>
       )}
       <p className="border-t border-[var(--border-card)] px-4 py-2 text-[10px] text-[var(--text-tertiary)]">
-        Audit is capped at the newest {maxRows} rows. Level 1 (Normal / Resolved) is recorded here but never popped as a toast.
+        {viewOnly
+          ? "Read-only — these are someone else's notifications. Their unread state is untouched while you view as them."
+          : `Audit is capped at the newest ${maxRows} rows. Level 1 (Normal / Resolved) is recorded here but never popped as a toast.`}
       </p>
     </Drawer>
   );
