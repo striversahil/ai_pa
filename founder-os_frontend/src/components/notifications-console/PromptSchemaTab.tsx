@@ -15,8 +15,26 @@
 import { useCallback, useMemo, useState } from "react";
 import { Button, SearchSelect } from "@/components/ui";
 import { fetchNotificationPrompt, fetchNotificationSchema, saveNotificationPrompt } from "@/notifications/api";
-import type { NotificationSchema } from "@/notifications/types";
+import type { NotificationSchema, NotificationSchemaTable } from "@/notifications/types";
 import { Field, Section, inputCls } from "./ui";
+
+/** One table as a paste-ready block: columns then its outgoing edges. */
+function tableBlock(t: NotificationSchemaTable): string {
+  return [
+    t.table + (t.note ? `  -- ${t.note}` : ""),
+    ...t.columns.map((c) => `  ${c.name} ${c.type || "TEXT"}`),
+    ...(t.joins ?? []).map((j) => `  -> ${j.field} = ${j.model}.${j.ref}   (${j.kind})`),
+  ].join("\n");
+}
+
+/** Just the graph — for an agent whose context limit cannot take every column. */
+function relationsBlock(s: NotificationSchema): string {
+  const lines = ["Founder OS relationships (`from.field = to.ref  (kind)`). JOIN only along these edges."];
+  for (const t of s.tables) {
+    for (const j of t.joins ?? []) lines.push(`${t.table}.${j.field} = ${j.model}.${j.ref}   (${j.kind})`);
+  }
+  return lines.join("\n");
+}
 
 function useCopy() {
   const [copied, setCopied] = useState<string | null>(null);
@@ -125,7 +143,7 @@ export function PromptSchemaTab({
         </div>
       </Section>
 
-      <Section title="Live database schema" desc="Read from the D1 catalog (sqlite_master + table_info) and cached for 10 minutes. Business tables only — enough to write a rule, small enough to paste.">
+      <Section title="Live database schema" desc="Read from the D1 catalog (sqlite_master + table_info + foreign_key_list) and cached for 10 minutes. Every table lists its outgoing joins with a confidence label (fk > orm > declared > app > inferred), so the agent joins along real edges instead of guessing.">
         <div className="flex flex-wrap items-end gap-2">
           <Button size="sm" variant="primary" disabled={busy !== null} onClick={() => void loadSchema()}>
             {busy === "schema" ? "Reading…" : schema ? "Refresh schema" : "Load schema"}
@@ -133,12 +151,15 @@ export function PromptSchemaTab({
           <Button size="sm" variant="secondary" disabled={!schema} onClick={() => schema && void copy("schema", schema.text)}>
             {copied === "schema" ? "Copied ✓" : "Copy full schema"}
           </Button>
+          <Button size="sm" variant="secondary" disabled={!schema} onClick={() => schema && void copy("rel", relationsBlock(schema))}>
+            {copied === "rel" ? "Copied ✓" : "Copy relationships"}
+          </Button>
           <div className="w-64">
             <SearchSelect value={table} options={tableOptions} onChange={setTable} placeholder="Inspect a table…" clearLabel="None" />
           </div>
           {schema ? (
             <span className="text-[10px] text-[var(--text-tertiary)]">
-              {schema.tables.length} tables · {schema.text.length} chars · read {new Date(schema.generatedAt).toLocaleTimeString()}
+              {schema.tables.length} tables · {schema.relationships ?? 0} edges · {schema.text.length} chars · read {new Date(schema.generatedAt).toLocaleTimeString()}
             </span>
           ) : (
             <span className="text-[10px] text-[var(--text-tertiary)]">Not loaded yet</span>
@@ -149,13 +170,18 @@ export function PromptSchemaTab({
           <div className="rounded-lg border border-[var(--border-card)] p-2.5">
             <div className="mb-1 flex items-center justify-between gap-2">
               <p className="font-mono text-[11px] font-bold text-[var(--text-primary)]">{picked.table}</p>
-              <Button size="sm" variant="ghost" onClick={() => void copy(`table:${picked.table}`, `${picked.table}\n${picked.columns.map((c) => `  ${c.name} ${c.type || "TEXT"}`).join("\n")}`)}>
+              <Button size="sm" variant="ghost" onClick={() => void copy(`table:${picked.table}`, tableBlock(picked))}>
                 {copied === `table:${picked.table}` ? "Copied ✓" : "Copy table"}
               </Button>
             </div>
             {picked.note ? <p className="mb-1.5 text-[10px] text-[var(--text-secondary)]">{picked.note}</p> : null}
             <div className="max-h-56 overflow-auto font-mono text-[10px] leading-5 text-[var(--text-secondary)]">
               {picked.columns.map((c) => <div key={c.name}>{c.name} <span className="text-[var(--text-tertiary)]">{c.type}</span></div>)}
+              {(picked.joins ?? []).map((j) => (
+                <div key={`${j.field}->${j.model}`} className="text-[var(--color-brand-indigo)]">
+                  {"-> "}{j.field} = {j.model}.{j.ref} <span className="text-[var(--text-tertiary)]">({j.kind})</span>
+                </div>
+              ))}
             </div>
           </div>
         ) : null}

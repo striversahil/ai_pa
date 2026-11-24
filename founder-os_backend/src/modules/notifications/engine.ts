@@ -17,7 +17,7 @@
 // an hourly rule. Deterministic — no LLM, no network.
 // ─────────────────────────────────────────────────────────────────────────────
 import { notifyUsers } from "../core/notify";
-import { resultColumns } from "./columns";
+import { resultColumns, sampleRows } from "./columns";
 import { escalatedLevel, levelColorNameOf, levelDefOf, levelForValue, levelLabelOf } from "./levels";
 import { runMetricSql } from "./metric-sql";
 import {
@@ -151,7 +151,14 @@ export async function evaluateRule(db: any, rule: NotificationRule, opts: Evalua
   // The real headers of the authored query — the console turns these into
   // insertable message tokens (no hand-typed mustache keys).
   result.columns = resultColumns(rows);
+  // Dry run only: hand the console the actual output so it can render a table
+  // and preview the message from row 1 (never invented sample values).
+  if (dryRun) result.sampleRows = sampleRows(rows);
   if (rows.length === 0) return result;
+
+  // identity value (telecaller_id | employee_key) → recipient name, so the
+  // dry run can preview {EMPLOYEE_NAME} per row (the SQL returns ids, not names).
+  const nameByKey: Record<string, string> = {};
 
   // Audience once per run (position-wise dispatch).
   const seats = await loadSeats(db);
@@ -175,6 +182,7 @@ export async function evaluateRule(db: any, rule: NotificationRule, opts: Evalua
       if (result.unmatched.length < 25) result.unmatched.push(rawKey);
       continue;
     }
+    if (dryRun) nameByKey[rawKey] = seat.name;
     const audienceSeat = allowed.get(seat.employeeKey) ?? null;
     if (!audienceSeat) {
       result.skipped++;
@@ -284,6 +292,7 @@ export async function evaluateRule(db: any, rule: NotificationRule, opts: Evalua
     }
   }
 
+  if (dryRun) result.sampleNames = nameByKey;
   return result;
 }
 

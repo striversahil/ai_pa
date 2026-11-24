@@ -451,6 +451,43 @@ The sourcing queue is the procurement desk's own worklist, not a mirror of the e
 - Chat composers send on plain **Enter** (`Shift+Enter` = newline) in `ThreadCard` and
   `NewThreadForm`. Guard `enquiry-procurement-ownership` pins all of the above.
 
+### 3.2e Accounts task threads — one task, not one card per day (2026-11-25, migration 0166)
+
+The accounts taskbar used to render a fresh card for every due day, so a task that repeats on the
+15th and 30th was two unrelated cards and a day nobody opened the dashboard produced **no row at
+all** (`ensureInstances(today)` only ran inside the dashboard request). `AccountsTaskLog` was
+already shaped like a thread entry — `UNIQUE(templateId, dueDate, slot)` — so the model was
+extended, not rebuilt:
+
+- **Entry columns** — `entryKind` (`instance` | `auto_miss`), `lateNote`, `lateNoteBy`,
+  `lateNoteAt`; template gains `dueTime` (HH:mm IST) and `shortTitle` (the sheet titles are 60+
+  characters).
+- **Window** — the Indian financial year (1 Apr → 31 Mar), `service-parts/thread.ts#threadWindow`.
+  A window rule's span is its deadline: `isMissable` only lets the LAST day of
+  `day_range`/`week_of_month`/`month_day_range` become a miss, inner days are grace.
+- **Engine** — `thread-io.ts#runThreadMaintenance` instantiates every due day of the window and
+  writes `status='not_done', entryKind='auto_miss'` for a past due day with no human entry. The
+  sentence "Task not done on 15 Nov 2026" is rendered from the date (`missLabel`), never stored.
+  It runs natively in `worker/cron.ts` at the 02:30 UTC slot (08:00 IST) — deterministic, no LLM,
+  no GitHub dispatch, and quiet hours don't apply (nothing pings Zoho).
+- **Resolution semantics (founder rule)** — a missed day stays `not_done` forever. Writing a
+  `lateNote` ("what was done late, and when") is the resolution *audit trail* and changes nothing
+  else; marking Done is a separate explicit action. A human "Not done" with a remark is a valid
+  negligence record for that day.
+- **Buckets** — `bucketOf` → `done` · `not_done` · `late` (missed + note, still not done) ·
+  `missed` (auto, no note = unexplained) · `pending`. `unresolved = missed + not_done`.
+- **API** — the workspace payload adds `threads` (one row per template × lane, counts per slot +
+  `completionPct`, cache prefix `accounts:dashboard:v3:`); `GET
+  /api/accounts/tasks/:templateId/thread?slot&from&to` opens one thread; root
+  `POST /api/accounts/threads/sync` backfills a year; `GET /api/accounts/export?shape=thread`
+  (default) emits one row per task × lane with the window's entries inlined, `shape=daily` keeps
+  the cell grid for audit. File/upload handlers moved to `routes/accounts-files.ts`.
+- **UI** — `components/accounts-dashboard/ThreadList.tsx` + `TaskThreadRow.tsx` +
+  `ThreadEntryRow.tsx`: today's open tasks render expanded (logging unchanged, one remark input per
+  day), everything else collapsed, with search / frequency / "unexplained only" and a root
+  "Sync year" button. Rows are keyed `templateId::slot`, which also fixes the duplicate-key and
+  cross-lane remark bugs of the old grid. Guard `accounts-thread`.
+
 ### 3.3 Trigger dispatch
 `POST /api/trigger/:slug` runs the matching automation (auth required). On the Worker,
 cron-driven automations are reached via GitHub Actions → `curl /api/trigger/:slug`.
@@ -1510,6 +1547,31 @@ every scanned row, the rendered message per person and the audience match — an
 (`modules/notifications/columns.ts`) is the authored SQL's actual SELECT list, which the drawer offers as
 `{TOKEN}` buttons (identity/level columns hidden — they are engine plumbing), so templates are never typed
 blind.
+
+**The preview is the query, or `null` (2026-11-24).** The dry run carries its actual output
+(`result.sampleRows`, capped 50×30 — never on a cron run) which the console renders as a real table
+(`ResultTable`) with a Clear button, and the message preview speaks for **row 1** of that output (with a
+`1/n` stepper), not for an invented sample: `helpers.ts#renderPreview` resolves every token from the
+selected row, then from engine values that are REAL for that run (`WINDOW`/`WINDOW_START`/`WINDOW_END`/
+`DATE`/`RULE_NAME`, and the person behind the row via `result.sampleNames`), and renders anything else as
+the literal `null` so a wrong token is visible. A row column with the same name always beats the engine
+value. This is presentation-only: dispatch keeps collapsing unknown tokens to `""` (mirror guard intact).
+`{EMPLOYEE_NAME}` is the one always-available default field (founder decision) — the metric SQL returns
+ids, so the name can only come from the HR register, hence `sampleNames` exists.
+
+**The schema now carries the graph.** A flat column dump let an agent invent joins and columns. The AI
+block (`GET /api/notification-schema`, `modules/notifications/schema.ts`) merges four sources of
+relationship truth and labels every edge by confidence:
+`fk` (real `PRAGMA foreign_key_list` in the migrations) > `orm` (a join our code actually performs —
+`src/shared/d1-prisma.ts#RELATIONS`) > `declared` (Prisma `@relation(fields: …, references: …)`) >
+`app` (no key exists; the application matches the values — the `Telecaller.email =
+HumanResourcesMember.email` seat identity, `core_notification.employeeId`, …) > `inferred` (a `xId`
+column whose table exists). The code-side tiers are compiled into `modules/notifications/relations.ts` by
+`scripts/gen-schema-relations.mjs` (same pattern as `gen-kyp-catalog.mjs`; `--check` fails the guard if
+the schemas moved and nobody regenerated — the Worker cannot read `.prisma` at runtime). `schemaText()`
+emits `-> field = Model.ref (kind)` under each table plus a separate section for the no-FK joins, and the
+prompt forbids joining outside those edges. Console: per-table edges + **Copy relationships** for agents
+with a tight context budget.
 
 **AI assist.** The founder describes an escalation in words and an agent writes the rule. Two copyable
 artefacts: the saved **prompt** (Setting `notifications:prompt`, default `modules/notifications/prompt.ts` —

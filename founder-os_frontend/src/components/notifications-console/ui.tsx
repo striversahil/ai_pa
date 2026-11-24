@@ -55,12 +55,15 @@ export function Chips({
   );
 }
 
-export function Section({ title, desc, children }: { title: string; desc?: string; children: React.ReactNode }) {
+export function Section({ title, desc, children, right }: { title: string; desc?: string; children: React.ReactNode; right?: React.ReactNode }) {
   return (
     <section className="space-y-2.5 rounded-xl border border-[var(--border-card)] bg-[var(--surface-sunken)]/40 p-3.5">
-      <div>
-        <h4 className="text-xs font-extrabold text-[var(--text-primary)]">{title}</h4>
-        {desc ? <p className="mt-0.5 text-[10px] text-[var(--text-tertiary)]">{desc}</p> : null}
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h4 className="text-xs font-extrabold text-[var(--text-primary)]">{title}</h4>
+          {desc ? <p className="mt-0.5 text-[10px] text-[var(--text-tertiary)]">{desc}</p> : null}
+        </div>
+        {right}
       </div>
       {children}
     </section>

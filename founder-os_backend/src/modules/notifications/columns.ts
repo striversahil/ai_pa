@@ -44,3 +44,26 @@ export function columnToken(column: string): string {
     .replace(/^_+|_+$/g, '')
     .toUpperCase();
 }
+
+/** Trim a dry run's rows down to something a browser can render: `maxRows`
+ *  rows, `maxCols` columns, long strings clipped. Only ever called under
+ *  `dryRun` — the sweep never carries result data around. */
+export function sampleRows(
+  rows: Array<Record<string, unknown>> | null | undefined,
+  maxRows = 50,
+  maxCols = 30,
+): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = [];
+  for (const row of (rows ?? []).slice(0, maxRows)) {
+    if (!row || typeof row !== 'object') continue;
+    const copy: Record<string, unknown> = {};
+    for (const key of Object.keys(row).slice(0, maxCols)) {
+      const v = (row as any)[key];
+      if (v === null || v === undefined) copy[key] = null;
+      else if (typeof v === 'object') copy[key] = JSON.stringify(v).slice(0, 200);
+      else copy[key] = typeof v === 'string' ? v.slice(0, 200) : v;
+    }
+    out.push(copy);
+  }
+  return out;
+}

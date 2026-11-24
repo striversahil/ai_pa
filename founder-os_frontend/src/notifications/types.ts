@@ -102,6 +102,12 @@ export interface NotificationRunResult {
   windowKey: string;
   /** The query's REAL result headers (in SELECT order) — offered as {TOKEN}s. */
   columns?: string[];
+  /** The dry run's actual rows (capped) — rendered as a table, and row 1 is the
+   *  preview. Absent on a real run. */
+  sampleRows?: Array<Record<string, unknown>>;
+  /** identity value (telecaller_id / employee_key) → recipient name, so the
+   *  console can preview {EMPLOYEE_NAME} for each row. Dry run only. */
+  sampleNames?: Record<string, string>;
   scanned: number;
   matched: number;
   dispatched: number;
@@ -153,14 +159,30 @@ export interface NotificationConsolePayload {
 }
 
 /** One table of the live D1 schema offered to the AI authoring flow. */
+export type NotificationJoinKind = "fk" | "orm" | "declared" | "app" | "inferred";
+
+export interface NotificationJoin {
+  /** Column on this table. */
+  field: string;
+  /** Table it points at. */
+  model: string;
+  /** Column on `model` (usually `id`). */
+  ref: string;
+  kind: NotificationJoinKind;
+}
+
 export interface NotificationSchemaTable {
   table: string;
   note: string;
   columns: Array<{ name: string; type: string }>;
+  /** Outgoing relationships — how this table connects to the rest. */
+  joins?: NotificationJoin[];
 }
 
 export interface NotificationSchema {
   tables: NotificationSchemaTable[];
   text: string;
   generatedAt: string;
+  /** Total relationship edges in the block (all kinds). */
+  relationships?: number;
 }

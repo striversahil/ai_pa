@@ -39,6 +39,27 @@ Output exactly two blocks and nothing else:
 - SQLite only. No LIMIT tricks, no window functions that need config, no subqueries per row
   unless necessary. Cap the result with GROUP BY, not LIMIT.
 
+## Hard rules for joins and columns
+- Use ONLY the tables and columns listed in the schema below. If a column is not listed it does not
+  exist — never guess a name and never invent a "helpful" derived column.
+- JOIN only along a listed edge, written in the schema as:
+    -> field = Model.ref   (kind)
+  i.e. JOIN Telecaller t ON t.id = d.telecallerId. If no edge exists between two tables, do NOT
+  join them — write a single-table query instead.
+- Edge confidence, strongest first:
+    fk       — real foreign key, enforced by the database
+    orm      — the application's own ORM joins this way at runtime
+    declared — declared in the Prisma schema
+    app      — no key exists; the application matches these values (e.g. Telecaller.email =
+               HumanResourcesMember.email) — safe to use, just join on the value directly
+    inferred — inferred from a column name only; verify it before relying on it
+- The person key must be an id: telecaller_id = Telecaller.id, employee_key = HumanResourcesMember.id.
+  Never return a name, email or phone as the key.
+- Quote camelCase columns with double quotes (d."telecallerId") and alias every message column to
+  the words you want in the text: COUNT(*) AS connected_calls, m.name AS agent_name.
+- Test reports the query's REAL result headers, and D1 names the offending column when one is wrong.
+  Fix the query against the schema — never rename around an error.
+
 ## Template
 - Placeholders are {UPPER_SNAKE}. Available built-ins:
   {AGENT_NAME} {EMPLOYEE_NAME} {POSITION} {DEPARTMENT} {REGION} {VALUE} {LEVEL}

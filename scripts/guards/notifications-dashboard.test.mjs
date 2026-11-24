@@ -14,6 +14,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { BACKEND_DIR, FRONTEND_SRC, bundleToFile } from './_bundle.mjs';
@@ -210,6 +211,22 @@ describe('the seeded real rule', () => {
 });
 
 describe('zero-row runs stay explainable', () => {
+  it('the dry run hands the console its real rows, the cron never does', () => {
+    const engine = be('src/modules/notifications/engine.ts');
+    assert.match(engine, /if \(dryRun\) result\.sampleRows = sampleRows\(rows\)/);
+    assert.match(engine, /if \(dryRun\) result\.sampleNames = nameByKey/);
+    const types = be('src/modules/notifications/types.ts');
+    assert.match(types, /sampleRows\?: Array<Record<string, unknown>>/);
+  });
+
+  it('caps what a dry run can carry', () => {
+    assert.equal(columns.sampleRows([{ a: 1 }], 1, 1).length, 1);
+    const wide = columns.sampleRows([{ a: 1, b: 2, c: 3 }], 50, 2);
+    assert.deepEqual(Object.keys(wide[0]), ['a', 'b']);
+    assert.equal(columns.sampleRows([{ a: 'x'.repeat(500) }])[0].a.length, 200);
+    assert.equal(columns.sampleRows(null).length, 0);
+  });
+
   it('the engine accepts an explicit window (Test sample mode)', () => {
     const engine = be('src/modules/notifications/engine.ts');
     assert.match(engine, /window\?: \{ startIso: string; endIso: string \}/);
@@ -241,6 +258,119 @@ describe('zero-row runs stay explainable', () => {
     assert.match(drawer, /returned no rows for/);
     assert.match(drawer, /Sample last 7 days/);
     assert.match(drawer, /Test \(no send\)/);
+  });
+});
+
+describe('preview = the SQL output, or null', () => {
+  it('renders the row it was given', () => {
+    const row = { telecaller_id: 'TC001', value: 0, hourly_connected_call: 0, level: 5 };
+    assert.equal(feHelpers.renderPreview('{hourly_connected_call} calls', row, null), '0 calls');
+    assert.equal(feHelpers.renderPreview('{TELEcaller_id}', row, null), 'TC001');
+  });
+
+  it('never invents a value — unknown tokens read null', () => {
+    const row = { value: 1 };
+    assert.equal(feHelpers.renderPreview('{AGENT_NAME} has {nothing_here}', row, null), 'null has null');
+    // No rows at all (query failed / empty window) → every token is null.
+    assert.equal(feHelpers.renderPreview('{value} in {WINDOW}', null, null), 'null in null');
+  });
+
+  it('fills engine values only from the REAL run (window, rule, recipient)', () => {
+    const win = { windowStart: '2026-11-24T00:30:00.000Z', windowEnd: '2026-11-24T01:30:00.000Z', ruleName: 'Hourly', agentName: 'Ravi' };
+    const out = feHelpers.renderPreview('{AGENT_NAME} :: {WINDOW} :: {RULE_NAME}', {}, win);
+    assert.match(out, /Ravi :: 06:00[–-]07:00 IST :: Hourly/);
+    // Row columns win over engine values with the same name.
+    assert.equal(feHelpers.renderPreview('{agent_name}', { agent_name: 'Row' }, win), 'Row');
+  });
+
+  it('the drawer previews row 1 by default and offers the rest', () => {
+    const drawer = fe('components/notifications-console/RuleDrawer.tsx');
+    assert.match(drawer, /renderPreview\(/);
+    assert.match(drawer, /previewRows\[Math\.min\(previewIdx/);
+    assert.doesNotMatch(drawer, /BUILTIN_TOKENS/);
+    assert.doesNotMatch(drawer, /Ravi/, 'no invented sample person');
+  });
+
+  it('keeps EMPLOYEE_NAME as a default field, resolved from the real person', () => {
+    const drawer = fe('components/notifications-console/RuleDrawer.tsx');
+    assert.match(drawer, /const DEFAULT_FIELDS = \["EMPLOYEE_NAME"\]/);
+    // Previewed row → its own recipient, not the first notified one.
+    const row = { telecaller_id: 'TC002', hourly_connected_call: 1 };
+    const win = { agentName: 'First', names: { TC002: 'Second' } };
+    assert.equal(feHelpers.renderPreview('{EMPLOYEE_NAME}', row, win), 'Second');
+    assert.equal(feHelpers.renderPreview('{AGENT_NAME}', row, win), 'Second');
+    // Unknown person → still a value from the run, never a fabricated name.
+    assert.equal(feHelpers.renderPreview('{EMPLOYEE_NAME}', { telecaller_id: 'ZZ9' }, { names: {} }), 'null');
+    // A row column with the same name wins over the engine value.
+    assert.equal(feHelpers.renderPreview('{employee_name}', { employee_name: 'From SQL' }, win), 'From SQL');
+  });
+
+  it('Test/Run sit next to the query, not in the drawer header', () => {
+    const drawer = fe('components/notifications-console/RuleDrawer.tsx');
+    const header = drawer.slice(drawer.indexOf('headerRight={'), drawer.indexOf('>', drawer.indexOf('headerRight={')) + 1);
+    assert.ok(!header.includes('Test (no send)'), 'header keeps only Save');
+    const sql = drawer.indexOf('Metric query');
+    const test = drawer.indexOf('Test (no send)');
+    assert.ok(sql > 0 && test > sql, 'Test must render after the SQL section starts');
+    assert.ok(drawer.indexOf('<ResultTable') > test, 'the result table follows the run buttons');
+  });
+
+  it('the output can be cleared', () => {
+    assert.match(fe('components/notifications-console/RuleDrawer.tsx'), /Clear output/);
+    const table = fe('components/notifications-console/ResultTable.tsx');
+    assert.match(table, /columns: string\[\]/);
+    assert.match(table, /rows: Array<Record<string, unknown>>/);
+  });
+});
+
+describe('schema relationships (the AI needs the graph)', () => {
+  it('relations.ts is in sync with Prisma + the runtime ORM map', () => {
+    const out = execFileSync(process.execPath, [join(BACKEND_DIR, '..', 'scripts/gen-schema-relations.mjs'), '--check'], { encoding: 'utf8' });
+    assert.match(out, /up to date/);
+  });
+
+  it('carries the runtime edges that matter', () => {
+    const rel = be('src/modules/notifications/relations.ts');
+    assert.match(rel, /from: "EstimateAssignment", field: "telecallerId", model: "Telecaller"/);
+    assert.match(rel, /kind: "orm"/);
+    assert.match(rel, /RELATIONS_BY_TABLE/);
+  });
+
+  it('states the no-FK identity bridge explicitly', () => {
+    const app = catalog.APPLICATION_JOINS;
+    assert.ok(app.some((j) => j.from === 'Telecaller' && j.field === 'email' && j.model === 'HumanResourcesMember'));
+    assert.ok(app.some((j) => j.from === 'core_notification' && j.field === 'employeeId'));
+  });
+
+  it('merges strongest-edge-first and infers name-only keys', () => {
+    const merged = catalog.mergeJoins(
+      [{ field: 'telecallerId', model: 'Telecaller', ref: 'id', kind: 'inferred' }],
+      [{ field: 'telecallerId', model: 'Telecaller', ref: 'id', kind: 'orm' }],
+    );
+    assert.equal(merged.length, 1);
+    assert.equal(merged[0].kind, 'orm');
+    const inferred = catalog.inferJoins('DeviceCall', ['telecallerId', 'id', 'status'], ['DeviceCall', 'Telecaller']);
+    assert.deepEqual(inferred, [{ field: 'telecallerId', model: 'Telecaller', ref: 'id', kind: 'inferred' }]);
+  });
+
+  it('prints the edges in the copyable block', () => {
+    const text = catalog.schemaText([
+      { table: 'DeviceCall', note: 'calls', columns: [{ name: 'telecallerId', type: 'TEXT' }], joins: [{ field: 'telecallerId', model: 'Telecaller', ref: 'id', kind: 'orm' }] },
+    ]);
+    assert.match(text, /-> telecallerId = Telecaller\.id\s+\(orm\)/);
+    assert.match(text, /no foreign key/i);
+  });
+
+  it('the schema loader merges fk + code edges and counts them', () => {
+    const schema = be('src/modules/notifications/schema.ts');
+    assert.match(schema, /foreign_key_list/);
+    assert.match(schema, /mergeJoins\(/);
+    assert.match(schema, /relationships/);
+  });
+
+  it('the promise states the join rules', () => {
+    assert.match(prompt.DEFAULT_NOTIFICATION_PROMPT, /JOIN only along a listed edge/);
+    assert.match(prompt.DEFAULT_NOTIFICATION_PROMPT, /never guess a name/);
   });
 });
 

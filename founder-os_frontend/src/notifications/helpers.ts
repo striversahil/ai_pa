@@ -130,6 +130,72 @@ export interface RuleFilter {
   status?: "all" | "live" | "paused";
 }
 
+// ── Message preview: the SQL's own output, or `null` ─────────────────────────
+//
+// Founder decision (2026-11-24): the preview must show what the query actually
+// returned. Pick the row (default: the first), every token resolves from THAT
+// row, and a token the SQL did not return renders the literal `null` — so a
+// wrong/typo'd token is visible instead of silently blank.
+//
+// NOT a mirror of template.renderTemplate: dispatch keeps collapsing unknown
+// tokens to "" (a `null` in a real notification would be noise). This renderer
+// is presentation-only.
+
+export interface PreviewWindow {
+  windowStart?: string | null;
+  windowEnd?: string | null;
+  ruleName?: string;
+  agentName?: string;
+  /** identity value (telecaller_id / employee_key) → real recipient name, from
+   *  the dry run. Lets {EMPLOYEE_NAME} resolve for the previewed ROW, not only
+   *  for whoever happened to be notified first. */
+  names?: Record<string, string>;
+}
+
+/** Row values (uppercased keys) + only the engine values that are REAL for this
+ *  run. Nothing is invented: no placeholder names, no fake counts. */
+export function previewFields(
+  row: Record<string, unknown> | null | undefined,
+  win: PreviewWindow | null | undefined,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(row ?? {})) {
+    if (v === null || v === undefined) continue;
+    out[String(k).trim().toUpperCase()] = String(v);
+  }
+  const push = (key: string, value: unknown) => {
+    if (key in out) return; // the SQL's own column always wins over an engine default
+    if (value === null || value === undefined || value === "") return;
+    out[key] = String(value);
+  };
+  // EMPLOYEE_NAME / AGENT_NAME are DEFAULT fields: the metric SQL returns ids,
+  // not names, so the engine resolves the name from the HR register. Here it is
+  // resolved for the previewed row (identity → name map from the same dry run).
+  const identity = String(
+    (row as any)?.telecaller_id ?? (row as any)?.employee_key ?? (row as any)?.employeeKey ?? (row as any)?.telecallerId ?? "",
+  ).trim();
+  const person = (identity && win?.names?.[identity]) || win?.agentName || null;
+  push("WINDOW", win?.windowStart && win?.windowEnd ? `${fmtIstTime(win.windowStart)}–${fmtIstTime(win.windowEnd)} IST` : null);
+  push("WINDOW_START", win?.windowStart);
+  push("WINDOW_END", win?.windowEnd);
+  push("DATE", win?.windowStart ? new Date(win.windowStart).toISOString().slice(0, 10) : null);
+  push("RULE_NAME", win?.ruleName);
+  push("RULE", win?.ruleName);
+  push("EMPLOYEE_NAME", person);
+  push("AGENT_NAME", person);
+  return out;
+}
+
+/** Render a template against one result row. Unknown tokens → `null`. */
+export function renderPreview(
+  tpl: string,
+  row: Record<string, unknown> | null | undefined,
+  win: PreviewWindow | null | undefined,
+): string {
+  const fields = previewFields(row, win);
+  return String(tpl ?? "").replace(/\{([A-Za-z0-9_]+)\}/g, (_m, raw: string) => fields[String(raw).toUpperCase()] ?? "null");
+}
+
 /** Collapsed-view filter: free text over name/key/description, one position
  *  ("" = all), and live/paused. Pure — guarded by the notifications test. */
 export function filterRules(rules: NotificationRule[], f: RuleFilter | null | undefined): NotificationRule[] {

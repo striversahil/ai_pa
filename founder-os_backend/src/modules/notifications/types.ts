@@ -120,6 +120,13 @@ export interface NotificationRunResult {
   /** The SQL's REAL result headers, in SELECT order — what the console offers as
    *  `{TOKEN}`s after a dry run (see ./columns.ts). */
   columns: string[];
+  /** The dry run's actual rows (capped) so the console can show the SQL's real
+   *  output as a table and preview messages from row 1. Never set on a real /
+   *  cron run — the sweep does not carry data around. */
+  sampleRows?: Array<Record<string, unknown>>;
+  /** identity value (telecaller_id / employee_key) → recipient name, so the
+   *  console can preview {EMPLOYEE_NAME} for each row. Dry run only. */
+  sampleNames?: Record<string, string>;
   scanned: number;
   matched: number;
   dispatched: number;

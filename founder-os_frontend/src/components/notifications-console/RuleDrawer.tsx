@@ -8,15 +8,20 @@
 //
 // Test writes NOTHING; Run now dispatches for real (manual cadence's only
 // trigger). Level 1 rows are never toasted by the engine.
-import React, { useMemo, useState } from "react";
+import React, { useState } from "react";
 import { Button, ConfirmDialog, Drawer, SearchMultiSelect, SearchSelect } from "@/components/ui";
 import { deleteNotificationRule, runNotificationRule, saveNotificationRule, testNotificationRule, type TestRuleResponse } from "@/notifications/api";
-import { BUILTIN_TOKENS, renderTemplate } from "@/notifications/template";
-import { cadenceLabel, clockToMinute, columnToken, emptyRule, minuteToClock, relTime, windowLabel, WEEKDAYS } from "@/notifications/helpers";
+import { cadenceLabel, clockToMinute, columnToken, emptyRule, minuteToClock, relTime, renderPreview, windowLabel, WEEKDAYS } from "@/notifications/helpers";
 import type { NotificationLevelDef, NotificationOptions, NotificationRule, NotificationThreshold } from "@/notifications/types";
 import { LevelDot } from "@/components/notifications/LevelDot";
 import { Field, Section, inputCls, monoCls } from "./ui";
+import { ResultTable } from "./ResultTable";
 const OPS: Array<NotificationThreshold["op"]> = ["lt", "lte", "gt", "gte", "eq"];
+
+/** Always-available engine fields (founder 2026-11-24: EMPLOYEE_NAME is
+ *  necessary). The metric SQL returns ids, so the name can only come from the
+ *  HR register — the engine fills these, the SQL never has to. */
+const DEFAULT_FIELDS = ["EMPLOYEE_NAME"];
 
 /** Dry-run lookbacks. A quiet hour legitimately returns 0 rows, which hides the
  *  columns and the message shape — widening ONLY the Test window makes the rule
@@ -44,27 +49,29 @@ export function RuleDrawer({
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [lookback, setLookback] = useState("0");
+  // Which result row the message preview speaks for (founder spec: the SQL's
+  // output IS the preview; row 1 by default, per-agent on demand).
+  const [previewIdx, setPreviewIdx] = useState(0);
 
   const set = (patch: Partial<NotificationRule>) => setDraft((d) => ({ ...d, ...patch }));
   const setAudience = (key: keyof NotificationRule["audience"], value: string[]) =>
     setDraft((d) => ({ ...d, audience: { ...d.audience, [key]: value } }));
 
-  const preview = useMemo(() => {
-    const sample = {
-      AGENT_NAME: options.people[0]?.name ?? "Ravi",
-      POSITION: options.positions[0] ?? draft.audience.positions?.[0] ?? "Telecaller",
-      VALUE: 2,
-      LEVEL: 3,
-      LEVEL_LABEL: levels[2]?.label ?? "Warning / Moderate",
-      LEVEL_COLOR: levels[2]?.colorName ?? "Yellow",
-      WINDOW: "13:00–14:00 IST",
-      DATE: "today",
-      RULE_NAME: draft.name || "rule",
-      HOURLY_CONNECTED_CALL: 2,
-      CONNECTED: 2,
-    };
-    return { title: renderTemplate(draft.titleTpl || draft.name || "Notification", sample), body: renderTemplate(draft.bodyTpl, sample) };
-  }, [draft.titleTpl, draft.bodyTpl, draft.name, options.people, options.positions, draft.audience.positions, levels]);
+  const previewRows = test?.result.sampleRows ?? [];
+  const previewRow = previewRows.length > 0 ? previewRows[Math.min(previewIdx, previewRows.length - 1)] : null;
+  const previewWin = test
+    ? {
+        windowStart: test.result.windowStart,
+        windowEnd: test.result.windowEnd,
+        ruleName: draft.name,
+        agentName: test.result.results[0]?.name,
+        names: test.result.sampleNames ?? {},
+      }
+    : { ruleName: draft.name };
+  const preview = {
+    title: renderPreview(draft.titleTpl || draft.name || "Notification", previewRow, previewWin),
+    body: renderPreview(draft.bodyTpl, previewRow, previewWin),
+  };
 
   const appendToken = (token: string, field: "bodyTpl" | "titleTpl" = "bodyTpl") =>
     setDraft((d) => {
@@ -115,25 +122,11 @@ export function RuleDrawer({
       onClose={onClose}
       width="max-w-3xl"
       headerRight={
-        <>
-          <Button size="sm" variant="secondary" disabled={!!busy} onClick={() => void call("test")}>{busy === "test" ? "Testing…" : "Test (no send)"}</Button>
-          {!isNew && <Button size="sm" variant="secondary" disabled={!!busy} onClick={() => void call("run")}>{busy === "run" ? "Running…" : "Run now (sends)"}</Button>}
-          <Button size="sm" variant="primary" disabled={!!busy} onClick={() => void call("save")}>{busy === "save" ? "Saving…" : "Save"}</Button>
-        </>
+        <Button size="sm" variant="primary" disabled={!!busy} onClick={() => void call("save")}>{busy === "save" ? "Saving…" : "Save"}</Button>
       }
     >
       <div className="space-y-4 p-4">
         {error ? <p className="rounded-lg border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 px-3 py-2 text-[11px] font-bold text-[var(--color-danger)]">{error}</p> : null}
-
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--border-card)] bg-[var(--surface-sunken)]/40 px-3 py-2">
-          <span className="text-[10px] font-bold uppercase tracking-wide text-[var(--text-tertiary)]">Test / Run window</span>
-          <div className="w-60">
-            <SearchSelect value={lookback} options={LOOKBACKS} onChange={setLookback} clearLabel={null} />
-          </div>
-          <span className="text-[10px] text-[var(--text-tertiary)]">
-            Applies to <b>Test (no send)</b> and <b>Run now (sends)</b> — the cron always uses the cadence. Widen it when the hour is quiet.
-          </span>
-        </div>
 
         <Section title="Basics">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -200,9 +193,17 @@ export function RuleDrawer({
         <Section title="Metric query" desc="One read-only SELECT. It receives ?1 = window start, ?2 = window end, ?3 = IST day. Each row needs telecaller_id (or employee_key), value, and level.">
           <textarea className={`${monoCls} min-h-[11rem]`} spellCheck={false} value={draft.sqlText} onChange={(e) => set({ sqlText: e.target.value })} />
           <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" variant="ghost" onClick={() => set({ sqlText: options.sampleSql })}>Load sample (DeviceCall hourly)</Button>
-            <span className="text-[10px] text-[var(--text-tertiary)]">Row contract: <code className="font-mono">telecaller_id | employee_key</code> · <code className="font-mono">value</code> · <code className="font-mono">level</code> 1–5</span>
+            <Button size="sm" variant="secondary" disabled={!!busy} onClick={() => void call("test")}>{busy === "test" ? "Testing…" : "Test (no send)"}</Button>
+            {!isNew ? <Button size="sm" variant="secondary" disabled={!!busy} onClick={() => void call("run")}>{busy === "run" ? "Running…" : "Run now (sends)"}</Button> : null}
+            <div className="w-56">
+              <SearchSelect value={lookback} options={LOOKBACKS} onChange={setLookback} clearLabel={null} />
+            </div>
+            <Button size="sm" variant="ghost" onClick={() => set({ sqlText: options.sampleSql })}>Load sample</Button>
           </div>
+          <p className="text-[10px] text-[var(--text-tertiary)]">
+            The window selector applies to <b>Test</b> and <b>Run now</b> — the cron always uses the cadence. Widen it when the hour is quiet.
+            Row contract: <code className="font-mono">telecaller_id | employee_key</code> · <code className="font-mono">value</code> · <code className="font-mono">level</code> 1–5.
+          </p>
         </Section>
 
         <Section title="Escalation" desc="The row's level column wins. Thresholds are the fallback for rules whose SQL does not compute a level.">
@@ -245,14 +246,14 @@ export function RuleDrawer({
           </div>
         </Section>
 
-        <Section title="Message" desc="Mustache-lite: {TOKEN}. Any alias your SQL returns (e.g. {HOURLY_CONNECTED_CALL}) plus the built-ins below.">
+        <Section title="Message" desc="Mustache-lite: {TOKEN}. Tokens come ONLY from your query's own output — return the words you want to say (e.g. SELECT m.name AS agent_name).">
           <Field label="Title"><input className={inputCls} value={draft.titleTpl} onChange={(e) => set({ titleTpl: e.target.value })} placeholder={draft.name || "Notification title"} /></Field>
           <Field label="Body template">
-            <textarea className={`${inputCls} min-h-[5rem]`} value={draft.bodyTpl} onChange={(e) => set({ bodyTpl: e.target.value })} placeholder="{AGENT_NAME} heads up you only have {HOURLY_CONNECTED_CALL} in last hour…" />
+            <textarea className={`${inputCls} min-h-[5rem]`} value={draft.bodyTpl} onChange={(e) => set({ bodyTpl: e.target.value })} placeholder="You have {hourly_connected_call} connected calls in {WINDOW} — pick up your pace." />
           </Field>
           <div className="space-y-1">
             <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--text-tertiary)]">
-              {detected.length > 0 ? "Detected from your SQL — click to add to the body" : "Built-in tokens — run Test to detect your own columns"}
+              {detected.length > 0 ? "Your SQL's columns — click to add to the body" : "No columns detected yet — run Test to read your query's headers"}
             </p>
             {detected.length > 0 ? (
               <div className="flex flex-wrap gap-1">
@@ -264,18 +265,38 @@ export function RuleDrawer({
                 ))}
               </div>
             ) : null}
-            <div className="flex flex-wrap gap-1">
-              {BUILTIN_TOKENS.map((t) => (
-                <button key={t} type="button" onClick={() => appendToken(t)} className="rounded-md border border-dashed border-[var(--border-card)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-secondary)] hover:border-[var(--color-brand-indigo)] hover:text-[var(--color-brand-indigo)]">
-                  {`{${t}}`}
-                </button>
-              ))}
-            </div>
+            {DEFAULT_FIELDS.filter((t) => !detected.some((c) => columnToken(c) === t)).length > 0 ? (
+              <div className="flex flex-wrap items-center gap-1">
+                <span className="text-[10px] text-[var(--text-tertiary)]">Default field{detected.length > 0 ? "s" : "s (always available)"}:</span>
+                {DEFAULT_FIELDS.filter((t) => !detected.some((c) => columnToken(c) === t)).map((t) => (
+                  <button key={t} type="button" onClick={() => appendToken(t)} title="Filled by the engine from the HR register"
+                    className="rounded-md border border-dashed border-[var(--border-card)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-secondary)] hover:border-[var(--color-brand-indigo)] hover:text-[var(--color-brand-indigo)]">
+                    {`{${t}}`}
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
           <div className="rounded-lg border border-[var(--border-card)] bg-[var(--bg-card)] p-2.5">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--text-tertiary)]">Preview (sample values)</p>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--text-tertiary)]">
+                Preview — your query's row {previewRow ? `${Math.min(previewIdx, previewRows.length - 1) + 1} of ${previewRows.length}` : "(none returned)"}
+              </p>
+              {previewRows.length > 1 ? (
+                <div className="flex items-center gap-1">
+                  <Button size="sm" variant="ghost" disabled={previewIdx <= 0} onClick={() => setPreviewIdx((i) => Math.max(0, i - 1))}>←</Button>
+                  <Button size="sm" variant="ghost" disabled={previewIdx >= previewRows.length - 1} onClick={() => setPreviewIdx((i) => Math.min(previewRows.length - 1, i + 1))}>→</Button>
+                </div>
+              ) : null}
+            </div>
             <p className="mt-1 text-xs font-bold text-[var(--text-primary)]">{preview.title}</p>
             <p className="text-[11px] text-[var(--text-secondary)]">{preview.body}</p>
+            {previewRow === null ? (
+              <p className="mt-1.5 text-[10px] text-[var(--text-tertiary)]">
+                No rows to preview — every token shows <code className="font-mono">null</code>. Run Test (widen the window if the hour is quiet)
+                to preview against real output.
+              </p>
+            ) : null}
           </div>
         </Section>
 
@@ -318,7 +339,17 @@ export function RuleDrawer({
             desc={test.result.dryRun
               ? `${test.result.scanned} row(s) scanned · ${test.result.matched} in audience · ${test.result.results.length} would be notified · 0 sent (dry run) · window ${windowLabel(test.result.windowStart, test.result.windowEnd)}`
               : `${test.result.scanned} row(s) scanned · ${test.result.matched} in audience · ${test.result.dispatched} notified · ${test.result.skipped} skipped · window ${windowLabel(test.result.windowStart, test.result.windowEnd)}`}
+            right={<Button size="sm" variant="ghost" onClick={() => { setTest(null); setPreviewIdx(0); }}>Clear output</Button>}
           >
+            <ResultTable
+              columns={test.result.columns ?? []}
+              rows={test.result.sampleRows ?? []}
+              emptyHint={
+                test.result.dryRun
+                  ? "The query ran but returned no rows in this window — widen the window and Test again."
+                  : "A real run keeps no result data — Test shows the rows."
+              }
+            />
             {test.result.scanned === 0 ? (
               <div className="rounded-lg border border-[var(--color-warning)]/40 bg-[var(--color-warning)]/10 p-2.5">
                 <p className="text-[11px] font-bold text-[var(--color-warning)]">
