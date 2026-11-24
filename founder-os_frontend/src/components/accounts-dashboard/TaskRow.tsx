@@ -8,7 +8,7 @@ import { FreqChip } from "./FreqChip";
 import { StatusChip } from "./StatusChip";
 import { fmtShort, fmtDur, fmtSize } from "./helpers";
 
-export function TaskRow({ t, roster, identity, onSave, onAttach, onDetach, today }: {
+export function TaskRow({ t, roster, identity, onSave, onAttach, onDetach, today, dense = false }: {
   t: TaskItem;
   roster: RosterRow[];
   // Inferred doer: the device's "Acting as" identity, else the signed-in
@@ -19,6 +19,9 @@ export function TaskRow({ t, roster, identity, onSave, onAttach, onDetach, today
   onAttach: (logId: string, file: File) => Promise<unknown>;
   onDetach: (logId: string, fileId: string) => Promise<unknown>;
   today?: string;
+  /** Embedded logger for a thread row: the row above already names the task and
+   *  its lane, so only the actions, remark, time and proof stay. */
+  dense?: boolean;
 }) {
   const [remark, setRemark] = useState(t.remark ?? "");
   // Time taken, entered as hours + minutes, stored as integer minutes.
@@ -158,8 +161,9 @@ export function TaskRow({ t, roster, identity, onSave, onAttach, onDetach, today
   const needReason = !hasReason ? " — add a remark (reason) first" : "";
 
   return (
-    <div className={`rounded-xl border p-3 sm:p-4 ${isIncomplete && t.status !== "done" && t.status !== "skipped" ? "border-rose-500/40 bg-rose-500/[0.04]" : "border-zinc-200/80 dark:border-zinc-800/80 bg-zinc-50 dark:bg-zinc-900"}`}>
-      <div className="flex flex-wrap items-start justify-between gap-2">
+    <div className={dense ? "" : `rounded-xl border p-3 sm:p-4 ${isIncomplete && t.status !== "done" && t.status !== "skipped" ? "border-rose-500/40 bg-rose-500/[0.04]" : "border-zinc-200/80 dark:border-zinc-800/80 bg-zinc-50 dark:bg-zinc-900"}`}>
+      <div className={`flex flex-wrap items-start gap-2 ${dense ? "justify-end" : "justify-between"}`}>
+        {!dense && (
         <div className="min-w-0 flex-1">
           <div className="font-semibold text-zinc-900 dark:text-white text-sm">{t.title}</div>
           {t.description && <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t.description}</div>}
@@ -197,6 +201,7 @@ export function TaskRow({ t, roster, identity, onSave, onAttach, onDetach, today
             )}
           </div>
         </div>
+        )}
         <div className="flex gap-1.5 shrink-0">
           {t.status !== "pending" && (
             <button disabled={busy || !t.logId} onClick={() => save("pending")} className="px-2.5 py-1.5 text-xs font-bold rounded-lg bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 disabled:opacity-50 cursor-pointer border-0" title="Back to pending">↩ Pending</button>
@@ -244,7 +249,7 @@ export function TaskRow({ t, roster, identity, onSave, onAttach, onDetach, today
           <input type="file" className="hidden" disabled={uploading || !t.logId} onChange={(e) => { upload(e.target.files?.[0]); e.target.value = ""; }} />
         </label>
       </div>
-      {lane.length > 0 && (
+      {!dense && lane.length > 0 && (
         <div className="text-[10px] text-zinc-400 mt-1">Team: {lane.map((r) => r.name).join(", ")}</div>
       )}
     </div>

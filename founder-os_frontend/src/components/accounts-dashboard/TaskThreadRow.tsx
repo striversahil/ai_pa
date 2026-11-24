@@ -6,9 +6,10 @@
 // single row with two entries in its thread, and a day nobody logged is listed
 // as "Task not done on <date>" until somebody resolves it.
 //
-// Today's logging stays one line: remark + Done / Not Done straight in the row
-// (the server requires a reason for any transition). Time taken and proof files
-// live in the expanded "log today" card (TaskRow), so nothing was lost.
+// Today's logging is ALWAYS on the row (dense TaskRow: remark + Done / Not Done,
+// time taken, proof files) so progress is logged without opening anything. The
+// financial-year history is COLLAPSED by default and mounts only when the row is
+// opened by hand — no auto-expand, no background thread fetch.
 import React, { useCallback, useEffect, useState } from "react";
 import type { RosterRow, TaskItem, ThreadDetail, ThreadRow, ThreadSlot } from "./types";
 import { StatusChip } from "./StatusChip";
@@ -35,7 +36,7 @@ export function TaskThreadRow({
   /** Called after a successful write so the parent can refetch the payload. */
   onLogged: () => void;
 }) {
-  const [open, setOpen] = useState(!!(today && today.status !== "done" && today.status !== "skipped"));
+  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [detail, setDetail] = useState<ThreadDetail | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -78,7 +79,7 @@ export function TaskThreadRow({
           <button
             onClick={() => setOpen((v) => !v)}
             aria-expanded={open}
-            aria-label={`${open ? "Collapse" : "Expand"} thread for ${title}`}
+            aria-label={`${open ? "Collapse" : "Expand"} history for ${title}`}
             className="shrink-0 rounded p-0.5 text-xs text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 cursor-pointer bg-transparent border-0"
           >
             {open ? "▾" : "▸"}
@@ -121,29 +122,26 @@ export function TaskThreadRow({
                     ? "today recorded as not done"
                     : "today still open"}
               </span>
-              <button
-                onClick={() => setOpen(true)}
-                className="rounded-md border border-zinc-300 px-2 py-0.5 text-[10px] font-bold text-zinc-600 hover:border-indigo-400 hover:text-indigo-600 dark:border-zinc-700 dark:text-zinc-400 cursor-pointer bg-transparent"
-                title="Open today's entry to log a remark, time or proof"
-              >
-                {open ? "open" : "Log today"}
-              </button>
             </>
           ) : (
-            <span className="text-[11px] text-zinc-500">Not due today — open the thread for its history.</span>
+            <span className="text-[11px] text-zinc-500">Not due today — open the row for its history.</span>
           )}
         </div>
+        {/* exactly ONE remark input per day: today's entry is logged right here,
+            never inside the collapsible history (no second writer to wipe it). */}
+        {today && (
+          <div className="mt-2 pl-5">
+            <TaskRow dense t={today} roster={roster} identity={identity} onSave={onSave} onAttach={onAttach} onDetach={onDetach} today={todayLabel} />
+          </div>
+        )}
         {err && <div className="mt-1.5 pl-5 text-[11px] text-rose-500">{err}</div>}
       </div>
 
-      {/* ── the thread ───────────────────────────────────────────────────── */}
+      {/* ── history — collapsed until the user opens it ───────────────────── */}
       {open && (
         <div className="space-y-2 border-t border-zinc-100 px-3 py-2.5 dark:border-zinc-800">
-          {today && (
-            <TaskRow t={today} roster={roster} identity={identity} onSave={onSave} onAttach={onAttach} onDetach={onDetach} today={todayLabel} />
-          )}
           <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-zinc-500">
-            <span>Thread · {detail ? `${detail.from} → ${detail.to}` : "loading…"}</span>
+            <span>History · {detail ? `${detail.from} → ${detail.to}` : "loading…"}</span>
             <button onClick={() => void loadThread()} className="rounded border border-zinc-300 px-1.5 py-0.5 text-[10px] font-semibold normal-case tracking-normal text-zinc-600 dark:border-zinc-700 dark:text-zinc-400 cursor-pointer bg-transparent">Refresh</button>
           </div>
           {!detail && !err && <div className="py-4 text-center text-[11px] text-zinc-500 animate-pulse">Loading the year…</div>}
