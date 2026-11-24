@@ -537,6 +537,14 @@ today, and that path is byte-identical to the pre-feature computation (guard-ass
   never forked), `components/debtors-tracker/RangeBar` (picker + historical banner),
   `tabs/summary-tab/ComparisonSection` (then vs now, ageing shift, movement). The customer Ledger
   endpoint takes the same `?asOf=`. Guard: `scripts/guards/debtors-as-of.test.mjs`.
+- **Invoice-number sort** (2026-11-26): `debtors-tracker/multi-sort.ts#compareInvoiceNo` is the one
+  comparator for the invoice column (Invoices tab, Collections tab, overdue export) — the trailing
+  `/` segment cast to Number (`BUI/26-27/751` → 751), numeric serials first, numeric-aware string
+  fallback, always finite (a `NaN` comparator reads as "equal" and silently disables the sort and
+  every sub-level under it). A click on a new column APPENDS under the active sort instead of
+  replacing a pristine default, so "Date ↓ › Invoice No. ↑" is one gesture; `Reset` restores it.
+  The historical view's empty state names the date (`asOf`), never "nothing was ever imported".
+  Guard: `scripts/guards/debtors-invoice-sort.test.mjs`.
 
 ### 3.3 Trigger dispatch
 `POST /api/trigger/:slug` runs the matching automation (auth required). On the Worker,

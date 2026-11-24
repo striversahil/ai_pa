@@ -4,16 +4,18 @@ import { useMemo, useRef, useState } from "react";
 import type { LiveInvoice } from "@/debtors-tracker/types";
 import { planZipFiles, uploadInvoicePdf } from "@/debtors-tracker/api";
 import { BUCKET_LABELS, formatDays, formatINR, shortDate } from "@/debtors-tracker/types";
-import { describeSortSpecs, isDefaultSort, nextSortSpecs, type SortSpec } from "@/debtors-tracker/multi-sort";
+import { compareInvoiceNo, describeSortSpecs, isDefaultSort, nextSortSpecs, type SortSpec } from "@/debtors-tracker/multi-sort";
 import { useColumnOrder } from "@/hooks/useColumnOrder";
 import { Card, Chip, EmptyState, SearchInput, SortableTh, TDC, TDCR, TableShell, bucketBadge } from "../ui";
 import { DEFAULT_INVOICE_SORT, DEFAULT_COLUMNS, INVOICE_TEXT_FIRST, INVOICE_SORT_LABELS, BUCKET_CHIPS } from "./invoices-tab/helpers";
 import type { InvoiceColumn } from "./invoices-tab/types";
 
 export default function InvoicesTab({
-  invoices, onEdit, onGoToAccounts, canAccounts, onChanged,
+  invoices, asOf, onEdit, onGoToAccounts, canAccounts, onChanged,
 }: {
   invoices: LiveInvoice[];
+  /** Historical snapshot date (YYYY-MM-DD) — drives the honest empty state. */
+  asOf?: string | null;
   onEdit: (inv: LiveInvoice) => void;
   onGoToAccounts: () => void;
   /** Accounts users get the zip-upload + missing-PDF review tools. */
@@ -123,7 +125,7 @@ export default function InvoicesTab({
     const compareByKey = (a: LiveInvoice, b: LiveInvoice, key: string): number => {
       switch (key) {
         case "customer": return strCmp(a.customerName, b.customerName);
-        case "invoice": return strCmp(String(a.invoiceNo), String(b.invoiceNo));
+        case "invoice": return compareInvoiceNo(a.invoiceNo, b.invoiceNo);
         case "date": return dateCmp(a.invoiceDate, b.invoiceDate);
         case "due": return dateCmp(a.dueDate, b.dueDate);
         case "dueMonth": return strCmp(a.dueMonth || "", b.dueMonth || "");
@@ -156,7 +158,7 @@ export default function InvoicesTab({
       }
       // Stable fallback: newest invoice first, then largest balance.
       const fb = (b.invoiceDate || b.dueDate || "").localeCompare(a.invoiceDate || a.dueDate || "");
-      return fb !== 0 ? fb : b.balance - a.balance;
+      return fb !== 0 ? fb : (Number(b.balance) || 0) - (Number(a.balance) || 0);
     });
   }, [invoices, bucket, pdfFilter, q, sortSpecs]);
 
@@ -325,11 +327,15 @@ export default function InvoicesTab({
       </Card>
 
       {invoices.length === 0 ? (
-        <EmptyState
-          title="No invoices imported yet"
-          hint="Paste the debtors ageing sheet from the Accounts tab. Money columns come from the paste; everything else is calculated or edited per row."
-          action={<button onClick={onGoToAccounts} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500">Go to Accounts</button>}
-        />
+        asOf ? (
+          <EmptyState title={`No invoices existed on ${asOf}`} hint="This is a historical snapshot, not today's book — widen the range or switch back to Live." />
+        ) : (
+          <EmptyState
+            title="No invoices imported yet"
+            hint="Paste the debtors ageing sheet from the Accounts tab. Money columns come from the paste; everything else is calculated or edited per row."
+            action={<button onClick={onGoToAccounts} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500">Go to Accounts</button>}
+          />
+        )
       ) : (
         <TableShell minWidth={1040} dense>
           <thead>

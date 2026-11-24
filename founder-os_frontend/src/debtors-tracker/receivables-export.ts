@@ -11,6 +11,7 @@
 import type { CustomerAgeingRow, LiveInvoice } from "./types";
 import { situationLabel } from "./types";
 import { downloadCsv, type CsvValue } from "../lib/csv";
+import { compareInvoiceNo } from "./multi-sort";
 
 const OVERDUE_BUCKETS = new Set<string>(["D0", "D31", "D61", "D91", "D181"]);
 
@@ -104,8 +105,7 @@ export function buildOverdueReceivableRows(
       const bills = [...group.bills].sort((a, b) => {
         const ad = billDate(a) || "9999-12-31";
         const bd = billDate(b) || "9999-12-31";
-        return ad.localeCompare(bd)
-          || String(a.invoiceNo).localeCompare(String(b.invoiceNo), undefined, { numeric: true });
+        return ad.localeCompare(bd) || compareInvoiceNo(a.invoiceNo, b.invoiceNo);
       });
       const seen = new Set<string>();
       const numbers: string[] = [];

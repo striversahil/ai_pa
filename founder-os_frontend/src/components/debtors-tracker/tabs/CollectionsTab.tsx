@@ -3,7 +3,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import type { LiveCollection } from "@/debtors-tracker/types";
 import { formatINR, shortDate } from "@/debtors-tracker/types";
-import { describeSortSpecs, isDefaultSort, nextSortSpecs, type SortSpec } from "@/debtors-tracker/multi-sort";
+import { compareInvoiceNo, describeSortSpecs, isDefaultSort, nextSortSpecs, type SortSpec } from "@/debtors-tracker/multi-sort";
 import { useColumnOrder } from "@/hooks/useColumnOrder";
 import { Card, EmptyState, SearchInput, SortableTh, TDC, TDCR, TableShell, matchBadge, matchLabel } from "../ui";
 
@@ -66,7 +66,7 @@ export default function CollectionsTab({
       switch (key) {
         case "date": return dateCmp(a.collectionDate, b.collectionDate);
         case "customer": return strCmp(a.customerName, b.customerName);
-        case "invoice": return strCmp(a.invoiceNo || "", b.invoiceNo || "");
+        case "invoice": return compareInvoiceNo(a.invoiceNo, b.invoiceNo);
         case "amount": return numCmp(a.amount, b.amount);
         case "mode": return strCmp(a.mode || "", b.mode || "");
         case "remarks": return strCmp(a.remarks || "", b.remarks || "");
@@ -88,7 +88,7 @@ export default function CollectionsTab({
       }
       // Stable fallback: newest receipt first, then largest amount.
       const fb = (b.collectionDate || b.createdAt || "").localeCompare(a.collectionDate || a.createdAt || "");
-      return fb !== 0 ? fb : b.amount - a.amount;
+      return fb !== 0 ? fb : (Number(b.amount) || 0) - (Number(a.amount) || 0);
     });
   }, [collections, q, sortSpecs]);
 

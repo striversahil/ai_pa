@@ -325,6 +325,7 @@ export default function DebtorsTrackerDashboard() {
       {data && activeView === "invoices" && (
         <InvoicesTab
           invoices={data.invoices}
+          asOf={data.meta.isHistorical ? data.meta.asOfIST : null}
           onEdit={openInvoice}
           onGoToAccounts={() => setView("accounts")}
           canAccounts={canEdit}
