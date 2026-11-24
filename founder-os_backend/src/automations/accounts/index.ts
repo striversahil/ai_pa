@@ -1,5 +1,5 @@
 import type { AutomationContext } from '../../modules/automation/types';
-import { runDailyRollover, getAccountsDashboardData } from './service';
+import { getAccountsDashboardData, runThreadMaintenance } from './service';
 
 /**
  * Accounts automation: daily rollover ensures one log instance per due
@@ -9,7 +9,11 @@ import { runDailyRollover, getAccountsDashboardData } from './service';
  * Live cadence: POST /api/trigger/accounts (GH cron or manual).
  */
 export async function handler(_ctx: AutomationContext): Promise<void> {
-  await runDailyRollover();
+  // Thread maintenance (migration 0166): keep the rolling range instantiated and
+  // stamp the due days nobody logged, so a missed day becomes the engine's own
+  // "Task not done on <date>" entry instead of silently disappearing. The daily
+  // Worker cron calls this natively; this handler is the manual/GH trigger.
+  await runThreadMaintenance();
 }
 
 /** Dashboard data provider — GET /api/automations/accounts/data */

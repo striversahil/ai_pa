@@ -25,6 +25,8 @@ export interface TaskItem {
   isShared?: boolean;
   employeeRaw?: string | null;
   logId: string | null;
+  /** 'main', or the lane copy of a shared task ('senior' | 'junior'). */
+  slot?: string;
   status: string;
   remark: string | null;
   doneBy: string | null;
@@ -132,9 +134,72 @@ export interface DashData {
   cashEntries?: CashEntry[];
   cashSummary?: CashSummary;
   team?: TeamData | null;
+  /** One row per task × lane (migration 0166): the year's counts for a task.
+   *  Expand a row → GET /api/accounts/tasks/:id/thread. */
+  threads?: ThreadRow[];
 }
 
-export type AccountsView = "dashboard" | "tasks" | "incomplete" | "history" | "senior" | "junior" | "my" | "dues" | "cash" | "controller";
+// ── Task threads (one task = a year of entries, not a card per day) ─────────
+export interface ThreadCounts {
+  due: number;
+  done: number;
+  notDone: number;
+  missed: number;
+  late: number;
+  pending: number;
+  /** Engine-written days nobody has explained yet — what an accountant clears. */
+  unresolved: number;
+}
+
+export interface ThreadSlot {
+  slot: string;
+  counts: ThreadCounts;
+  completionPct: number;
+}
+
+export interface ThreadRow {
+  templateId: string;
+  title: string;
+  shortTitle: string | null;
+  dueTime: string | null;
+  frequency: string;
+  ownerRole: string;
+  isShared: boolean;
+  rawText: string | null;
+  slots: ThreadSlot[];
+}
+
+export type ThreadBucket = "done" | "not_done" | "late" | "missed" | "pending";
+
+export interface ThreadEntry {
+  logId: string;
+  dueDate: string;
+  bucket: ThreadBucket;
+  status: string;
+  entryKind: string;
+  /** "Task not done on <date>" — engine text for a missed/late day. */
+  systemText: string | null;
+  remark: string | null;
+  lateNote: string | null;
+  lateNoteBy: string | null;
+  lateNoteAt: string | null;
+  doneBy: string | null;
+  timeSpentMin: number | null;
+  updatedAt: string | null;
+  attachments: FileItem[];
+}
+
+export interface ThreadDetail {
+  template: { id: string; title: string; shortTitle: string | null; dueTime: string | null; frequency: string; ownerRole: string; isShared: boolean; rawText: string | null };
+  slot: string;
+  from: string;
+  to: string;
+  counts: ThreadCounts;
+  completionPct: number;
+  entries: ThreadEntry[];
+}
+
+export type AccountsView = "dashboard" | "tasks" | "senior" | "junior" | "my" | "dues" | "cash" | "controller";
 
 export interface LaneStat {
   done: number;

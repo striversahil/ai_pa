@@ -7,6 +7,7 @@ import { cacheDel, cacheGet, cacheSet, cached } from "../../../shared/cache";
 import { mirrorRosterRow } from "../../../modules/core/sync";
 import { isDueOn, slotsFor, slotKey, SLOT_MAIN, SLOT_SENIOR, SLOT_JUNIOR, normName, LANE_SLOTS, addDays, istDateStr, DATA_CACHE_PREFIX, DUES_SIG_KEY, DUE_SYNC_TTL_MS, UNSCHEDULED_RULES, parseRule, windowGraceStart, toAttachmentJson, missStreak, summarizePayments, DATA_TTL_MS, ISO_DAY, diffDays, fmtMins, normId, cleanTemplateInput, toPaymentAttachment, toPaymentRow, mondayOf } from "./pure";
 import type { LaneScope, PaymentAttachment, PaymentDueRow } from "./types";
+import { getThreadsForDashboard, materialiseMisses, MAINTENANCE_LOOKBACK_DAYS } from "../thread-io";
 
 export async function ensureSeedTemplates(): Promise<void> {
   try {
@@ -232,6 +233,14 @@ export async function computeDashboard(
   // Payment dues (kind='payment') live in the Payment dues tab, never in the
   // task lanes — filter them here; getPaymentDues() serves them separately.
   const templates = (allTemplates as any[]).filter((t) => String(t.kind || 'task') !== 'payment');
+  // Repair missed days on READ as well (bounded 14-day lookback, one SELECT +
+  // one UPDATE-many). The 02:30 UTC cron is the primary writer, but a cron
+  // hiccup must never let a due day disappear from the thread. Called
+  // directly (not runThreadMaintenance) so we don't invalidate the cache
+  // entry this very compute is filling.
+  if (templates.length) {
+    await materialiseMisses(templates, addDays(dateStr, -MAINTENANCE_LOOKBACK_DAYS), dateStr).catch(() => 0);
+  }
   const logIds = (logs as any[]).map((l) => String(l.id)).filter(Boolean);
   const attachments = logIds.length
     ? await (prisma as any).accountsTaskAttachment.findMany({
@@ -548,7 +557,7 @@ export async function computeDashboard(
     });
   return history;
   });
-  const [overdueList, history, team, paymentDues, paymentHistory, cashReport] = await Promise.all([
+  const [overdueList, history, team, paymentDues, paymentHistory, cashReport, threads] = await Promise.all([
     trayP,
     historyP,
     timed('team', () => computeTeam(dateStr, carriedEffective, { roster, todayLogs: logs })),
@@ -561,6 +570,18 @@ export async function computeDashboard(
         entries: [], summary: { opening: 0, totalIn: 0, totalOut: 0, closing: 0, count: 0 },
       }));
     }),
+    // Task threads (migration 0166): one row per task × lane with the window's
+    // per-day counts. Expand a row → GET /api/accounts/tasks/:id/thread.
+    // Same lane scoping as the per-day cards: a lane viewer receives only their
+    // own copy of a shared task and never another lane's private task.
+    timed('threads', async () => {
+      const rows = await getThreadsForDashboard(dateStr).catch(() => [] as any[]);
+      if (!laneEnforced) return rows;
+      return rows
+        .filter((r: any) => inLane(r))
+        .map((r: any) => ({ ...r, slots: r.slots.filter((s: any) => inSlot(r, s.slot)) }))
+        .filter((r: any) => r.slots.length > 0);
+    }),
   ]);
   return {
     meta: {
@@ -568,7 +589,7 @@ export async function computeDashboard(
       today: istDateStr(),
       // Calc version tag (shown tiny in the UI header): proves which backend
       // logic produced these numbers. Bump when the dashboard math changes.
-      computeV: 'slot-3',
+      computeV: 'thread-1',
       total: items.length,
       open: openCount,
       inProgress: inProgressCount,
@@ -594,6 +615,7 @@ export async function computeDashboard(
     items,
     overdueList,
     history,
+    threads,
     freqStats,
     unscheduled,
     // Payment dues ride the same payload (no lane scoping — any viewer of the
@@ -875,6 +897,23 @@ export async function logTask(
     else throw new Error('A remark (reason) is required to change status');
   }
   const data: Record<string, any> = { status, remark, updatedBy: actor };
+  // ── Late-work resolution (thread view, migration 0166) ──────────────────
+  // A day the engine recorded as missed can be explained: the note + author +
+  // timestamp are the audit trail. The day's STATUS is deliberately untouched
+  // (founder rule 2026-11-25) — resolving says "this is why I was late", not
+  // "this was done"; marking it done is a separate, explicit action.
+  if (input.lateNote !== undefined) {
+    const note = input.lateNote ? String(input.lateNote).slice(0, 2000).trim() : '';
+    if (note) {
+      data.lateNote = note;
+      data.lateNoteBy = actor ? String(actor).slice(0, 200) : null;
+      data.lateNoteAt = new Date();
+    } else {
+      data.lateNote = null;
+      data.lateNoteBy = null;
+      data.lateNoteAt = null;
+    }
+  }
   if (paidAmount !== undefined) data.paidAmount = paidAmount;
   if (paidRef !== undefined) data.paidRef = paidRef;
   const selfId = identity?.selfId ? String(identity.selfId) : null;

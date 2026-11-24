@@ -996,6 +996,11 @@ model AccountsTaskTemplate {
   ruleType    String?
   ruleJson    String?
   rawText     String?
+  // Clock time the task is expected by (HH:mm IST), e.g. bank recon at 13:00.
+  // One task may repeat more than once a day — the time orders its entries.
+  dueTime     String?
+  // Readable list label; the sheet's long parenthetical stays in title/rawText.
+  shortTitle  String?
   // Verbatim sheet-fidelity columns (data/accounts_follow_up.json per-task fields).
   isShared    Boolean  @default(false)
   employeeRaw String?
@@ -1039,6 +1044,15 @@ model AccountsTaskLog {
   dueDate      String // YYYY-MM-DD (IST)
   slot         String   @default("main") // main | senior | junior (lane copy for shared templates)
   status       String   @default("pending") // pending | done | not_done | skipped | overdue (legacy) | inprogress (legacy)
+  // One task is a THREAD of entries (migration 0166). 'instance' = a real due
+  // occurrence; 'auto_miss' = written for a past due day nobody logged, which
+  // renders "Task not done on <DATE>" and counts as not done until resolved.
+  entryKind    String   @default("instance") // instance | auto_miss
+  // Resolution of a missed day: the description of the late work. The day
+  // stays not_done (founder rule 2026-11-25) — this is the audit trail only.
+  lateNote     String?
+  lateNoteBy   String?
+  lateNoteAt   DateTime?
   remark       String?
   doneBy       String?
   // Time taken to finish, entered as hours+minutes on the taskbar and stored

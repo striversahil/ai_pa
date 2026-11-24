@@ -21,9 +21,10 @@ export const LOG_STATUSES = ['pending', 'inprogress', 'done', 'skipped', 'not_do
 
 export const DATA_TTL_MS = 5 * 60 * 1000;
 
-// v2: payload rows for shared templates split per lane (slot). Bump on any
+// v3: payload carries `threads` (one row per task × lane with the window's
+// counts, migration 0166) alongside the today card arrays. Bump on any
 // dashboard-shape change so stale KV never serves the old row layout.
-export const DATA_CACHE_PREFIX = 'accounts:dashboard:v2:';
+export const DATA_CACHE_PREFIX = 'accounts:dashboard:v3:';
 
 /** Due-projection signature (Phase 5a mirror gate). The accounts read path
  *  projects dues into core_receipt; identical dues must not re-write ~180 rows

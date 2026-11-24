@@ -469,7 +469,8 @@ extended, not rebuilt:
   writes `status='not_done', entryKind='auto_miss'` for a past due day with no human entry. The
   sentence "Task not done on 15 Nov 2026" is rendered from the date (`missLabel`), never stored.
   It runs natively in `worker/cron.ts` at the 02:30 UTC slot (08:00 IST) — deterministic, no LLM,
-  no GitHub dispatch, and quiet hours don't apply (nothing pings Zoho).
+  no GitHub dispatch, and quiet hours don't apply (nothing pings Zoho). The same 14-day repair also
+  runs on read inside `computeDashboard`, so a cron hiccup can never hide a due day.
 - **Resolution semantics (founder rule)** — a missed day stays `not_done` forever. Writing a
   `lateNote` ("what was done late, and when") is the resolution *audit trail* and changes nothing
   else; marking Done is a separate explicit action. A human "Not done" with a remark is a valid

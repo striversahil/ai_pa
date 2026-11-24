@@ -391,6 +391,28 @@ async function runScheduled(event: { cron?: string; scheduledTime?: number }, en
     ctx.waitUntil(sweepStuckIntake(env));
   }
 
+  // Accounts task threads (migration 0166) — native, deterministic, D1-only.
+  // Fires once at 02:30 UTC (08:00 IST) so every working day has its instances
+  // BEFORE the team starts, whether or not anyone opened the dashboard. The
+  // 14-day lookback repairs days that were never viewed (previously those days
+  // produced no rows at all and vanished from the backlog). Quiet hours don't
+  // apply: no Zoho/NeoDove call, just two bounded D1 passes.
+  const hhmm = now.getUTCHours() * 60 + min;
+  if (hhmm === 2 * 60 + 30) {
+    ctx.waitUntil(
+      (async () => {
+        try {
+          const { runThreadMaintenance } = await import('../automations/accounts/thread-io');
+          const { istDateStr } = await import('../automations/accounts/service-parts/pure');
+          const r = await runThreadMaintenance(istDateStr(now));
+          console.log(`[cron] accounts threads ${r.to}: created=${r.created} missed=${r.missed} templates=${r.templates}`);
+        } catch (e: any) {
+          console.error('[cron] accounts threads failed:', e?.message);
+        }
+      })(),
+    );
+  }
+
   // GitHub Actions dispatcher — fire workflow_dispatch for every due workflow.
   const token = env.GITHUB_ACCESS_TOKEN;
   if (!token) {

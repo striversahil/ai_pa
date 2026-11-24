@@ -69,6 +69,8 @@ const tests = [
   ['POST /api/leave/requests/x/cancel no-auth -> 401', '/api/leave/requests/x/cancel', { method: 'POST' }],
   ['GET /api/accounts/roster', '/api/accounts/roster'],
   ['GET /api/accounts/templates', '/api/accounts/templates'],
+  ['GET /api/accounts/tasks/:id/thread no-auth -> 401', '/api/accounts/tasks/seed-04/thread'],
+  ['POST /api/accounts/threads/sync no-auth -> 401', '/api/accounts/threads/sync', { method: 'POST' }],
   ['GET /api/neodove/campaign/states no-auth -> 401', '/api/neodove/campaign/states?region=R1'],
   ['GET /api/neodove/campaign/preview no-auth -> 401', '/api/neodove/campaign/preview?region=R1&state=Punjab'],
   ['POST /api/neodove/campaign/push no-auth -> 401', '/api/neodove/campaign/push', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ region: 'R1', state: 'Punjab' }) }],
@@ -133,6 +135,48 @@ try {
     if (!okPatch) console.log('     ', JSON.stringify(pbody).slice(0, 200));
   } else {
     console.log('???  accounts log PATCH skipped — no logId in payload');
+  }
+  // Threads (migration 0166): one row per task × lane carrying the window's
+  // counts; the today arrays must still be present for the existing UI.
+  const threads = data?.threads ?? [];
+  const okThreads = Array.isArray(threads) && threads.length > 0
+    && threads.every((t) => t.templateId && Array.isArray(t.slots)
+      && t.slots.every((s) => s.slot && s.counts && typeof s.counts.due === 'number'
+        && typeof s.counts.unresolved === 'number' && typeof s.completionPct === 'number'));
+  console.log(`${okThreads ? 'PASS' : '???'}  accounts thread rows -> ${threads.length} tasks`);
+  if (!okThreads) console.log('     ', JSON.stringify(threads).slice(0, 200));
+
+  // Missed-day engine (migration 0166): a past due day nobody logged must be
+  // written by the engine itself as not_done + entry_kind 'auto_miss', stay
+  // not_done (never flipped to done), and count as unresolved in the thread.
+  try {
+    const tpl = threads.find((t) => t.frequency === 'daily' && !t.isShared && t.slots.some((s) => s.slot === 'main'));
+    if (!tpl) {
+      console.log('???  accounts missed-day check — no daily template in payload');
+    } else {
+      const ist = new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
+      const days = [1, 2, 3, 4, 5, 6, 7].map((i) => new Date(Date.parse(ist) - i * 86400e3).toISOString().slice(0, 10));
+      const nowIso = new Date().toISOString();
+      for (const d of days) {
+        await env.DB.prepare(
+          'INSERT INTO AccountsTaskLog (id, templateId, dueDate, slot, status, entryKind, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?)',
+        ).bind(`smoke-${d}`, tpl.templateId, d, 'main', 'pending', 'instance', nowIso, nowIso).run();
+      }
+      await env.DB.prepare('UPDATE AccountsTaskTemplate SET createdAt = ? WHERE id = ?')
+        .bind(`${days[days.length - 1]}T00:00:00.000Z`, tpl.templateId).run();
+      const res2 = await app.fetch(new Request('http://local/api/automations/accounts/data'), env, {});
+      const d2 = await res2.json();
+      const auto = await env.DB.prepare("SELECT COUNT(*) AS n FROM AccountsTaskLog WHERE entryKind = 'auto_miss' AND status = 'not_done' AND id LIKE 'smoke-%'").first();
+      const row = (d2.threads ?? []).find((t) => t.templateId === tpl.templateId)?.slots.find((s) => s.slot === 'main');
+      const missed = Number(auto?.n || 0);
+      // D1 is the assertion: entryKind/status are written by the engine on the
+      // payload path. The payload copy may still be the cached compute from the
+      // first fetch above (5-min memory cache), so it is reported, not asserted.
+      const okMiss = missed > 0;
+      console.log(`${okMiss ? 'PASS' : '???'}  accounts missed day auto-recorded -> ${missed} row(s) not_done/auto_miss (cached unresolved=${row?.counts?.unresolved ?? 'n/a'})`);
+    }
+  } catch (e) {
+    console.log('???  accounts missed-day check threw:', String(e?.message || e).slice(0, 200));
   }
 } catch (e) {
   console.log('???  accounts deep check threw:', String(e?.message || e).slice(0, 200));

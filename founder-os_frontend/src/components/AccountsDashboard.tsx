@@ -8,11 +8,10 @@ import PaymentDues from "@/components/accounts/PaymentDues";
 import DispatchCash from "@/components/accounts/DispatchCash";
 import { inr, inrShort } from "@/components/accounts/payment-calendar";
 import { workspaceDataUrl } from "@/workspaces/api";
-import type { AccountsView, DashData, TaskItem, FileItem, LaneStat, UnscheduledItem } from "./accounts-dashboard/types";
+import type { AccountsView, DashData, TaskItem, FileItem, LaneStat, UnscheduledItem, ThreadRow } from "./accounts-dashboard/types";
 import { matchSelfRoster, ACTOR_KEY, fmtToday } from "./accounts-dashboard/helpers";
 import { TeamBoard } from "./accounts-dashboard/TeamBoard";
-import { TaskRow } from "./accounts-dashboard/TaskRow";
-import { FreqChip } from "./accounts-dashboard/FreqChip";
+import { ThreadList } from "./accounts-dashboard/ThreadList";
 import { Controller } from "./accounts-dashboard/Controller";
 
 // Pieces split into ./accounts-dashboard/ (importable on their own); re-exported for compat.
@@ -26,17 +25,13 @@ export default function AccountsDashboard() {
   const canCashEdit = !!me && (me.isAdmin || me.scopes.includes("accounts"));
   const [view, setView] = useState<AccountsView>("dashboard");
 
-  // Today only — no date filter. The backend serves the current IST day.
-  // pollMs safety net: a stalled request can never wedge the view forever —
-  // the 30s hook timeout turns it into an error and the next poll recovers.
-  // Loading renders non-destructively (spinner only before first payload).
-  //
-  // Refetch scope: this payload is ~280 KB (task lanes + 300-row history +
-  // paid history), so refetching it on EVERY `data-changed` event (WhatsApp,
-  // CRM sync, enquiries, chat…) is what made the tab crawl. Every write that
-  // can change these numbers broadcasts `accounts` (all accounts routes
-  // notifyLive(Accounts)), and the 60s poll covers anything that does not, so
-  // the hook is narrowed to that one event.
+  // Today only — the backend serves the current IST day. Every task row also
+  // carries its financial-year thread (payload `threads`), which is what the
+  // task views render: one row per task, expandable into the year's entries.
+  // pollMs safety net: a stalled request can never wedge the view forever.
+  // Refetch scope: this payload is ~280 KB, so it refetches on the one event
+  // every accounts write broadcasts (plus a 60s poll), never on every
+  // `data-changed` from WhatsApp/CRM/chat.
   const dash = useLiveQuery<DashData>(async () => {
     // Identity rides along so the backend scopes the payload to the viewer's
     // own lane (root skips scoping server-side).
@@ -48,9 +43,7 @@ export default function AccountsDashboard() {
   const data = dash.data;
   // Shared optimistic module (useLiveData): every write paints instantly and
   // reconciles in the background — the same contract as sales enquiries.
-  // All payload lists holding log rows; rapid taps on one log serialize via
-  // the mutation key, taps on different logs run concurrently.
-  const LISTS = useMemo(() => ["items", "senior", "junior", "overdueList", "history"] as const, []);
+  const LISTS = useMemo(() => ["items", "senior", "junior"] as const, []);
   const { mutate } = useOptimisticMutation(dash);
   const saveLog = React.useCallback((logId: string, body: Record<string, unknown>, patch: Partial<TaskItem>) =>
     mutate(
@@ -87,10 +80,7 @@ export default function AccountsDashboard() {
       },
       { key: logId },
     ), [mutate, LISTS]);
-  const [statusFilter, setStatusFilter] = useState<"pending" | "done" | "all">("pending");
-  // Inner tabs for Senior/Junior/My: today (today's taskbar) vs incomplete (role's not-done backlog) vs history (role's last-30d done)
-  const [roleSub, setRoleSub] = useState<"today" | "incomplete" | "history">("today");
-  React.useEffect(() => { if (["senior", "junior", "my"].includes(view)) setRoleSub("today"); }, [view]);
+
   const selfId = useMemo(() => matchSelfRoster(me as any, data?.roster ?? []), [me, data]);
   // Shared logins can't be told apart by auth — each device declares its human
   // once ("Acting as"), remembered in localStorage. Every Done/remark/file is
@@ -113,10 +103,9 @@ export default function AccountsDashboard() {
     dash.refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actorPick]);
-  // Inferred doer for instant Done paint: the device's "Acting as"
-  // identity, else the signed-in user's roster match, else the
-  // server-resolved name. The server stamps the same identity — no who
-  // is ever sent from the client.
+  // Inferred doer for instant Done paint: the device's "Acting as" identity,
+  // else the signed-in user's roster match, else the server-resolved name. The
+  // server stamps the same identity — no who is ever sent from the client.
   const identity = useMemo(() => {
     const id = actorPick || selfId;
     const name = (id && data?.roster.find((r) => r.id === id)?.name) ?? data?.meta?.self?.name ?? null;
@@ -127,28 +116,12 @@ export default function AccountsDashboard() {
   React.useEffect(() => {
     if (actorPick && data && !data.roster.some((r) => r.id === actorPick)) pickActor("");
   }, [actorPick, data]);
-  const lane = useMemo(() => {
-    if (!data) return [];
-    if (view === "senior") return data.senior;
-    if (view === "junior") return data.junior;
-    if (view === "incomplete") return [];
-    // Scoped "My Tasks" and the admin "All Tasks" both render the payload's
-    // items, which the backend already lane-filtered for non-admin viewers.
-    return data.items;
-  }, [data, view]);
-  const visible = useMemo(() => {
-    if (statusFilter === "done") return lane.filter((t) => t.status === "done");
-    if (statusFilter === "all") return lane;
-    return lane.filter((t) => t.status !== "done" && t.status !== "skipped");
-  }, [lane, statusFilter]);
-  const pendingCount = lane.filter((t) => t.status !== "done" && t.status !== "skipped").length;
-  const doneCount = lane.filter((t) => t.status === "done").length;
 
   // Identity-aware nav: root sees every lane; everyone else sees Dashboard
   // + exactly their own lane ("My Tasks"). The backend already scopes the
   // payload, so this is display-layer enforcement to match.
   const selfRole = data?.meta?.self && !data?.meta?.isAdmin ? data.meta.self.role : null;
-  const showAllLanes = !data || data.meta.isAdmin;
+  const showAllLanes = !data || data.meta.isAdmin === true;
   const visibleTabs: { key: AccountsView; label: string; icon: string }[] = !data
     ? [{ key: "dashboard", label: "Dashboard", icon: "📊" }]
     : showAllLanes
@@ -173,7 +146,7 @@ export default function AccountsDashboard() {
           { key: "cash", label: "Dispatch cash", icon: "💵" },
         ];
   const isTaskView = view === "tasks" || view === "senior" || view === "junior" || view === "my";
-  const isIncompleteView = view === "incomplete";
+
   // Payment-dues badges on the TAB BAR (not just inside the tab): the red
   // overdue ₹ and the amber this-week ₹ stay visible from every Accounts view,
   // so money at risk is seen before opening the page. Short notation keeps the
@@ -210,26 +183,24 @@ export default function AccountsDashboard() {
       (paySum.overdueCount > 0 ? ` · ${paySum.overdueCount} overdue (${inr(paySum.overdueTotal)})` : "") +
       (paySum.weekCount > 0 ? ` · ${paySum.weekCount} due in 7 days (${inr(paySum.weekTotal)})` : "")
     : undefined;
-  const isHistoryView = view === "history";
-  // Incomplete tab shows the full not-done backlog (past-due unresolved logs).
-  // The payload is already lane-scoped server-side, so admins see everything and
-  // everyone else sees their own lane — no further narrowing by lane tab.
-  const incompleteCount = (data?.overdueList ?? []).length;
-  const incompleteTray = useMemo(() => {
-    const list = data?.overdueList ?? [];
-    if (isIncompleteView || view === "tasks") return list;
-    if (view === "my") return selfRole ? list.filter((t) => t.ownerRole === "either" || t.ownerRole === selfRole) : list;
-    return list.filter((t) => t.ownerRole === "either" || t.ownerRole === view);
-  }, [data, view, selfRole, isIncompleteView]);
-  const historyCount = data?.history?.length ?? 0;
-  const historyTray = useMemo(() => {
-    const list = data?.history ?? [];
-    if (isHistoryView || view === "tasks") return list;
-    if (view === "my") return selfRole ? list.filter((t) => t.ownerRole === "either" || t.ownerRole === selfRole) : list;
-    if (view === "senior" || view === "junior") return list.filter((t) => t.ownerRole === "either" || t.ownerRole === view);
-    return list;
-  }, [data, view, selfRole, isHistoryView]);
-  // Completed vs not completed per lane (today) + past backlog count —
+
+  // Thread rows for the open lane: root sees the task once per lane copy,
+  // a lane viewer sees only their own copy of a shared task.
+  const threadRows = useMemo<ThreadRow[]>(() => {
+    const all = data?.threads ?? [];
+    const role = view === "senior" || view === "junior" ? view : view === "my" ? selfRole : null;
+    return all
+      .filter((r) => !role || r.isShared || r.ownerRole === "either" || r.ownerRole === role)
+      .map((r) => ({ ...r, slots: r.slots.filter((s) => !role || s.slot === "main" || s.slot === role) }))
+      .filter((r) => r.slots.length > 0);
+  }, [data, view, selfRole]);
+  // Reference items with no fixed date follow the same lane visibility.
+  const unscheduled = useMemo<UnscheduledItem[]>(() => {
+    const all = data?.unscheduled ?? [];
+    const role = view === "senior" || view === "junior" ? view : view === "my" ? selfRole : null;
+    return all.filter((u) => !role || u.ownerRole === "either" || u.ownerRole === role);
+  }, [data, view, selfRole]);
+  // Completed vs not completed per lane (today) + the year's unexplained days —
   // feeds the dashboard hero so the one number that matters is unmissable.
   const laneStats = useMemo(() => {
     if (!data) return null;
@@ -240,13 +211,10 @@ export default function AccountsDashboard() {
     };
     return { senior: stat(data.senior), junior: stat(data.junior) };
   }, [data]);
-  const backlogCount = (data?.overdueList ?? []).length;
-  // Reference items follow the same lane visibility as tasks.
-  const inUnscheduled = (u: UnscheduledItem) => {
-    if (view === "my") return !selfRole || u.ownerRole === "either" || u.ownerRole === selfRole;
-    if (view === "tasks") return true;
-    return u.ownerRole === "either" || u.ownerRole === view;
-  };
+  const backlogCount = useMemo(
+    () => (data?.threads ?? []).reduce((n, r) => n + r.slots.reduce((m, s) => m + s.counts.unresolved, 0), 0),
+    [data],
+  );
   // If the visible tabs narrow (e.g. identity picked/cleared), drop a
   // now-unreachable view back to the dashboard.
   React.useEffect(() => {
@@ -264,7 +232,7 @@ export default function AccountsDashboard() {
               <span className="font-bold text-zinc-800 dark:text-zinc-100 text-xs">📅 Today · {fmtToday(data.meta.date)}</span>
               <span className="font-bold text-emerald-500">✓ {data.meta.done} completed</span>
               <span className="font-bold text-amber-500">✕ {data.meta.open} not completed</span>
-              {(data.meta.incomplete ?? data.meta.overdue) > 0 && <span className="font-bold text-rose-500">✕ {data.meta.incomplete ?? data.meta.overdue} incomplete</span>}
+              {backlogCount > 0 && <span className="font-bold text-rose-500">⏳ {backlogCount} unexplained day{backlogCount === 1 ? "" : "s"} this year</span>}
               {data.meta.computeV && <span className="text-zinc-400" title="Backend version that calculated these numbers">· {data.meta.computeV}</span>}
             </div>
           )}
@@ -289,8 +257,6 @@ export default function AccountsDashboard() {
               .filter((t) => t.key !== "controller" || canRoot)
               .map((t) => ({
                 ...t,
-                count: t.key === "incomplete" ? incompleteCount : t.key === "history" ? historyCount : null,
-                tone: t.key === "incomplete" ? "danger" as const : undefined,
                 badges: t.key === "dues" ? duesBadges : undefined,
                 title: t.key === "dues" ? duesTitle : undefined,
               }))}
@@ -303,128 +269,30 @@ export default function AccountsDashboard() {
         <div className="flex-1 min-w-0">
           {data && view === "dashboard" && <TeamBoard team={data.team ?? null} freqStats={data.freqStats ?? []} laneStats={laneStats} backlog={backlogCount} />}
 
-      {dash.loading && !data && <div className="py-16 text-center text-sm text-zinc-500 animate-pulse">Loading accounts taskbar…</div>}
-      {Boolean((dash as any).error) && <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-4 text-sm text-rose-400">Failed to load: {String((dash as any).error)} <button onClick={() => dash.refresh()} className="ml-2 underline cursor-pointer">Retry</button></div>}
+          {dash.loading && !data && <div className="py-16 text-center text-sm text-zinc-500 animate-pulse">Loading accounts taskbar…</div>}
+          {Boolean((dash as any).error) && <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-4 text-sm text-rose-400">Failed to load: {String((dash as any).error)} <button onClick={() => dash.refresh()} className="ml-2 underline cursor-pointer">Retry</button></div>}
 
-      {/* All Tasks (global) — today taskbar */}
-      {data && view === "tasks" && (
-        <>
-          <div className="flex flex-wrap gap-1.5">
-            {([
-              { key: "pending", label: `● Pending (${pendingCount})` },
-              { key: "done", label: `✓ Done (${doneCount})` },
-              { key: "all", label: `All (${lane.length})` },
-            ] as const).map((s) => (
-              <button key={s.key} onClick={() => setStatusFilter(s.key)} className={`px-3 py-1 text-[11px] font-bold rounded-full cursor-pointer border ${statusFilter === s.key ? "bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 border-transparent" : "border-zinc-300 dark:border-zinc-700 text-zinc-500"}`}>
-                {s.label}
-              </button>
-            ))}
-          </div>
-          <div className="grid gap-3 md:grid-cols-2">
-                {visible.map((t) => <TaskRow key={t.templateId} t={t} roster={data.roster} identity={identity} onSave={saveLog} onAttach={attachFile} onDetach={detachFile} />)}
-            {visible.length === 0 && <div className="col-span-2 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-sm text-zinc-500">{statusFilter === "done" ? "Nothing marked done in this view yet — today's completions will appear here (past done is in History tab)." : "No pending tasks in this view."}</div>}
-          </div>
-          {(data.unscheduled ?? []).filter(inUnscheduled).length > 0 && (
-            <div className="space-y-2">
-              <h3 className="text-xs font-extrabold uppercase tracking-wider text-zinc-500">📌 No fixed date — reference ({(data.unscheduled ?? []).filter(inUnscheduled).length})</h3>
-              <div className="grid gap-2 md:grid-cols-2">
-                {(data.unscheduled ?? []).filter(inUnscheduled).map((u) => (
-                  <div key={u.templateId} className="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-3 text-xs">
-                    <div className="font-semibold text-zinc-800 dark:text-zinc-200">{u.title}</div>
-                    {(u.note || u.dueLabel) && <div className="text-zinc-500 mt-0.5">{[u.note, u.dueLabel].filter(Boolean).join(" · ")}</div>}
-                    <div className="flex gap-1.5 mt-1.5">
-                      <FreqChip f={u.frequency} />
-                      <span title={u.employeeRaw ? `Sheet: ${u.employeeRaw}` : undefined} className="inline-flex items-center rounded-full border border-zinc-300 dark:border-zinc-700 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-500">{u.isShared ? "👥 shared" : u.ownerRole}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </>
-      )}
-
-      {/* Senior / Junior / My — individual tabs: Today / Incomplete (by role) / History (by role) */}
-      {data && (view === "senior" || view === "junior" || view === "my") && (
-        <div className="space-y-4">
-          <div className="flex flex-wrap gap-1.5">
-            {([
-              { key: "today" as const, label: `📋 Today (${lane.length})` },
-              { key: "incomplete" as const, label: `✕ Incomplete (${incompleteTray.length})` },
-              { key: "history" as const, label: `🕘 History (${historyTray.length})` },
-            ]).map((t) => (
-              <button key={t.key} onClick={() => setRoleSub(t.key)} className={`px-3 py-1.5 text-xs font-bold rounded-full cursor-pointer border ${roleSub === t.key ? "bg-indigo-600 text-white border-transparent" : "border-zinc-300 dark:border-zinc-700 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"}`}>
-                {t.label}
-              </button>
-            ))}
-          </div>
-
-          {roleSub === "today" && (
-            <>
-              <div className="flex flex-wrap gap-1.5">
-                {([
-                  { key: "pending", label: `● Pending (${pendingCount})` },
-                  { key: "done", label: `✓ Done (${doneCount})` },
-                  { key: "all", label: `All (${lane.length})` },
-                ] as const).map((s) => (
-                  <button key={s.key} onClick={() => setStatusFilter(s.key)} className={`px-3 py-1 text-[11px] font-bold rounded-full cursor-pointer border ${statusFilter === s.key ? "bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 border-transparent" : "border-zinc-300 dark:border-zinc-700 text-zinc-500"}`}>
-                    {s.label}
-                  </button>
-                ))}
-              </div>
-              <div className="grid gap-3 md:grid-cols-2">
-            {visible.map((t) => <TaskRow key={t.templateId} t={t} roster={data.roster} identity={identity} onSave={saveLog} onAttach={attachFile} onDetach={detachFile} />)}
-                {visible.length === 0 && <div className="col-span-2 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-sm text-zinc-500">{statusFilter === "done" ? "Nothing marked done today for this lane — switch to History for past completions." : "No pending tasks for this lane today."}</div>}
-              </div>
-              {(data.unscheduled ?? []).filter(inUnscheduled).length > 0 && (
-                <div className="space-y-2">
-                  <h3 className="text-xs font-extrabold uppercase tracking-wider text-zinc-500">📌 No fixed date — reference ({(data.unscheduled ?? []).filter(inUnscheduled).length})</h3>
-                  <div className="grid gap-2 md:grid-cols-2">
-                    {(data.unscheduled ?? []).filter(inUnscheduled).map((u) => (
-                      <div key={u.templateId} className="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-3 text-xs">
-                        <div className="font-semibold text-zinc-800 dark:text-zinc-200">{u.title}</div>
-                        {(u.note || u.dueLabel) && <div className="text-zinc-500 mt-0.5">{[u.note, u.dueLabel].filter(Boolean).join(" · ")}</div>}
-                        <div className="flex gap-1.5 mt-1.5">
-                          <FreqChip f={u.frequency} />
-                          <span title={u.employeeRaw ? `Sheet: ${u.employeeRaw}` : undefined} className="inline-flex items-center rounded-full border border-zinc-300 dark:border-zinc-700 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-500">{u.isShared ? "👥 shared" : u.ownerRole}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </>
+          {/* One row per task: today's status + the year's thread behind it. */}
+          {data && isTaskView && (
+            <ThreadList
+              rows={threadRows}
+              items={data.items}
+              roster={data.roster}
+              identity={identity}
+              showLane={showAllLanes}
+              isAdmin={showAllLanes}
+              todayLabel={data.meta.date}
+              onSave={saveLog}
+              onAttach={attachFile}
+              onDetach={detachFile}
+              onRefresh={() => dash.refresh()}
+              unscheduled={unscheduled}
+            />
           )}
 
-          {roleSub === "incomplete" && (
-            <div className="space-y-2">
-              {incompleteTray.length > 0 ? (
-                <div className="grid gap-3 md:grid-cols-2">
-                  {incompleteTray.map((t) => <TaskRow key={t.logId ?? t.templateId} t={t} roster={data.roster} identity={identity} today={data.meta.date} onSave={saveLog} onAttach={attachFile} onDetach={detachFile} />)}
-                </div>
-              ) : (
-                <div className="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-sm text-zinc-500">All clear — nothing incomplete for this lane. 🎉</div>
-              )}
-            </div>
-          )}
-
-          {roleSub === "history" && (
-            <div className="space-y-2">
-              {historyTray.length > 0 ? (
-                <div className="grid gap-3 md:grid-cols-2">
-                  {historyTray.map((t) => <TaskRow key={t.logId ?? `${t.templateId}-${t.dueDate}`} t={t} roster={data.roster} identity={identity} today={data.meta.date} onSave={saveLog} onAttach={attachFile} onDetach={detachFile} />)}
-                </div>
-              ) : (
-                <div className="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-sm text-zinc-500">No completed tasks in the last 30 days for this lane.</div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {data && view === "controller" && (canRoot ? <Controller onChanged={() => dash.refresh()} /> : <div className="rounded-xl border p-6 text-sm text-zinc-500">🔒 Controller is restricted to root.</div>)}
-      {data && view === "dues" && <PaymentDues dues={data.payments ?? []} history={data.paymentHistory ?? []} summary={data.paymentSummary} onRefresh={() => dash.refresh()} />}
-      {data && view === "cash" && <DispatchCash entries={data.cashEntries ?? []} summary={data.cashSummary} canAdd={canCashAdd} canEdit={canCashEdit} onRefresh={() => dash.refresh()} />}
+          {data && view === "controller" && (canRoot ? <Controller onChanged={() => dash.refresh()} /> : <div className="rounded-xl border p-6 text-sm text-zinc-500">🔒 Controller is restricted to root.</div>)}
+          {data && view === "dues" && <PaymentDues dues={data.payments ?? []} history={data.paymentHistory ?? []} summary={data.paymentSummary} onRefresh={() => dash.refresh()} />}
+          {data && view === "cash" && <DispatchCash entries={data.cashEntries ?? []} summary={data.cashSummary} canAdd={canCashAdd} canEdit={canCashEdit} onRefresh={() => dash.refresh()} />}
         </div>
       </div>
     </div>

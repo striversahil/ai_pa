@@ -3,26 +3,19 @@
 // Mirror: founder-os_backend/src/routes/accounts.ts (Express alt runtime).
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { deps, adminGuard, notifyLive, LiveEvent, MAX_ATTACHMENT_BYTES, type Bindings } from '../context';
+import { deps, adminGuard, notifyLive, LiveEvent, type Bindings } from '../context';
 import { ScopeKeys } from '../../modules/auth/types';
 import {
   listAccountants, createAccountant, updateAccountant,
   listTemplates, createTemplate, updateTemplate, logTask, getAccountsExport,
-  createAttachmentRecord, getAttachment, deleteAttachmentRecord, toAttachmentJson,
-  resolveSelfAccountant, payDue,
+  resolveSelfAccountant, payDue, getThreadsExport,
+  getThread, runThreadMaintenance, threadWindow, ISO_DAY, istDateStr, SLOT_MAIN,
 } from '../../automations/accounts/service';
 import {
   listCashEntries, createCashEntry, updateCashEntry, deleteCashEntry,
 } from '../../automations/accounts/cash';
 import { getViewerMe } from '../viewer';
 import { readBody, writeError } from '../http';
-
-async function actorName(c: any): Promise<string | null> {
-  try {
-    const me = await getViewerMe(c);
-    return me?.user?.name ?? me?.user?.email ?? null;
-  } catch { return null; }
-}
 
 export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void {
   // ── Roster (root-only, like /api/telecallers: reads and writes) ──────────
@@ -185,7 +178,7 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
   // Simple in/out ledger. Reads + adds: accounts OR dispatch floor (the floor
   // records its own spends). Edits/deletes: accounts-department only, so history
   // can't be rewritten from the floor.
-  async function cashReadGate(c: any) {
+  async function accountsReadGate(c: any) {
     const me = await getViewerMe(c).catch(() => null);
     if (!me) throw new Error('Authentication required');
     const scopes = ((me as any)?.scopes ?? []) as string[];
@@ -201,7 +194,7 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
   }
 
   app.get('/api/accounts/cash', async (c) => {
-    try { await cashReadGate(c); } catch (e: any) {
+    try { await accountsReadGate(c); } catch (e: any) {
       const msg = String(e?.message ?? '');
       return c.json({ error: msg }, msg.includes('Authentication') ? 401 : 403);
     }
@@ -213,7 +206,7 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
 
   app.post('/api/accounts/cash', async (c) => {
     let me: any;
-    try { me = await cashReadGate(c); } catch (e: any) {
+    try { me = await accountsReadGate(c); } catch (e: any) {
       const msg = String(e?.message ?? '');
       return c.json({ error: msg }, msg.includes('Authentication') ? 401 : 403);
     }
@@ -254,8 +247,17 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
   app.get('/api/accounts/export', async (c) => {
     const denied = await adminGuard(c); if (denied) return denied;
     try {
-      const origin = new URL(c.req.url).origin;
-      return c.json(await getAccountsExport(c.req.query('days'), origin, c.req.query('from'), c.req.query('to')));
+      // shape=thread (default) = one row per task × lane with the window's
+      // entries inline; shape=daily keeps the per-day cell grid.
+      if (c.req.query('shape') === 'daily') {
+        const origin = new URL(c.req.url).origin;
+        return c.json(await getAccountsExport(c.req.query('days'), origin, c.req.query('from'), c.req.query('to')));
+      }
+      const today = istDateStr();
+      const w = threadWindow(today);
+      const from = String(c.req.query('from') || w.from).slice(0, 10);
+      const to = String(c.req.query('to') || today).slice(0, 10);
+      return c.json(await getThreadsExport(from, to));
     } catch (e: any) { return writeError(c, e, 'export failed'); }
   });
 
@@ -279,85 +281,50 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
     } catch (e: any) { return writeError(c, e, 'log failed'); }
   });
 
-  // ── Proof attachments (bytes in CHAT_FILES KV; any signed-in viewer) ──
-  app.post('/api/accounts/logs/:id/files', async (c) => {
-    if (!c.env.CHAT_FILES) return c.json({ error: 'File storage is not configured' }, 501);
-    let form: FormData;
-    try {
-      form = await c.req.formData();
-    } catch {
-      return c.json({ error: 'Expected multipart/form-data' }, 400);
+  // ── Task threads (migration 0166): one task = a thread of entries ────────
+  // Read: dashboard access (accounts or dispatch), lane-scoped. With no
+  // `from`/`to` the thread covers the current financial year up to today; the
+  // page is capped in thread-io (THREAD_PAGE_MAX).
+  app.get('/api/accounts/tasks/:templateId/thread', async (c) => {
+    let me: any;
+    try { me = await accountsReadGate(c); } catch (e: any) {
+      const msg = String((e as any)?.message ?? '');
+      return c.json({ error: msg }, msg.includes('Authentication') ? 401 : 403);
     }
-    const file = form.get('file');
-    if (!(file instanceof File)) return c.json({ error: 'file field required' }, 400);
-    const mime = file.type || 'application/octet-stream';
-    if (!isAccountsMime(mime)) return c.json({ error: 'Only PDF, image, spreadsheet, CSV, text or ZIP files can be attached' }, 400);
-    if (file.size > MAX_ATTACHMENT_BYTES) return c.json({ error: 'File too large (max 20MB)' }, 413);
-    if (file.size <= 0) return c.json({ error: 'Empty file' }, 400);
-    const actor = await actorName(c);
-    const logId = c.req.param('id');
-    const ext = (file.name.split('.').pop() || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 8);
-    const key = `acct/${String(logId).replace(/[^A-Za-z0-9_-]/g, '_')}/${crypto.randomUUID()}${ext ? '.' + ext : ''}`;
-    await c.env.CHAT_FILES.put(key, await file.arrayBuffer(), {
-      metadata: { name: file.name, type: mime, log: logId },
-    });
+    const today = istDateStr();
+    const win = threadWindow(today);
+    const qFrom = String(c.req.query('from') || '');
+    const qTo = String(c.req.query('to') || '');
+    const from = ISO_DAY.test(qFrom) ? qFrom : win.from;
+    const to = ISO_DAY.test(qTo) ? qTo : today;
+    const slot = String(c.req.query('slot') || SLOT_MAIN);
+    // Lane enforcement mirrors the dashboard payload: a non-admin may only open
+    // their own lane's copy of a shared task.
+    if (!(me as any).isAdmin && (slot === 'senior' || slot === 'junior')) {
+      const self = await resolveSelfAccountant(null, me as any).catch(() => null);
+      if (!self || String((self as any).selfRole) !== slot) {
+        return c.json({ error: 'That lane is not yours' }, 403);
+      }
+    }
+    const thread = await getThread(c.req.param('templateId'), slot, from, to, today);
+    if (!thread) return c.json({ error: 'task not found' }, 404);
+    return c.json(thread);
+  });
+
+  // Year backfill / manual maintenance (root, idempotent). Pass from=YYYY-MM-DD
+  // (body or query) to fill the financial year the first time; the daily Worker
+  // cron then keeps it current with a 14-day lookback.
+  app.post('/api/accounts/threads/sync', async (c) => {
+    const denied = await adminGuard(c); if (denied) return denied;
+    const body = await readBody(c);
+    const today = istDateStr();
+    const qFrom = String((body as any)?.from ?? c.req.query('from') ?? '');
+    const from = ISO_DAY.test(qFrom) ? qFrom : threadWindow(today).from;
     try {
-      const row = await createAttachmentRecord({
-        logId, fileName: file.name.slice(0, 200), mime, size: file.size, kvKey: key, uploadedBy: actor,
-      });
+      const result = await runThreadMaintenance(today, { from });
       notifyLive(c, { type: LiveEvent.Accounts });
-      return c.json({ ok: true, attachment: toAttachmentJson(row) }, 201);
-    } catch (e: any) {
-      try { await c.env.CHAT_FILES.delete(key); } catch { /* orphan bytes best-effort */ }
-      return writeError(c, e, 'attach failed');
-    }
-  });
-
-  // Serve file bytes by attachment id (never exposes raw KV keys).
-  app.get('/api/accounts/files/:id', async (c) => {
-    if (!c.env.CHAT_FILES) return c.json({ error: 'File storage is not configured' }, 501);
-    const { prisma } = deps();
-    void prisma;
-    const row: any = await getAttachment(c.req.param('id') ?? '').catch(() => null);
-    if (!row?.kvKey) return c.json({ error: 'Attachment not found' }, 404);
-    const obj = await c.env.CHAT_FILES.getWithMetadata(String(row.kvKey), 'arrayBuffer');
-    if (obj.value === null) return c.json({ error: 'File not found' }, 404);
-    const meta = (obj.metadata || {}) as { name?: string; type?: string };
-    const type = String(row.mime || meta.type || 'application/octet-stream');
-    const name = String(row.fileName || meta.name || 'file');
-    const headers = new Headers();
-    headers.set('Content-Type', type);
-    headers.set('Cache-Control', 'public, max-age=31536000, immutable');
-    if (!/^image\/|^application\/pdf$|^text\//.test(type)) {
-      headers.set('Content-Disposition', `attachment; filename="${name.replace(/["\\]/g, '')}"`);
-    }
-    return new Response(obj.value, { headers });
-  });
-
-  // Delete attachment (row + bytes) — uploader or root.
-  app.delete('/api/accounts/files/:id', async (c) => {
-    const row: any = await getAttachment(c.req.param('id') ?? '').catch(() => null);
-    if (!row) return c.json({ error: 'Attachment not found' }, 404);
-    const actor = await actorName(c);
-    const isRoot = (await adminGuard(c)) === null;
-    if (!isRoot && actor && String(row.uploadedBy) !== String(actor)) {
-      return c.json({ error: 'Only the uploader or root can remove this file' }, 403);
-    }
-    try {
-      if (c.env.CHAT_FILES && row.kvKey) await c.env.CHAT_FILES.delete(String(row.kvKey));
-    } catch { /* bytes best-effort — row delete still proceeds */ }
-    await deleteAttachmentRecord(String(row.id)).catch(() => {});
-    notifyLive(c, { type: LiveEvent.Accounts });
-    return c.json({ ok: true });
+      return c.json(result);
+    } catch (e: any) { return writeError(c, e, 'thread sync failed'); }
   });
 }
 
-function isAccountsMime(mime: string): boolean {
-  return mime === 'application/pdf'
-    || mime.startsWith('image/')
-    || mime.startsWith('text/')
-    || mime === 'text/csv'
-    || mime === 'application/zip'
-    || mime === 'application/vnd.ms-excel'
-    || mime === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-}

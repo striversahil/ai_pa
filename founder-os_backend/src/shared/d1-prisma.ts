@@ -136,7 +136,7 @@ const DATE_FIELDS: Record<string, string[]> = {
   EstimateAssignment: ['assignedAt'],
   Accountant: ['createdAt'],
   AccountsTaskTemplate: ['createdAt', 'updatedAt'],
-  AccountsTaskLog: ['createdAt', 'updatedAt'],
+  AccountsTaskLog: ['createdAt', 'updatedAt', 'lateNoteAt'],
   AccountsTaskAttachment: ['createdAt'],
   DigitalMarketingManager: ['createdAt'],
   DigitalMarketingTaskTemplate: ['createdAt', 'updatedAt'],
