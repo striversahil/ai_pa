@@ -101,6 +101,9 @@ export interface CrmProofFile {
 export interface CrmDispatchProof {
   id: string;
   invoiceId: string;
+  /** True when the batch went out with the invoice gate off — `invoiceId` is
+   *  a `no-invoice:` sentinel, not a file. */
+  noInvoice?: boolean;
   beforeId: string | null;
   afterId: string | null;
   transportId: string | null;
@@ -215,6 +218,8 @@ export interface CrmViewerMeta {
   canWrite: boolean;
   /** Tentative dates + delay reasons (floor + sales agents, own region). */
   canPromise: boolean;
+  /** Invoice gate (Setting `crm:invoice_gate`): `off` = dispatch without one. */
+  invoiceGate: "enforce" | "off";
 }
 
 export const VIEW_LABELS: Record<View, string> = {

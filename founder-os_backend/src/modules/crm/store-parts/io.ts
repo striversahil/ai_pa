@@ -7,7 +7,7 @@ import type { ViewOrder } from "../queues";
 import { prisma } from "../../../shared/prisma";
 import { normalizeRegionFilter, regionMatches, buildEstimateRegionIndex, resolveOrderRegion } from "../region";
 import type { EstimateRegionIndex } from "../region";
-import { deriveLifecycle, effectiveQty, validateSchedule, validateReschedule, validateDispatch, resolveDispatchQty, validateAmend, validateCancelItems, validateLocalCancel, isOverdueItem } from "../scheduling";
+import { deriveLifecycle, effectiveQty, validateSchedule, validateReschedule, validateDispatch, resolveDispatchQty, validateAmend, validateCancelItems, validateLocalCancel, isOverdueItem, NO_INVOICE_PREFIX, isNoInvoiceId } from "../scheduling";
 import type { DispatchProof, ItemLike, ScheduleEntry, RescheduleEntry, DispatchEntry, AmendQtyChange, AmendRemove, AmendAdd } from "../scheduling";
 import { logger } from "../../../shared/logger";
 import { ITEM_BATCH, toItemView, str, toOrderView, num, iso, proofFile, CrmError, isPdfFile, isImageFile, assertWorkable, PROOF_DOC_SLOTS, PROOF_DOC_RULES, REGION_LOOKUP_BATCH, dayAdd, FLOOR_WINDOW_DAYS, SCORE_STAGES, STAGE_COMPLETION, isCompleteInZoho, orderStage, STAGE_DEPT, ORDER_COLS, sqlValue, ITEM_COLS, isChargeLine, lineKeyFor } from "./pure";
@@ -288,7 +288,8 @@ export async function proofsForOrder(soId: string, itemRows?: any[], eventRows?:
     }
     const pickFile = (id: unknown): ProofFile | null => {
       const key = str(id);
-      if (!key) return null;
+      // A gate-off batch carries a sentinel, not a file — never draw a tile.
+      if (!key || isNoInvoiceId(key)) return null;
       return (
         files.get(key) ?? {
           id: key,
@@ -327,6 +328,7 @@ export async function proofsForOrder(soId: string, itemRows?: any[], eventRows?:
       return {
         id: str(p.id),
         invoiceId: str(p.invoiceId),
+        noInvoice: isNoInvoiceId(p.invoiceId),
         beforeId: str(p.beforeId) || null,
         afterId: str(p.afterId) || null,
         transportId: str(p.transportId) || null,
@@ -362,6 +364,9 @@ export async function verifyDispatchProof(
   soId: string,
   soNumber: string,
   proof?: DispatchProof | null,
+  /** Setting `crm:invoice_gate`: false = dispatch with no invoice PDF.
+   *  The batch then records a `no-invoice:` sentinel instead of a file. */
+  requireInvoice = true,
 ): Promise<{
   invoiceId: string;
   beforeId: string | null;
@@ -377,13 +382,17 @@ export async function verifyDispatchProof(
   const transportId = pick((proof as any)?.transportId) || null;
   const courierId = pick((proof as any)?.courierId) || null;
   const packingListId = pick((proof as any)?.packingListId) || null;
-  if (!invoiceId) {
+  if (!invoiceId && requireInvoice) {
     throw new CrmError(
       'Add the invoice PDF before dispatching. Packing photos, receipts and the packing list are optional.',
       400,
       'proof_required',
     );
   }
+  // Gate off with no invoice: burn nothing, but still reserve a unique,
+  // non-null marker so the batch row (day/actor/items) survives — both
+  // CrmDispatchProof and the core mirror declare invoiceId NOT NULL + UNIQUE.
+  const resolvedInvoiceId = invoiceId || `${NO_INVOICE_PREFIX}${crypto.randomUUID()}`;
   const load = (id: string | null) =>
     id ? prisma.soAttachment.findUnique({ where: { id } }).catch(() => null) : null;
   const [invoice, before, after, transport, courier, packingList] = (await Promise.all([
@@ -395,7 +404,7 @@ export async function verifyDispatchProof(
     load(packingListId),
   ])) as any[];
   if (
-    !invoice ||
+    (invoiceId && !invoice) ||
     (beforeId && !before) ||
     (afterId && !after) ||
     (transportId && !transport) ||
@@ -410,7 +419,8 @@ export async function verifyDispatchProof(
       throw new CrmError('Dispatch proof belongs to a different sales order.', 400, 'proof_wrong_order');
     }
   }
-  if (str(invoice.kind) !== 'invoice' || !isPdfFile(str(invoice.mime), str(invoice.fileName))) {
+  // The invoice is only verified when one was supplied (gate off = none).
+  if (invoice && (str(invoice.kind) !== 'invoice' || !isPdfFile(str(invoice.mime), str(invoice.fileName)))) {
     throw new CrmError('The invoice proof must be a PDF uploaded as kind "invoice".', 400, 'proof_kind');
   }
   if (before && (str(before.kind) !== 'packing_before' || !isImageFile(str(before.mime), str(before.fileName)))) {
@@ -438,7 +448,10 @@ export async function verifyDispatchProof(
       );
     }
   }
-  const reuseChecks = [prisma.crmDispatchProof.findFirst({ where: { invoiceId } }).catch(() => null)];
+  // A gate-off batch has no invoice to check for reuse.
+  const reuseChecks: Promise<any>[] = invoiceId
+    ? [prisma.crmDispatchProof.findFirst({ where: { invoiceId } }).catch(() => null)]
+    : [];
   const reuseCols: Array<[string, string | null]> = [
     ['beforeId', beforeId],
     ['afterId', afterId],
@@ -457,7 +470,7 @@ export async function verifyDispatchProof(
       'proof_reused',
     );
   }
-  return { invoiceId, beforeId, afterId, transportId, courierId, packingListId };
+  return { invoiceId: resolvedInvoiceId, beforeId, afterId, transportId, courierId, packingListId };
 }
 
 /**
@@ -725,8 +738,11 @@ export async function rescheduleOrder(args: {
 export async function dispatchOrder(args: {
   idOrSo: string;
   entries: DispatchEntry[];
-  /** Fresh proof triple — required for every dispatch, full or partial. */
+  /** Fresh proof triple — required for every dispatch, full or partial,
+   *  unless `requireInvoice` is false (Setting `crm:invoice_gate` = `off`). */
   proof?: DispatchProof | null;
+  /** Invoice-PDF gate; see verifyDispatchProof. Absent = required. */
+  requireInvoice?: boolean;
   actor?: string | null;
   today?: string;
 }): Promise<ActionResult & { credited: boolean }> {
@@ -745,12 +761,12 @@ export async function dispatchOrder(args: {
     removedAt: (r as any).removedAt ? iso((r as any).removedAt) : null,
   })) as ItemLike[];
 
-  const check = validateDispatch({ items, entries: args.entries, proof: args.proof });
+  const check = validateDispatch({ items, entries: args.entries, proof: args.proof, requireInvoice: args.requireInvoice });
   if (!check.ok) throw new CrmError(check.message, 400, check.code);
 
   // Proof files are verified BEFORE anything moves — a bad triple fails the
   // whole dispatch and consumes nothing.
-  const proofIds = await verifyDispatchProof(str(orderRow.id), str(orderRow.soNumber), args.proof);
+  const proofIds = await verifyDispatchProof(str(orderRow.id), str(orderRow.soNumber), args.proof, args.requireInvoice !== false);
 
   const byId = new Map(itemRows.map((r) => [str(r.id), r]));
   const now = new Date();

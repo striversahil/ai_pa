@@ -70,7 +70,7 @@ export default function SettingsDashboard() {
   const providerControl = (key: string) => {
     const opts = spec[key]?.options ?? [];
     const cur = settings[key] ?? spec[key]?.default ?? opts[0];
-    const labels: Record<string, string> = { "least-used-first": "Least-used first", "round-robin": "Round robin" };
+    const labels: Record<string, string> = { "least-used-first": "Least-used first", "round-robin": "Round robin", enforce: "Invoice required", off: "Gate off" };
     return (
       <div className="flex rounded-lg border border-[var(--border-card)] overflow-hidden text-[12px] font-bold">
         {opts.map((o) => (
@@ -134,6 +134,20 @@ export default function SettingsDashboard() {
                 Pool: <span className="font-bold text-[var(--text-secondary)]">{preview?.ai?.keys ?? 0} keys</span>
                 {(preview?.ai?.providers ?? []).map((p) => ` · ${p.provider} ${p.usable}/${p.total}`).join("")}
               </p>
+            </>
+          )}
+
+          {section("CRM dispatch floor",
+            "The invoicing check on dispatch. The floor normally needs a fresh invoice PDF for every batch; with the gate off material can go out now and the invoice follows later — the batch is recorded either way.",
+            <>
+              {row(spec["crm:invoice_gate"]?.label ?? "Invoice gate",
+                spec["crm:invoice_gate"]?.hint ?? "",
+                providerControl("crm:invoice_gate"))}
+              {(settings["crm:invoice_gate"] ?? "enforce") === "off" && (
+                <p className="text-[11px] font-bold text-amber-600 dark:text-amber-400">
+                  Accounting check is lifted — dispatches go out without an invoice and are recorded as such.
+                </p>
+              )}
             </>
           )}
         </>

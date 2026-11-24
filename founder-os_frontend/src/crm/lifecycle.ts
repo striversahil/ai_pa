@@ -193,14 +193,15 @@ export interface DispatchProof {
 export function validateDispatch(args: {
   items: readonly ItemLike[];
   entries: readonly { itemId: string; qty?: number | null }[];
-  /** Required: no invoice, no dispatch (even partial). Packing photos ride along when available. */
   proof?: DispatchProof | null;
+  /** Invoice gate: required unless false (Setting `crm:invoice_gate` = `off`). */
+  requireInvoice?: boolean;
 }): Validation {
   const entries = (args.entries || []).filter((e) => e && e.itemId);
   if (entries.length === 0) return fail("no_items", "Select at least one item to dispatch.");
   const p = args.proof || null;
   const s = (v: unknown) => String(v ?? "").trim();
-  if (!p || !s(p.invoiceId)) {
+  if (args.requireInvoice !== false && (!p || !s(p.invoiceId))) {
     return fail(
       "proof_required",
       "Add the invoice PDF before dispatching. Packing photos can be added if available.",

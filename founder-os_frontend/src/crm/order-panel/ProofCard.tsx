@@ -79,8 +79,11 @@ export function ProofCard({
     slot: "invoice" | "before" | "after" | "transport" | "courier" | "packingList",
     canAdd?: AttachSlot,
   ) => {
-    const found = proof.files?.[slot];
-    const fallbackId =
+    // A gate-off batch has no invoice file — say so instead of drawing an
+    // inert tile out of the `no-invoice:` sentinel.
+    const missingInvoice = slot === "invoice" && !!proof.noInvoice;
+    const found = missingInvoice ? null : proof.files?.[slot];
+    const fallbackId = missingInvoice ? "" :
       slot === "invoice" ? proof.invoiceId
       : slot === "before" ? proof.beforeId
       : slot === "after" ? proof.afterId
@@ -120,7 +123,9 @@ export function ProofCard({
         )}
         <span className="min-w-0 flex-1">
           <span className="block font-bold text-zinc-700 dark:text-zinc-200">{label}</span>
-          {file?.fileName ? (
+          {missingInvoice ? (
+            <span className="block text-[10px] font-semibold text-amber-600 dark:text-amber-400">No invoice — gate was off</span>
+          ) : file?.fileName ? (
             <span className="block truncate text-[10px] text-zinc-400">{file.fileName}</span>
           ) : null}
         </span>

@@ -90,8 +90,11 @@ export interface DispatchProof {
 export interface DispatchArgs {
   items: readonly ItemLike[];
   entries: readonly DispatchEntry[];
-  /** Required: no proof, no dispatch (even partial). */
+  /** Required: no proof, no dispatch (even partial) — unless `requireInvoice`
+   *  is false, i.e. Setting `crm:invoice_gate` is `off`. */
   proof?: DispatchProof | null;
+  /** Invoice-PDF gate (Setting `crm:invoice_gate`). Absent = required. */
+  requireInvoice?: boolean;
 }
 
 // ── Amendments (floor overlay, client-confirmed) ─────────────────────────────

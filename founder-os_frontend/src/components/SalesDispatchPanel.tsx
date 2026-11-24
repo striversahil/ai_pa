@@ -227,6 +227,7 @@ export default function SalesDispatchPanel() {
             list.refresh();
             summary.refresh();
           }}
+          invoiceGate={viewer?.invoiceGate ?? "enforce"}
         />
       )}
     </div>

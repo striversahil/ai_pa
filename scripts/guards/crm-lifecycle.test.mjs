@@ -266,6 +266,28 @@ describe('crm lifecycle mirror', () => {
       assert.equal(a.ok, false);
       assert.equal(a.code, 'proof_required');
     }
+
+    // Gate off (Setting `crm:invoice_gate` = 'off'): the invoice may be absent —
+    // every other rule still applies and both mirrors must agree in both states.
+    for (const proof of [null, undefined, {}, { invoiceId: '  ' }, { beforeId: 'att-before', afterId: 'att-after' }]) {
+      const a = be.validateDispatch({ items: ITEM_SETS.allScheduled, entries: [{ itemId: 'a' }], proof, requireInvoice: false });
+      const b = fe.validateDispatch({ items: ITEM_SETS.allScheduled, entries: [{ itemId: 'a' }], proof, requireInvoice: false });
+      assert.deepEqual(b, a);
+      assert.equal(a.ok, true);
+    }
+    // A supplied invoice still dispatches identically with the gate off.
+    assert.equal(
+      be.validateDispatch({ items: ITEM_SETS.allScheduled, entries: [{ itemId: 'a' }], proof: { invoiceId: 'att-inv' }, requireInvoice: false }).ok,
+      true,
+    );
+    // The gate is not a bypass: selection + already-dispatched rules stand.
+    assert.equal(be.validateDispatch({ items: ITEM_SETS.allScheduled, entries: [], proof: null, requireInvoice: false }).code, 'no_items');
+    assert.equal(be.validateDispatch({ items: ITEM_SETS.allDispatched, entries: [{ itemId: 'a' }], proof: null, requireInvoice: false }).code, 'already_dispatched');
+    // The gate-off marker (backend only — the FE reads `noInvoice` off the payload).
+    assert.equal(be.isNoInvoiceId('no-invoice:abc'), true);
+    assert.equal(be.isNoInvoiceId('att-inv'), false);
+    assert.equal(be.isNoInvoiceId(null), false);
+    assert.equal(be.isNoInvoiceId(''), false);
   });
 
   it('resolveDispatchQty agrees', () => {

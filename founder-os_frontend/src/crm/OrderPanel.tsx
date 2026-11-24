@@ -48,12 +48,16 @@ export default function OrderPanel({
   initialMode,
   canWrite,
   promiseOnly = false,
+  invoiceGate = "enforce",
   onClose,
   onChanged,
 }: {
   order: CrmOrder;
   initialMode: PanelMode;
   canWrite: boolean;
+  /** Server invoice gate: `off` unlocks dispatch with no invoice PDF
+      (Setting `crm:invoice_gate`, root-toggled in Settings). */
+  invoiceGate?: "enforce" | "off";
   /** Sales view: dates + delay reasons + SO cancellation. Dispatch/reschedule/
       address edits stay with the dispatch floor (`canWrite` alone is not
       enough for those). */
@@ -395,6 +399,7 @@ export default function OrderPanel({
       return validateDispatch({
         items,
         entries: pickedItems.map((it) => ({ itemId: it.id, qty: qty[it.id] ? Number(qty[it.id]) : null })),
+        requireInvoice: invoiceGate !== "off",
         proof: proofIds,
       });
     }
@@ -407,7 +412,7 @@ export default function OrderPanel({
       });
     }
     return { ok: true as const };
-  }, [mode, today, items, pickedItems, dates, reasons, soReason, moveReason, qty, proofIds]);
+  }, [mode, today, items, pickedItems, dates, reasons, soReason, moveReason, qty, proofIds, invoiceGate]);
 
   const anyDated = pickedItems.some((it) => !!dates[it.id]);
 
@@ -607,7 +612,9 @@ export default function OrderPanel({
                   ? "Set the tentative dispatch date for each item — this is the promise the dispatch floor works to. Anything you cannot date needs a reason."
                   : "Pick the items going out and the tentative dispatch date for each. Anything you cannot date needs a reason — leave every item undated to keep the whole order unscheduled with one order-level reason.")}
               {mode === "dispatch" &&
-                "Tick what is actually leaving today. Quantity defaults to the full remaining amount; a smaller number records a partial dispatch. Add the invoice PDF below — Mark dispatched stays locked until it is attached. Transport receipt, courier receipt, packing list and the packing photos are optional and can be attached now or later from the dispatch proof."}
+                (invoiceGate === "off"
+                  ? "Tick what is actually leaving today. Quantity defaults to the full remaining amount; a smaller number records a partial dispatch. The invoice check is off — attach the invoice PDF now or later, it does not block Mark dispatched. Transport receipt, courier receipt, packing list and the packing photos stay optional."
+                  : "Tick what is actually leaving today. Quantity defaults to the full remaining amount; a smaller number records a partial dispatch. Add the invoice PDF below — Mark dispatched stays locked until it is attached. Transport receipt, courier receipt, packing list and the packing photos are optional and can be attached now or later from the dispatch proof.")}
               {mode === "reschedule" &&
                 "The committed date slipped. Give every selected item a new date and explain the slip — that reason is the audit trail."}
             </p>
@@ -899,12 +906,14 @@ export default function OrderPanel({
               upload on pick; the server burns them on dispatch. */}
           {mode === "dispatch" && (
             <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
-              <h3 className="text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
-                Dispatch proof — invoice required
+              <h3 className={`text-[10px] font-bold uppercase tracking-wider ${invoiceGate === "off" ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400"}`}>
+                {invoiceGate === "off" ? "Dispatch proof — invoice optional (gate off)" : "Dispatch proof — invoice required"}
               </h3>
               <p className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-300">
-                Each dispatch needs a fresh invoice PDF — it works once, so the next partial needs a new one.
-                Packing photos, transport receipt, courier receipt and packing
+                {invoiceGate === "off"
+                  ? "The accounting invoice check is off — material can go out now and the invoice follows later. The batch is still recorded with its items, day and operator."
+                  : "Each dispatch needs a fresh invoice PDF — it works once, so the next partial needs a new one."}
+                {" "}Packing photos, transport receipt, courier receipt and packing
                 list can be added when available.
               </p>
               {/* Earlier batches on this SO — what already went out and in what
@@ -927,14 +936,20 @@ export default function OrderPanel({
                           )}
                           <span className="whitespace-nowrap">
                             {" "}·{" "}
-                            <button
-                              type="button"
-                              onClick={() => openProofDoc(p.files?.invoice ?? proofFileFromId(p.invoiceId))}
-                              className="border-0 bg-transparent p-0 font-bold text-indigo-600 hover:underline dark:text-indigo-400"
-                            >
-                              View
-                            </button>
-                            {" "}<a href={`/api/crm/files/${p.invoiceId}?download=1`} className="font-bold text-indigo-600 hover:underline dark:text-indigo-400">Download</a>
+                            {p.noInvoice ? (
+                              <span className="font-semibold text-amber-600 dark:text-amber-400">no invoice</span>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => openProofDoc(p.files?.invoice ?? proofFileFromId(p.invoiceId))}
+                                  className="border-0 bg-transparent p-0 font-bold text-indigo-600 hover:underline dark:text-indigo-400"
+                                >
+                                  View
+                                </button>
+                                {" "}<a href={`/api/crm/files/${p.invoiceId}?download=1`} className="font-bold text-indigo-600 hover:underline dark:text-indigo-400">Download</a>
+                              </>
+                            )}
                             {!p.beforeId && <span className="text-amber-600 dark:text-amber-400"> · Before pending</span>}
                             {!p.afterId && <span className="text-amber-600 dark:text-amber-400"> · After pending</span>}
                           </span>
@@ -974,7 +989,13 @@ export default function OrderPanel({
                         {meta.label}
                       </span>
                       <span className="mt-0.5 block truncate font-semibold">
-                        {proofBusy === slot ? "Uploading…" : done ? `✓ ${proofNames[slot]}` : meta.hint}
+                        {proofBusy === slot
+                          ? "Uploading…"
+                          : done
+                            ? `✓ ${proofNames[slot]}`
+                            : slot === "invoice" && invoiceGate === "off"
+                              ? "Optional — attach now or later"
+                              : meta.hint}
                       </span>
                       <input
                         type="file"

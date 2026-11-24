@@ -193,6 +193,7 @@ export default function CrmDashboard() {
             list.refresh();
             summary.refresh();
           }}
+          invoiceGate={list.data?.viewer?.invoiceGate ?? "enforce"}
         />
       )}
     </div>

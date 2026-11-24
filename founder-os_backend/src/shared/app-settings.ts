@@ -55,6 +55,14 @@ export const APP_SETTINGS: Record<string, AppSettingSpec> = {
     options: [],
     default: '',
   },
+  'crm:invoice_gate': {
+    key: 'crm:invoice_gate',
+    label: 'CRM dispatch — invoice gate',
+    hint: 'enforce = every dispatch needs a fresh invoice PDF. off = the floor may dispatch without one (accounting check temporarily lifted); the batch is still recorded as dispatched without an invoice.',
+    kind: 'enum',
+    options: ['enforce', 'off'],
+    default: 'enforce',
+  },
   'ai:strategy': {
     key: 'ai:strategy',
     label: 'AI gateway strategy',

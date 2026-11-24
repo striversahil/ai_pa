@@ -50,6 +50,7 @@ import { resolveRosterMatch } from '../../modules/telecalling/self';
 import { listActiveTelecallers } from '../../modules/telecalling/self-roster';
 import { getViewerMe } from '../viewer';
 import { readBody } from '../http';
+import { getAppSetting } from '../../shared/app-settings';
 
 interface Viewer {
   id: string;
@@ -67,6 +68,8 @@ interface Viewer {
   canPromise: boolean;
   /** May execute floor transitions (schedule/dispatch/addresses/amend/removal). */
   canWriteFloor: boolean;
+  /** Invoice-PDF gate (Setting `crm:invoice_gate`): `off` = dispatch without one. */
+  invoiceGate: 'enforce' | 'off';
 }
 
 const lower = (v: unknown) => String(v ?? '').toLowerCase();
@@ -101,6 +104,9 @@ async function viewer(c: any): Promise<Viewer | null> {
       }
     }
 
+    // Runtime switch (Setting `crm:invoice_gate`, default `enforce`): one tiny
+    // keyed read per CRM request keeps a flip instant — no cache to invalidate.
+    const invoiceGate = (await getAppSetting('crm:invoice_gate')) === 'off' ? 'off' : 'enforce';
     return {
       id: String(me.user?.id ?? ''),
       scopes,
@@ -112,6 +118,7 @@ async function viewer(c: any): Promise<Viewer | null> {
       isManager,
       canPromise,
       canWriteFloor,
+      invoiceGate,
     };
   } catch {
     return null;
@@ -140,6 +147,7 @@ async function requireRead(c: any): Promise<Viewer | Response> {
   return v || {
     id: '', scopes: [], roles: [], isAdmin: true, name: 'root',
     staffId: null, region: '', isManager: true, canPromise: true, canWriteFloor: true,
+    invoiceGate: 'enforce',
   };
 }
 
@@ -182,6 +190,7 @@ function viewerMeta(v: Viewer) {
     isManager: v.isManager,
     canWrite: v.canWriteFloor,
     canPromise: v.canPromise,
+    invoiceGate: v.invoiceGate,
   };
 }
 
@@ -327,18 +336,24 @@ export function registerCrmRoutes(app: Hono<{ Bindings: Bindings }>): void {
   });
 
   // ── Dispatch (full or partial) ──────────────────────────────────────────────
-  // PROOF GATE (2026-11-04): every dispatch consumes a fresh invoice PDF
-  // (packing photos optional). The store verifies ownership/kind/mime/freshness;
-  // a missing or reused invoice fails the whole dispatch and consumes nothing.
+  // PROOF GATE (2026-11-04, liftable 2026-11-26): every dispatch consumes a
+  // fresh invoice PDF (packing photos optional) — unless Setting
+  // `crm:invoice_gate` is `off`, when the batch records a `no-invoice:` marker
+  // instead. The store verifies ownership/kind/mime/freshness of every document
+  // that IS supplied; a missing or reused invoice fails the whole dispatch and
+  // consumes nothing.
   app.post('/api/crm/orders/:id/dispatch', async (c) => {
     const v = await requireDispatchWrite(c);
     if (v instanceof Response) return v;
     const body = await readBody(c);
     const entries = Array.isArray(body?.items) ? body.items : [];
     const proof = body?.proof && typeof body.proof === 'object' ? body.proof : null;
+    // Gate off (carried on the viewer) = the invoice PDF is optional here.
+    const requireInvoice = v.invoiceGate !== 'off';
     try {
       const res = await dispatchOrder({
         idOrSo: c.req.param('id'),
+        requireInvoice,
         entries: entries.map((e: any) => ({
           itemId: String(e?.itemId ?? e?.id ?? ''),
           qty: e?.qty === undefined || e?.qty === null || e?.qty === '' ? null : Number(e.qty),

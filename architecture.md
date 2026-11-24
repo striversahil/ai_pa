@@ -335,6 +335,20 @@ Rules exist once per runtime — backend `modules/crm/scheduling.ts` + `queues.t
 frontend `src/crm/lifecycle.ts` + `queue.ts` — and `scripts/guards/crm-lifecycle.test.mjs`
 fails on any disagreement (state machine, overdue verdict, tab membership, validation).
 
+The invoice-PDF proof gate (2026-11-04) is a **runtime switch**, not a constant:
+Setting `crm:invoice_gate` = `enforce` (default) | `off`, toggled root-only in Settings
+(`PUT /api/settings/crm:invoice_gate`, live event, no deploy). With `off` the floor may
+dispatch without an invoice and the batch still writes its `CrmDispatchProof` row, with
+`invoiceId = 'no-invoice:<uuid>'` standing in for the file — both `CrmDispatchProof.invoiceId`
+and the core mirror's `core_dispatch_proof.invoiceId` are NOT NULL + UNIQUE, and a nullable
+column would make the mirror's `INSERT OR IGNORE` drop those rows silently. Exactly two
+points enforce the gate — `validateDispatch({ requireInvoice })` and
+`verifyDispatchProof(…, requireInvoice)` (mirrored in the FE validator) — and it never
+relaxes the scheduled-only / removed-line / quantity / already-dispatched rules; an invoice
+that IS supplied is still verified, burned and never reusable. Readers expose such batches as
+`noInvoice` (`files.invoice` null), so the panel says "no invoice" instead of drawing an
+inert tile from the sentinel; accounts can audit with `WHERE invoiceId LIKE 'no-invoice:%'`.
+
 Sync: `scripts/crm-runner.js` pages Zoho and POSTs only the **in-window** slice
 (`FLOOR_WINDOW_DAYS = 30`, mirrored in the store — Zoho reports 5,000+ open SOs and the
 rate-limited per-order item fetch could never catch up on the backlog). Per-order
@@ -1662,6 +1676,25 @@ D1's “Wrong number of parameter bindings” — a live rule that looked health
 IST hour, `HAVING COUNT(*) >= 5` so a break/partial hour cannot grade someone); 0165 upgrades the row the
 founder had already created in the console (guarded on “still the sample”), leaving their Live/Paused choice
 alone. Empty windows are expected until the Auto-Dialer/phone sync writes `DeviceCall` again.
+
+**A rule must be driven by PEOPLE, not by the fact table (2026-11-24).** The seeded query above only
+produced rows for agents whose phones had synced calls in the hour, so the escalation “everyone who is not
+absent gets a ping” reached two people. Migration `0167` rewrites it seat-first: `HumanResourcesMember`
+(active, `designation = 'Telecaller'`) → `LEFT JOIN Telecaller` **by email (`loginEmail` first)** →
+`LEFT JOIN` the hour's `DeviceCall` aggregate, so a seat with no dialer rows is a real row with `value = 0`
+(level 5), not a missing row. Graded against the real target (**20 connected calls/hour**): ≥20 → 1,
+15–19 → 2, 10–14 → 3, 5–9 → 4, 0–4 → 5. “Not absent that day” (`?3` = IST day) excludes approved
+**full-day** leave (half-day/short leave still worked), HR attendance marked `absent`, an
+`HumanResourcesHoliday` date, a `SalesHoliday` date and Sundays; windows ending outside **10:00–21:00 IST**
+are not graded, so off-shift hours never fire a false “0 calls”. The update is idempotent (`instr(upper(sqlText),
+'HUMANRESOURCESMEMBER') = 0`) and never touches `enabled`. Generic lesson for every future rule: whatever
+the SQL does not return cannot be notified, and `HAVING` silently narrows an escalation to “people who
+were already active”.
+
+**A toast is for a NEW arrival, not for history.** `NotificationProvider` seeds its `seen` set from the first
+payload, so a notification dispatched while the tab was closed (or before the page loaded) lands in the bell +
+panel but never pops — by design (no backlog burst; founder decision 2026-11-24). A live toast therefore
+requires the dashboard to be open when the sweep dispatches.
 
 ## 21. Root "view as" — read-only impersonation (2026-11-24)
 

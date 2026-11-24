@@ -4,6 +4,21 @@ import { CANCELLED_STATUSES, isDayString, REASON_MIN } from "../types";
 import type { Lifecycle } from "../types";
 import type { ItemLike, OrderLike, ValidationOk, ValidationFail, Validation, ScheduleArgs, RescheduleArgs, DispatchArgs, DispatchEntry, AmendArgs } from "./types";
 
+/**
+ * Invoice-gate sentinel (2026-11-26): when Setting `crm:invoice_gate` is `off`
+ * the floor may dispatch without an invoice PDF, and the proof row stores
+ * `invoiceId = 'no-invoice:<uuid>'` instead. `CrmDispatchProof.invoiceId` — and
+ * the core mirror's `core_dispatch_proof.invoiceId` — are NOT NULL + UNIQUE, so
+ * a real sentinel string is the only shape that keeps the batch row (day, actor,
+ * items snapshot) without a migration or a locked-core edit. It is never a
+ * file: readers expose it as `noInvoice` and never build a file tile from it.
+ */
+export const NO_INVOICE_PREFIX = 'no-invoice:';
+
+export function isNoInvoiceId(v: unknown): boolean {
+  return String(v ?? '').trim().startsWith(NO_INVOICE_PREFIX);
+}
+
 /** Quantity the floor works against: the amended override wins over Zoho qty. */
 export function effectiveQty(item: Pick<ItemLike, 'qty' | 'amendedQty'> | undefined | null): number {
   if (!item) return 0;
@@ -178,16 +193,22 @@ export function validateReschedule(args: RescheduleArgs): Validation {
  * positive and no more than what remains. Early dispatch (before the committed
  * date) is allowed and recorded with the actual date.
  *
- * PROOF GATE (2026-11-04): every dispatch needs a fresh invoice PDF;
- * before/after packing photos are optional extras. Shape-only here (invoice
- * ID present); the store verifies the files exist, belong to this SO, have
- * the right kind/mime and were never used before.
+ * PROOF GATE (2026-11-04, relaxable 2026-11-26): every dispatch needs a fresh
+ * invoice PDF — unless `requireInvoice` is false (Setting `crm:invoice_gate` =
+ * `off`: the accounting check is temporarily lifted and the store records a
+ * `no-invoice:` sentinel instead of a file). Before/after packing photos are
+ * optional extras. Shape-only here (invoice ID present); the store verifies the
+ * files exist, belong to this SO, have the right kind/mime and were never used
+ * before.
  */
 export function validateDispatch(args: DispatchArgs): Validation {
   const entries = (args.entries || []).filter((e) => e && e.itemId);
   if (entries.length === 0) return fail('no_items', 'Select at least one item to dispatch.');
   const p = args.proof || null;
-  if (!p || !str3(p.invoiceId)) {
+  // Only this branch relaxes when the accounting gate is off — the
+  // scheduled-only, removed-line and quantity rules below stay untouched.
+  const requireInvoice = args.requireInvoice !== false;
+  if (requireInvoice && (!p || !str3(p.invoiceId))) {
     return fail(
       'proof_required',
       'Add the invoice PDF before dispatching. Packing photos can be added if available.',
