@@ -189,53 +189,52 @@ export default function CrmDashboard() {
         <CrmCashPanel canWrite={canFloorWrite} />
       ) : (
         <>
-        {!!list.error && (
-          <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-700 dark:text-rose-300">
-            Could not load the floor: {list.error instanceof Error ? list.error.message : String(list.error)}
+          {!!list.error && (
+            <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-700 dark:text-rose-300">
+              Could not load the floor: {list.error instanceof Error ? list.error.message : String(list.error)}
+            </div>
+          )}
+
+          <ChangesBanner count={list.changes} onRefresh={list.refresh} />
+
+          {list.loading && orders.length === 0 && <SkeletonList />}
+
+          {!list.loading && orders.length === 0 && (
+            <div className="rounded-2xl border border-dashed border-zinc-300 p-10 text-center text-sm text-zinc-500 dark:border-zinc-700">
+              {view === "dispatch-floor"
+                ? "Nothing due today — dated orders land here on their day."
+                : view === "cancelled"
+                  ? "No cancelled orders — full SO cancels and unavailable-line cancels land here."
+                  : view === "source-deleted"
+                    ? "No orders were dropped by Zoho. Nothing to confirm."
+                    : "No orders in this view."}
+            </div>
+          )}
+
+          <div className="space-y-2.5">
+            {orders.map((order) => (
+              <MemoOrderCard key={order.id} order={order} today={today} view={view} canSchedule={canSchedule} onOpen={openPanel} />
+            ))}
           </div>
-        )}
 
-        <ChangesBanner count={list.changes} onRefresh={list.refresh} />
+          {list.total > 0 && (
+            <Pager page={list.page} limit={list.limit} total={list.total} totalPages={list.totalPages} onPage={list.setPage} noun="orders" />
+          )}
 
-        {list.loading && orders.length === 0 && <SkeletonList />}
-
-        {!list.loading && orders.length === 0 && (
-          <div className="rounded-2xl border border-dashed border-zinc-300 p-10 text-center text-sm text-zinc-500 dark:border-zinc-700">
-            {view === "dispatch-floor"
-              ? "Nothing due today. Schedule the red orders so work shows up here."
-              : view === "cancelled"
-                ? "No cancelled orders — full SO cancels and unavailable-line cancels land here."
-                : view === "source-deleted"
-                  ? "No orders were dropped by Zoho. Nothing to confirm."
-                  : "No orders in this view."}
-          </div>
-        )}
-
-        <div className="space-y-2.5">
-          {orders.map((order) => (
-            <MemoOrderCard key={order.id} order={order} today={today} view={view} canSchedule={canSchedule} onOpen={openPanel} />
-          ))}
-        </div>
-
-        {list.total > 0 && (
-          <Pager page={list.page} limit={list.limit} total={list.total} totalPages={list.totalPages} onPage={list.setPage} noun="orders" />
-        )}
-
-        {panel && (
-          <OrderPanel
-            order={panel.order}
-            initialMode={panel.mode}
-            canWrite
-            canSchedule={canSchedule}
-            onClose={() => setPanel(null)}
-            onChanged={() => {
-              list.refresh();
-              summary.refresh();
-            }}
-            invoiceGate={list.data?.viewer?.invoiceGate ?? "enforce"}
-          />
-        )}
-        </>
+          {panel && (
+            <OrderPanel
+              order={panel.order}
+              initialMode={panel.mode}
+              canWrite
+              canSchedule={canSchedule}
+              onClose={() => setPanel(null)}
+              onChanged={() => {
+                list.refresh();
+                summary.refresh();
+              }}
+              invoiceGate={list.data?.viewer?.invoiceGate ?? "enforce"}
+            />
+          )}        </>
       )}
     </div>
   );

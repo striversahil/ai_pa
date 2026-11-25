@@ -1,5 +1,9 @@
 "use client";
 
+// crm/DispatchCash.tsx — the dispatch cash ledger (the floor's in/out book).
+// Moved wholesale from components/accounts/DispatchCash.tsx (2026-11-26): the
+// markup is unchanged, the address is /api/crm/cash, the row types live in
+// crm/types.ts and CrmCashPanel feeds it from useCrmCash.
 import { useMemo, useState } from "react";
 import { inr } from "@/components/accounts/payment-calendar";
 import type { CashEntry, CashSummary } from "@/crm/types";
