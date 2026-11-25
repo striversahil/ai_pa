@@ -535,7 +535,12 @@ export function useEnquiryData(view: "sales" | "procurement" = "sales", paging?:
     });
     if (!res.ok) {
       const data = await res.json().catch(() => null);
-      throw new Error((data && (data.error || data.message)) || 'request failed');
+      // The API answers 4xx/5xx as JSON ({error, requestId}) — anything else is
+      // an edge/limit page. Name the status so a failure is diagnosable from
+      // the screen instead of collapsing into a bare "request failed".
+      const detail = (data && (data.error || data.message)) || `HTTP ${res.status}`;
+      const rid = data && (data as any).requestId ? ` [#${(data as any).requestId}]` : '';
+      throw new Error(detail + rid);
     }
     return res.json();
   };

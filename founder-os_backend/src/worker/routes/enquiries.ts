@@ -499,19 +499,31 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     enquirySend(c, r);
     // New free text needs its procurement-safe rewrite now — otherwise the
     // redacted copy only appears after the next list fetch kicks enrichment.
+    // It runs OFF the response path (waitUntil), exactly like PATCH below:
+    // awaiting the extraction + vision intake here held the create open for
+    // 10-60s, the browser got a non-JSON error page ("request failed") for an
+    // enquiry that was ALREADY saved, and the retry duplicated the row. The D1
+    // write is committed; the tracker converges from the live
+    // `enquiries/updated` event (useEnquiryData merges it, no polling).
+    // No executionCtx in tests/smoke — fall back to inline there.
     if ((r as any).status === 201 && (r.body as any)?.id) {
-      await runEnquiryAi(c, String((r.body as any).id), true);
-      bustQueues(c);
-      // Phase 3c dual-write: project the new enquiry header (linked only).
-      try {
-        const { mirrorEnquiries } = await import('../../modules/core/sales');
-        await mirrorEnquiries([String((r.body as any).id)]);
-      } catch { /* non-fatal */ }
-      // Phase 7b dual-write: new enquiry = unqualified lead until quoted.
-      try {
-        const { mirrorLeadsForEnquiries } = await import('../../modules/core/leads');
-        await mirrorLeadsForEnquiries([String((r.body as any).id)]);
-      } catch { /* non-fatal */ }
+      const newId = String((r.body as any).id);
+      const after = (async () => {
+        await runEnquiryAi(c, newId, true);
+        bustQueues(c);
+        // Phase 3c dual-write: project the new enquiry header (linked only).
+        try {
+          const { mirrorEnquiries } = await import('../../modules/core/sales');
+          await mirrorEnquiries([newId]);
+        } catch { /* non-fatal */ }
+        // Phase 7b dual-write: new enquiry = unqualified lead until quoted.
+        try {
+          const { mirrorLeadsForEnquiries } = await import('../../modules/core/leads');
+          await mirrorLeadsForEnquiries([newId]);
+        } catch { /* non-fatal */ }
+      })();
+      if (c.executionCtx?.waitUntil) c.executionCtx.waitUntil(after);
+      else await after;
     }
     return c.json(r.body, r.status as any);
   });

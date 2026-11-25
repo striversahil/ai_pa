@@ -600,6 +600,30 @@ export function createApp(): Hono<{ Bindings: Bindings }> {
     broadcastLive(c, LiveEvent.DataChanged, { path, method });
   });
 
+  // ── JSON error contract ────────────────────────────────────────────────────
+  // One uncaught throw must never answer with Hono's default plain-text 500:
+  // the frontend reads `error`/`message` out of the body, so a text/plain 500
+  // collapsed into a meaningless "request failed" and the real cause was lost.
+  // Log it (short request id) and answer JSON, so the screen, a screenshot and
+  // the Worker log all carry the same reference.
+  app.onError((err: any, c: any) => {
+    const requestId = (() => {
+      try { return crypto.randomUUID().slice(0, 8); } catch { return String(Date.now()).slice(-8); }
+    })();
+    const method = (() => { try { return c.req.method; } catch { return '?'; } })();
+    const path = (() => { try { return new URL(c.req.url).pathname; } catch { return '?'; } })();
+    console.error(`[api] ${method} ${path} requestId=${requestId}`, err?.stack || err?.message || err);
+    const message = String((err && (err.message || err)) || 'Internal server error');
+    try {
+      return c.json({ error: message, requestId }, 500);
+    } catch {
+      return new Response(JSON.stringify({ error: message, requestId }), {
+        status: 500,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+  });
+
   return app;
 }
 
