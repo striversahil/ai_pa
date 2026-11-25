@@ -7,6 +7,8 @@
 // Remarked/snatch penalties were part of the old held-estimate machinery and
 // are retired — no new negative rows are written; historic ones still read.
 import { prisma } from '../../shared/prisma';
+import { displayNameForEmail } from '../../shared/employee-name';
+import { loadEmployeeNameIndex } from '../../shared/employee-name-store';
 import { logger } from '../../shared/logger';
 import { DATE_RE, IN_BATCH, istDate } from './util';
 
@@ -140,14 +142,16 @@ export async function getConvertersMap(sinceDay: string = ''): Promise<Record<st
       select: { telecallerId: true, estimateId: true, day: true, kind: true },
     });
     const ids = [...new Set((events as any[]).map((e) => String(e.telecallerId ?? '')).filter(Boolean))];
-    const nameById = new Map<string, string>();
+    const [employees, nameById] = [await loadEmployeeNameIndex(), new Map<string, string>()] as const;
     // Chunked at IN_BATCH — D1 caps bound variables at 100/statement.
     for (let i = 0; i < ids.length; i += IN_BATCH) {
       const rows = await prisma.telecaller.findMany({
         where: { id: { in: ids.slice(i, i + IN_BATCH) } },
-        select: { id: true, name: true },
+        select: { id: true, name: true, email: true },
       });
-      for (const r of rows as any[]) nameById.set(String(r.id), String(r.name ?? ''));
+      for (const r of rows as any[]) {
+        nameById.set(String(r.id), displayNameForEmail(employees, (r as any).email, String(r.name ?? '')));
+      }
     }
     const out: Record<string, { name: string; day: string }> = {};
     // Two passes: closer rows first ("Converted By" = who closed it), then

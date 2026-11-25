@@ -20,6 +20,8 @@ import {
   dayCounts, delegationDate, groupLogsByTask, isSelfEditable, needsUpdateToday, reopenRequiresReason,
 } from './delegation-parse';
 import type { HrSelf } from './types';
+import { displayNameForLabel, employeeDisplayName } from '../../shared/employee-name';
+import { loadDisplayNameIndex } from '../../shared/employee-name-store';
 
 const TASK_TAKE = 500;
 const LOG_TAKE = 500;
@@ -54,6 +56,7 @@ function rosterLite(row: any, known: Set<string>) {
   return {
     id: String(row.id),
     name: String(row.name ?? ''),
+    displayName: employeeDisplayName(row),
     designation: row.designation ?? null,
     department: row.department ?? null,
     employeeCode: row.employeeCode ?? null,
@@ -78,6 +81,8 @@ export async function getDelegationBoard(opts: {
   const isManager = isHrManager(opts.me);
   const known = opts.knownLogins ?? new Set<string>();
   const self = await resolveSelfHumanResourcesMember(null, opts.me);
+  const names = await loadDisplayNameIndex();
+  const nameFor = (value: any) => displayNameForLabel(names, value);
 
   const rosterRows = (await prisma.humanResourcesMember.findMany({
     where: { deleted: false }, orderBy: { order: 'asc' },
@@ -88,7 +93,8 @@ export async function getDelegationBoard(opts: {
     .map((row) => {
       const lite = rosterLite(row, known);
       return {
-        id: lite.id, name: lite.name, designation: lite.designation,
+        id: lite.id, name: lite.name, displayName: lite.displayName,
+        designation: lite.designation,
         department: lite.department, employeeCode: lite.employeeCode,
         photoUrl: lite.photoUrl, order: lite.order,
       };
@@ -154,7 +160,7 @@ export async function getDelegationBoard(opts: {
       kind: row.kind === 'status' ? 'status' : 'remark',
       status: row.status ?? null,
       remark: row.remark ?? null,
-      authorName: row.authorName ?? null,
+      authorName: nameFor(row.authorName),
       createdAt: row.createdAt ?? null,
     })),
     needsUpdate: !isManager ? needsUpdateToday(task, today, nowTime, loggedToday) : false,
@@ -208,6 +214,7 @@ export async function getDelegationBoard(opts: {
       return {
         memberId: id,
         name: String(row.name ?? ''),
+        displayName: employeeDisplayName(row),
         designation: row.designation ?? null,
         photoUrl: row.photoUrl ?? null,
         open: open.length,
@@ -226,11 +233,11 @@ export async function getDelegationBoard(opts: {
       taskId: String(log.taskId),
       taskTitle: task?.title ?? 'Task',
       memberId: log.memberId ?? null,
-      memberName: log.memberId ? String(rosterById.get(String(log.memberId))?.name ?? '') : '',
+      memberName: log.memberId ? employeeDisplayName(rosterById.get(String(log.memberId))) : '',
       kind: log.kind === 'status' ? 'status' : 'remark',
       status: log.status ?? null,
       remark: log.remark ?? null,
-      authorName: log.authorName ?? null,
+      authorName: nameFor(log.authorName),
       logDate: String(log.logDate ?? ''),
       createdAt: log.createdAt ?? null,
     };
@@ -379,11 +386,14 @@ export async function getTaskHistory(id: string, me: any, limit = 100) {
       throw new HrError('You can only read tasks assigned to you', 403);
     }
   }
-  const rows: any[] = await (prisma as any).humanResourcesTaskLog.findMany({
-    where: { taskId: String(id) },
-    orderBy: [{ createdAt: 'desc' }],
-    take: Math.min(Math.max(Number(limit) || 100, 1), 300),
-  });
+  const [rows, names] = await Promise.all([
+    (prisma as any).humanResourcesTaskLog.findMany({
+      where: { taskId: String(id) },
+      orderBy: [{ createdAt: 'desc' }],
+      take: Math.min(Math.max(Number(limit) || 100, 1), 300),
+    }) as Promise<any[]>,
+    loadDisplayNameIndex(),
+  ]);
   return {
     task: taskJson(task, istDateStr(), istTimeStr(), await completedStamp(task)),
     logs: rows.map((row) => ({
@@ -392,7 +402,7 @@ export async function getTaskHistory(id: string, me: any, limit = 100) {
       kind: row.kind === 'status' ? 'status' : 'remark',
       status: row.status ?? null,
       remark: row.remark ?? null,
-      authorName: row.authorName ?? null,
+      authorName: displayNameForLabel(names, row.authorName),
       createdAt: row.createdAt ?? null,
     })),
   };

@@ -44,7 +44,7 @@ export async function listTaskLogs(taskId: string, limit = 100) {
     orderBy: [{ createdAt: 'desc' }],
     take: Math.min(Math.max(Number(limit) || 100, 1), 300),
   });
-  return rows.map(taskLogJson).filter(Boolean);
+  return rows.map((row) => taskLogJson(row)).filter(Boolean);
 }
 
 /** Logs for a set of tasks, newest first, capped — used to inline recent

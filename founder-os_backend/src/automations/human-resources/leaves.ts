@@ -5,8 +5,10 @@ import { leaveWorkingDays, monthRange } from './calendar';
 import { holidaySet } from './holidays';
 import { invalidateHumanResourcesCache } from './cache';
 import { dateRangesOverlap, leaveDaysFor } from './leave-requests-parse';
+import { displayNameForLabel, employeeDisplayName, type DisplayNameIndex } from '../../shared/employee-name';
+import { loadDisplayNameIndex } from '../../shared/employee-name-store';
 
-export function leaveJson(row: any, holidays?: Set<string>) {
+export function leaveJson(row: any, holidays?: Set<string>, names?: DisplayNameIndex) {
   const durationType = row.durationType ?? 'full_day';
   const days = holidays
     ? leaveDaysFor(durationType, leaveWorkingDays(String(row.startDate), String(row.endDate), holidays))
@@ -14,7 +16,7 @@ export function leaveJson(row: any, holidays?: Set<string>) {
   return {
     id: String(row.id),
     memberId: String(row.memberId),
-    memberName: row.member?.name ?? null,
+    memberName: row.member ? employeeDisplayName(row.member) : null,
     leaveType: row.leaveType ?? 'other',
     paid: row.paid !== false,
     startDate: row.startDate ?? null,
@@ -25,10 +27,10 @@ export function leaveJson(row: any, holidays?: Set<string>) {
     // created already approved, so older views keep their meaning.
     status: row.status ?? 'approved',
     durationType,
-    requestedBy: row.requestedBy ?? null,
+    requestedBy: names && row.requestedBy ? displayNameForLabel(names, row.requestedBy) : (row.requestedBy ?? null),
     fromTime: row.fromTime ?? null,
     toTime: row.toTime ?? null,
-    decidedBy: row.decidedBy ?? null,
+    decidedBy: names && row.decidedBy ? displayNameForLabel(names, row.decidedBy) : (row.decidedBy ?? null),
     decidedAt: row.decidedAt ?? null,
     decisionNote: row.decisionNote ?? null,
     updatedAt: row.updatedAt ?? null,
@@ -53,10 +55,11 @@ export async function listLeaves(
   const memberIds = [...new Set(filtered.map((r) => String(r.memberId)))];
   const members = await prisma.humanResourcesMember.findMany({ where: { id: { in: memberIds } } }) as any[];
   const byId = new Map(members.map((m) => [String(m.id), m]));
+  const names = await loadDisplayNameIndex();
   const start = filtered.reduce((min, r) => String(r.startDate) < min ? String(r.startDate) : min, String(filtered[0].startDate));
   const end = filtered.reduce((max, r) => String(r.endDate) > max ? String(r.endDate) : max, String(filtered[0].endDate));
   const holidays = await holidaySet(start, end);
-  return filtered.map((r) => leaveJson({ ...r, member: byId.get(String(r.memberId)) }, holidays));
+  return filtered.map((r) => leaveJson({ ...r, member: byId.get(String(r.memberId)) }, holidays, names));
 }
 
 /** Overlap + working-day validation shared by HR recording and employee

@@ -39,7 +39,7 @@ export default function AutoDialerSection({ rosterRows }: { rosterRows: RosterRo
 
   const paired = useMemo(() => new Set((board.data?.agents ?? []).map((r) => r.telecallerId)), [board.data]);
   const agents: AgentOption[] = useMemo(
-    () => rosterRows.map((r) => ({ id: r.id, name: r.name, region: r.region, paired: paired.has(r.id) })),
+    () => rosterRows.map((r) => ({ id: r.id, name: r.displayName || r.name, region: r.region, paired: paired.has(r.id) })),
     [rosterRows, paired],
   );
 

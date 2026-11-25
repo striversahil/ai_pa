@@ -47,7 +47,11 @@ export function money(n: number | null | undefined): string {
 }
 
 export function initials(name: string | null | undefined): string {
-  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  // Display names can be "Character Name (Employee Name)"; the parenthetical is
+  // context, so initials must come from the leading name only.
+  const raw = String(name || "");
+  const base = raw.replace(/\([^)]*\)/g, " ").trim() || raw;
+  const parts = base.trim().split(/\s+/).filter(Boolean);
   return (parts[0]?.[0] ?? "?").toUpperCase() + (parts[1]?.[0] ?? "").toUpperCase();
 }
 

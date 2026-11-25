@@ -4,10 +4,12 @@ import { cleanAttendanceRows } from './attendance-parse';
 import { monthRange } from './calendar';
 import { holidaySet } from './holidays';
 import { invalidateHumanResourcesCache } from './cache';
+import { employeeDisplayName } from '../../shared/employee-name';
 
 function memberLite(row: any) {
   return {
-    id: String(row.id), name: row.name, employeeCode: row.employeeCode ?? null,
+    id: String(row.id), name: row.name, displayName: employeeDisplayName(row),
+    employeeCode: row.employeeCode ?? null,
     designation: row.designation ?? null, department: row.department ?? null,
     photoUrl: row.photoUrl ?? null, active: row.active !== false,
   };

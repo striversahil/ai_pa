@@ -94,7 +94,7 @@ export default function OrgInspector({ title, people, onEdit, onClose }: {
           <div key={p.employee.id} className="rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
             <div className="flex items-center justify-between gap-2">
               <div className="min-w-0">
-                <div className="truncate text-[13px] font-bold text-zinc-900 dark:text-zinc-100">{p.employee.name}</div>
+                <div className="truncate text-[13px] font-bold text-zinc-900 dark:text-zinc-100">{p.employee.displayName || p.employee.name}</div>
                 <div className="flex items-center gap-1.5 text-[11px] text-zinc-500">
                   <span className={`h-1.5 w-1.5 rounded-full ${p.login ? "bg-emerald-500" : "bg-amber-400"}`} />
                   {p.login ? relActive(p.login.lastLoginAt) : "No login linked"}
@@ -134,7 +134,7 @@ export default function OrgInspector({ title, people, onEdit, onClose }: {
           <div className="mt-1 space-y-1">
             {inactive.map((p) => (
               <div key={p.employee.id} className="flex items-center justify-between gap-2 rounded-lg bg-zinc-50 px-2 py-1 dark:bg-zinc-900">
-                <span className="truncate">{p.employee.name}</span>
+                <span className="truncate">{p.employee.displayName || p.employee.name}</span>
                 {p.canManage && <button onClick={() => onEdit(p)} className="font-bold text-indigo-500 hover:underline">Edit</button>}
               </div>
             ))}

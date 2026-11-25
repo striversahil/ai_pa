@@ -27,7 +27,7 @@ export function parseAttachments(raw: string | null): ChatAttachment[] {
 export function mapMessage(row: any): ChatMessage | null {
   if (!row) return null;
   const replyTo = row.replyToId
-    ? { id: row.replyToId, senderName: row.replyToSenderName || "Unknown", body: row.replyToBody || "" }
+    ? { id: row.replyToId, senderId: row.replyToSenderId ?? null, senderName: row.replyToSenderName || "Unknown", body: row.replyToBody || "" }
     : null;
   return {
     id: row.id,

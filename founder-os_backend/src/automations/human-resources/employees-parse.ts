@@ -27,6 +27,8 @@ function employeeFields(input: Record<string, any>): Omit<EmployeeInput, 'name'>
   const aadhaar = nullableText(input.aadhaarLast4, 4);
   if (aadhaar && !/^\d{4}$/.test(aadhaar)) throw new HrError('aadhaarLast4 must be the last 4 digits');
   return {
+    characterName: nullableText(input.characterName, 120),
+    useCharacterName: Boolean(input.useCharacterName),
     employeeCode: nullableText(input.employeeCode, 40),
     email: nullableText(input.email, 200),
     loginEmail: nullableText(input.loginEmail, 200),
@@ -61,6 +63,9 @@ export function cleanEmployeeCreate(input: Record<string, any>): EmployeeInput {
   const name = text(input.name, 200);
   if (!name) throw new HrError('name is required');
   const fields = employeeFields(input);
+  if (fields.useCharacterName && !fields.characterName) {
+    throw new HrError('characterName is required when useCharacterName is on');
+  }
   if (fields.joiningDate && fields.exitDate && fields.exitDate < fields.joiningDate) {
     throw new HrError('exitDate cannot be before joiningDate');
   }
@@ -77,6 +82,9 @@ export function cleanEmployeePatch(input: Record<string, any>): EmployeePatch {
   const fields = employeeFields(input);
   for (const key of Object.keys(fields) as (keyof typeof fields)[]) {
     if (input[key] !== undefined) (out as any)[key] = fields[key];
+  }
+  if (input.useCharacterName === true && input.characterName !== undefined && !fields.characterName) {
+    throw new HrError('characterName is required when useCharacterName is on');
   }
   if (input.deleted !== undefined) out.deleted = Boolean(input.deleted);
   if (Object.keys(out).length === 0) throw new HrError('nothing to update');

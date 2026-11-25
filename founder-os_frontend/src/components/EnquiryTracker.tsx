@@ -68,7 +68,7 @@ export default function EnquiryTracker() {
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         const list = Array.isArray(d?.telecallers) ? d.telecallers : Array.isArray(d) ? d : [];
-        if (list.length) setTelecallers(list.map((t: any, i: number) => ({ id: String(t.id), name: t.name, initials: (t.name||"").split(" ").map((w:string)=>w[0]).join("").slice(0,2).toUpperCase()||"UN", color: ['#6366f1','#10b981','#f59e0b','#f43f5e','#06b6d4','#8b5cf6','#ec4899','#84cc16'][i%8], status:'active' as const })));
+        if (list.length) setTelecallers(list.map((t: any, i: number) => { const name = t.displayName || t.name; return { id: String(t.id), name, initials: (name||"").split(" ").map((w:string)=>w[0]).join("").slice(0,2).toUpperCase()||"UN", color: ['#6366f1','#10b981','#f59e0b','#f43f5e','#06b6d4','#8b5cf6','#ec4899','#84cc16'][i%8], status:'active' as const }; }));
       })
       .catch(()=>{});
   }, [isAdmin]);

@@ -6,6 +6,7 @@
 import type { AuthStore } from "../auth/store-parts/types";
 import { canManagePerson, positionScopes, chartTitleToPosition } from "./access";
 import { fail, normEmail, isPrivileged, heldScopes } from "./types";
+import { employeeDisplayName } from '../../shared/employee-name';
 import type { OrgPerson, OrgPeople } from "./types";
 
 /** Departments this viewer may READ people in (null = all). Procurement maps
@@ -121,6 +122,7 @@ export async function getOrgPeople(opts: {
       employee: {
         id: String((emp as any).id),
         name: String((emp as any).name ?? ""),
+        displayName: employeeDisplayName(emp),
         email: (emp as any).email ?? null,
         loginEmail: (emp as any).loginEmail ?? null,
         phone: (emp as any).phone ?? null,

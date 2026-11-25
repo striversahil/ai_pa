@@ -1,5 +1,6 @@
 import { prisma } from '../../shared/prisma';
 import { HrError } from './errors';
+import { employeeDisplayName } from '../../shared/employee-name';
 import { clampRange, monthRange, workingDatesInRange } from './calendar';
 import { cleanPayrollLinesPatch } from './payroll-parse';
 import { holidaySet } from './holidays';
@@ -99,18 +100,23 @@ function parseSnapshot(raw: unknown): any {
   catch { return {}; }
 }
 
-export function slipJson(row: any) {
+export function slipJson(row: any, member?: any) {
   const snapshot = parseSnapshot(row.snapshot);
+  const employeeName = row.employeeName;
+  const employeeDisplay = member ? employeeDisplayName(member) : (snapshot.employee?.displayName || employeeName);
   return {
     id: String(row.id),
     memberId: String(row.memberId),
     month: row.month,
     status: row.status ?? 'draft',
-    employee: snapshot.employee ?? {
-      name: row.employeeName, employeeCode: row.employeeCode,
-      designation: row.designation, department: row.department,
-    },
-    employeeName: row.employeeName,
+    employee: snapshot.employee
+      ? { ...snapshot.employee, displayName: employeeDisplay }
+      : {
+        name: row.employeeName, displayName: employeeDisplay, employeeCode: row.employeeCode,
+        designation: row.designation, department: row.department,
+      },
+    employeeName,
+    employeeDisplayName: employeeDisplay,
     employeeCode: row.employeeCode ?? null,
     designation: row.designation ?? null,
     department: row.department ?? null,
@@ -169,6 +175,7 @@ function buildSlip(
     employee: {
       id: String(member.id),
       name: member.name,
+      displayName: employeeDisplayName(member),
       employeeCode: member.employeeCode ?? null,
       designation: member.designation ?? null,
       department: member.department ?? null,
@@ -225,14 +232,16 @@ export async function listPayroll(monthInput: unknown) {
       }).gross;
     } catch { /* incomplete */ }
     return {
-      id: String(m.id), name: m.name, employeeCode: m.employeeCode ?? null,
+      id: String(m.id), name: m.name, displayName: employeeDisplayName(m),
+      employeeCode: m.employeeCode ?? null,
       designation: m.designation ?? null, department: m.department ?? null,
       photoUrl: m.photoUrl ?? null, active: m.active !== false,
       joiningDate: m.joiningDate ?? null, exitDate: m.exitDate ?? null,
       hasSalary: gross > 0, grossSalary: round2(gross),
     };
   });
-  const rows = slips.map(slipJson);
+  const memberById = new Map(members.map((m) => [String(m.id), m]));
+  const rows = slips.map((s) => slipJson(s, memberById.get(String(s.memberId))));
   return {
     month,
     slips: rows,
@@ -279,7 +288,7 @@ export async function generatePayroll(monthInput: unknown, actor: string | null)
       && String(l.endDate) >= start && String(l.startDate) <= end);
     const existing = slipBy.get(String(member.id));
     if (existing && ['finalized', 'paid'].includes(String(existing.status))) {
-      skipped.push({ name: member.name, reason: `${existing.status} slip locked` });
+      skipped.push({ name: employeeDisplayName(member), reason: String(existing.status) + ' slip locked' });
       continue;
     }
     if (!member.active && !existing && memberAttendance.length === 0 && memberLeaves.length === 0) {
@@ -303,7 +312,7 @@ export async function generatePayroll(monthInput: unknown, actor: string | null)
         created += 1;
       }
     } catch (e) {
-      skipped.push({ name: member.name, reason: e instanceof Error ? e.message : 'could not generate' });
+      skipped.push({ name: employeeDisplayName(member), reason: e instanceof Error ? e.message : 'could not generate' });
     }
   }
   await invalidateHumanResourcesCache();

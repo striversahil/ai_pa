@@ -63,7 +63,7 @@ export default function LeaveFormModal({ leave, employees, onClose, onSaved }: {
           <label className={label}>Employee</label>
           <select value={form.memberId} onChange={(e) => set("memberId", e.target.value)} className={field}>
             <option value="">Select employee</option>
-            {employees.map((emp) => <option key={emp.id} value={emp.id}>{emp.name}{emp.employeeCode ? ` · ${emp.employeeCode}` : ""}{emp.active ? "" : " (inactive)"}</option>)}
+            {employees.map((emp) => <option key={emp.id} value={emp.id}>{emp.displayName || emp.name}{emp.employeeCode ? ` · ${emp.employeeCode}` : ""}{emp.active ? "" : " (inactive)"}</option>)}
           </select>
         </div>
         <div className="grid gap-2 sm:grid-cols-2">

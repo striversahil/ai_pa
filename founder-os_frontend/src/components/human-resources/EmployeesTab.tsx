@@ -20,11 +20,11 @@ function EmployeeCard({ employee, onEdit, onToggle, onDelete }: {
         {employee.photoUrl ? (
           <img src={employee.photoUrl} alt="" className="h-12 w-12 shrink-0 rounded-xl border border-zinc-200 object-cover dark:border-zinc-700" />
         ) : (
-          <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-sm font-extrabold ${employee.active ? "bg-indigo-500/10 text-indigo-500" : "bg-zinc-200 text-zinc-500 dark:bg-zinc-800"}`}>{initials(employee.name)}</div>
+          <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-sm font-extrabold ${employee.active ? "bg-indigo-500/10 text-indigo-500" : "bg-zinc-200 text-zinc-500 dark:bg-zinc-800"}`}>{initials(employee.displayName || employee.name)}</div>
         )}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
-            <h4 className="truncate text-sm font-bold">{employee.name}</h4>
+            <h4 className="truncate text-sm font-bold">{employee.displayName || employee.name}</h4>
             <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${employee.active ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-zinc-500/10 text-zinc-500"}`}>{employee.active ? "Active" : "Inactive"}</span>
             {employee.employeeCode && <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold text-zinc-500 dark:bg-zinc-800">{employee.employeeCode}</span>}
           </div>
@@ -71,7 +71,7 @@ export default function EmployeesTab() {
       if (view === "active" && !e.active) return false;
       if (view === "inactive" && e.active) return false;
       if (!q) return true;
-      return [e.name, e.employeeCode, e.designation, e.department, e.phone, e.email, e.personalPhone, e.emergencyContactName, e.emergencyContactPhone]
+      return [e.name, e.displayName, e.characterName, e.employeeCode, e.designation, e.department, e.phone, e.email, e.personalPhone, e.emergencyContactName, e.emergencyContactPhone]
         .some((v) => String(v || "").toLowerCase().includes(q));
     });
   }, [employees, query, view]);
@@ -146,7 +146,7 @@ export default function EmployeesTab() {
       <ConfirmDialog
         open={!!deleting}
         title="Remove employee?"
-        message={<>Remove <b>{deleting?.name}</b> permanently? Tasks, attendance and salary history stay in the database but the employee disappears from the master.</>}
+        message={<>Remove <b>{deleting?.displayName || deleting?.name}</b> permanently? Tasks, attendance and salary history stay in the database but the employee disappears from the master.</>}
         confirmLabel="Remove"
         busy={busy}
         onConfirm={remove}

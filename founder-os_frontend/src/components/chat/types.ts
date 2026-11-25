@@ -37,7 +37,7 @@ export interface ChatMessage {
   deletedAt: string | null;
   attachments: ChatAttachment[];
   replyToId?: number | null;
-  replyTo?: { id: number; senderName: string; body: string } | null;
+  replyTo?: { id: number; senderId?: string | null; senderName: string; body: string } | null;
 }
 
 export interface ChatReaction {

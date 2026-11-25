@@ -148,6 +148,8 @@ export type PayrollStatus = (typeof PAYROLL_STATUSES)[number];
 
 export interface EmployeeInput {
   name: string;
+  characterName: string | null;
+  useCharacterName: boolean;
   employeeCode: string | null;
   email: string | null;
   /** Platform login email (falls back to `email` when empty). */

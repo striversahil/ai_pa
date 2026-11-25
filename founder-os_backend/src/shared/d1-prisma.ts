@@ -56,7 +56,7 @@ const BOOL_FIELDS: Record<string, string[]> = {
   DigitalMarketingOpenTask: [],
   DigitalMarketingOpenTaskEntry: [],
   DigitalMarketingOpenTaskAttachment: [],
-  HumanResourcesMember: ['deleted', 'active'],
+  HumanResourcesMember: ['deleted', 'active', 'useCharacterName'],
   HumanResourcesTask: ['deleted'],
   HumanResourcesExpense: ['deleted'],
   HumanResourcesFundTxn: ['deleted'],

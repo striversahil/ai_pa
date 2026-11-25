@@ -70,7 +70,7 @@ export function ViewAsTab() {
     const titles = [...order.filter((t) => byTitle.has(t)), ...[...byTitle.keys()].filter((t) => !order.includes(t))];
     return titles.map((title) => ({
       title,
-      people: (byTitle.get(title) ?? []).sort((a, b) => (a.employee.name || "").localeCompare(b.employee.name || "")),
+      people: (byTitle.get(title) ?? []).sort((a, b) => ((a.employee.displayName || a.employee.name) || "").localeCompare((b.employee.displayName || b.employee.name) || "")),
     }));
   }, [people]);
 
@@ -87,7 +87,7 @@ export function ViewAsTab() {
     const base = q ? seats.flatMap((s) => s.people) : (pick?.people ?? []);
     if (!q) return base;
     return base.filter((p) => {
-      const hay = `${p.employee.name ?? ""} ${p.employee.email ?? ""} ${p.login?.email ?? ""} ${(p.login?.roles ?? []).join(" ")}`.toLowerCase();
+      const hay = `${p.employee.displayName ?? p.employee.name ?? ""} ${p.employee.name ?? ""} ${p.employee.email ?? ""} ${p.login?.email ?? ""} ${(p.login?.roles ?? []).join(" ")}`.toLowerCase();
       return hay.includes(q);
     });
   }, [seats, position, q]);
@@ -198,11 +198,11 @@ export function ViewAsTab() {
                   }`}
                 >
                   <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-[11px] font-bold text-white">
-                    {(p.employee.name || "?").charAt(0).toUpperCase()}
+                    {(p.employee.displayName || p.employee.name || "?").replace(/\([^)]*\)/g, " ").trim().charAt(0).toUpperCase()}
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-semibold">
-                      {p.employee.name}
+                      {p.employee.displayName || p.employee.name}
                       {p.employee.designation && p.employee.designation !== position && !q && (
                         <span className="ml-1.5 text-[10px] font-normal text-zinc-500">{p.employee.designation}</span>
                       )}
@@ -221,7 +221,7 @@ export function ViewAsTab() {
           </div>
           <div className="mt-auto flex flex-wrap items-center justify-between gap-2 border-t border-zinc-200 px-3 py-2.5 dark:border-zinc-800">
             <span className="text-[11px] text-zinc-500">
-              {target ? <>Entering as <b className="text-zinc-700 dark:text-zinc-200">{target.employee.name}</b> — read-only</> : "Select a person to continue"}
+              {target ? <>Entering as <b className="text-zinc-700 dark:text-zinc-200">{target.employee.displayName || target.employee.name}</b> — read-only</> : "Select a person to continue"}
             </span>
             <button type="button" onClick={() => void enter()} disabled={!target || viewAsBusy} className={BTN}>
               {viewAsBusy ? "Entering…" : "Enter dashboard →"}

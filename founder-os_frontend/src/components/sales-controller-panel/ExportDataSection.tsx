@@ -270,7 +270,7 @@ export function ExportDataSection({ rosterRows, showRisk }: { rosterRows: Roster
             <option value="all">All</option>
             <option value="followups">Follow-up specialists</option>
             <option value="leadgen">Lead-gen only</option>
-            {rosterRows.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+            {rosterRows.map((r) => <option key={r.id} value={r.id}>{r.displayName || r.name}</option>)}
           </select>
         </label>
         <button onClick={() => void doExport()} disabled={loading}

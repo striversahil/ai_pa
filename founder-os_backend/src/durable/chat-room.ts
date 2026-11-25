@@ -22,7 +22,7 @@ export interface ChatRoomMsg {
   deletedAt: string | null;
   attachments: unknown[];
   replyToId: number | null;
-  replyTo?: { id: number; senderName: string; body: string } | null;
+  replyTo?: { id: number; senderId: string | null; senderName: string; body: string } | null;
 }
 
 export class ChatRoomDO {
@@ -40,7 +40,7 @@ export class ChatRoomDO {
   async ensureLoaded(): Promise<void> {
     if (this.loaded || !this.channelId) return;
     this.loaded = true;
-    const cached = (await this.state.storage.get<ChatRoomMsg[]>('messages')) || [];
+    const cached = (await this.state.storage.get<ChatRoomMsg[]>('messages:v2')) || [];
     if (cached.length > 0) {
       this.messages = cached;
       return;
@@ -49,7 +49,7 @@ export class ChatRoomDO {
     try {
       const stmt = this.env.DB.prepare(
         `SELECT m.*, u.name AS senderName, u.picture AS senderPicture,
-                ru.name AS replyToSenderName, rm.body AS replyToBody
+                ru.name AS replyToSenderName, rm.senderId AS replyToSenderId, rm.body AS replyToBody
          FROM chat_message m
          JOIN auth_user u ON u.id = m.senderId
          LEFT JOIN chat_message rm ON rm.id = m.replyToId
@@ -66,13 +66,13 @@ export class ChatRoomDO {
         attachments: this.parseAtt(r.attachments),
         replyToId: r.replyToId ?? null,
         replyTo: r.replyToId
-          ? { id: r.replyToId, senderName: r.replyToSenderName || 'Unknown', body: r.replyToBody || '' }
+          ? { id: r.replyToId, senderId: r.replyToSenderId ?? null, senderName: r.replyToSenderName || 'Unknown', body: r.replyToBody || '' }
           : null,
       }));
     } catch {
       this.messages = [];
     }
-    await this.state.storage.put('messages', this.messages);
+    await this.state.storage.put('messages:v2', this.messages);
   }
 
   parseAtt(raw: string | null): unknown[] {
@@ -95,7 +95,7 @@ export class ChatRoomDO {
         try {
           const stmt = this.env.DB.prepare(
             `SELECT m.*, u.name AS senderName, u.picture AS senderPicture,
-                    ru.name AS replyToSenderName, rm.body AS replyToBody
+                    ru.name AS replyToSenderName, rm.senderId AS replyToSenderId, rm.body AS replyToBody
              FROM chat_message m
              JOIN auth_user u ON u.id = m.senderId
              LEFT JOIN chat_message rm ON rm.id = m.replyToId
@@ -111,7 +111,7 @@ export class ChatRoomDO {
             attachments: this.parseAtt(r.attachments),
             replyToId: r.replyToId ?? null,
             replyTo: r.replyToId
-              ? { id: r.replyToId, senderName: r.replyToSenderName || 'Unknown', body: r.replyToBody || '' }
+              ? { id: r.replyToId, senderId: r.replyToSenderId ?? null, senderName: r.replyToSenderName || 'Unknown', body: r.replyToBody || '' }
               : null,
           }));
           return new Response(JSON.stringify(rows2), { headers: { 'content-type': 'application/json' } });
@@ -139,7 +139,7 @@ export class ChatRoomDO {
       // Resolve reply context from memory if present.
       if (msg.replyToId) {
         const r = this.messages.find((m) => m.id === msg.replyToId);
-        if (r) msg.replyTo = { id: r.id, senderName: r.senderName, body: r.body };
+        if (r) msg.replyTo = { id: r.id, senderId: r.senderId, senderName: r.senderName, body: r.body };
       }
       // Durable write-through.
       try {
@@ -158,7 +158,7 @@ export class ChatRoomDO {
       // Memory + durable cache.
       this.messages.push(msg);
       if (this.messages.length > CACHE_PAGE) this.messages = this.messages.slice(-CACHE_PAGE);
-      await this.state.storage.put('messages', this.messages);
+      await this.state.storage.put('messages:v2', this.messages);
       return new Response(JSON.stringify(msg), { status: 201, headers: { 'content-type': 'application/json' } });
     }
 

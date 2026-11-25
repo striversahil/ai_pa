@@ -1,6 +1,8 @@
 // ── Dialer config + per-agent queue persistence (D1) ────────────────────────
 import { CONFIG_KEY, type DialerConfig, type QueueItemView } from './types';
 import { normalizeConfig, parseStoredConfig, queueOutcome } from './pure';
+import { displayNameForEmail } from '../../shared/employee-name';
+import { loadEmployeeNameIndex } from '../../shared/employee-name-store';
 
 type Db = D1Database;
 
@@ -111,12 +113,14 @@ export async function recallQueue(db: Db, telecallerId: string, batchId?: string
 /** Leads that hit the retry cap (never re-queued), newest first. */
 export async function listUnreachable(db: Db, sinceIso: string): Promise<any[]> {
   const res: any = await db.prepare(
-    `SELECT q.id, q.telecallerId, q.mobile, q.name, q.attempts, q.lastDisposition, q.updatedAt, t.name AS agentName
+    `SELECT q.id, q.telecallerId, q.mobile, q.name, q.attempts, q.lastDisposition, q.updatedAt, t.name AS agentName, t.email AS agentEmail
        FROM DialerQueue q LEFT JOIN Telecaller t ON t.id = q.telecallerId
       WHERE q.status = 'unreachable' AND q.updatedAt >= ? ORDER BY q.updatedAt DESC LIMIT 300`,
   ).bind(sinceIso).all();
+  const employees = await loadEmployeeNameIndex();
   return ((res?.results ?? []) as any[]).map((r) => ({
-    id: String(r.id), telecallerId: String(r.telecallerId), agentName: String(r.agentName ?? ''),
+    id: String(r.id), telecallerId: String(r.telecallerId),
+    agentName: displayNameForEmail(employees, r.agentEmail, String(r.agentName ?? '')),
     mobile: String(r.mobile ?? ''), name: String(r.name ?? ''), attempts: Number(r.attempts ?? 0),
     lastDisposition: String(r.lastDisposition ?? ''), updatedAt: String(r.updatedAt ?? ''),
   }));

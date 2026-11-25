@@ -47,10 +47,10 @@ export default function TeamPanel({
           >
             <div className="flex items-center gap-2">
               <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-indigo-500/10 text-[10px] font-extrabold text-indigo-500">
-                {initials(row.name)}
+                {initials(row.displayName || row.name)}
               </span>
               <div className="min-w-0 flex-1">
-                <div className="truncate text-xs font-bold text-zinc-800 dark:text-zinc-100">{row.name}</div>
+                <div className="truncate text-xs font-bold text-zinc-800 dark:text-zinc-100">{row.displayName || row.name}</div>
                 <div className="truncate text-[10px] text-zinc-500">{row.designation ?? "—"}</div>
               </div>
               {row.overdue > 0 && (

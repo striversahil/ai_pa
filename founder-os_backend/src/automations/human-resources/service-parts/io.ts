@@ -14,6 +14,7 @@ import { appendTaskLog, completedInWindow } from "../task-logs";
 import { reopenRequiresReason } from "../delegation-parse";
 import { listPendingLeaveRequests } from "../leave-requests";
 import { normId, emailTokens, expenseJson, fundTxnJson, splitTaskBuckets } from "./pure";
+import { employeeDisplayName } from "../../../shared/employee-name";
 
 export async function resolveSelfHumanResourcesMember(
   asId: unknown,
@@ -26,7 +27,7 @@ export async function resolveSelfHumanResourcesMember(
     const hit = roster.find((r) => String(r.id) === String(asId));
     if (hit) {
       return {
-        selfId: String(hit.id), selfName: String(hit.name),
+        selfId: String(hit.id), selfName: employeeDisplayName(hit),
         designation: hit.designation ?? null, matchedBy: 'as',
       };
     }
@@ -39,7 +40,7 @@ export async function resolveSelfHumanResourcesMember(
     if (loginHits.length === 1) {
       const h = loginHits[0];
       return {
-        selfId: String(h.id), selfName: String(h.name),
+        selfId: String(h.id), selfName: employeeDisplayName(h),
         designation: h.designation ?? null, matchedBy: 'loginEmail',
       };
     }
@@ -48,7 +49,7 @@ export async function resolveSelfHumanResourcesMember(
     if (mailHits.length === 1) {
       const h = mailHits[0];
       return {
-        selfId: String(h.id), selfName: String(h.name),
+        selfId: String(h.id), selfName: employeeDisplayName(h),
         designation: h.designation ?? null, matchedBy: 'email',
       };
     }
@@ -62,7 +63,7 @@ export async function resolveSelfHumanResourcesMember(
     if (hits.length === 1) {
       const h = hits[0];
       return {
-        selfId: String(h.id), selfName: String(h.name),
+        selfId: String(h.id), selfName: employeeDisplayName(h),
         designation: h.designation ?? null, matchedBy: 'name',
       };
     }

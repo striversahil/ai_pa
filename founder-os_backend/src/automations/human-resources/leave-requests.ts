@@ -12,6 +12,7 @@ import {
   cleanLeaveRequest, decisionNoteError, MIN_NOTE_CHARS,
 } from './leave-requests-parse';
 import { LEAVE_REQUEST_STATUSES } from './types';
+import { loadDisplayNameIndex } from '../../shared/employee-name-store';
 
 const REQUESTS_TAKE = 500;
 
@@ -34,18 +35,22 @@ async function memberNameMap(memberIds: string[]) {
   return new Map(rows.map((row) => [String(row.id), row]));
 }
 
-function withMember(row: any, byId: Map<string, any>) {
-  return leaveJson({ ...row, member: byId.get(String(row.memberId)) ?? null });
+function withMember(row: any, byId: Map<string, any>, names: any) {
+  return leaveJson({ ...row, member: byId.get(String(row.memberId)) ?? null }, undefined, names);
 }
 
 /** One employee's own leave history (every status), newest first. */
 export async function listMyLeave(memberId: string) {
-  const rows = (await prisma.humanResourcesLeave.findMany({
-    where: { memberId: String(memberId), deleted: false },
-    orderBy: [{ startDate: 'desc' }],
-    take: 200,
-  })) as any[];
-  return sortRequests(rows).map((row) => leaveJson(row));
+  const [rows, member, names] = await Promise.all([
+    prisma.humanResourcesLeave.findMany({
+      where: { memberId: String(memberId), deleted: false },
+      orderBy: [{ startDate: 'desc' }],
+      take: 200,
+    }) as Promise<any[]>,
+    prisma.humanResourcesMember.findUnique({ where: { id: String(memberId) } }) as Promise<any>,
+    loadDisplayNameIndex(),
+  ]);
+  return sortRequests(rows).map((row) => leaveJson({ ...row, member }, undefined, names));
 }
 
 /** HR queue: every application regardless of month (the leave section is
@@ -61,8 +66,11 @@ export async function listLeaveRequests(status?: unknown) {
     orderBy: [{ startDate: 'desc' }],
     take: REQUESTS_TAKE,
   })) as any[];
-  const byId = await memberNameMap(rows.map((row) => String(row.memberId)));
-  return sortRequests(rows).map((row) => withMember(row, byId));
+  const [byId, names] = await Promise.all([
+    memberNameMap(rows.map((row) => String(row.memberId))),
+    loadDisplayNameIndex(),
+  ]);
+  return sortRequests(rows).map((row) => withMember(row, byId, names));
 }
 
 /** Pending applications for the HR dashboard payload (badge + short list). */
@@ -72,8 +80,11 @@ export async function listPendingLeaveRequests(limit = 20) {
     orderBy: [{ startDate: 'asc' }],
     take: Math.min(Math.max(Number(limit) || 20, 1), 100),
   })) as any[];
-  const byId = await memberNameMap(rows.map((row) => String(row.memberId)));
-  const pending = rows.map((row) => withMember(row, byId));
+  const [byId, names] = await Promise.all([
+    memberNameMap(rows.map((row) => String(row.memberId))),
+    loadDisplayNameIndex(),
+  ]);
+  const pending = rows.map((row) => withMember(row, byId, names));
   return { pendingCount: pending.length, pending };
 }
 
@@ -98,7 +109,11 @@ export async function applyLeaveRequest(
     },
   });
   await invalidateHumanResourcesCache();
-  return leaveJson(row);
+  const [member, names] = await Promise.all([
+    prisma.humanResourcesMember.findUnique({ where: { id: String(memberId) } }) as Promise<any>,
+    loadDisplayNameIndex(),
+  ]);
+  return leaveJson({ ...row, member }, undefined, names);
 }
 
 /** Employee withdraws their own still-undecided request. */
@@ -157,5 +172,9 @@ export async function decideLeaveRequest(opts: {
     },
   });
   await invalidateHumanResourcesCache();
-  return leaveJson(updated);
+  const [member, names] = await Promise.all([
+    prisma.humanResourcesMember.findUnique({ where: { id: String(updated.memberId) } }) as Promise<any>,
+    loadDisplayNameIndex(),
+  ]);
+  return leaveJson({ ...updated, member }, undefined, names);
 }

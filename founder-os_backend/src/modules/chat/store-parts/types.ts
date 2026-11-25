@@ -7,6 +7,8 @@ export interface ChatUser {
   name: string;
   picture: string | null;
   email?: string | null;
+  /** Server-only: callers never surface this flag in the UI. */
+  isRoot?: boolean;
 }
 
 export interface ChatChannel {
@@ -39,7 +41,7 @@ export interface ChatMessage {
   deletedAt: string | null;
   attachments: ChatAttachment[];
   replyToId: number | null;
-  replyTo?: { id: number; senderName: string; body: string } | null;
+  replyTo?: { id: number; senderId: string | null; senderName: string; body: string } | null;
 }
 
 export interface ChatReaction {

@@ -308,6 +308,8 @@ export interface AgentViewData {
 export interface RosterRow {
   id: string;
   name: string;
+  /** Character-name display (Character Name (Legal Name)); `name` stays the roster identity. */
+  displayName?: string;
   email: string | null;
   phone: string | null;
   whatsapp: string | null;

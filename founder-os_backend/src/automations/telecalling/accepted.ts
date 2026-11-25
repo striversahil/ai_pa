@@ -25,6 +25,8 @@
 import { prisma } from '../../shared/prisma';
 import { logger } from '../../shared/logger';
 import { closePointsFor } from './scoring';
+import { displayNameForEmail } from '../../shared/employee-name';
+import { loadEmployeeNameIndex } from '../../shared/employee-name-store';
 
 export type AcceptedBucketKind = 'region' | 'direct' | 'unlinked';
 
@@ -90,13 +92,16 @@ export async function loadCreatorIndex(): Promise<CreatorIndex> {
   const index: CreatorIndex = { regionById: new Map(), nameById: new Map(), knownIds: new Set() };
   try {
     // NO deleted filter on purpose (see CreatorIndex). The roster is tiny.
-    const rows = await prisma.telecaller.findMany({ select: { id: true, name: true, region: true } });
+    const [rows, employees] = await Promise.all([
+      prisma.telecaller.findMany({ select: { id: true, name: true, email: true, region: true } }),
+      loadEmployeeNameIndex(),
+    ]);
     for (const t of (rows as any[]) ?? []) {
       const id = String(t.id ?? '');
       if (!id) continue;
       index.knownIds.add(id);
       index.regionById.set(id, String(t.region ?? ''));
-      index.nameById.set(id, String(t.name ?? ''));
+      index.nameById.set(id, displayNameForEmail(employees, (t as any).email, String(t.name ?? '')));
     }
   } catch (e: any) {
     logger.warn({ err: e?.message }, 'accepted: creator index read failed — every creator reads as direct');

@@ -452,6 +452,14 @@ payroll keep exactly one source of truth (`HumanResourcesLeave`); no second tabl
 - Live: every write broadcasts the existing `human-resources` event (no new event name);
   `invalidateHumanResourcesCache()` keeps the 5-min dashboard cache honest.
 
+**Character / working names (2026-11-26, migration 0169).** `HumanResourcesMember` carries
+`characterName` + `useCharacterName`; the legal `name` is never rewritten. Every
+display surface (HR cards, org chart, payroll screen, leave/task audit labels, sales
+leaderboard, notifications, chat) renders `employeeDisplayName()` =
+`Character Name (Legal Name)`, or the legal name when the switch is off/blank. Backend
+truth `shared/employee-name.ts` ↔ frontend mirror `hr/display.ts`; guard
+`employee-display-name`. Payroll snapshots/PDFs and identity matching keep the legal name.
+
 ### 3.2d Procurement queue ownership — manual conclude only (2026-11-21)
 
 The sourcing queue is the procurement desk's own worklist, not a mirror of the estimate lifecycle.
@@ -1286,6 +1294,15 @@ for every approved member — not an automation.
   message})` → the existing EventHub WebSocket; the frontend applies creates/updates/deletes
   instantly. Per-channel message cache makes switching chats instant (no refetch per click);
   older pages load on scroll-up.
+- **Root is not a participant:** `auth_user.isRoot` accounts are filtered out of
+  `GET /api/chat/users`, channel member lists, DM pickers and DM channels. Creating a DM
+  with root, sending/typing/reacting as root, and adding root to a channel are refused
+  (generic 403 / stripped id); root-authored rows are also dropped on read. Nothing in the
+  UI advertises the exclusion.
+- **Display names:** chat resolves every sender (and reply author) through the shared
+  employee-name index — HR character name first, then `auth_user.displayName`, then the
+  login name. The Durable Object cache key is `messages:v2` so old raw-name rows are not
+  served.
 
 ## 14. PWA & mobile
 

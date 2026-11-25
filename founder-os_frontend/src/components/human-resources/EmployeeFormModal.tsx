@@ -10,6 +10,7 @@ import { applySalaryPlan, jsonRequest, listSalaryTemplates, readError, reapplySa
 import { fileToDataUrl, uploadMediaFile } from "@/lib/imageFiles";
 import { resolveSalary } from "@/hr/salary";
 import { initials, todayIST } from "@/hr/format";
+import { employeeDisplayName } from "@/hr/display";
 
 const field = "w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-3 py-2 text-sm outline-none focus:border-indigo-500";
 const label = "block text-[11px] font-bold uppercase tracking-wide text-zinc-500 mb-1";
@@ -31,6 +32,8 @@ export default function EmployeeFormModal({ employee, onClose, onSaved }: {
   const editing = !!employee;
   const [form, setForm] = useState({
     name: employee?.name ?? "",
+    characterName: employee?.characterName ?? "",
+    useCharacterName: employee?.useCharacterName === true,
     email: employee?.email ?? "",
     loginEmail: employee?.loginEmail ?? "",
     phone: employee?.phone ?? "",
@@ -71,6 +74,7 @@ export default function EmployeeFormModal({ employee, onClose, onSaved }: {
 
   const set = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) => setForm((prev) => ({ ...prev, [key]: value }));
   const planDirty = templateId !== initialTemplateId || planAmount !== initialPlanAmount;
+  const previewName = employeeDisplayName(form);
 
   useEffect(() => {
     let alive = true;
@@ -117,6 +121,10 @@ export default function EmployeeFormModal({ employee, onClose, onSaved }: {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.name.trim()) { setErr("Employee name is required"); return; }
+    if (form.useCharacterName && !form.characterName.trim()) {
+      setErr("Enter the character name, or turn off the character-name display");
+      return;
+    }
     // Founder decision 2026-11-19: designation is free text again (the
     // 2026-11-13 chart-only rule is retired for the HR employee form). Picking
     // a chart position below is the optional shortcut that also seats them on
@@ -135,6 +143,8 @@ export default function EmployeeFormModal({ employee, onClose, onSaved }: {
       const body = {
         ...form,
         name: form.name.trim(),
+        characterName: form.characterName.trim() || null,
+        useCharacterName: form.useCharacterName,
         email: form.email.trim() || null,
         loginEmail: form.loginEmail.trim() || null,
         phone: form.phone.trim() || null,
@@ -193,7 +203,7 @@ export default function EmployeeFormModal({ employee, onClose, onSaved }: {
           {form.photoUrl ? (
             <img src={form.photoUrl} alt="" className="h-16 w-16 rounded-2xl border border-zinc-200 object-cover dark:border-zinc-700" />
           ) : (
-            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-indigo-500/10 text-lg font-extrabold text-indigo-500">{initials(form.name)}</div>
+            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-indigo-500/10 text-lg font-extrabold text-indigo-500">{initials(previewName)}</div>
           )}
           <div className="flex flex-wrap items-center gap-2">
             <label className="cursor-pointer rounded-lg bg-zinc-100 px-3 py-1.5 text-xs font-bold text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700">
@@ -208,6 +218,31 @@ export default function EmployeeFormModal({ employee, onClose, onSaved }: {
         <Section title="Basic details">
           <div className="grid gap-2 sm:grid-cols-2">
             <div><label className={label}>Full name</label><input value={form.name} onChange={(e) => set("name", e.target.value)} className={field} autoFocus /></div>
+            <div className="sm:col-span-2 rounded-lg border border-zinc-200 dark:border-zinc-800 p-3 space-y-2">
+              <label className="flex items-center gap-2 text-sm font-semibold text-zinc-700 dark:text-zinc-300">
+                <input
+                  type="checkbox"
+                  checked={form.useCharacterName}
+                  onChange={(e) => set("useCharacterName", e.target.checked)}
+                />
+                Use a character name across the dashboard
+              </label>
+              {form.useCharacterName && (
+                <div>
+                  <label className={label}>Character name</label>
+                  <input
+                    value={form.characterName}
+                    onChange={(e) => set("characterName", e.target.value)}
+                    placeholder="e.g. Iron Man"
+                    className={field}
+                  />
+                </div>
+              )}
+              <p className="text-xs text-zinc-500">
+                Shown everywhere as <span className="font-semibold text-zinc-700 dark:text-zinc-300">{previewName || "Employee name"}</span>
+                {form.useCharacterName ? "" : " (character-name display is off)"}
+              </p>
+            </div>
             <div>
               <label className={label}>Employee code</label>
               <div className={`${field} flex items-center justify-between gap-2 bg-zinc-50 text-zinc-500 dark:bg-zinc-900`}>

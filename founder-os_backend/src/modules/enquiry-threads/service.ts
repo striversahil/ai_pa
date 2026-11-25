@@ -21,16 +21,17 @@ import type { EnquiryThread, ThreadActor, ThreadDesk, ThreadResult } from './typ
 type D1 = any;
 type Res<T> = ThreadResult<T>;
 
-/** Who is writing, as a NAME. The auth profile name is trusted only when it is
- *  not an address; otherwise the HR register supplies the person's real name
- *  (matched on the login email), and the email is humanized as a last resort —
- *  a thread must never be attributed to `someone@company.com`. */
+/** Who is writing, as a NAME. When the login matches the HR register, the HR
+ *  display name wins (Character Name (Legal Name), 2026-11-26). Otherwise the
+ *  auth profile name is trusted only when it is not an address, else the email
+ *  is humanized — a thread must never read as `someone@company.com`. */
 async function actorFor(db: D1, me: MeResponse, desk: ThreadDesk): Promise<ThreadActor> {
   const email = String((me as any)?.user?.email ?? '').trim();
   const raw = String((me as any)?.user?.name ?? '').trim();
-  if (raw && !looksLikeEmail(raw)) return { desk, name: raw.slice(0, 120) };
   const member = await readMemberName(db, email);
-  const name = member || prettifyAuthorName(raw || email) || DESK_LABEL[desk];
+  if (member) return { desk, name: member.slice(0, 120) };
+  if (raw && !looksLikeEmail(raw)) return { desk, name: raw.slice(0, 120) };
+  const name = prettifyAuthorName(raw || email) || DESK_LABEL[desk];
   return { desk, name: name.slice(0, 120) };
 }
 

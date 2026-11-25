@@ -62,7 +62,7 @@ export default function SalarySlipEditor({ slip, onClose, onSaved }: {
   };
 
   return (
-    <Modal title={`Salary slip · ${slip.employeeName}`} subtitle={`${monthLabel(slip.month)} · draft`} onClose={onClose} wide>
+    <Modal title={`Salary slip · ${slip.employeeDisplayName || slip.employeeName}`} subtitle={`${monthLabel(slip.month)} · draft`} onClose={onClose} wide>
       <div className="space-y-3">
         <div className="grid grid-cols-2 gap-2 rounded-xl border border-zinc-200 p-3 text-[11px] dark:border-zinc-800 sm:grid-cols-4">
           <div><div className={label}>Working days</div><div className="text-sm font-bold">{slip.workingDays}</div></div>

@@ -104,6 +104,10 @@ export interface HrSelf {
 export interface HrMember {
   id: string;
   name: string;
+  /** Preferred label - Character Name (Employee Name) when enabled. */
+  displayName?: string;
+  characterName?: string | null;
+  useCharacterName?: boolean;
   designation: string | null;
   order: number;
   department?: string | null;
@@ -286,8 +290,9 @@ export interface HrSalarySlip {
   memberId: string;
   month: string;
   status: PayrollStatus;
-  employee: { id?: string; name: string; employeeCode?: string | null; designation?: string | null; department?: string | null; joiningDate?: string | null; photoUrl?: string | null };
+  employee: { id?: string; name: string; displayName?: string; employeeCode?: string | null; designation?: string | null; department?: string | null; joiningDate?: string | null; photoUrl?: string | null };
   employeeName: string;
+  employeeDisplayName?: string;
   employeeCode: string | null;
   designation: string | null;
   department: string | null;
@@ -322,6 +327,7 @@ export interface HrSalarySlip {
 export interface HrPayrollEmployee {
   id: string;
   name: string;
+  displayName?: string;
   employeeCode: string | null;
   designation: string | null;
   department: string | null;
@@ -572,6 +578,7 @@ export interface HrDelegationTask extends HrTask {
 export interface HrDelegationMember {
   id: string;
   name: string;
+  displayName?: string;
   designation: string | null;
   department: string | null;
   employeeCode: string | null;
@@ -596,6 +603,7 @@ export interface HrDelegationCounts {
 export interface HrDelegationTeamRow {
   memberId: string;
   name: string;
+  displayName?: string;
   designation: string | null;
   photoUrl: string | null;
   open: number;

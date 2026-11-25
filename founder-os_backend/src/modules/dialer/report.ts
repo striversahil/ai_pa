@@ -2,6 +2,8 @@
 import { breakOverrunSec, dispositionOf, istHour } from './pure';
 import { queueCounts } from './queue';
 import { NOT_DISPOSED, type DialerConfig } from './types';
+import { displayNameForEmail } from '../../shared/employee-name';
+import { loadEmployeeNameIndex } from '../../shared/employee-name-store';
 
 type Db = D1Database;
 
@@ -33,13 +35,16 @@ function reached(cfg: DialerConfig, row: any): boolean {
 }
 
 export async function dayReport(db: Db, cfg: DialerConfig, day: string): Promise<{ day: string; agents: AgentDay[] }> {
-  const [calls, breaks, roster] = await Promise.all([
+  const [calls, breaks, roster, employees] = await Promise.all([
     db.prepare(`SELECT telecallerId, attemptAt, durationSec, status, disposition, manual, origin FROM DeviceCall WHERE day = ?`).bind(day).all(),
     db.prepare(`SELECT telecallerId, reason, note, startAt, endAt, durationSec FROM DialerBreak WHERE day = ? ORDER BY startAt`).bind(day).all(),
-    db.prepare(`SELECT id, name, region FROM Telecaller`).all(),
+    db.prepare(`SELECT id, name, email, region FROM Telecaller`).all(),
+    loadEmployeeNameIndex(),
   ]);
   const names = new Map<string, { name: string; region: string }>();
-  for (const r of ((roster as any).results ?? []) as any[]) names.set(String(r.id), { name: String(r.name ?? ''), region: String(r.region ?? '') });
+  for (const r of ((roster as any).results ?? []) as any[]) names.set(String(r.id), {
+    name: displayNameForEmail(employees, r.email, String(r.name ?? '')), region: String(r.region ?? ''),
+  });
   const agents = new Map<string, AgentDay>();
   const agent = (id: string): AgentDay => {
     let a = agents.get(id);
@@ -84,7 +89,7 @@ export async function liveBoard(db: Db, cfg: DialerConfig, today: string): Promi
   const [devices, counts, report] = await Promise.all([
     db.prepare(
       `SELECT d.id, d.telecallerId, d.label, d.appVersion, d.lastSeenAt, d.liveState, d.liveDetail, d.liveAt, d.pendingSync,
-              t.name AS agentName, t.region
+              t.name AS agentName, t.email AS agentEmail, t.region
          FROM DeviceRegistration d LEFT JOIN Telecaller t ON t.id = d.telecallerId
         WHERE d.status = 'active' ORDER BY t.name`,
     ).all(),
@@ -92,6 +97,7 @@ export async function liveBoard(db: Db, cfg: DialerConfig, today: string): Promi
     dayReport(db, cfg, today),
   ]);
   const byAgent = new Map(report.agents.map((a) => [a.telecallerId, a]));
+  const employees = await loadEmployeeNameIndex();
   return (((devices as any).results ?? []) as any[]).map((d) => {
     const day = byAgent.get(String(d.telecallerId));
     const openBreak = day?.breaks.find((b) => !b.endAt) ?? null;
@@ -99,7 +105,7 @@ export async function liveBoard(db: Db, cfg: DialerConfig, today: string): Promi
     return {
       deviceId: String(d.id),
       telecallerId: String(d.telecallerId),
-      agentName: String(d.agentName ?? ''),
+      agentName: displayNameForEmail(employees, d.agentEmail, String(d.agentName ?? '')),
       region: String(d.region ?? ''),
       label: String(d.label ?? ''),
       appVersion: String(d.appVersion ?? ''),

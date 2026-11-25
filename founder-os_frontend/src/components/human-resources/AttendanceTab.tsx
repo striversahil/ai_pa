@@ -164,9 +164,9 @@ export default function AttendanceTab() {
                   <tr key={row.member.id} className="border-t border-zinc-100 dark:border-zinc-800/80">
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-2">
-                        {row.member.photoUrl ? <img src={row.member.photoUrl} alt="" className="h-7 w-7 rounded-lg object-cover" /> : <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-500/10 text-[10px] font-extrabold text-indigo-500">{initials(row.member.name)}</div>}
+                        {row.member.photoUrl ? <img src={row.member.photoUrl} alt="" className="h-7 w-7 rounded-lg object-cover" /> : <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-500/10 text-[10px] font-extrabold text-indigo-500">{initials(row.member.displayName || row.member.name)}</div>}
                         <div>
-                          <div className="font-bold">{row.member.name}</div>
+                          <div className="font-bold">{row.member.displayName || row.member.name}</div>
                           <div className="text-[10px] text-zinc-500">{row.member.designation || row.member.employeeCode || "—"}</div>
                         </div>
                       </div>
@@ -206,7 +206,7 @@ export default function AttendanceTab() {
               <tbody>
                 {summary.map((r) => (
                   <tr key={r.member.id} className="border-t border-zinc-100 dark:border-zinc-800/80">
-                    <td className="px-3 py-2 font-semibold">{r.member.name}</td>
+                    <td className="px-3 py-2 font-semibold">{r.member.displayName || r.member.name}</td>
                     <td className="px-2 py-2 font-bold text-emerald-600 dark:text-emerald-400">{r.present}</td>
                     <td className="px-2 py-2 text-amber-600 dark:text-amber-400">{r.halfDay}</td>
                     <td className="px-2 py-2 text-rose-500">{r.absent}</td>

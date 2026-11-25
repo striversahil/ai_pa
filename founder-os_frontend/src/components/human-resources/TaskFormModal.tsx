@@ -99,7 +99,7 @@ export default function TaskFormModal({ task, roster, mode = "manager", selfMemb
               <select value={assignedToId} onChange={(e) => setAssignedToId(e.target.value)} className={field}>
                 {roster.length === 0 && <option value="">Add a team member first</option>}
                 {roster.map((m) => (
-                  <option key={m.id} value={m.id}>{m.name}{m.designation ? ` · ${m.designation}` : ""}</option>
+                  <option key={m.id} value={m.id}>{m.displayName || m.name}{m.designation ? ` · ${m.designation}` : ""}</option>
                 ))}
               </select>
             </div>

@@ -4,6 +4,8 @@
  */
 import { prisma } from '../../shared/prisma';
 import { mirrorRosterRemoved, mirrorRosterRow } from '../core/sync';
+import { displayNameForEmail } from '../../shared/employee-name';
+import { loadEmployeeNameIndex } from '../../shared/employee-name-store';
 
 export interface TelecallerInput {
   name: string;
@@ -15,14 +17,17 @@ export interface TelecallerInput {
 }
 
 export async function listTelecallers(): Promise<any[]> {
-  const tcs = await prisma.telecaller.findMany({ orderBy: { order: 'asc' } });
+  const [tcs, employees] = await Promise.all([
+    prisma.telecaller.findMany({ orderBy: { order: 'asc' } }),
+    loadEmployeeNameIndex(),
+  ]);
   return Promise.all(
     tcs.map(async (t: any) => {
       const [totalAssigned, activeAssigned] = await Promise.all([
         prisma.estimateAssignment.count({ where: { telecallerId: t.id } }),
         prisma.estimateAssignment.count({ where: { telecallerId: t.id, status: 'assigned' } }),
       ]);
-      return { ...t, totalAssigned, activeAssigned };
+      return { ...t, displayName: displayNameForEmail(employees, t.email, t.name), totalAssigned, activeAssigned };
     }),
   );
 }

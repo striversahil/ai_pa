@@ -11,6 +11,7 @@
 // Login roles are attached by email so `roles:["sales-head"]` works too.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { NotificationAudience, NotificationSeat } from "./types";
+import { employeeDisplayName } from "../../shared/employee-name";
 
 export interface SeatIndex {
   seats: NotificationSeat[];
@@ -57,7 +58,7 @@ export async function loadSeats(db: any, opts?: { includeInactive?: boolean }): 
   const [employees, roster, roles] = await Promise.all([
     all(
       db,
-      `SELECT "id", "name", "email", "loginEmail", "designation", "department", "active", "deleted"
+      `SELECT "id", "name", "characterName", "useCharacterName", "email", "loginEmail", "designation", "department", "active", "deleted"
          FROM "HumanResourcesMember"`,
     ),
     all(db, `SELECT "id", "name", "email", "region", "region2", "type", "deleted" FROM "Telecaller"`),
@@ -83,7 +84,7 @@ export async function loadSeats(db: any, opts?: { includeInactive?: boolean }): 
     if (!key) continue;
     out.push({
       employeeKey: key,
-      name: String(emp?.name ?? "").trim() || String(row?.name ?? "").trim() || key,
+      name: employeeDisplayName(emp) || String(row?.name ?? "").trim() || key,
       email: String(emp?.email ?? emp?.loginEmail ?? row?.email ?? "").trim(),
       position: String(emp?.designation ?? "").trim(),
       department: String(emp?.department ?? "").trim(),

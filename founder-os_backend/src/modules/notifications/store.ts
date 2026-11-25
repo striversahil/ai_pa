@@ -15,6 +15,7 @@ import {
   type NotificationRule,
   type NotificationSettings,
 } from "./types";
+import { employeeDisplayName } from '../../shared/employee-name';
 
 const PANEL_MAX = 200;
 
@@ -368,14 +369,22 @@ export async function listDeliveries(db: any, limit = PANEL_MAX): Promise<any[]>
     `SELECT d."id" AS id, d."ruleKey" AS ruleKey, d."employeeKey" AS employeeKey, d."level" AS level,
             d."colorHex" AS colorHex, d."value" AS value, d."title" AS title, d."body" AS body,
             d."createdAt" AS createdAt, n."status" AS status,
-            m."name" AS employeeName, m."designation" AS position
+            m."name" AS employeeName, m."characterName" AS employeeCharacterName,
+            m."useCharacterName" AS employeeUseCharacterName, m."designation" AS position
        FROM "hlp_notification_delivery" d
        LEFT JOIN "core_notification" n ON n."id" = d."notificationId"
        LEFT JOIN "HumanResourcesMember" m ON m."id" = d."employeeKey"
       ORDER BY d."createdAt" DESC
       LIMIT ?`,
     capped,
-  ).catch(() => []);
+  ).catch(() => []).then((rows: any[]) => rows.map((row) => ({
+    ...row,
+    employeeName: employeeDisplayName({
+      name: row.employeeName,
+      characterName: row.employeeCharacterName,
+      useCharacterName: row.employeeUseCharacterName,
+    }),
+  })));
 }
 
 /** Employees a rule's window already covered (used by the console Test tab). */

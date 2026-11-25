@@ -57,7 +57,7 @@ export default function LoginsPanel({
             <div key={row.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">
-                  <span className="truncate text-xs font-bold text-zinc-800 dark:text-zinc-100">{row.name}</span>
+                  <span className="truncate text-xs font-bold text-zinc-800 dark:text-zinc-100">{row.displayName || row.name}</span>
                   {row.linked ? (
                     <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-bold text-emerald-600 dark:text-emerald-400">
                       linked{row.matchedBy === "loginEmail" ? " · login" : row.matchedBy === "email" ? " · email" : ""}

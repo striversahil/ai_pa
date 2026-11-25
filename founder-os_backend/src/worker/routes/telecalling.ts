@@ -28,6 +28,8 @@ import {
 import { requireViewer } from '../viewer';
 import { listActiveTelecallers } from '../../modules/telecalling/self-roster';
 import { readBody } from '../http';
+import { displayNameForEmail } from '../../shared/employee-name';
+import { loadEmployeeNameIndex } from '../../shared/employee-name-store';
 
 /** Root/sales-head gate for the region-model management writes. Accepts
  * the scope or the role itself, so a sales-head role holder is authorized even
@@ -65,10 +67,13 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     if (denied && !(await requireRosterManager(c))) return denied;
     const { prisma } = deps();
     const showDeleted = c.req.query('deleted') === '1';
-    const tcs = await prisma.telecaller.findMany({
-      where: { deleted: showDeleted },
-      orderBy: { order: 'asc' },
-    });
+    const [tcs, employees] = await Promise.all([
+      prisma.telecaller.findMany({
+        where: { deleted: showDeleted },
+        orderBy: { order: 'asc' },
+      }),
+      loadEmployeeNameIndex(),
+    ]);
     // Signed-up users by email — lets you see which roster agent is a real
     // platform user (for incentive/payout mapping).
     let usersByEmail = new Map<string, { id: string; email: string; name: string; isRoot: boolean }>();
@@ -114,7 +119,7 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
           prisma.estimateAssignment.count({ where: { telecallerId: t.id, status: 'assigned' } }),
         ]);
         const linkedUser = resolveLinkedUser(t);
-        return { ...t, totalAssigned, activeAssigned, linkedUser };
+        return { ...t, displayName: displayNameForEmail(employees, t.email, t.name), totalAssigned, activeAssigned, linkedUser };
       }),
     );
     return c.json({ telecallers: withCounts });

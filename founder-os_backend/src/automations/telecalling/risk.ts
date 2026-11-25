@@ -7,6 +7,8 @@
 // who GENERATED the enquiry (Estimate.createdBy), never to an individual
 // holder. Uses a 15-min KV cache. No engine writes here.
 import { prisma } from '../../shared/prisma';
+import { displayNameForEmail } from '../../shared/employee-name';
+import { loadEmployeeNameIndex } from '../../shared/employee-name-store';
 import { logger } from '../../shared/logger';
 import { cached, cacheDel, cacheDelPrefix } from '../../shared/cache';
 import { DATE_RE, IN_BATCH, istDate } from './util';
@@ -145,7 +147,7 @@ export function buildSnatchReason(
 // 15 min, the Zoho analyzer cadence), so the scan is cached in KV with a short
 // TTL. Stale-upon-error: if the cached copy is older than TTL it is still
 // served when a refresh fails (graceful degradation, no retry loops).
-export const RISK_CACHE_KEY = 'telecalling:risk_cache_v2';
+export const RISK_CACHE_KEY = 'telecalling:risk_cache_v3';
 const RISK_CACHE_TTL_MS = 15 * 60 * 1000;
 
 export interface CachedRiskItem extends Omit<RiskItem, 'generatorName'> {
@@ -159,8 +161,13 @@ export interface RiskCache {
 
 export async function computeRiskCache(): Promise<RiskCache> {
   const nowMs = Date.now();
-  const telecallers = await prisma.telecaller.findMany({ orderBy: { order: 'asc' } });
-  const nameById = new Map(telecallers.map((t) => [t.id, t.name]));
+  const [telecallers, employees] = await Promise.all([
+    prisma.telecaller.findMany({ orderBy: { order: 'asc' } }),
+    loadEmployeeNameIndex(),
+  ]);
+  const nameById = new Map(telecallers.map((t) => [
+    t.id, displayNameForEmail(employees, (t as any).email, String(t.name ?? '')),
+  ]));
 
   const sentOpen = await prisma.estimate.findMany({
     where: { status: 'sent' },

@@ -86,7 +86,7 @@ export default function OrgPersonDrawer({ person, onClose, onSaved }: {
   };
 
   return (
-    <Modal title={`Edit · ${person.employee.name}`} subtitle={person.employee.designation ?? ""} onClose={onClose} wide>
+    <Modal title={`Edit · ${person.employee.displayName || person.employee.name}`} subtitle={person.employee.designation ?? ""} onClose={onClose} wide>
       <div className="space-y-3">
         <section className="space-y-2 rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
           <h3 className="text-[11px] font-extrabold uppercase tracking-wider text-zinc-500">Organization position</h3>

@@ -106,7 +106,7 @@ export default function PayrollTab() {
 
       {missingSalary.length > 0 && (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-600 dark:text-amber-400">
-          {missingSalary.length} active employee{missingSalary.length === 1 ? "" : "s"} missing a salary structure: {missingSalary.map((e) => e.name).join(", ")}. Assign a salary template in Employees, then regenerate.
+          {missingSalary.length} active employee{missingSalary.length === 1 ? "" : "s"} missing a salary structure: {missingSalary.map((e) => e.displayName || e.name).join(", ")}. Assign a salary template in Employees, then regenerate.
         </div>
       )}
       {err && <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 px-3 py-2 text-xs text-rose-500">{err}</div>}
@@ -121,10 +121,10 @@ export default function PayrollTab() {
           {slips.map((slip) => (
             <div key={slip.id} className="rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
               <div className="flex flex-wrap items-center gap-3">
-                {slip.employee?.photoUrl ? <img src={slip.employee.photoUrl} alt="" className="h-10 w-10 rounded-xl object-cover" /> : <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500/10 text-xs font-extrabold text-indigo-500">{initials(slip.employeeName)}</div>}
+                {slip.employee?.photoUrl ? <img src={slip.employee.photoUrl} alt="" className="h-10 w-10 rounded-xl object-cover" /> : <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500/10 text-xs font-extrabold text-indigo-500">{initials(slip.employeeDisplayName || slip.employeeName)}</div>}
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="text-sm font-bold">{slip.employeeName}</span>
+                    <span className="text-sm font-bold">{slip.employeeDisplayName || slip.employeeName}</span>
                     <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold capitalize ${STATUS_TONE[slip.status]}`}>{slip.status}</span>
                     {slip.employeeCode && <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold text-zinc-500 dark:bg-zinc-800">{slip.employeeCode}</span>}
                   </div>
@@ -154,10 +154,10 @@ export default function PayrollTab() {
         open={!!pending}
         title={pending?.action === "finalize" ? "Finalize salary slip?" : pending?.action === "paid" ? "Mark salary paid?" : "Reopen salary slip?"}
         message={pending?.action === "finalize"
-          ? <>Finalize <b>{pending.slip.employeeName}</b> for {monthLabel(pending.slip.month)}? Lines lock after finalizing.</>
+          ? <>Finalize <b>{pending.slip.employeeDisplayName || pending.slip.employeeName}</b> for {monthLabel(pending.slip.month)}? Lines lock after finalizing.</>
           : pending?.action === "paid"
-          ? <>Mark <b>{pending?.slip.employeeName}</b> salary as paid? This records the payout date.</>
-          : <>Reopen <b>{pending?.slip.employeeName}</b> as draft? You can edit and finalize it again.</>}
+          ? <>Mark <b>{pending?.slip.employeeDisplayName || pending?.slip.employeeName}</b> salary as paid? This records the payout date.</>
+          : <>Reopen <b>{pending?.slip.employeeDisplayName || pending?.slip.employeeName}</b> as draft? You can edit and finalize it again.</>}
         confirmLabel={pending?.action === "finalize" ? "Finalize" : pending?.action === "paid" ? "Mark paid" : "Reopen"}
         busy={busy}
         onConfirm={changeStatus}

@@ -27,7 +27,7 @@ export interface OrgRoster {
 
 export interface OrgPerson {
   employee: {
-    id: string; name: string; email: string | null; loginEmail: string | null;
+    id: string; name: string; displayName?: string; email: string | null; loginEmail: string | null;
     phone: string | null; designation: string | null; department: string | null;
     active: boolean;
   };

@@ -3,6 +3,7 @@
 // board (delegation.ts) so both always expose the same shape.
 // Mirrors founder-os_frontend/src/hr/types.ts (HrTask / HrTaskLog).
 import { isTaskOverdue } from './parse';
+import { employeeDisplayName } from '../../shared/employee-name';
 
 export function taskJson(row: any, today: string, nowTime: string, completedAt: string | null = null) {
   return {
@@ -10,7 +11,7 @@ export function taskJson(row: any, today: string, nowTime: string, completedAt: 
     title: row.title ?? '',
     description: row.description ?? null,
     assignedToId: row.assignedToId ?? null,
-    assignedToName: row.assignedTo?.name ?? null,
+    assignedToName: row.assignedTo ? employeeDisplayName(row.assignedTo) : null,
     assignedToDesignation: row.assignedTo?.designation ?? null,
     dueDate: row.dueDate ?? null,
     dueTime: row.dueTime ?? null,
@@ -30,7 +31,7 @@ export function taskJson(row: any, today: string, nowTime: string, completedAt: 
   };
 }
 
-export function taskLogJson(row: any) {
+export function taskLogJson(row: any, nameFor?: (value: any) => string) {
   if (!row) return null;
   return {
     id: String(row.id),
@@ -40,7 +41,7 @@ export function taskLogJson(row: any) {
     kind: row.kind === 'status' ? 'status' : 'remark',
     status: row.status ?? null,
     remark: row.remark ?? null,
-    authorName: row.authorName ?? null,
+    authorName: nameFor ? nameFor(row.authorName) : (row.authorName ?? null),
     authorMemberId: row.authorMemberId ?? null,
     createdAt: row.createdAt ?? null,
   };

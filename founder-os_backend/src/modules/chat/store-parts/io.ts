@@ -2,6 +2,7 @@
 // store.ts re-exports everything public here, so existing imports keep working.
 import { LINKED_ACCOUNT_EMAILS, LINKED_PRIMARY_EMAIL, newId, mapMessage } from "./pure";
 import type { ChatStore, ChatChannel, ChatUser, ChatMessage, ChatReaction } from "./types";
+import { loadD1ChatNameLookup, presentChatMessage, type ChatNameLookup } from "../display";
 
 export async function resolveLinkedSender(
   db: any,
@@ -108,7 +109,7 @@ export class MemoryChatStore implements ChatStore {
     const msg: ChatMessage = { id: this.seq++, channelId: input.channelId, senderId: input.senderId, senderName: input.senderId, senderPicture: null, body: input.body, createdAt: new Date().toISOString(), editedAt: null, deletedAt: null, attachments: input.attachments ?? [], replyToId: input.replyToId ?? null };
     if (msg.replyToId) {
       const r = this.messages.find((x) => x.id === msg.replyToId);
-      if (r) msg.replyTo = { id: r.id, senderName: r.senderName, body: r.body };
+      if (r) msg.replyTo = { id: r.id, senderId: r.senderId, senderName: r.senderName, body: r.body };
     }
     this.messages.push(msg);
     return msg;
@@ -154,6 +155,14 @@ export class D1ChatStore implements ChatStore {
   constructor(private db: any) {}
 
   private linkedCache: { ids: string[]; at: number } | null = null;
+  private namesCache: { lookup: ChatNameLookup; at: number } | null = null;
+
+  private async nameLookup(): Promise<ChatNameLookup> {
+    if (this.namesCache && Date.now() - this.namesCache.at < 60_000) return this.namesCache.lookup;
+    const lookup = await loadD1ChatNameLookup(this.db);
+    this.namesCache = { lookup, at: Date.now() };
+    return lookup;
+  }
 
   private async linkedIds(userId: string): Promise<string[]> {
     if (this.linkedCache && Date.now() - this.linkedCache.at < 60_000) {
@@ -195,11 +204,18 @@ export class D1ChatStore implements ChatStore {
     const ids = await this.linkedIds(excludeUserId);
     const row = await this.db
       .prepare(
-        `SELECT u.id, u.name, u.picture, u.email FROM chat_member m JOIN auth_user u ON u.id = m.userId WHERE m.channelId = ? AND m.userId NOT IN (${ids.map(() => "?").join(",")}) LIMIT 1`,
+        `SELECT u.id, u.name, u.picture, u.email, u.isRoot FROM chat_member m JOIN auth_user u ON u.id = m.userId WHERE m.channelId = ? AND m.userId NOT IN (${ids.map(() => "?").join(",")}) LIMIT 1`,
       )
       .bind(channelId, ...ids)
       .first();
-    return row ? { id: row.id, name: row.name, picture: row.picture ?? null, email: row.email ?? null } : null;
+    if (!row || Number(row.isRoot ?? 0) === 1) return null;
+    const names = await this.nameLookup();
+    return {
+      id: row.id,
+      name: names.byId.get(String(row.id)) ?? row.name,
+      picture: row.picture ?? null,
+      email: row.email ?? null,
+    };
   }
 
   private mapChannel(row: any, other: ChatUser | null): ChatChannel {
@@ -228,7 +244,9 @@ export class D1ChatStore implements ChatStore {
       .bind(isAdmin ? 1 : 0, ...ids, ...ids)
       .all();
     const channels = (rows.results || []) as any[];
-    return Promise.all(channels.map(async (r) => this.mapChannel(r, r.type === "dm" ? await this.otherUser(r.id, userId) : null)));
+    const mapped = await Promise.all(channels.map(async (r) => this.mapChannel(r, r.type === "dm" ? await this.otherUser(r.id, userId) : null)));
+    // Root DMs (and orphaned DMs) are not a chat surface at all.
+    return mapped.filter((c) => c.type !== "dm" || !!c.otherUser);
   }
   async createChannel(input) {
     const channel: ChatChannel = { id: newId(), name: input.name, description: input.description, category: input.category, type: "channel", createdBy: input.createdBy, createdAt: new Date().toISOString() };
@@ -236,13 +254,19 @@ export class D1ChatStore implements ChatStore {
       .prepare("INSERT INTO chat_channel (id, name, description, category, type, createdBy, createdAt) VALUES (?, ?, ?, ?, 'channel', ?, ?)")
       .bind(channel.id, channel.name, channel.description, channel.category, channel.createdBy, channel.createdAt)
       .run();
-    const memberIds = [...new Set([input.createdBy, ...(input.memberIds || [])])];
+    const names = await this.nameLookup();
+    const memberIds = [...new Set([input.createdBy, ...(input.memberIds || [])])]
+      .filter((id) => !names.rootIds.has(String(id)));
     await this.db.batch(
       memberIds.map((uid) => this.db.prepare("INSERT OR IGNORE INTO chat_member (channelId, userId) VALUES (?, ?)").bind(channel.id, uid)),
     );
     return channel;
   }
   async createDm(userA: string, userB: string) {
+    const names = await this.nameLookup();
+    if (names.rootIds.has(String(userA)) || names.rootIds.has(String(userB))) {
+      throw new Error("This account cannot receive direct messages");
+    }
     const existing = await this.db
       .prepare(
         "SELECT c.id FROM chat_channel c JOIN chat_member m1 ON m1.channelId = c.id AND m1.userId = ? JOIN chat_member m2 ON m2.channelId = c.id AND m2.userId = ? WHERE c.type = 'dm' LIMIT 1",
@@ -254,9 +278,12 @@ export class D1ChatStore implements ChatStore {
       const other = await this.otherUser(row.id, userA);
       return this.mapChannel(row, other);
     }
-    const otherUser = await this.db.prepare("SELECT id, name, picture, email FROM auth_user WHERE id = ?").bind(userB).first();
-    const name = otherUser?.name || "Direct Message";
-    const channel: ChatChannel = { id: newId(), name, description: null, category: null, type: "dm", createdBy: userA, createdAt: new Date().toISOString(), otherUser: otherUser ? { id: otherUser.id, name: otherUser.name, picture: otherUser.picture ?? null, email: otherUser.email ?? null } : null };
+    const otherUser = await this.db.prepare("SELECT id, name, picture, email, isRoot FROM auth_user WHERE id = ?").bind(userB).first();
+    if (!otherUser || Number(otherUser.isRoot ?? 0) === 1) {
+      throw new Error("This account cannot receive direct messages");
+    }
+    const name = names.byId.get(String(otherUser.id)) ?? otherUser.name ?? "Direct Message";
+    const channel: ChatChannel = { id: newId(), name, description: null, category: null, type: "dm", createdBy: userA, createdAt: new Date().toISOString(), otherUser: { id: otherUser.id, name, picture: otherUser.picture ?? null, email: otherUser.email ?? null } };
     await this.db
       .prepare("INSERT INTO chat_channel (id, name, description, category, type, createdBy, createdAt) VALUES (?, ?, NULL, NULL, 'dm', ?, ?)")
       .bind(channel.id, channel.name, channel.createdBy, channel.createdAt)
@@ -269,14 +296,25 @@ export class D1ChatStore implements ChatStore {
   }
   async listChannelMembers(channelId: string) {
     const rows = await this.db
-      .prepare("SELECT u.id, u.name, u.picture, u.email FROM chat_member m JOIN auth_user u ON u.id = m.userId WHERE m.channelId = ? ORDER BY u.name ASC")
+      .prepare("SELECT u.id, u.name, u.picture, u.email, u.isRoot FROM chat_member m JOIN auth_user u ON u.id = m.userId WHERE m.channelId = ? ORDER BY u.name ASC")
       .bind(channelId)
       .all();
-    return ((rows.results || []) as any[]).map((r) => ({ id: r.id, name: r.name, picture: r.picture ?? null, email: r.email ?? null }));
+    const names = await this.nameLookup();
+    return ((rows.results || []) as any[])
+      .filter((r) => Number(r.isRoot ?? 0) !== 1)
+      .map((r) => ({
+        id: r.id,
+        name: names.byId.get(String(r.id)) ?? r.name,
+        picture: r.picture ?? null,
+        email: r.email ?? null,
+      }));
   }
   async addChannelMembers(channelId: string, userIds: string[]) {
+    const names = await this.nameLookup();
     await this.db.batch(
-      userIds.map((uid) => this.db.prepare("INSERT OR IGNORE INTO chat_member (channelId, userId) VALUES (?, ?)").bind(channelId, uid)),
+      userIds
+        .filter((uid) => !names.rootIds.has(String(uid)))
+        .map((uid) => this.db.prepare("INSERT OR IGNORE INTO chat_member (channelId, userId) VALUES (?, ?)").bind(channelId, uid)),
     );
   }
   async removeChannelMember(channelId: string, userId: string) {
@@ -293,13 +331,21 @@ export class D1ChatStore implements ChatStore {
     return !!row;
   }
   async listUsers() {
-    const rows = await this.db.prepare("SELECT id, name, picture, email FROM auth_user ORDER BY name ASC").all();
-    return ((rows.results || []) as any[]).map((r) => ({ id: r.id, name: r.name, picture: r.picture ?? null, email: r.email ?? null }));
+    const rows = await this.db.prepare("SELECT id, name, picture, email, isRoot FROM auth_user ORDER BY name ASC").all();
+    const names = await this.nameLookup();
+    return ((rows.results || []) as any[])
+      .filter((r) => Number(r.isRoot ?? 0) !== 1)
+      .map((r) => ({
+        id: r.id,
+        name: names.byId.get(String(r.id)) ?? r.name,
+        picture: r.picture ?? null,
+        email: r.email ?? null,
+      }));
   }
   async listMessages(channelId: string, before?: number | null, limit = 50) {
     const SELECT = `
       SELECT m.*, u.name AS senderName, u.picture AS senderPicture,
-             ru.name AS replyToSenderName, rm.body AS replyToBody
+             ru.name AS replyToSenderName, rm.senderId AS replyToSenderId, rm.body AS replyToBody
       FROM chat_message m
       JOIN auth_user u ON u.id = m.senderId
       LEFT JOIN chat_message rm ON rm.id = m.replyToId
@@ -313,13 +359,18 @@ export class D1ChatStore implements ChatStore {
           .prepare(`${SELECT} WHERE m.channelId = ? ORDER BY m.id DESC LIMIT ?`)
           .bind(channelId, limit)
           .all();
-    return (rows.results || []).reverse().map(mapMessage).filter(Boolean) as ChatMessage[];
+    const names = await this.nameLookup();
+    return ((rows.results || []) as any[])
+      .filter((r) => !names.rootIds.has(String(r.senderId)))
+      .reverse()
+      .map((r) => presentChatMessage(mapMessage(r), names))
+      .filter(Boolean) as ChatMessage[];
   }
   async getMessage(id: number) {
     const row = await this.db
       .prepare(
         `SELECT m.*, u.name AS senderName, u.picture AS senderPicture,
-                ru.name AS replyToSenderName, rm.body AS replyToBody
+                ru.name AS replyToSenderName, rm.senderId AS replyToSenderId, rm.body AS replyToBody
          FROM chat_message m
          JOIN auth_user u ON u.id = m.senderId
          LEFT JOIN chat_message rm ON rm.id = m.replyToId
@@ -328,7 +379,10 @@ export class D1ChatStore implements ChatStore {
       )
       .bind(id)
       .first();
-    return mapMessage(row);
+    if (!row) return null;
+    const names = await this.nameLookup();
+    if (names.rootIds.has(String(row.senderId))) return null;
+    return presentChatMessage(mapMessage(row), names);
   }
   async createMessage(input) {
     await this.db
@@ -338,7 +392,7 @@ export class D1ChatStore implements ChatStore {
     const row = await this.db
       .prepare(
         `SELECT m.*, u.name AS senderName, u.picture AS senderPicture,
-                ru.name AS replyToSenderName, rm.body AS replyToBody
+                ru.name AS replyToSenderName, rm.senderId AS replyToSenderId, rm.body AS replyToBody
          FROM chat_message m
          JOIN auth_user u ON u.id = m.senderId
          LEFT JOIN chat_message rm ON rm.id = m.replyToId
@@ -347,7 +401,8 @@ export class D1ChatStore implements ChatStore {
       )
       .bind(input.channelId)
       .first();
-    return mapMessage(row)!;
+    const names = await this.nameLookup();
+    return presentChatMessage(mapMessage(row), names)!;
   }
   async getUnreadCounts(userId: string) {
     const rows = await this.db
@@ -355,7 +410,7 @@ export class D1ChatStore implements ChatStore {
         `SELECT m.channelId, COUNT(*) AS cnt
          FROM chat_message m
          LEFT JOIN chat_read_state rs ON rs.channelId = m.channelId AND rs.userId = ?
-         WHERE m.id > COALESCE(rs.lastReadId, 0) AND m.deletedAt IS NULL
+         WHERE m.id > COALESCE(rs.lastReadId, 0) AND m.deletedAt IS NULL AND m.senderId NOT IN (SELECT id FROM auth_user WHERE isRoot = 1)
          GROUP BY m.channelId`,
       )
       .bind(userId)
@@ -384,13 +439,13 @@ export class D1ChatStore implements ChatStore {
            FROM chat_message m
            LEFT JOIN (SELECT channelId, MAX(lastReadId) AS lastReadId FROM chat_read_state WHERE userId IN (${ph}) GROUP BY channelId) rs
              ON rs.channelId = m.channelId
-           WHERE m.id > COALESCE(rs.lastReadId, 0) AND m.deletedAt IS NULL
+           WHERE m.id > COALESCE(rs.lastReadId, 0) AND m.deletedAt IS NULL AND m.senderId NOT IN (SELECT id FROM auth_user WHERE isRoot = 1)
            GROUP BY m.channelId`,
         )
         .bind(...ids),
       this.db
         .prepare(
-          `SELECT m.channelId, u.id, u.name, u.picture, u.email
+          `SELECT m.channelId, u.id, u.name, u.picture, u.email, u.isRoot
            FROM chat_member m JOIN auth_user u ON u.id = m.userId
            WHERE m.channelId IN (SELECT id FROM chat_channel WHERE type = 'dm') AND m.userId NOT IN (${ph})`,
         )
@@ -399,14 +454,25 @@ export class D1ChatStore implements ChatStore {
     const channels = ((chRows as any).results || []) as any[];
     const unread: Record<string, number> = {};
     for (const r of ((unreadRows as any).results || []) as any[]) unread[r.channelId] = Number(r.cnt) || 0;
+    const names = await this.nameLookup();
     const dmCounterpart: Record<string, ChatUser> = {};
     for (const r of ((dmRows as any).results || []) as any[]) {
-      if (!dmCounterpart[r.channelId]) dmCounterpart[r.channelId] = { id: r.id, name: r.name, picture: r.picture ?? null, email: r.email ?? null };
+      if (Number(r.isRoot ?? 0) === 1) continue;
+      if (!dmCounterpart[r.channelId]) {
+        dmCounterpart[r.channelId] = {
+          id: r.id,
+          name: names.byId.get(String(r.id)) ?? r.name,
+          picture: r.picture ?? null,
+          email: r.email ?? null,
+        };
+      }
     }
-    return channels.map((r: any) => {
-      const ch = this.mapChannel(r, r.type === "dm" ? dmCounterpart[r.id] || null : null);
-      return { ...ch, unread: unread[r.id] || 0 };
-    });
+    return channels
+      .map((r: any) => {
+        const ch = this.mapChannel(r, r.type === "dm" ? dmCounterpart[r.id] || null : null);
+        return { ...ch, unread: unread[r.id] || 0 };
+      })
+      .filter((c) => c.type !== "dm" || !!c.otherUser);
   }
   async markChannelRead(userId: string, channelId: string, lastReadId: number) {
     const ids = await this.linkedIds(userId);
@@ -452,14 +518,21 @@ export class D1ChatStore implements ChatStore {
     await this.ensureReactionTable();
     const rows = await this.db
       .prepare(
-        "SELECT r.messageId, r.emoji, r.userId, u.name AS userName FROM chat_reaction r JOIN chat_message m ON m.id = r.messageId JOIN auth_user u ON u.id = r.userId WHERE m.channelId = ? ORDER BY r.rowid ASC",
+        "SELECT r.messageId, r.emoji, r.userId, u.name AS userName, u.isRoot FROM chat_reaction r JOIN chat_message m ON m.id = r.messageId JOIN auth_user u ON u.id = r.userId WHERE m.channelId = ? ORDER BY r.rowid ASC",
       )
       .bind(channelId)
       .all();
+    const names = await this.nameLookup();
     const out: Record<number, ChatReaction[]> = {};
     for (const r of (rows.results || []) as any[]) {
+      if (Number(r.isRoot ?? 0) === 1) continue;
       if (!out[r.messageId]) out[r.messageId] = [];
-      out[r.messageId].push({ messageId: r.messageId, emoji: r.emoji, userId: r.userId, userName: r.userName });
+      out[r.messageId].push({
+        messageId: r.messageId,
+        emoji: r.emoji,
+        userId: r.userId,
+        userName: names.byId.get(String(r.userId)) ?? r.userName,
+      });
     }
     return out;
   }
@@ -477,10 +550,18 @@ export class D1ChatStore implements ChatStore {
         .run();
     }
     const rows = await this.db
-      .prepare("SELECT r.emoji, r.userId, u.name AS userName FROM chat_reaction r JOIN auth_user u ON u.id = r.userId WHERE r.messageId = ? ORDER BY r.rowid ASC")
+      .prepare("SELECT r.emoji, r.userId, u.name AS userName, u.isRoot FROM chat_reaction r JOIN auth_user u ON u.id = r.userId WHERE r.messageId = ? ORDER BY r.rowid ASC")
       .bind(messageId)
       .all();
-    const reactions = ((rows.results || []) as any[]).map((r) => ({ messageId, emoji: r.emoji, userId: r.userId, userName: r.userName }));
+    const names = await this.nameLookup();
+    const reactions = ((rows.results || []) as any[])
+      .filter((r) => Number(r.isRoot ?? 0) !== 1)
+      .map((r) => ({
+        messageId,
+        emoji: r.emoji,
+        userId: r.userId,
+        userName: names.byId.get(String(r.userId)) ?? r.userName,
+      }));
     return { active: removed ? false : true, reactions };
   }
 }

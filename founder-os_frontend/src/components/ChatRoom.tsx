@@ -354,6 +354,21 @@ export default function ChatRoom() {
   const dragCounter = useRef(0);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [selfName, setSelfName] = useState("");
+
+  // Same HR display name as the messages; the auth row can still carry the
+  // Google name, which must never leak into the chat UI.
+  useEffect(() => {
+    if (!me?.user.id) { setSelfName(""); return; }
+    let alive = true;
+    fetch("/api/chat/me")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((u) => { if (alive) setSelfName(String(u?.name ?? "")); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [me?.user.id]);
+
+  const myName = selfName || me?.user.displayName || me?.user.name || "You";
 
   const handleDragEnter = (e: React.DragEvent) => { e.preventDefault(); dragCounter.current += 1; setDragging(true); };
   const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); };
@@ -538,7 +553,7 @@ export default function ChatRoom() {
       id: tempId,
       channelId: selectedId,
       senderId: me?.user.id ?? "",
-      senderName: me?.user.name ?? "You",
+      senderName: myName,
       senderPicture: me?.user.picture ?? null,
       body,
       createdAt: new Date().toISOString(),
@@ -889,9 +904,9 @@ export default function ChatRoom() {
           )}
         </div>
         <div className="flex items-center gap-2 border-t border-[var(--chat-border)] px-3 py-2.5">
-          <Avatar src={me?.user.picture ?? null} name={me?.user.name ?? "?"} size="h-8 w-8" color={userColor(me?.user.id ?? "me")} />
+          <Avatar src={me?.user.picture ?? null} name={myName} size="h-8 w-8" color={userColor(me?.user.id ?? "me")} />
           <div className="min-w-0 flex-1">
-            <p className="truncate text-xs font-bold text-[var(--chat-text)]">{me?.user.name}</p>
+            <p className="truncate text-xs font-bold text-[var(--chat-text)]">{myName}</p>
             <p className="truncate text-[10px] text-[var(--chat-muted)]">{isAdmin ? "Admin" : "Member"}</p>
           </div>
           <button onClick={() => setRailOpen(false)} title="Close" className="rounded p-1.5 text-[var(--chat-muted)] hover:text-[var(--chat-text)] md:hidden">

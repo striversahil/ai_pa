@@ -7,7 +7,8 @@ import { resolveSalary, round2 } from './salary';
 import { templateComponentsForCopy } from './templates';
 import { createWithEmployeeCode } from './employee-codes';
 import { mirrorRosterRemoved, mirrorRosterRow } from '../../modules/core/sync';
-import { DATA_CACHE_PREFIX, DATA_TTL_MS, invalidateHumanResourcesCache } from './cache';
+import { DATA_CACHE_PREFIX, DATA_TTL_MS, invalidateEmployeeNameCaches, invalidateHumanResourcesCache } from './cache';
+import { employeeDisplayName } from '../../shared/employee-name';
 import type { SalaryComponentInput } from './types';
 
 function salaryOptions(row: any) {
@@ -49,6 +50,9 @@ export function employeeJson(row: any, components: any[] = [], template: any = n
   return {
     id: String(row.id),
     name: row.name ?? '',
+    characterName: row.characterName ?? null,
+    useCharacterName: row.useCharacterName === true,
+    displayName: employeeDisplayName(row),
     employeeCode: row.employeeCode ?? null,
     email: row.email ?? null,
     loginEmail: row.loginEmail ?? null,
@@ -155,7 +159,7 @@ export async function createEmployee(input: Record<string, any>) {
   const row: any = await createWithEmployeeCode((employeeCode) =>
     prisma.humanResourcesMember.create({ data: { ...data, employeeCode } }),
   );
-  await invalidateHumanResourcesCache();
+  await invalidateEmployeeNameCaches();
   await mirrorRosterRow('human_resources_member', row);
   return employeeJson(row, []);
 }
@@ -169,8 +173,13 @@ export async function updateEmployee(id: string, input: Record<string, any>) {
   const joining = patch.joiningDate !== undefined ? patch.joiningDate : current.joiningDate;
   const exit = patch.exitDate !== undefined ? patch.exitDate : current.exitDate;
   if (joining && exit && exit < joining) throw new HrError('exitDate cannot be before joiningDate');
+  const characterName = patch.characterName !== undefined ? patch.characterName : current.characterName;
+  const useCharacterName = patch.useCharacterName !== undefined ? patch.useCharacterName : current.useCharacterName;
+  if (useCharacterName === true && !characterName) {
+    throw new HrError('characterName is required when useCharacterName is on');
+  }
   const row: any = await prisma.humanResourcesMember.update({ where: { id }, data: patch });
-  await invalidateHumanResourcesCache();
+  await invalidateEmployeeNameCaches();
   await mirrorRosterRow('human_resources_member', row);
   return employeeJson(row, await componentsFor(id), await templateFor(row));
 }
@@ -179,7 +188,7 @@ export async function deleteEmployee(id: string) {
   const row: any = await prisma.humanResourcesMember.findUnique({ where: { id } });
   if (!row || row.deleted) throw new HrError('employee not found', 404);
   await prisma.humanResourcesMember.update({ where: { id }, data: { deleted: true, active: false } });
-  await invalidateHumanResourcesCache();
+  await invalidateEmployeeNameCaches();
   await mirrorRosterRemoved('human_resources_member', id);
 }
 

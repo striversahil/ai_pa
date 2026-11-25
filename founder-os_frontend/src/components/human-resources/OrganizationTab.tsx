@@ -102,7 +102,7 @@ export default function OrganizationTab({ department }: { department?: string } 
                 onClick={() => { setSelected(String(p.employee.designation ?? "")); setEditing(p); }}
                 className="rounded-full border border-amber-500/30 bg-white px-2 py-0.5 text-[11px] dark:bg-zinc-950"
               >
-                <span className="font-semibold text-zinc-700 dark:text-zinc-200">{p.employee.name}</span>
+                <span className="font-semibold text-zinc-700 dark:text-zinc-200">{p.employee.displayName || p.employee.name}</span>
                 <span className="text-zinc-400"> · {p.employee.designation}</span>
               </button>
             ))}

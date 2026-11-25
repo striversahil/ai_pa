@@ -18,6 +18,8 @@ import { DATE_RE, IN_BATCH, istDate } from '../util';
 import { getRiskItems, parseCommentDateMs, buildSnatchReason } from '../risk';
 import type { EstimateRisk, RiskItem } from '../risk';
 import { REGIONS } from '../regions';
+import { displayNameForEmail } from '../../../shared/employee-name';
+import { loadEmployeeNameIndex } from '../../../shared/employee-name-store';
 import { overlayCallTags, overlayNextSteps } from '../call-tags';
 
 /** Region key used by the dashboard tabs: '' → "UNMAPPED". */
@@ -236,7 +238,16 @@ export async function loadRoster(): Promise<{ telecallers: any[]; nameById: Map<
   } catch (e: any) {
     logger.warn({ err: e?.message }, 'drill roster read failed');
   }
-  return { telecallers, nameById: new Map(telecallers.map((t) => [String(t.id), String(t.name ?? '')])) };
+  let nameById = new Map<string, string>();
+  try {
+    const employees = await loadEmployeeNameIndex();
+    nameById = new Map(telecallers.map((t) => [
+      String(t.id), displayNameForEmail(employees, (t as any).email, String(t.name ?? '')),
+    ]));
+  } catch {
+    nameById = new Map(telecallers.map((t) => [String(t.id), String(t.name ?? '')]));
+  }
+  return { telecallers, nameById };
 }
 
 /** Region metadata for the drill header. */
@@ -271,7 +282,7 @@ export async function buildRegionDrill(input: {
       region: input.regionId,
       regionName: label.name,
       agents: telecallers.map((t: any) => ({
-        id: String(t.id), name: String(t.name ?? ''),
+        id: String(t.id), name: nameById.get(String(t.id)) ?? String(t.name ?? ''),
         region: String(t.region ?? ''), region2: String(t.region2 ?? ''),
         tlLevel: String(t.tlLevel ?? ''),
         active: !!t.assignEstimateFollowUps,

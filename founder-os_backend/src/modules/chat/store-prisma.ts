@@ -16,7 +16,7 @@ function parseAttachments(raw: string | null): ChatAttachment[] {
 
 function mapMessage(row: any): ChatMessage {
   const replyTo = row.replyToId
-    ? { id: row.replyToId, senderName: row.replyTo?.sender?.name || "Unknown", body: row.replyTo?.body || "" }
+    ? { id: row.replyToId, senderId: row.replyTo?.sender?.id ?? null, senderName: row.replyTo?.sender?.name || "Unknown", body: row.replyTo?.body || "" }
     : null;
   return {
     id: row.id,
@@ -139,7 +139,7 @@ export class PrismaChatStore implements ChatStore {
       take: limit,
       include: {
         sender: { select: { name: true, picture: true } },
-        replyTo: { include: { sender: { select: { name: true } } } },
+        replyTo: { include: { sender: { select: { id: true, name: true } } } },
       },
     });
     return rows.reverse().map(mapMessage);
@@ -149,7 +149,7 @@ export class PrismaChatStore implements ChatStore {
       where: { id },
       include: {
         sender: { select: { name: true, picture: true } },
-        replyTo: { include: { sender: { select: { name: true } } } },
+        replyTo: { include: { sender: { select: { id: true, name: true } } } },
       },
     });
     return row ? mapMessage(row) : null;
@@ -196,7 +196,7 @@ export class PrismaChatStore implements ChatStore {
       },
       include: {
         sender: { select: { name: true, picture: true } },
-        replyTo: { include: { sender: { select: { name: true } } } },
+        replyTo: { include: { sender: { select: { id: true, name: true } } } },
       },
     });
     return mapMessage(row);

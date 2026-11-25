@@ -1375,6 +1375,10 @@ model DigitalMarketingOpenTaskAttachment {
 model HumanResourcesMember {
   id                    String   @id @default(uuid())
   name                  String
+  // Optional character/working name. `name` stays the legal name; when
+  // useCharacterName is on, display surfaces render "Character (Legal)".
+  characterName         String?
+  useCharacterName      Boolean  @default(false)
   email                 String?
   // Explicit platform-login link (may differ from the contact email). Falls
   // back to `email` when empty — see resolveSelfHumanResourcesMember.

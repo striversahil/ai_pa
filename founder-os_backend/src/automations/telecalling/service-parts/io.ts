@@ -6,6 +6,8 @@ import { syncTelecallersFromNeodove } from "../roster";
 import { sweepEnquiryEstimateLinks } from "../enquiry-links";
 import { getEpochDate, closePointsFor, getConvertersMap, EPOCH_SETTING_KEY } from "../scoring";
 import { loadCreatorIndex, loadAcceptedSnapshot, groupAcceptedByWeek, groupAcceptedByWeekFiltered, roundAgg } from "../accepted";
+import { displayNameForEmail } from '../../../shared/employee-name';
+import { loadEmployeeNameIndex } from '../../../shared/employee-name-store';
 import type { AcceptedSnapshot, AcceptedAgg, AcceptedEstimate } from "../accepted";
 import { getNeodoveAgentMap, getNeodoveRangeMap, CONNECTED_CALLS_PER_DAY, LEADS_PER_AGENT_PER_DAY } from "../../neodove-telecaller-report";
 import type { AutomationContext } from "../../../modules/automation/types";
@@ -76,7 +78,8 @@ export async function computeTelecallingDaily(
   const fromEff = epoch && epoch > from ? epoch : from;
   if (fromEff > to) return { rows: [] };
   const telecallers = await prisma.telecaller.findMany({ where: { deleted: false }, orderBy: { order: 'asc' } });
-  const nameById = new Map(telecallers.map((t) => [t.id, t.name]));
+  const creatorIndex = await loadCreatorIndex();
+  const nameById = creatorIndex.nameById;
 
   type DayAgg = { won: number; closePoints: number; estIds: string[]; value: number };
   const agg = new Map<string, DayAgg>(); // `${day}|${owner}`
@@ -122,7 +125,7 @@ export async function computeTelecallingDaily(
   type Owner = { id: string; name: string; region: string; neodoveUserName?: string | null; neodoveUserId?: string | null };
   const owners: Owner[] = (telecallers as any[]).map((t) => ({
     id: String(t.id),
-    name: String(t.name ?? ''),
+    name: creatorIndex.nameById.get(String(t.id)) ?? String(t.name ?? ''),
     region: String((t as any).region ?? ''),
     neodoveUserName: (t as any).neodoveUserName,
     neodoveUserId: (t as any).neodoveUserId,
@@ -252,7 +255,7 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
   const wantsDrill = (typeof q.region === 'string' && q.region.trim() !== '')
     || (typeof q.agent === 'string' && q.agent !== '');
   if (wantsDrill) {
-    const { telecallers } = await loadRoster();
+    const { telecallers, nameById } = await loadRoster();
     const { scope, error } = resolveDrillScope(q, telecallers);
     if (error) {
       return {
@@ -261,7 +264,7 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
           title: 'Sales Leaderboard',
           day: requestedDay,
           agents: telecallers.map((t: any) => ({
-            id: String(t.id), name: String(t.name ?? ''), region: String(t.region ?? ''),
+            id: String(t.id), name: nameById.get(String(t.id)) ?? String(t.name ?? ''), region: String(t.region ?? ''),
             region2: String(t.region2 ?? ''), tlLevel: String(t.tlLevel ?? ''), active: !!t.assignEstimateFollowUps,
           })),
           generatedAt: new Date().toISOString(),
@@ -411,7 +414,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     }).catch(() => []),
   ]);
 
-  const nameById = new Map(telecallers.map((t) => [t.id, t.name]));
+  const nameById = creatorIndex.nameById;
   const regionByTc = new Map<string, string>();
   const tlLevelByTc = new Map<string, TlLevel>();
   for (const t of telecallers as any[]) {
@@ -842,7 +845,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       const team = periodTeamByTl.get(id) ?? { count: 0, value: 0 };
       tlTargets.push({
         id,
-        name: String((t as any).name ?? ''),
+        name: creatorIndex.nameById.get(id) ?? String((t as any).name ?? ''),
         regions: pair,
         perDay: DAILY_TL_RESELLER_TARGET,
         target,
@@ -996,7 +999,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     const segSplit = segSplitByCreator.get(id) ?? { consumerWon: 0, consumerValue: 0, resellerWon: 0, resellerValue: 0, unclassifiedWon: 0, unclassifiedValue: 0 };
     staffRows.set(id, {
       id,
-      name: String(t.name ?? ''),
+      name: creatorIndex.nameById.get(id) ?? String(t.name ?? ''),
       type: String((t as any).type ?? 'telecaller'),
       region: String((t as any).region ?? ''),
       region2: String((t as any).region2 ?? ''),
@@ -1280,7 +1283,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   // Self-contained staff list so the dashboard can build dropdowns without a
   // second round-trip.
   const agentList = telecallers.map((t: any) => ({
-    id: String(t.id), name: String(t.name ?? ''),
+    id: String(t.id), name: creatorIndex.nameById.get(String(t.id)) ?? String(t.name ?? ''),
     region: String(t.region ?? ''), region2: String(t.region2 ?? ''),
     regions: tlRegions(t), tlLevel: String(t.tlLevel ?? ''),
     active: !!t.assignEstimateFollowUps,
