@@ -902,7 +902,7 @@ The Pages Functions proxy (`functions/api/[[path]].ts`) forwards `/api/*` to
 ```
 cd founder-os_frontend
 npm run build                  # static export → out/ (webpack: next build --webpack)
-wrangler pages deploy out --project-name founder-os-frontend
+node scripts/deploy.mjs        # build → publish → live assertions (§9.2)
 ```
 > **Must build with webpack.** Next 16 defaults `next build` to Turbopack, and the
 > Turbopack production build drops nested dynamic-import chunks (`page →
@@ -922,7 +922,7 @@ The `functions/` dir is excluded from Next typecheck (Pages Functions types come
 | **D1 nightly backup** | cPanel cron (`216.10.246.39`) | `30 2 * * *` → `~/d1-backup.sh` → Cloudflare D1 **export API** (polling) → SQL dump in `~/d1-backups/`, 14-day retention |
 | waba-worker | Cloudflare Workers | `cd waba-worker && wrangler deploy` (D1 `waba-worker`) |
 | Express backend | Docker / host (alt/local) | `pnpm build` (tsc) → `node dist/server.js`; `Dockerfile` + `docker-compose.yml` |
-| Frontend (+ PWA) | Cloudflare Pages | `npm run build` → `wrangler pages deploy out` |
+| Frontend (+ PWA) | Cloudflare Pages | `node scripts/deploy.mjs` (build → deploy → live deep-link assertions) |
 | webhook-relay / local-runner | host/process | `node webhook-relay/relay.js`, `node local-runner.js` |
 
 Secrets: `SHARED_SECRET` (Worker + GH Actions + waba-worker), `DATABASE_URL` (Express),
@@ -933,7 +933,31 @@ cPanel host in the root `.env`).
 ### 9.1 Verification
 - Worker: `node scripts/smoke-worker.mjs` (asserts public 200s, auth 401s, heavy-slug behaviour).
 - Express: `node dist/server.js` + `curl /api/status`.
-- Frontend: `curl https://<pages>/api/estimates/baseline` confirms the Pages `/api` proxy.
+- Frontend: `node scripts/deploy.mjs` asserts `/`, `/automations`, `/leave`,
+  `/session/leaderboard`, `/crm` return 200 + the app shell, `/api/status` returns JSON,
+  and `/404.html` is not Next's not-found page (see §9.2).
+
+### 9.2 SPA fallback (why a refresh 404s, and how it is prevented)
+The dashboard is ONE static route — `src/app/page.tsx` — and every view is a
+History-API path (`useHashRoute`: `/automations`, `/leave`, `/session/<slug>`…).
+A refresh or a pasted deep link therefore asks Pages for a file that was never
+built. Pages serves the shell for those paths **only while the artifact contains
+no `404.html`**; the moment one is present its implicit SPA fallback is off and
+every deep link answers 404 (2026-11-26: production shipped an `out/` mixing two
+builds — two webpack runtimes, a stale `sw.js` and a `404.html` — so the app
+booted from `/` but nothing refreshed).
+
+Layered defence, one commit:
+- `public/_redirects` ends with `/*    /index.html   200` — versioned, so it does
+  not depend on a build step. `/api/*` still wins: `functions/api/[[path]].ts`
+  runs before static rules.
+- `scripts/prebuild.mjs` (npm `prebuild`) deletes `out/`, so `next build` can
+  never publish a mix of two builds.
+- `scripts/postbuild.mjs` removes `out/404.html` and then FAILS the build if it
+  survived, if `out/index.html` is missing, if an asset it references is absent,
+  or if more than one `webpack-*.js` runtime exists.
+- `scripts/deploy.mjs` builds, publishes and then fetches the deep links above.
+Guard: `pages-spa`.
 
 ## 10. Extension guidelines
 

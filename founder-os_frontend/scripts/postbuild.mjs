@@ -6,7 +6,7 @@
  * 2. Scan out/ for built assets and emit out/sw.js with a precache manifest of
  *    the app shell, so the PWA works offline after first load.
  */
-import { rm, readdir, writeFile, stat } from 'node:fs/promises';
+import { rm, readdir, writeFile, stat, readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,8 +14,27 @@ import { fileURLToPath } from 'node:url';
 const OUT = new URL('../out/', import.meta.url);
 const OUT_PATH = fileURLToPath(OUT);
 
-await rm(new URL('../out/404.html', import.meta.url), { force: true });
+const NOT_FOUND = new URL('../out/404.html', import.meta.url);
+const exists = async (p) => {
+  try { await stat(p); return true; } catch (e) { if (e && e.code === 'ENOENT') return false; throw e; }
+};
+
+await rm(NOT_FOUND, { force: true });
+if (await exists(NOT_FOUND)) {
+  throw new Error('postbuild: out/404.html survived removal — Cloudflare Pages would disable the SPA fallback and every deep link would 404');
+}
 console.log('postbuild: removed out/404.html → Cloudflare Pages SPA fallback enabled');
+
+// This build must really have produced a static export: a `next build` that
+// skipped the export leaves the previous out/ in place, which is what a stale
+// deploy ships.
+const indexHtml = await readFile(new URL('../out/index.html', import.meta.url), 'utf8').catch(() => '');
+if (!indexHtml) {
+  throw new Error('postbuild: out/index.html is missing — the build did not produce a static export (check output: "export" in next.config.ts)');
+}
+const referenced = [...indexHtml.matchAll(/(?:src|href)="(\/_next\/[^"]+)"/g)]
+  .map((m) => m[1].split('?')[0])
+  .filter((v, i, a) => a.indexOf(v) === i);
 
 // ── collect built assets (relative paths, no leading slash) ─────────────────
 const ASSET_EXT = new Set(['.js', '.css', '.png', '.svg', '.ico', '.webp', '.avif', '.woff', '.woff2', '.ttf', '.webmanifest', '.txt']);
@@ -34,6 +53,20 @@ async function walk(dir) {
   }
 }
 await walk(OUT_PATH);
+
+// Everything index.html references must exist in THIS out/.
+const assetSet = new Set(assets);
+const missing = referenced.filter((r) => !assetSet.has(r));
+if (missing.length) {
+  throw new Error('postbuild: out/index.html references ' + missing.length + ' asset(s) this build did not produce — stale out/, run the prebuild clean:\n  ' + missing.join('\n  '));
+}
+// Exactly one webpack runtime may exist (production served two: index.html and
+// sw.js came from different builds).
+const runtimes = assets.filter((a) => /\/webpack-[^/]+\.js$/.test(a));
+const usedRuntime = referenced.filter((r) => /\/webpack-[^/]+\.js$/.test(r));
+if (runtimes.length !== 1 || usedRuntime.length !== 1 || runtimes[0] !== usedRuntime[0]) {
+  throw new Error('postbuild: out/ carries ' + runtimes.length + ' webpack runtime(s) but index.html uses ' + (usedRuntime.join(', ') || 'none') + ' — mixed builds in out/');
+}
 
 const precache = [...new Set(['/', ...assets])];
 

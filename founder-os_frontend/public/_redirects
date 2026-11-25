@@ -1,0 +1,11 @@
+# Cloudflare Pages routing for the static export.
+#
+# The dashboard is ONE static route (src/app/page.tsx) and every view is a
+# History-API path (/automations, /leave, /session/<slug>…), so a refresh or a
+# pasted link asks Pages for a file that was never built. Serve the app shell
+# with 200 for those paths — the fallback must NOT depend on a build step
+# deleting out/404.html, because one stray 404.html turns it off and EVERY
+# deep link 404s at once.
+#
+# /api/* never matches this rule: functions/api/[[path]].ts runs first.
+/*    /index.html   200

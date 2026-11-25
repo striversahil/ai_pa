@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prebuild": "node scripts/prebuild.mjs",
     "build": "next build --webpack && node scripts/postbuild.mjs",
     "start": "next start",
     "lint": "eslint",
