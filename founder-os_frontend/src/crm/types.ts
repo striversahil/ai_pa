@@ -227,8 +227,39 @@ export interface CrmViewerMeta {
   canWrite: boolean;
   /** Tentative dates + delay reasons (floor + sales agents, own region). */
   canPromise: boolean;
+  /** May open the scheduling queue: the CRM desk + root. A dispatch-only login
+   *  works the floor without the "To Schedule" tab (founder 2026-11-26). */
+  canSchedule: boolean;
   /** Invoice gate (Setting `crm:invoice_gate`): `off` = dispatch without one. */
   invoiceGate: "enforce" | "off";
+}
+
+// ── Dispatch cash ledger (moved to the floor from Accounts, 2026-11-26) ──
+
+/** One in/out cash row; `runningBalance` is computed server-side in day order. */
+export interface CashEntry {
+  id: string;
+  day: string;
+  direction: "in" | "out";
+  kind: string;
+  amount: number;
+  party: string;
+  purpose: string;
+  mode: string;
+  ref: string;
+  note: string;
+  enteredBy: string;
+  runningBalance: number;
+  createdAt: string;
+}
+
+/** Opening/in/out/closing for the ledger the server just served. */
+export interface CashSummary {
+  opening: number;
+  totalIn: number;
+  totalOut: number;
+  closing: number;
+  count: number;
 }
 
 export const VIEW_LABELS: Record<View, string> = {

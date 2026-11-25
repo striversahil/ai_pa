@@ -385,9 +385,10 @@ export async function computeDashboard(
   // its next due date — this list stays visible until each row is done, and
   // honours the same lane scoping as items. Per-day model: rows are never
   // rewritten to `overdue`; legacy `overdue` rows are included as not-done.
-  // Phase-1: tray + history + team + dues + payHistory + cash are mutually
+  // Phase-1: tray + history + team + dues + payHistory are mutually
   // independent (all read from the snapshots above) — one Promise.all instead
-  // of six sequential awaits.
+  // of five sequential awaits. The dispatch-cash ledger moved to the CRM
+  // dispatch floor (2026-11-26), so it no longer rides this payload.
   const trayP = timed('tray', async () => {
   const overdueLogs = await (prisma as any).accountsTaskLog.findMany({
     where: {
@@ -557,19 +558,12 @@ export async function computeDashboard(
     });
   return history;
   });
-  const [overdueList, history, team, paymentDues, paymentHistory, cashReport, threads] = await Promise.all([
+  const [overdueList, history, team, paymentDues, paymentHistory, threads] = await Promise.all([
     trayP,
     historyP,
     timed('team', () => computeTeam(dateStr, carriedEffective, { roster, todayLogs: logs })),
     timed('dues', () => getPaymentDues(dateStr)),
     timed('payHistory', () => getPaymentHistory(dateStr)),
-    timed('cash', async () => {
-      // Dispatch cash ledger rides along too (small table, no lane scoping).
-      const { listCashEntries } = await import('../cash');
-      return listCashEntries(1000).catch(() => ({
-        entries: [], summary: { opening: 0, totalIn: 0, totalOut: 0, closing: 0, count: 0 },
-      }));
-    }),
     // Task threads (migration 0166): one row per task × lane with the window's
     // per-day counts. Expand a row → GET /api/accounts/tasks/:id/thread.
     // Same lane scoping as the per-day cards: a lane viewer receives only their
@@ -625,8 +619,6 @@ export async function computeDashboard(
     payments: paymentDues,
     paymentHistory,
     paymentSummary: summarizePayments(paymentDues, paymentHistory),
-    cashEntries: (cashReport as any).entries,
-    cashSummary: (cashReport as any).summary,
     team: { ...team, incompleteToday: (team as any).overdueToday },
   };
 }

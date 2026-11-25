@@ -6,7 +6,7 @@
 // the client only echoes it back for rendering.
 import { api } from "@/api/client";
 import type { Paged } from "@/lib/paging";
-import type { CrmOrder, CrmSummary, CrmViewerMeta, View } from "./types";
+import type { CashEntry, CashSummary, CrmOrder, CrmSummary, CrmViewerMeta, View } from "./types";
 
 /** Paged tab list (usePagedQuery base URL) — founder paging standard
  *  2026-11-21. "dispatch-floor" always returns every row on page 1. */
@@ -25,6 +25,11 @@ export interface SummaryResponse {
   viewer?: CrmViewerMeta;
 }
 
+export interface CashResponse {
+  entries: CashEntry[];
+  summary: CashSummary;
+}
+
 export interface ScheduleItemInput {
   itemId: string;
   date?: string | null;
@@ -41,6 +46,9 @@ const qs = (params: Record<string, string | undefined>) => {
 
 export const crmApi = {
   summary: (region = "") => api.get<SummaryResponse>(`/crm/summary${qs({ region })}`),
+
+  /** Dispatch cash ledger — the floor's own in/out book (floor + accounts). */
+  cash: () => api.get<CashResponse>("/crm/cash"),
 
   order: (id: string) => api.get<{ order: CrmOrder; viewer?: CrmViewerMeta }>(`/crm/orders/${encodeURIComponent(id)}`),
 

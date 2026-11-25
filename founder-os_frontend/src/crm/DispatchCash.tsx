@@ -2,30 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { inr } from "@/components/accounts/payment-calendar";
-
-export interface CashEntry {
-  id: string;
-  day: string;
-  direction: "in" | "out";
-  kind: string;
-  amount: number;
-  party: string;
-  purpose: string;
-  mode: string;
-  ref: string;
-  note: string;
-  enteredBy: string;
-  runningBalance: number;
-  createdAt: string;
-}
-
-export interface CashSummary {
-  opening: number;
-  totalIn: number;
-  totalOut: number;
-  closing: number;
-  count: number;
-}
+import type { CashEntry, CashSummary } from "@/crm/types";
 
 function todayIST(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()).slice(0, 10);
@@ -54,7 +31,7 @@ export default function DispatchCash({
     if (!window.confirm("Void this cash entry? The running balance will recompute.")) return;
     setBusy(true);
     try {
-      const res = await fetch(`/api/accounts/cash/${encodeURIComponent(id)}`, { method: "DELETE" });
+      const res = await fetch(`/api/crm/cash/${encodeURIComponent(id)}`, { method: "DELETE" });
       if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || `Delete failed (${res.status})`);
       onRefresh();
     } catch (e: any) {
@@ -153,7 +130,7 @@ export default function DispatchCash({
         <AddCashDialog busy={busy} onClose={() => setShowAdd(false)} onSave={async (body) => {
           setBusy(true);
           try {
-            const res = await fetch("/api/accounts/cash", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+            const res = await fetch("/api/crm/cash", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
             if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || `Save failed (${res.status})`);
             setShowAdd(false);
             onRefresh();

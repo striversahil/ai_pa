@@ -8,7 +8,7 @@
 import { useCallback, useState } from "react";
 import { useLiveDashboard } from "@/hooks/useLiveData";
 import { usePagedQuery } from "@/hooks/usePagedQuery";
-import { crmApi, ORDERS_URL, type ListResponse, type ScheduleItemInput, type SummaryResponse } from "./api";
+import { crmApi, ORDERS_URL, type CashResponse, type ListResponse, type ScheduleItemInput, type SummaryResponse } from "./api";
 import type { CrmOrder, View } from "./types";
 
 /** One tab of orders, 50 per page with a server total + search over every
@@ -20,6 +20,12 @@ export function useCrmOrders(view: View, region = "") {
 
 export function useCrmSummary(region = "") {
   return useLiveDashboard<SummaryResponse>(() => crmApi.summary(region), { events: ["crm"], deps: [region], pollMs: 180_000 });
+}
+
+/** Dispatch cash ledger. Written under the `accounts` live event (the ledger's
+ *  bus), so an entry booked on one floor screen lands on every other screen. */
+export function useCrmCash() {
+  return useLiveDashboard<CashResponse>(() => crmApi.cash(), { events: ["accounts"], pollMs: 120_000 });
 }
 
 /** IST calendar day (YYYY-MM-DD) — the floor runs on IST, never UTC. */

@@ -68,6 +68,10 @@ interface Viewer {
   canPromise: boolean;
   /** May execute floor transitions (schedule/dispatch/addresses/amend/removal). */
   canWriteFloor: boolean;
+  /** May open the scheduling queue: the CRM desk + root. The dispatch desk
+   *  ships what is already dated, so "To Schedule" is not its screen
+   *  (founder request 2026-11-26). Visibility only — floor writes are unchanged. */
+  canSchedule: boolean;
   /** Invoice-PDF gate (Setting `crm:invoice_gate`): `off` = dispatch without one. */
   invoiceGate: 'enforce' | 'off';
 }
@@ -118,6 +122,7 @@ async function viewer(c: any): Promise<Viewer | null> {
       isManager,
       canPromise,
       canWriteFloor,
+      canSchedule: isAdmin || scopes.includes(ScopeKeys.Crm),
       invoiceGate,
     };
   } catch {
@@ -147,7 +152,7 @@ async function requireRead(c: any): Promise<Viewer | Response> {
   return v || {
     id: '', scopes: [], roles: [], isAdmin: true, name: 'root',
     staffId: null, region: '', isManager: true, canPromise: true, canWriteFloor: true,
-    invoiceGate: 'enforce',
+    canSchedule: true, invoiceGate: 'enforce',
   };
 }
 
@@ -190,6 +195,7 @@ function viewerMeta(v: Viewer) {
     isManager: v.isManager,
     canWrite: v.canWriteFloor,
     canPromise: v.canPromise,
+    canSchedule: v.canSchedule,
     invoiceGate: v.invoiceGate,
   };
 }

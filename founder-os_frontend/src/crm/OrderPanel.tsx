@@ -47,6 +47,7 @@ export default function OrderPanel({
   order,
   initialMode,
   canWrite,
+  canSchedule = true,
   promiseOnly = false,
   invoiceGate = "enforce",
   onClose,
@@ -55,6 +56,8 @@ export default function OrderPanel({
   order: CrmOrder;
   initialMode: PanelMode;
   canWrite: boolean;
+  /** May schedule: false on a dispatch-only login (the CRM desk schedules). */
+  canSchedule?: boolean;
   /** Server invoice gate: `off` unlocks dispatch with no invoice PDF
       (Setting `crm:invoice_gate`, root-toggled in Settings). */
   invoiceGate?: "enforce" | "off";
@@ -67,7 +70,9 @@ export default function OrderPanel({
 }) {
   const today = istToday();
   const floorWrite = canWrite && !promiseOnly;
-  const [mode, setMode] = useState<PanelMode>(initialMode);
+  // A dispatch-desk login can never land on a schedule form, even if a card
+  // opened the panel in that mode.
+  const [mode, setMode] = useState<PanelMode>(initialMode === "schedule" && !canSchedule ? "view" : initialMode);
   // Full detail (proofs + audit events) lives only on the order-detail
   // endpoint — dashboard list rows carry items but no proofs/events. Fetch it
   // on open; every history section below reads from `detail` first and falls
@@ -512,7 +517,7 @@ export default function OrderPanel({
                 ["reschedule", "Reschedule", ArrowRight],
               ] as Array<[PanelMode, string, any]>
             )
-              .filter(([key]) => !promiseOnly || key === "view" || key === "schedule")
+              .filter(([key]) => (promiseOnly ? key === "view" || key === "schedule" : canSchedule || key !== "schedule"))
               .map(([key, label, Icon]) => {
               const disabled =
                 key !== "view" &&

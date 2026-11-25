@@ -25,6 +25,7 @@ import {
   Search,
   Trash2,
   Truck,
+  Wallet,
   XCircle,
   type LucideIcon,
 } from "lucide-react";
@@ -33,6 +34,7 @@ import { MemoOrderCard } from "@/crm/OrderCard";
 import { istToday, useCrmOrders, useCrmSummary } from "@/crm/hooks";
 import type { CrmOrder, View } from "@/crm/types";
 import { ChangesBanner, Pager } from "@/components/ui";
+import CrmCashPanel from "@/components/CrmCashPanel";
 
 
 
@@ -46,9 +48,16 @@ const TABS: Array<{ key: View; label: string; icon: LucideIcon }> = [
   { key: "all", label: "All SOs", icon: Package },
 ];
 
+/** The ledger is a floor surface, not an order view: it never reaches the
+ *  orders API (which only knows the View union above). */
+const CASH_TAB = { key: "cash" as const, label: "Dispatch cash", icon: Wallet };
+
 export default function CrmDashboard() {
   const today = istToday();
-  const [view, setView] = useState<View>("dispatch-floor");
+  // "cash" is the ledger, not an order view: the list keeps the default tab
+  // underneath so the orders API is never asked for a view it does not know.
+  const [tab, setTab] = useState<View | "cash">("dispatch-floor");
+  const view: View = tab === "cash" ? "dispatch-floor" : tab;
   const [panel, setPanel] = useState<{ order: CrmOrder; mode: PanelMode } | null>(null);
 
   // 50 per page + server search over every order (Today's Dispatches is
@@ -58,6 +67,18 @@ export default function CrmDashboard() {
 
   const orders = list.rows;
   const counts = summary.data?.counts;
+
+  // Server-resolved viewer flags: the scheduling queue belongs to the CRM desk,
+  // so a dispatch-only login gets the floor without "To Schedule"; the cash
+  // ledger is a floor write surface.
+  const viewer = summary.data?.viewer ?? list.data?.viewer ?? null;
+  const canSchedule = viewer ? viewer.canSchedule : true;
+  const canFloorWrite = viewer ? viewer.canWrite : true;
+
+  const tabs: Array<{ key: View | "cash"; label: string; icon: LucideIcon }> = [
+    ...TABS.filter((t) => t.key !== "unscheduled" || canSchedule || !canFloorWrite),
+    ...(canFloorWrite ? [CASH_TAB] : []),
+  ];
 
   const badges = useMemo<Record<View, number>>(
     () => ({
@@ -113,94 +134,108 @@ export default function CrmDashboard() {
           always equals the SOs the list renders. The lifecycle buckets are
           pipeline stages that overlap (one SO sits in several tabs), so they
           never back a card; "Partially sched." is the one stage without a tab. */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-        <Kpi label="Due today" value={counts?.floorToday ?? 0} hint={itemHint(counts?.dueTodayItems)} accent="text-indigo-600 dark:text-indigo-400" icon={Truck} />
-        <Kpi label="Overdue" value={counts?.overdue ?? 0} hint={itemHint(counts?.overdueItems)} accent="text-rose-600 dark:text-rose-400" icon={AlertTriangle} />
-        <Kpi label="Unscheduled" value={counts?.tabUnscheduled ?? 0} accent="text-red-600 dark:text-red-400" icon={CalendarClock} />
-        <Kpi label="Partially sched." value={counts?.partiallyScheduled ?? 0} title="Mixed stage: some lines are dated or dispatched while others are still open, so these SOs also appear in the other tabs." accent="text-amber-600 dark:text-amber-400" icon={Clock} />
-        <Kpi label="Scheduled" value={counts?.tabScheduled ?? 0} accent="text-sky-600 dark:text-sky-400" icon={CalendarClock} />
-        <Kpi label="Dispatched" value={counts?.tabDispatched ?? 0} accent="text-emerald-600 dark:text-emerald-400" icon={CheckCircle2} />
-      </div>
+      {tab !== "cash" && (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+          <Kpi label="Due today" value={counts?.floorToday ?? 0} hint={itemHint(counts?.dueTodayItems)} accent="text-indigo-600 dark:text-indigo-400" icon={Truck} />
+          <Kpi label="Overdue" value={counts?.overdue ?? 0} hint={itemHint(counts?.overdueItems)} accent="text-rose-600 dark:text-rose-400" icon={AlertTriangle} />
+          <Kpi label="Unscheduled" value={counts?.tabUnscheduled ?? 0} accent="text-red-600 dark:text-red-400" icon={CalendarClock} />
+          <Kpi label="Partially sched." value={counts?.partiallyScheduled ?? 0} title="Mixed stage: some lines are dated or dispatched while others are still open, so these SOs also appear in the other tabs." accent="text-amber-600 dark:text-amber-400" icon={Clock} />
+          <Kpi label="Scheduled" value={counts?.tabScheduled ?? 0} accent="text-sky-600 dark:text-sky-400" icon={CalendarClock} />
+          <Kpi label="Dispatched" value={counts?.tabDispatched ?? 0} accent="text-emerald-600 dark:text-emerald-400" icon={CheckCircle2} />
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <nav className="flex flex-wrap gap-1 rounded-xl border border-zinc-200 bg-white p-1 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/60">
-          {TABS.map(({ key, label, icon: Icon }) => (
-            <button
-              key={key}
-              onClick={() => setView(key)}
-              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                view === key
-                  ? "bg-indigo-600 text-white shadow-sm"
-                  : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
-              }`}
-            >
-              <Icon className="h-3.5 w-3.5" />
-              {label}
-              {badges[key] > 0 && (
-                <span
-                  className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${
-                    view === key ? "bg-white/20" : "bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
-                  }`}
-                >
-                  {badges[key]}
-                </span>
-              )}
-            </button>
-          ))}
+          {tabs.map(({ key, label, icon: Icon }) => {
+            const count = key === "cash" ? 0 : badges[key] ?? 0;
+            return (
+              <button
+                key={key}
+                onClick={() => setTab(key)}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                  tab === key
+                    ? "bg-indigo-600 text-white shadow-sm"
+                    : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                }`}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                {label}
+                {count > 0 && (
+                  <span
+                    className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${
+                      tab === key ? "bg-white/20" : "bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+                    }`}
+                  >
+                    {count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </nav>
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-zinc-400" />
-          <input
-            value={list.q}
-            onChange={(e) => list.setQ(e.target.value)}
-            placeholder="SO number, customer, salesperson…"
-            className="w-64 rounded-lg border border-zinc-200 bg-white py-1.5 pl-8 pr-3 text-xs outline-none focus:border-indigo-500 dark:border-zinc-800 dark:bg-zinc-900/60"
+        {tab !== "cash" && (
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-zinc-400" />
+            <input
+              value={list.q}
+              onChange={(e) => list.setQ(e.target.value)}
+              placeholder="SO number, customer, salesperson…"
+              className="w-64 rounded-lg border border-zinc-200 bg-white py-1.5 pl-8 pr-3 text-xs outline-none focus:border-indigo-500 dark:border-zinc-800 dark:bg-zinc-900/60"
+            />
+          </div>
+        )}
+      </div>
+      {tab === "cash" ? (
+        <CrmCashPanel canWrite={canFloorWrite} />
+      ) : (
+        <>
+        {!!list.error && (
+          <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-700 dark:text-rose-300">
+            Could not load the floor: {list.error instanceof Error ? list.error.message : String(list.error)}
+          </div>
+        )}
+
+        <ChangesBanner count={list.changes} onRefresh={list.refresh} />
+
+        {list.loading && orders.length === 0 && <SkeletonList />}
+
+        {!list.loading && orders.length === 0 && (
+          <div className="rounded-2xl border border-dashed border-zinc-300 p-10 text-center text-sm text-zinc-500 dark:border-zinc-700">
+            {view === "dispatch-floor"
+              ? "Nothing due today. Schedule the red orders so work shows up here."
+              : view === "cancelled"
+                ? "No cancelled orders — full SO cancels and unavailable-line cancels land here."
+                : view === "source-deleted"
+                  ? "No orders were dropped by Zoho. Nothing to confirm."
+                  : "No orders in this view."}
+          </div>
+        )}
+
+        <div className="space-y-2.5">
+          {orders.map((order) => (
+            <MemoOrderCard key={order.id} order={order} today={today} view={view} canSchedule={canSchedule} onOpen={openPanel} />
+          ))}
+        </div>
+
+        {list.total > 0 && (
+          <Pager page={list.page} limit={list.limit} total={list.total} totalPages={list.totalPages} onPage={list.setPage} noun="orders" />
+        )}
+
+        {panel && (
+          <OrderPanel
+            order={panel.order}
+            initialMode={panel.mode}
+            canWrite
+            canSchedule={canSchedule}
+            onClose={() => setPanel(null)}
+            onChanged={() => {
+              list.refresh();
+              summary.refresh();
+            }}
+            invoiceGate={list.data?.viewer?.invoiceGate ?? "enforce"}
           />
-        </div>
-      </div>
-      {!!list.error && (
-        <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-700 dark:text-rose-300">
-          Could not load the floor: {list.error instanceof Error ? list.error.message : String(list.error)}
-        </div>
-      )}
-
-      <ChangesBanner count={list.changes} onRefresh={list.refresh} />
-
-      {list.loading && orders.length === 0 && <SkeletonList />}
-
-      {!list.loading && orders.length === 0 && (
-        <div className="rounded-2xl border border-dashed border-zinc-300 p-10 text-center text-sm text-zinc-500 dark:border-zinc-700">
-          {view === "dispatch-floor"
-            ? "Nothing due today. Schedule the red orders so work shows up here."
-            : view === "cancelled"
-              ? "No cancelled orders — full SO cancels and unavailable-line cancels land here."
-              : view === "source-deleted"
-                ? "No orders were dropped by Zoho. Nothing to confirm."
-                : "No orders in this view."}
-        </div>
-      )}
-
-      <div className="space-y-2.5">
-        {orders.map((order) => (
-          <MemoOrderCard key={order.id} order={order} today={today} view={view} onOpen={openPanel} />
-        ))}
-      </div>
-
-      {list.total > 0 && (
-        <Pager page={list.page} limit={list.limit} total={list.total} totalPages={list.totalPages} onPage={list.setPage} noun="orders" />
-      )}
-
-      {panel && (
-        <OrderPanel
-          order={panel.order}
-          initialMode={panel.mode}
-          canWrite
-          onClose={() => setPanel(null)}
-          onChanged={() => {
-            list.refresh();
-            summary.refresh();
-          }}
-          invoiceGate={list.data?.viewer?.invoiceGate ?? "enforce"}
-        />
+        )}
+        </>
       )}
     </div>
   );

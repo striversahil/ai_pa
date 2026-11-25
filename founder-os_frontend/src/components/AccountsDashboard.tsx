@@ -5,7 +5,6 @@ import { useLiveQuery, useOptimisticMutation, patchRowInLists, mapRowInLists } f
 import { useAuth } from "@/auth/AuthContext";
 import { TabBar } from "@/components/ui/TabBar";
 import PaymentDues from "@/components/accounts/PaymentDues";
-import DispatchCash from "@/components/accounts/DispatchCash";
 import { inr, inrShort } from "@/components/accounts/payment-calendar";
 import { workspaceDataUrl } from "@/workspaces/api";
 import type { AccountsView, DashData, TaskItem, FileItem, LaneStat, UnscheduledItem, ThreadRow } from "./accounts-dashboard/types";
@@ -20,9 +19,6 @@ export { matchSelfRoster } from "./accounts-dashboard/helpers";
 export default function AccountsDashboard() {
   const { me } = useAuth();
   const canRoot = !!me && !!me.isAdmin;
-  // Dispatch cash: adds from accounts OR dispatch floor; edits from accounts/root.
-  const canCashAdd = !!me && (me.isAdmin || me.scopes.includes("accounts") || me.scopes.includes("dispatch") || me.scopes.includes("crm"));
-  const canCashEdit = !!me && (me.isAdmin || me.scopes.includes("accounts"));
   const [view, setView] = useState<AccountsView>("dashboard");
 
   // Today only — the backend serves the current IST day. Every task row also
@@ -131,7 +127,6 @@ export default function AccountsDashboard() {
         { key: "senior", label: "Senior", icon: "👔" },
         { key: "junior", label: "Junior", icon: "🧾" },
         { key: "dues", label: "Payment dues", icon: "💳" },
-        { key: "cash", label: "Dispatch cash", icon: "💵" },
         { key: "controller", label: "Controller", icon: "🎛️" },
       ]
       : selfRole
@@ -139,11 +134,9 @@ export default function AccountsDashboard() {
           { key: "dashboard", label: "Dashboard", icon: "📊" },
           { key: "my", label: "My Tasks", icon: selfRole === "senior" ? "👔" : "🧾" },
           { key: "dues", label: "Payment dues", icon: "💳" },
-          { key: "cash", label: "Dispatch cash", icon: "💵" },
         ]
         : [
           { key: "dashboard", label: "Dashboard", icon: "📊" },
-          { key: "cash", label: "Dispatch cash", icon: "💵" },
         ];
   const isTaskView = view === "tasks" || view === "senior" || view === "junior" || view === "my";
 
@@ -292,7 +285,6 @@ export default function AccountsDashboard() {
 
           {data && view === "controller" && (canRoot ? <Controller onChanged={() => dash.refresh()} /> : <div className="rounded-xl border p-6 text-sm text-zinc-500">🔒 Controller is restricted to root.</div>)}
           {data && view === "dues" && <PaymentDues dues={data.payments ?? []} history={data.paymentHistory ?? []} summary={data.paymentSummary} onRefresh={() => dash.refresh()} />}
-          {data && view === "cash" && <DispatchCash entries={data.cashEntries ?? []} summary={data.cashSummary} canAdd={canCashAdd} canEdit={canCashEdit} onRefresh={() => dash.refresh()} />}
         </div>
       </div>
     </div>

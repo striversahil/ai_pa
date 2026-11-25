@@ -11,9 +11,6 @@ import {
   resolveSelfAccountant, payDue, getThreadsExport,
   getThread, runThreadMaintenance, threadWindow, ISO_DAY, istDateStr, SLOT_MAIN,
 } from '../../automations/accounts/service';
-import {
-  listCashEntries, createCashEntry, updateCashEntry, deleteCashEntry,
-} from '../../automations/accounts/cash';
 import { getViewerMe } from '../viewer';
 import { readBody, writeError } from '../http';
 
@@ -174,75 +171,6 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
     } catch (e: any) { return writeError(c, e, 'pay failed'); }
   });
 
-  // ── Dispatch cash report (Worker-only) ────────────────────────────────
-  // Simple in/out ledger. Reads + adds: accounts OR dispatch floor (the floor
-  // records its own spends). Edits/deletes: accounts-department only, so history
-  // can't be rewritten from the floor.
-  async function accountsReadGate(c: any) {
-    const me = await getViewerMe(c).catch(() => null);
-    if (!me) throw new Error('Authentication required');
-    const scopes = ((me as any)?.scopes ?? []) as string[];
-    if ((me as any)?.isAdmin || scopes.includes(ScopeKeys.Accounts) || scopes.includes(ScopeKeys.Dispatch)) return me;
-    throw new Error("Requires 'accounts' or 'dispatch' permission");
-  }
-  async function cashWriteGate(c: any) {
-    const me = await getViewerMe(c).catch(() => null);
-    if (!me) throw new Error('Authentication required');
-    const scopes = ((me as any)?.scopes ?? []) as string[];
-    if ((me as any)?.isAdmin || scopes.includes(ScopeKeys.Accounts)) return me;
-    throw new Error("Requires 'accounts' permission");
-  }
-
-  app.get('/api/accounts/cash', async (c) => {
-    try { await accountsReadGate(c); } catch (e: any) {
-      const msg = String(e?.message ?? '');
-      return c.json({ error: msg }, msg.includes('Authentication') ? 401 : 403);
-    }
-    try {
-      const { entries, summary } = await listCashEntries(1000);
-      return c.json({ entries, summary });
-    } catch (e: any) { return writeError(c, e, 'load failed'); }
-  });
-
-  app.post('/api/accounts/cash', async (c) => {
-    let me: any;
-    try { me = await accountsReadGate(c); } catch (e: any) {
-      const msg = String(e?.message ?? '');
-      return c.json({ error: msg }, msg.includes('Authentication') ? 401 : 403);
-    }
-    const body = await readBody(c);
-    try {
-      const row = await createCashEntry(body || {}, me?.user?.name ?? me?.user?.email ?? null);
-      notifyLive(c, { type: LiveEvent.Accounts });
-      return c.json(row, 201);
-    } catch (e: any) { return writeError(c, e, 'create failed'); }
-  });
-
-  app.patch('/api/accounts/cash/:id', async (c) => {
-    try { await cashWriteGate(c); } catch (e: any) {
-      const msg = String(e?.message ?? '');
-      return c.json({ error: msg }, msg.includes('Authentication') ? 401 : 403);
-    }
-    const body = await readBody(c);
-    try {
-      const row = await updateCashEntry(c.req.param('id'), body || {});
-      notifyLive(c, { type: LiveEvent.Accounts });
-      return c.json(row);
-    } catch (e: any) { return writeError(c, e, 'update failed'); }
-  });
-
-  app.delete('/api/accounts/cash/:id', async (c) => {
-    try { await cashWriteGate(c); } catch (e: any) {
-      const msg = String(e?.message ?? '');
-      return c.json({ error: msg }, msg.includes('Authentication') ? 401 : 403);
-    }
-    try {
-      await deleteCashEntry(c.req.param('id'));
-      notifyLive(c, { type: LiveEvent.Accounts });
-      return c.json({ ok: true });
-    } catch (e: any) { return writeError(c, e, 'delete failed'); }
-  });
-
   // ── Root export: date-range full ledger (pending/inprogress/done + remarks + file links) ──
   app.get('/api/accounts/export', async (c) => {
     const denied = await adminGuard(c); if (denied) return denied;
@@ -280,6 +208,18 @@ export function registerAccountsRoutes(app: Hono<{ Bindings: Bindings }>): void 
       return c.json(row);
     } catch (e: any) { return writeError(c, e, 'log failed'); }
   });
+
+  /** Dashboard read: root/admin or the accounts/dispatch scopes. Lane scoping
+   *  happens inside the payload; this only answers "may you open Accounts".
+   *  (The dispatch-cash routes that used to live here moved to the CRM floor —
+   *  routes/crm-cash.ts — so this gate is now task-thread read only.) */
+  async function accountsReadGate(c: any) {
+    const me = await getViewerMe(c).catch(() => null);
+    if (!me) throw new Error('Authentication required');
+    const scopes = ((me as any)?.scopes ?? []) as string[];
+    if ((me as any)?.isAdmin || scopes.includes(ScopeKeys.Accounts) || scopes.includes(ScopeKeys.Dispatch)) return me;
+    throw new Error("Requires 'accounts' or 'dispatch' permission");
+  }
 
   // ── Task threads (migration 0166): one task = a thread of entries ────────
   // Read: dashboard access (accounts or dispatch), lane-scoped. With no

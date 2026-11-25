@@ -1,7 +1,6 @@
 // Extracted verbatim from AccountsDashboard.tsx by scripts/refactor/split-module.mjs.
 // AccountsDashboard.tsx re-exports everything public here, so existing imports keep working.
 import type { PaymentDueRow, PaymentSummary } from "@/components/accounts/PaymentDues";
-import type { CashEntry, CashSummary } from "@/components/accounts/DispatchCash";
 import { PATTERNS } from "./helpers";
 
 export interface FileItem {
@@ -131,8 +130,6 @@ export interface DashData {
   payments?: PaymentDueRow[];
   paymentHistory?: PaymentDueRow[];
   paymentSummary?: PaymentSummary;
-  cashEntries?: CashEntry[];
-  cashSummary?: CashSummary;
   team?: TeamData | null;
   /** One row per task × lane (migration 0166): the year's counts for a task.
    *  Expand a row → GET /api/accounts/tasks/:id/thread. */
@@ -199,7 +196,7 @@ export interface ThreadDetail {
   entries: ThreadEntry[];
 }
 
-export type AccountsView = "dashboard" | "tasks" | "senior" | "junior" | "my" | "dues" | "cash" | "controller";
+export type AccountsView = "dashboard" | "tasks" | "senior" | "junior" | "my" | "dues" | "controller";
 
 export interface LaneStat {
   done: number;

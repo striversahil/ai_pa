@@ -32,11 +32,15 @@ export function OrderCard({
   today,
   view,
   onOpen,
+  canSchedule = true,
 }: {
   order: CrmOrder;
   today: string;
   view: View;
   onOpen: (order: CrmOrder, mode: PanelMode) => void;
+  /** Dispatch-desk logins do not schedule — the CRM desk owns "To Schedule"
+      (founder 2026-11-26), so the action disappears with the tab. */
+  canSchedule?: boolean;
 }) {
   const items = order.items || [];
   const meta = LIFECYCLE_META[order.lifecycle] ?? LIFECYCLE_META.unscheduled;
@@ -130,7 +134,7 @@ export function OrderCard({
         <ProofDocChips docs={order.proofDocs} />
       )}
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        {flags.canSchedule && (
+        {flags.canSchedule && canSchedule && (
           <ActionButton icon={CalendarClock} label={order.lifecycle === "unscheduled" ? "Schedule" : "Finish scheduling"} onClick={() => onOpen(order, "schedule")} primary />
         )}
         {flags.canDispatch && (

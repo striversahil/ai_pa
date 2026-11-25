@@ -81,6 +81,8 @@ const tests = [
   ['POST /api/crm/orders/SO-1/proofs/P1/photos no-auth -> 401', '/api/crm/orders/SO-1/proofs/P1/photos', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}) }],
   ['PUT /api/crm/orders/SO-1/items no-auth -> 401', '/api/crm/orders/SO-1/items', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason: 'client confirmed fewer pieces' }) }],
   ['POST /api/crm/orders/SO-1/cancel-local no-auth -> 401', '/api/crm/orders/SO-1/cancel-local', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason: 'client cancelled the full order' }) }],
+  ['GET /api/crm/cash no-auth -> 401', '/api/crm/cash'],
+  ['DELETE /api/crm/cash/x no-auth -> 401', '/api/crm/cash/x', { method: 'DELETE' }],
   ['POST /api/crm/orders/SO-1/reopen no-auth -> 401', '/api/crm/orders/SO-1/reopen', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}) }],
   ['GET /api/telecalling/client-segments no-auth -> 403', '/api/telecalling/client-segments'],
   ['PUT /api/telecalling/client-segments no-auth -> 403', '/api/telecalling/client-segments', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ clientKey: 'TEST', segment: 'consumer' }) }],

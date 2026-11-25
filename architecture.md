@@ -349,6 +349,22 @@ that IS supplied is still verified, burned and never reusable. Readers expose su
 `noInvoice` (`files.invoice` null), so the panel says "no invoice" instead of drawing an
 inert tile from the sentinel; accounts can audit with `WHERE invoiceId LIKE 'no-invoice:%'`.
 
+**Dispatch cash lives on the floor (2026-11-26).** The in/out ledger that used to sit behind
+`/api/accounts/cash` and an Accounts → "Dispatch cash" tab is now the floor's own surface:
+`worker/routes/crm-cash.ts` serves `GET/POST/PATCH/DELETE /api/crm/cash` over the unchanged core
+(`automations/accounts/cash.ts`), and the panel moved to `src/crm/DispatchCash.tsx` (mounted
+through `components/CrmCashPanel.tsx` + `crm/hooks.ts#useCrmCash`, so the ledger is fetched only
+while its tab is open, live on the `accounts` event). One gate for every verb — root/admin, `crm`,
+`dispatch`, `accounts` — because the person who types an entry on a busy morning is the person
+who must be able to correct or void it; the old "edits are accounts-only, so history can't be
+rewritten from the floor" rule is retired with the move. Accounts lost the routes, the tab and
+the `cashEntries`/`cashSummary` payload fields (the ledger no longer rides the accounts payload).
+The same change adds `viewerMeta.canSchedule` = root + `crm`: the scheduling queue belongs to the
+CRM desk, so a dispatch-only login gets the floor tabs without "To Schedule", and the scheduling
+entry points vanish with it (card action hidden, panel mode filtered, a deep-linked `schedule`
+mode falls back to Items). This is **visibility only** — `/api/crm/orders/:id/schedule` keeps the
+same floor write gate. Guard `crm-cash`.
+
 Sync: `scripts/crm-runner.js` pages Zoho and POSTs only the **in-window** slice
 (`FLOOR_WINDOW_DAYS = 30`, mirrored in the store — Zoho reports 5,000+ open SOs and the
 rate-limited per-order item fetch could never catch up on the backlog). Per-order
