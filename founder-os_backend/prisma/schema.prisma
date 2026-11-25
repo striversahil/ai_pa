@@ -1725,12 +1725,14 @@ model HumanResourcesInventoryTxn {
   @@index([expenseId])
 }
 
-// Hiring kit: a position (job title) can hold any number of JD and SOP PDFs.
-// PDF bytes live in CHAT_FILES KV; rows here hold metadata only.
+// Hiring kit: a position (job title) can hold any number of JD, SOP and
+// questionnaire PDFs plus one video walkthrough link. PDF bytes live in
+// CHAT_FILES KV; rows here hold metadata only.
 model HumanResourcesHiringPosition {
   id        String   @id @default(uuid())
   name      String
   nameKey   String   @unique // normalised name — prevents "Sales Exec" duplicates
+  videoUrl  String? // walkthrough recording (http/https), one per position
   createdBy String   @default("")
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now())
@@ -1743,7 +1745,7 @@ model HumanResourcesPositionDoc {
   id         String   @id @default(uuid())
   positionId String
   position   HumanResourcesHiringPosition @relation(fields: [positionId], references: [id], onDelete: Cascade)
-  kind       String   @default("jd") // jd | sop
+  kind       String   @default("jd") // jd | sop | questionnaire
   title      String   @default("")
   fileName   String
   mime       String   @default("application/pdf")

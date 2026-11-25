@@ -90,10 +90,22 @@ export async function importHiringPositions(names: string[]): Promise<{ created:
   return res.json();
 }
 
-export async function renameHiringPosition(id: string, name: string): Promise<HrHiringPosition> {
-  const res = await jsonRequest(`/api/human-resources/hiring-positions/${id}`, "PATCH", { name });
+export async function updateHiringPosition(
+  id: string,
+  patch: { name?: string; videoUrl?: string | null },
+): Promise<HrHiringPosition> {
+  const res = await jsonRequest(`/api/human-resources/hiring-positions/${id}`, "PATCH", patch);
   if (!res.ok) throw new Error(await readError(res));
   return res.json();
+}
+
+export async function renameHiringPosition(id: string, name: string): Promise<HrHiringPosition> {
+  return updateHiringPosition(id, { name });
+}
+
+/** One link per position; null clears it. */
+export async function saveHiringVideoUrl(id: string, videoUrl: string | null): Promise<HrHiringPosition> {
+  return updateHiringPosition(id, { videoUrl });
 }
 
 export async function deleteHiringPosition(id: string): Promise<void> {
@@ -101,7 +113,7 @@ export async function deleteHiringPosition(id: string): Promise<void> {
   if (!res.ok) throw new Error(await readError(res));
 }
 
-/** Adds a JD/SOP PDF to a position (roles can hold several of each). */
+/** Adds a JD/SOP/questionnaire PDF to a position (several of each allowed). */
 export async function uploadPositionDoc(positionId: string, kind: HiringDocKind, file: File, title?: string): Promise<HrPositionDoc> {
   const fd = new FormData();
   fd.append("kind", kind);

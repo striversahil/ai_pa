@@ -31,7 +31,7 @@ import {
 } from '../../automations/human-resources/inventory';
 import {
   createHiringPosition, createPositionDoc, deleteHiringPosition, deletePositionDoc, getPositionDoc,
-  importHiringPositions, listHiringPositions, renameHiringPosition,
+  importHiringPositions, listHiringPositions, updateHiringPosition,
 } from '../../automations/human-resources/hiring-positions';
 import {
   defaultDocTitle, isHiringDocKind, isPdfUpload, MAX_HIRING_DOC_BYTES,
@@ -580,7 +580,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
     } catch (e) { return errorResponse(c, e); }
   });
 
-  // ── Hiring kit: JD + SOP PDFs per position (many per role) ──────────────
+  // ── Hiring kit: JD / SOP / questionnaire PDFs + walkthrough per role ─────
   // PDF bytes live in CHAT_FILES KV (`hrdocs/<uuid>.pdf`); D1 keeps metadata.
   // Read/upload/delete are all HR/root-only (same `access()` gate as the rest
   // of the HR dashboard) — no public document URLs.
@@ -619,10 +619,10 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
   app.patch('/api/human-resources/hiring-positions/:id', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
-    if (!a.canManage) return c.json({ error: 'Only HR/root users can rename positions' }, 403);
+    if (!a.canManage) return c.json({ error: 'Only HR/root users can edit positions' }, 403);
     const body = await readBody(c);
     try {
-      const row = await renameHiringPosition(c.req.param('id') ?? '', body || {});
+      const row = await updateHiringPosition(c.req.param('id') ?? '', body || {});
       notifyLive(c, { type: LiveEvent.HumanResources });
       return c.json(row);
     } catch (e) { return errorResponse(c, e); }
@@ -644,7 +644,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
     } catch (e) { return errorResponse(c, e); }
   });
 
-  // Add a JD / SOP PDF to a position (a role can hold many of each).
+  // Add a JD / SOP / questionnaire PDF to a position (a role can hold many).
   app.post('/api/human-resources/hiring-positions/:id/docs', async (c) => {
     const a = await access(c);
     if (a.error) return a.error;
@@ -657,7 +657,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
       return c.json({ error: 'Expected multipart/form-data' }, 400);
     }
     const kind = String(form.get('kind') || 'jd').trim().toLowerCase();
-    if (!isHiringDocKind(kind)) return c.json({ error: "kind must be 'jd' or 'sop'" }, 400);
+    if (!isHiringDocKind(kind)) return c.json({ error: "kind must be 'jd', 'sop' or 'questionnaire'" }, 400);
     const file = form.get('file');
     if (!(file instanceof File)) return c.json({ error: 'file field required' }, 400);
     if (!isPdfUpload(file.name, file.type)) return c.json({ error: 'Only PDF files are accepted' }, 400);

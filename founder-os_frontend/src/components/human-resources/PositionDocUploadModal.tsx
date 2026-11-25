@@ -21,7 +21,7 @@ function sizeLabel(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** Adds one JD/SOP PDF. A position can hold as many as HR uploads. */
+/** Adds one JD / SOP / questionnaire PDF. A position can hold many. */
 export default function PositionDocUploadModal({
   position,
   kind,
@@ -79,7 +79,7 @@ export default function PositionDocUploadModal({
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             maxLength={200}
-            placeholder={kind === "jd" ? "e.g. Sales Executive JD (2026)" : "e.g. Attendance & leave SOP"}
+            placeholder={kind === "jd" ? "e.g. Sales Executive JD (2026)" : kind === "sop" ? "e.g. Attendance & leave SOP" : "e.g. Sales Executive screening questionnaire"}
             className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 dark:border-zinc-700 dark:bg-zinc-950"
           />
           <p className="mt-1 text-[11px] text-zinc-500">Defaults to the file name.</p>

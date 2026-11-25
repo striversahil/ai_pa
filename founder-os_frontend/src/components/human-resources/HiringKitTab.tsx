@@ -5,20 +5,20 @@ import ConfirmDialog from "../ui/ConfirmDialog";
 import PdfViewer from "../PdfViewer";
 import HiringPositionModal from "./HiringPositionModal";
 import PositionDocSlot from "./PositionDocSlot";
+import PositionVideoSlot from "./PositionVideoSlot";
 import { useLiveDashboard } from "@/hooks/useLiveData";
 import {
   deleteHiringPosition, importHiringPositions, listHiringPositions,
 } from "@/hr/api";
 import {
-  filterHiringPositions, hiringPositionSuggestions, hiringStats, docsFor,
+  filterHiringPositions, hiringPositionSuggestions, hiringStats, docsFor, isComplete, missingDocs,
   HIRING_FILTERS, type HiringFilter,
 } from "@/hr/hiring-positions";
-import type { HrHiringPosition, HrPositionDoc } from "@/hr/types";
+import { HIRING_DOC_LABEL, type HrHiringPosition, type HrPositionDoc } from "@/hr/types";
 
 /**
- * HR hiring kit: job descriptions and SOPs per position (any number of each),
- * viewable inline.
- * HR-only (the API gate is the same as the rest of the HR dashboard).
+ * HR hiring kit: per position, any number of JD / SOP / questionnaire PDFs
+ * plus one video walkthrough link. HR-only (same API gate as the dashboard).
  */
 export default function HiringKitTab({ designations }: { designations: string[] }) {
   const dash = useLiveDashboard(async () => listHiringPositions(), { events: ["human-resources"], pollMs: 60000 });
@@ -91,12 +91,12 @@ export default function HiringKitTab({ designations }: { designations: string[] 
           <div className="text-lg font-extrabold text-emerald-600 dark:text-emerald-400">{stats.complete}</div>
         </div>
         <div className="rounded-xl border border-zinc-200 bg-white px-3 py-2.5 dark:border-zinc-800 dark:bg-zinc-950">
-          <div className="text-[10px] font-extrabold uppercase tracking-wider text-zinc-500">Missing JD</div>
-          <div className="text-lg font-extrabold text-amber-600 dark:text-amber-400">{stats.missingJd}</div>
+          <div className="text-[10px] font-extrabold uppercase tracking-wider text-zinc-500">Missing docs</div>
+          <div className="text-lg font-extrabold text-amber-600 dark:text-amber-400">{stats.missingDocs}</div>
         </div>
         <div className="rounded-xl border border-zinc-200 bg-white px-3 py-2.5 dark:border-zinc-800 dark:bg-zinc-950">
-          <div className="text-[10px] font-extrabold uppercase tracking-wider text-zinc-500">Missing SOP</div>
-          <div className="text-lg font-extrabold text-amber-600 dark:text-amber-400">{stats.missingSop}</div>
+          <div className="text-[10px] font-extrabold uppercase tracking-wider text-zinc-500">No walkthrough</div>
+          <div className="text-lg font-extrabold text-amber-600 dark:text-amber-400">{stats.missingVideo}</div>
         </div>
       </div>
 
@@ -105,7 +105,7 @@ export default function HiringKitTab({ designations }: { designations: string[] 
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search position, document, file…"
+            placeholder="Search position, document, link…"
             className="w-56 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs outline-none focus:border-indigo-500 dark:border-zinc-700 dark:bg-zinc-950"
           />
           {HIRING_FILTERS.map((f) => (
@@ -161,7 +161,7 @@ export default function HiringKitTab({ designations }: { designations: string[] 
           <div className="text-2xl">📚</div>
           <h3 className="mt-2 text-sm font-bold">No positions yet</h3>
           <p className="mx-auto mt-1 max-w-md text-xs text-zinc-500">
-            Add a position, then upload its job description and SOP PDFs — as many of each as you need, viewable right here while hiring.
+            Add a position, then upload its job description, SOP and questionnaire PDFs plus a video walkthrough link for candidates.
           </p>
           {canManage && (
             <div className="mt-3 flex flex-wrap justify-center gap-2">
@@ -192,15 +192,23 @@ export default function HiringKitTab({ designations }: { designations: string[] 
           {filtered.map((position) => {
             const jdCount = docsFor(position, "jd").length;
             const sopCount = docsFor(position, "sop").length;
-            const complete = jdCount > 0 && sopCount > 0;
+            const qCount = docsFor(position, "questionnaire").length;
+            const complete = isComplete(position);
+            const missing = missingDocs(position);
+            const gaps = [
+              missing.length > 0
+                ? missing.map((kind) => HIRING_DOC_LABEL[kind]).join(", ") + " missing"
+                : "",
+              position.videoUrl ? "" : "walkthrough missing",
+            ].filter(Boolean).join(" · ");
             return (
               <div key={position.id} className="rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <h3 className="truncate text-sm font-extrabold">{position.name}</h3>
                     <div className="mt-0.5 text-[11px] text-zinc-500">
-                      {jdCount} JD{jdCount === 1 ? "" : "s"} · {sopCount} SOP{sopCount === 1 ? "" : "s"}
-                      {complete ? "" : ` · ${!jdCount && !sopCount ? "upload both" : !jdCount ? "JD missing" : "SOP missing"}`}
+                      {jdCount} JD{jdCount === 1 ? "" : "s"} · {sopCount} SOP{sopCount === 1 ? "" : "s"} · {qCount} questionnaire{qCount === 1 ? "" : "s"}
+                      {complete ? "" : ` · ${gaps}`}
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
@@ -229,7 +237,11 @@ export default function HiringKitTab({ designations }: { designations: string[] 
                 <div className="mt-3 grid gap-2 sm:grid-cols-2">
                   <PositionDocSlot position={position} kind="jd" canManage={canManage} onView={openDoc} onChanged={() => dash.refresh()} />
                   <PositionDocSlot position={position} kind="sop" canManage={canManage} onView={openDoc} onChanged={() => dash.refresh()} />
+                  <div className="sm:col-span-2">
+                    <PositionDocSlot position={position} kind="questionnaire" canManage={canManage} onView={openDoc} onChanged={() => dash.refresh()} />
+                  </div>
                 </div>
+                <PositionVideoSlot position={position} canManage={canManage} onChanged={() => dash.refresh()} />
               </div>
             );
           })}
@@ -248,7 +260,7 @@ export default function HiringKitTab({ designations }: { designations: string[] 
       <ConfirmDialog
         open={!!deleting}
         title="Remove position?"
-        message={<>Remove <b>{deleting?.name}</b> and its uploaded JD/SOP PDFs? This cannot be undone.</>}
+        message={<>Remove <b>{deleting?.name}</b> and its uploaded documents plus walkthrough link? This cannot be undone.</>}
         confirmLabel="Remove"
         busy={busy}
         onConfirm={removePosition}

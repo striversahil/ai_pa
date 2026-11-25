@@ -42,7 +42,7 @@ export default function HiringPositionModal({
   return (
     <Modal
       title={editing ? "Rename position" : "Add position"}
-      subtitle="A position can hold several job descriptions and SOPs."
+      subtitle="JD, SOP and questionnaire PDFs plus a walkthrough link live on the position."
       onClose={onClose}
     >
       <form onSubmit={submit} className="space-y-3">

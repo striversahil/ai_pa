@@ -1,43 +1,50 @@
-// HR hiring kit persistence: positions (job titles) with at most ONE job
-// description and ONE SOP document each. Metadata lives in D1; PDF bytes are
-// stored by the route layer in CHAT_FILES KV and referenced by `kvKey`.
+// HR hiring kit persistence: positions (job titles) with any number of job
+// description, SOP and questionnaire PDFs, plus one video walkthrough link.
+// Metadata lives in D1; PDF bytes are stored by the route layer in CHAT_FILES
+// KV and referenced by `kvKey`.
 // Mirrors the frontend helpers in founder-os_frontend/src/hr/hiring-positions.ts.
-import { prisma } from '../../shared/prisma';
-import { HrError } from './errors';
+import { prisma } from "../../shared/prisma";
+import { HrError } from "./errors";
 import {
-  cleanImportNames, cleanPositionName, positionNameKey,
+  cleanImportNames, cleanPositionName, cleanVideoUrl, positionNameKey,
   type HiringDocKind,
-} from './hiring-positions-parse';
+} from "./hiring-positions-parse";
+
+function docKind(value: unknown): HiringDocKind {
+  return value === "sop" ? "sop" : value === "questionnaire" ? "questionnaire" : "jd";
+}
 
 export function positionDocJson(row: any) {
   if (!row) return null;
   return {
     id: String(row.id),
-    kind: row.kind === 'sop' ? 'sop' : 'jd',
-    title: String(row.title || row.fileName || ''),
-    fileName: String(row.fileName ?? ''),
-    mime: String(row.mime ?? 'application/pdf'),
+    kind: docKind(row.kind),
+    title: String(row.title || row.fileName || ""),
+    fileName: String(row.fileName ?? ""),
+    mime: String(row.mime ?? "application/pdf"),
     size: Number(row.size) || 0,
-    uploadedBy: String(row.uploadedBy ?? ''),
+    uploadedBy: String(row.uploadedBy ?? ""),
     createdAt: row.createdAt ?? null,
     updatedAt: row.updatedAt ?? null,
-    url: `/api/human-resources/position-docs/${String(row.id)}/file`,
+    url: "/api/human-resources/position-docs/" + String(row.id) + "/file",
   };
 }
 
 export function hiringPositionJson(row: any, docs: any[]) {
-  const slots: Record<HiringDocKind, any[]> = { jd: [], sop: [] };
+  const slots: Record<HiringDocKind, any[]> = { jd: [], sop: [], questionnaire: [] };
   for (const doc of docs ?? []) {
-    if (doc?.kind === 'jd' || doc?.kind === 'sop') slots[doc.kind].push(positionDocJson(doc));
+    slots[docKind(doc?.kind)].push(positionDocJson(doc));
   }
   const newestFirst = (a: any, b: any) =>
-    String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? ''))
+    String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? ""))
     || String(b.id).localeCompare(String(a.id));
   slots.jd.sort(newestFirst);
   slots.sop.sort(newestFirst);
+  slots.questionnaire.sort(newestFirst);
   return {
     id: String(row.id),
-    name: String(row.name ?? ''),
+    name: String(row.name ?? ""),
+    videoUrl: row.videoUrl ? String(row.videoUrl) : null,
     createdAt: row.createdAt ?? null,
     updatedAt: row.updatedAt ?? null,
     docs: slots,
@@ -46,7 +53,7 @@ export function hiringPositionJson(row: any, docs: any[]) {
 
 async function positionRow(id: string) {
   const row: any = await (prisma as any).humanResourcesHiringPosition.findUnique({ where: { id } });
-  if (!row) throw new HrError('position not found', 404);
+  if (!row) throw new HrError("position not found", 404);
   return row;
 }
 
@@ -67,7 +74,7 @@ async function docsForPositions(positionIds: string[]) {
 
 export async function listHiringPositions() {
   const rows: any[] = await (prisma as any).humanResourcesHiringPosition.findMany({
-    orderBy: { name: 'asc' },
+    orderBy: { name: "asc" },
   });
   const grouped = await docsForPositions(rows.map((row) => String(row.id)));
   return rows.map((row) => hiringPositionJson(row, grouped.get(String(row.id)) ?? []));
@@ -83,9 +90,9 @@ export async function createHiringPosition(input: Record<string, any>, actor: st
   const name = cleanPositionName(input?.name);
   const nameKey = positionNameKey(name);
   const existing: any = await (prisma as any).humanResourcesHiringPosition.findFirst({ where: { nameKey } });
-  if (existing) throw new HrError('A position with this name already exists', 409);
+  if (existing) throw new HrError("A position with this name already exists", 409);
   const row: any = await (prisma as any).humanResourcesHiringPosition.create({
-    data: { name, nameKey, createdBy: actor ?? '' },
+    data: { name, nameKey, createdBy: actor ?? "" },
   });
   return hiringPositionJson(row, []);
 }
@@ -102,7 +109,7 @@ export async function importHiringPositions(values: unknown, actor: string | nul
     const nameKey = positionNameKey(name);
     if (taken.has(nameKey)) { skipped += 1; continue; }
     await (prisma as any).humanResourcesHiringPosition.create({
-      data: { name, nameKey, createdBy: actor ?? '' },
+      data: { name, nameKey, createdBy: actor ?? "" },
     });
     taken.add(nameKey);
     created += 1;
@@ -110,18 +117,28 @@ export async function importHiringPositions(values: unknown, actor: string | nul
   return { created, skipped, positions: await listHiringPositions() };
 }
 
-export async function renameHiringPosition(id: string, input: Record<string, any>) {
+/** Renames a position and/or saves (or clears) its video walkthrough link. */
+export async function updateHiringPosition(id: string, input: Record<string, any>) {
   const current = await positionRow(id);
-  const name = cleanPositionName(input?.name);
-  const nameKey = positionNameKey(name);
-  if (nameKey !== current.nameKey) {
-    const clash: any = await (prisma as any).humanResourcesHiringPosition.findFirst({ where: { nameKey } });
-    if (clash && String(clash.id) !== String(id)) {
-      throw new HrError('A position with this name already exists', 409);
+  const data: Record<string, any> = {};
+  const hasName = Object.prototype.hasOwnProperty.call(input ?? {}, "name");
+  const hasVideo = Object.prototype.hasOwnProperty.call(input ?? {}, "videoUrl");
+  if (!hasName && !hasVideo) throw new HrError("Nothing to update");
+  if (hasName) {
+    const name = cleanPositionName(input.name);
+    const nameKey = positionNameKey(name);
+    if (nameKey !== current.nameKey) {
+      const clash: any = await (prisma as any).humanResourcesHiringPosition.findFirst({ where: { nameKey } });
+      if (clash && String(clash.id) !== String(id)) {
+        throw new HrError("A position with this name already exists", 409);
+      }
     }
+    data.name = name;
+    data.nameKey = nameKey;
   }
+  if (hasVideo) data.videoUrl = cleanVideoUrl(input.videoUrl);
   const row: any = await (prisma as any).humanResourcesHiringPosition.update({
-    where: { id }, data: { name, nameKey },
+    where: { id }, data,
   });
   const grouped = await docsForPositions([String(id)]);
   return hiringPositionJson(row, grouped.get(String(id)) ?? []);
@@ -136,14 +153,14 @@ export async function deleteHiringPosition(id: string) {
   });
   await (prisma as any).humanResourcesPositionDoc.deleteMany({ where: { positionId: String(row.id) } });
   await (prisma as any).humanResourcesHiringPosition.delete({ where: { id: String(row.id) } });
-  return { kvKeys: docs.map((doc) => String(doc.kvKey ?? '')).filter(Boolean) };
+  return { kvKeys: docs.map((doc) => String(doc.kvKey ?? "")).filter(Boolean) };
 }
 
 export async function getPositionDoc(id: string) {
   return (prisma as any).humanResourcesPositionDoc.findUnique({ where: { id } }) as Promise<any | null>;
 }
 
-/** Adds another JD/SOP document to a position (a role can hold many). */
+/** Adds another JD / SOP / questionnaire PDF to a position (a role can hold many). */
 export async function createPositionDoc(input: {
   positionId: string;
   kind: HiringDocKind;
@@ -174,7 +191,7 @@ export async function createPositionDoc(input: {
  *  PDF bytes. */
 export async function deletePositionDoc(id: string) {
   const current: any = await getPositionDoc(id);
-  if (!current) throw new HrError('document not found', 404);
+  if (!current) throw new HrError("document not found", 404);
   await (prisma as any).humanResourcesPositionDoc.delete({ where: { id: String(current.id) } });
-  return { kvKey: String(current.kvKey ?? '') || null };
+  return { kvKey: String(current.kvKey ?? "") || null };
 }

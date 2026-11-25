@@ -483,12 +483,13 @@ export interface HrInventorySnapshot {
   summary: HrInventorySummary;
 }
 
-// ── Hiring kit (any number of JD / SOP PDFs per position) ───────────────────
-export const HIRING_DOC_KINDS = ["jd", "sop"] as const;
+// ── Hiring kit (any number of JD / SOP / questionnaire PDFs per position) ───
+export const HIRING_DOC_KINDS = ["jd", "sop", "questionnaire"] as const;
 export type HiringDocKind = (typeof HIRING_DOC_KINDS)[number];
 export const HIRING_DOC_LABEL: Record<HiringDocKind, string> = {
   jd: "Job description",
   sop: "SOP",
+  questionnaire: "Questionnaire",
 };
 
 export interface HrPositionDoc {
@@ -508,6 +509,8 @@ export interface HrPositionDoc {
 export interface HrHiringPosition {
   id: string;
   name: string;
+  /** One http(s) walkthrough recording; null until HR pastes one. */
+  videoUrl: string | null;
   createdAt: string | null;
   updatedAt: string | null;
   docs: Record<HiringDocKind, HrPositionDoc[]>;
