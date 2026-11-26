@@ -114,18 +114,23 @@ function groupRows(rows: Row[]): Map<string, Row[]> {
 /** 3 consecutive auth/quota failures = the key is dead, not flaky. */
 async function autoDisableIfFatal(env: any, provider: string, keyId: string): Promise<void> {
   try {
+    const cfg = await loadConfig(env);
+    if (!cfg) return;
+    const hit = keyEntries(cfg).find((e) => e.provider === provider && keyFingerprintId(e.provider, e.key.key) === keyId);
+    if (!hit || hit.key.enabled === false) return;
+    const hcfg = parseAiHealthConfig(await getAppSetting('ai:health'));
+    if (!hcfg.autoDisable) return;
+    // A manual re-enable stamps healthResetAt; failures from before that point
+    // must not count toward the new streak, or one fresh error would disable a
+    // key using a stale quota/503 run.
+    const rawReset = String(hit.key.healthResetAt ?? '');
+    const resetAt = rawReset && Number.isFinite(Date.parse(rawReset)) ? rawReset : '';
     const res: any = await db(env).prepare(
-      `SELECT ok, errorKind FROM AiKeyCall WHERE keyId = ? AND source <> 'playground' ORDER BY createdAt DESC LIMIT 3`,
-    ).bind(String(keyId)).all();
+      `SELECT ok, errorKind FROM AiKeyCall WHERE keyId = ? AND source <> 'playground'${resetAt ? ' AND createdAt >= ?' : ''} ORDER BY createdAt DESC LIMIT 3`,
+    ).bind(...(resetAt ? [String(keyId), resetAt] : [String(keyId)])).all();
     const last = (res?.results ?? []) as Array<{ ok: number; errorKind: string | null }>;
     if (last.length < 3) return;
     if (!last.every((r) => Number(r.ok) === 0 && r.errorKind && FATAL_ERROR_KINDS.has(r.errorKind as any))) return;
-    const cfg = await loadConfig(env);
-    if (!cfg) return;
-    const hcfg = parseAiHealthConfig(await getAppSetting('ai:health'));
-    if (!hcfg.autoDisable) return;
-    const hit = keyEntries(cfg).find((e) => e.provider === provider && keyFingerprintId(e.provider, e.key.key) === keyId);
-    if (!hit || hit.key.enabled === false) return;
     hit.key.enabled = false;
     hit.key.disabledBy = 'health';
     hit.key.disabledAt = new Date().toISOString();
