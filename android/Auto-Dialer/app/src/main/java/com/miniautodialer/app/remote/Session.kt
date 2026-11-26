@@ -89,6 +89,10 @@ class Session(private val ctx: Context) {
     var dialActive: Boolean
         get() = sp.getBoolean("dial_active", false)
         set(v) = sp.edit().putBoolean("dial_active", v).apply()
+    /** The phone went off-hook for the call being dialed (a SIM picker cancel never does). */
+    var dialSawCall: Boolean
+        get() = sp.getBoolean("dial_saw_call", false)
+        set(v) = sp.edit().putBoolean("dial_saw_call", v).apply()
     /** The agent pressed Start: the loop keeps dialing until a break. */
     var running: Boolean
         get() = sp.getBoolean("running", false)

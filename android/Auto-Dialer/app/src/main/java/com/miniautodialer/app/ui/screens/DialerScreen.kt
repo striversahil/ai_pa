@@ -79,7 +79,7 @@ private fun DialerPanel() {
         when (val s = state) {
             State.Stopped -> {
                 InfoCard("${waiting.size} lead(s) in your queue. Once you start, calls dial one after another; use Break to stop.")
-                Button(onClick = { perms.launch(arrayOf(Manifest.permission.CALL_PHONE, Manifest.permission.READ_CALL_LOG)) },
+                Button(onClick = { perms.launch(arrayOf(Manifest.permission.CALL_PHONE, Manifest.permission.READ_CALL_LOG, Manifest.permission.READ_PHONE_STATE)) },
                     modifier = Modifier.fillMaxWidth().height(64.dp), colors = ButtonDefaults.buttonColors(containerColor = CallGreen)) {
                     Icon(Icons.Filled.PlayArrow, null); Spacer(Modifier.width(8.dp)); Text("Start calling", fontSize = 18.sp)
                 }
@@ -87,7 +87,18 @@ private fun DialerPanel() {
             State.OffShift -> InfoCard("Outside shift hours (${session.config.shiftStart}–${session.config.shiftEnd}). Auto-dialing resumes when the shift starts; manual dialing still works.", Icons.Filled.Schedule)
             is State.NoLeads -> InfoCard("${s.note}. New leads from Founder OS appear here automatically.", Icons.Filled.HourglassEmpty)
             is State.Countdown -> NextCard(s.item.name, s.item.mobile, listOf(s.item.company, s.item.place, s.item.clientType), "Calling in ${s.secs}…", s.item.source)
-            is State.Calling -> NextCard(s.name, s.phone, emptyList(), if (s.manual) "Manual call in progress" else "Call in progress", null)
+            is State.Calling -> NextCard(s.name, s.phone, emptyList(),
+                when { !s.live -> "Placing the call…"; s.manual -> "Manual call in progress"; else -> "On call" }, null)
+            is State.NotPlaced -> {
+                InfoCard("The call to ${s.name} (${s.phone}) was not placed — the SIM picker was closed or the dial was cancelled. Nothing was recorded.",
+                    Icons.Filled.PhoneDisabled, Color(0xFFEA580C))
+                Button(onClick = { AutoDialer.redial(ctx) }, modifier = Modifier.fillMaxWidth().height(56.dp), colors = ButtonDefaults.buttonColors(containerColor = CallGreen)) {
+                    Icon(Icons.Filled.Call, null); Spacer(Modifier.width(8.dp)); Text("Call again")
+                }
+                OutlinedButton(onClick = { AutoDialer.dismissNotPlaced(ctx) }, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (s.manual) "Back to dialer" else "Stop dialer (lead stays first in queue)")
+                }
+            }
             is State.Disposing -> DispositionPanel(s, picked, remarks, callbackAt,
                 onPick = { k -> picked = k; val d = session.config.disposition(k); if (d?.callback == true && callbackAt == null) { AutoDialer.pauseTimer(true); showPicker = true } },
                 onRemarks = { remarks = it },
@@ -167,7 +178,11 @@ private fun DispositionPanel(
         }, color = Color.Gray
     )
     LinearProgressIndicator(progress = { s.secsLeft / cfg.dispositionSec.toFloat().coerceAtLeast(1f) }, modifier = Modifier.fillMaxWidth())
-    Text(if (s.paused) "Timer paused while you pick the callback time" else "Saves automatically in ${s.secsLeft}s",
+    Text(when {
+            s.heldByCall -> "Timer held: the phone is on a call. The next dial waits until it ends."
+            s.paused -> "Timer paused while you pick the callback time"
+            else -> "Saves automatically in ${s.secsLeft}s"
+        },
         color = if (s.secsLeft <= 5) Color(0xFFDC2626) else Color.Gray, style = MaterialTheme.typography.bodySmall)
     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         cfg.dispositions.forEach { d -> FilterChip(selected = picked == d.key, onClick = { onPick(d.key) }, label = { Text(d.label) }) }

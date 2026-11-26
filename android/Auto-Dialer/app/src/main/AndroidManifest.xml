@@ -7,6 +7,8 @@
     <uses-permission android:name="android.permission.CALL_PHONE" />
     <!-- Read call duration/status after each call -->
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <!-- Auto dialer: is the phone on a call right now (never dial over a live call) -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <!-- Import contacts from the phone book -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <!-- Find call recordings automatically, wherever the phone's recorder saves them (read-only) -->

@@ -182,10 +182,11 @@ fun AppRoot(intents: MutableStateFlow<Intent?>) {
         }
         val pc = CallManager.pending.value
         if (pc != null && MiniDialerApp.session.dialActive) {
-            // an auto-dialer call: its disposition window lives on the Dialer tab
+            // an auto-dialer call: coming back is not "call ended" — AutoDialer asks the phone
+            // (live call stays on Calling, hung up → disposition, SIM picker cancelled → not placed)
             if (!pc.dialed || System.currentTimeMillis() - pc.startedAt > 1500) {
                 if (nav.currentDestination?.route != "dialer") runCatching { nav.goTop("dialer") }
-                AutoDialer.callEnded(ctx)
+                AutoDialer.onResume(ctx)
             }
         } else if (pc != null) {
             if (!pc.dialed || System.currentTimeMillis() - pc.startedAt > 1500) openLogCall()
