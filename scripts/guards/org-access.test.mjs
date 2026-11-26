@@ -85,15 +85,22 @@ describe('org person contract (one save, server-decided)', () => {
     assert.ok(io.includes('chartRow?.id'), 'the seat allotment is validated against the real chart position');
   });
 
-  it('HR owns the region catalog + position allotment (Worker-only routes, one form)', () => {
-    const route = read(join('worker', 'routes', 'human-resources-regions.ts'));
-    assert.ok(route.includes('/api/human-resources/regions'), 'region edit endpoint');
-    assert.ok(route.includes('/api/human-resources/position-regions/:positionId'), 'allotment endpoint');
-    assert.ok(route.includes('canManage'), 'HR/root only');
+  it('the Sales Controller owns the region catalog + position allotment (never HR)', () => {
+    const route = read(join('worker', 'routes', 'sales-regions.ts'));
+    assert.ok(route.includes('/api/sales/regions'), 'region read endpoint');
+    assert.ok(route.includes('/api/sales/regions/:code'), 'region edit endpoint');
+    assert.ok(route.includes('/api/sales/position-regions/:positionId'), 'allotment endpoint');
+    assert.ok(route.includes('requireSalesManager'), 'sales-head/root only');
+    assert.ok(!route.includes('access(c)'), 'HR gate retired from region writes');
     const drawer = readFe(join('org', 'OrgPersonDrawer.tsx'));
     assert.ok(drawer.includes('allotment') && drawer.includes('regionOptions'), 'person form filters regions by seat allotment');
-    const tab = readFe(join('components', 'human-resources', 'ControllerTab.tsx'));
-    assert.ok(tab.includes('SalesRegionsSection'), 'HR Controller mounts the region table + allotment matrix');
+    const hrTab = readFe(join('components', 'human-resources', 'ControllerTab.tsx'));
+    assert.ok(!hrTab.includes('SalesRegionsSection') && !hrTab.includes('fetchRegions'), 'HR Controller no longer edits regions');
+    const salesTab = readFe(join('components', 'SalesControllerPanel.tsx'));
+    assert.ok(salesTab.includes('SalesRegionsSection') && salesTab.includes('fetchSalesRegions'), 'Sales Controller mounts the region table + allotment matrix');
+    assert.ok(salesTab.includes('chartEditable={false}'), 'Sales Controller chart is read-only');
+    const orgTab = readFe(join('components', 'human-resources', 'OrganizationTab.tsx'));
+    assert.ok(orgTab.includes('chartEditable') && orgTab.includes('canManageChart = chartEditable'), 'chart add/edit/delete is gated by the mount');
   });
 
   it('telecalling keeps the roster READ and no write endpoints', () => {

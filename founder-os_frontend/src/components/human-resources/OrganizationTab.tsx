@@ -5,7 +5,8 @@
 // React Flow canvas (positions as nodes, reportsToId as edges) + inspector
 // rail: click a node to see who sits there and who has logged in. HR can add,
 // edit and delete chart positions here; people are still edited in the person
-// drawer. Dashboard access lives ONLY in Users & Permissions.
+// drawer. The Sales Controller mounts the same graph with chartEditable={false}
+// (structure is HR-owned there). Dashboard access lives ONLY in Users & Permissions.
 import dynamic from "next/dynamic";
 import { useMemo, useState } from "react";
 import { useLiveDashboard } from "@/hooks/useLiveData";
@@ -16,7 +17,11 @@ import ChartPositionModal from "./ChartPositionModal";
 
 const OrgGraphCanvas = dynamic(() => import("@/org/OrgGraphCanvas"), { ssr: false });
 
-export default function OrganizationTab({ department }: { department?: string } = {}) {
+export default function OrganizationTab({ department, chartEditable = true }: {
+  department?: string;
+  /** False at the Sales Controller mount: the chart structure is HR-owned. */
+  chartEditable?: boolean;
+} = {}) {
   const dash = useLiveDashboard(async () => {
     const [org, chart, regionCatalog] = await Promise.all([
       fetchOrgPeople(department ?? null),
@@ -34,7 +39,7 @@ export default function OrganizationTab({ department }: { department?: string } 
   const people: OrgPerson[] = dash.data?.people ?? [];
   const positions: OrgChartPosition[] = dash.data?.chart.positions ?? [];
   const regionCatalog = dash.data?.regionCatalog ?? { regions: [], allotment: {} };
-  const canManageChart = !!dash.data?.chart.canManage;
+  const canManageChart = chartEditable && !!dash.data?.chart.canManage;
 
   const peopleByTitle = useMemo(() => {
     const map = new Map<string, OrgPerson[]>();
@@ -89,6 +94,9 @@ export default function OrganizationTab({ department }: { department?: string } 
           <button onClick={() => setPositionForm({ open: true, position: null })}
             className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-500">+ Add position</button>
         </div>
+      )}
+      {!chartEditable && (
+        <p className="text-[11px] text-zinc-500">Chart structure is managed by HR — seats are edited here, roles and reporting lines are not.</p>
       )}
 
       {dash.loading && !dash.data && <div className="py-12 text-center text-sm text-zinc-500 animate-pulse">Loading the organization chart…</div>}
@@ -153,7 +161,7 @@ export default function OrganizationTab({ department }: { department?: string } 
           onSaved={() => dash.refresh()}
         />
       )}
-      {positionForm.open && (
+      {canManageChart && positionForm.open && (
         <ChartPositionModal
           position={positionForm.position}
           positions={positions}

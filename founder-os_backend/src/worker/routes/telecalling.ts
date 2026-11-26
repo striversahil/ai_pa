@@ -30,19 +30,7 @@ import { listActiveTelecallers } from '../../modules/telecalling/self-roster';
 import { readBody } from '../http';
 import { displayNameForEmail } from '../../shared/employee-name';
 import { loadEmployeeNameIndex } from '../../shared/employee-name-store';
-
-/** Root/sales-head gate for the region-model management writes. Accepts
- * the scope or the role itself, so a sales-head role holder is authorized even
- * if the scope grant is missing from their session. */
-async function requireSalesManager(c: any): Promise<boolean> {
-  if ((await adminGuard(c)) === null) return true;
-  const me: any = await requireViewer(c).catch(() => null);
-  if (!me) return false;
-  if (!isApproved(me)) return false;
-  const scopes: string[] = me.scopes ?? [];
-  const roles: string[] = me.roles ?? [];
-  return scopes.includes(ScopeKeys.SalesHead) || roles.includes('sales-head') || !!me.isAdmin;
-}
+import { requireSalesManager } from './sales-access';
 
 /** Roster-mapping gate (founder decision 2026-11-12: HR owns employment
  *  mapping). Sales-head keeps its existing power; HR holders gain the

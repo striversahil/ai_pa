@@ -1,17 +1,18 @@
-// routes/human-resources-regions.ts — HR owns the sales region catalog and the
-// position-wise allotment. Codes stay R1–R4 (historical rows store them); HR
-// edits the label, the team-lead tier, the states list and which chart seats may
-// hold each region. The employee save enforces the result.
+// routes/sales-regions.ts — the Sales Controller owns the region catalog and the
+// position-wise allotment. Codes stay R1–R4 (historical rows store them); the
+// sales head edits the label, the team-lead tier, the states list and which
+// chart seats may hold each region. The employee save enforces the result.
 //
 // GET   /api/org/regions                      — catalog + allotment (any login)
-// GET   /api/human-resources/regions          — catalog + usage + chart (HR)
-// PATCH /api/human-resources/regions/:code    — name/tlLevel/states/order/active
-// PUT   /api/human-resources/position-regions/:positionId — { regions: string[] }
+// GET   /api/sales/regions                    — catalog + usage + chart (sales head)
+// PATCH /api/sales/regions/:code              — name/tlLevel/states/order/active
+// PUT   /api/sales/position-regions/:positionId — { regions: string[] }
 import type { Hono } from "hono";
 import { deps, notifyLive, LiveEvent, type Bindings } from "../context";
 import { getViewerMe } from "../viewer";
 import { readBody } from "../http";
-import { access, actorLabel, errorResponse } from "./hr-route-shared";
+import { actorLabel, errorResponse } from "./hr-route-shared";
+import { requireSalesManager } from "./sales-access";
 import { listChartRows } from "../../modules/org/chart/store";
 import { loadAllotment, loadSalesRegions, regionRowJson } from "../../modules/org/regions";
 import { HrError } from "../../automations/human-resources/errors";
@@ -39,7 +40,7 @@ async function usageCounts(prisma: any): Promise<Record<string, number>> {
   return out;
 }
 
-export function registerHumanResourcesRegionRoutes(app: Hono<{ Bindings: Bindings }>): void {
+export function registerSalesRegionRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.get("/api/org/regions", async (c) => {
     const me = await getViewerMe(c).catch(() => null);
     if (!me) return c.json({ error: "Authentication required" }, 401);
@@ -51,9 +52,8 @@ export function registerHumanResourcesRegionRoutes(app: Hono<{ Bindings: Binding
     return c.json({ regions, allotment });
   });
 
-  app.get("/api/human-resources/regions", async (c) => {
-    const a = await access(c);
-    if (a.error) return a.error;
+  app.get("/api/sales/regions", async (c) => {
+    if (!(await requireSalesManager(c))) return c.json({ error: "sales-head or root only" }, 403);
     const prisma = deps().prisma;
     try {
       const [regions, allotment, usage, chart] = await Promise.all([
@@ -74,14 +74,13 @@ export function registerHumanResourcesRegionRoutes(app: Hono<{ Bindings: Binding
     } catch (e) { return errorResponse(c, e); }
   });
 
-  app.patch("/api/human-resources/regions/:code", async (c) => {
-    const a = await access(c);
-    if (a.error) return a.error;
-    if (!a.canManage) return c.json({ error: "Only HR/root users can edit regions" }, 403);
+  app.patch("/api/sales/regions/:code", async (c) => {
+    if (!(await requireSalesManager(c))) return c.json({ error: "sales-head or root only" }, 403);
     const code = String(c.req.param("code") ?? "").trim().toUpperCase();
     if (!CODES.includes(code)) return c.json({ error: "unknown region" }, 404);
     const body: any = (await readBody(c)) ?? {};
-    const patch: Record<string, unknown> = { updatedBy: actorLabel(a.me) };
+    const me = await getViewerMe(c).catch(() => null);
+    const patch: Record<string, unknown> = { updatedBy: actorLabel(me) };
     try {
       if (body.name !== undefined) {
         const name = String(body.name ?? "").trim();
@@ -110,10 +109,8 @@ export function registerHumanResourcesRegionRoutes(app: Hono<{ Bindings: Binding
     } catch (e) { return errorResponse(c, e); }
   });
 
-  app.put("/api/human-resources/position-regions/:positionId", async (c) => {
-    const a = await access(c);
-    if (a.error) return a.error;
-    if (!a.canManage) return c.json({ error: "Only HR/root users can edit region allotment" }, 403);
+  app.put("/api/sales/position-regions/:positionId", async (c) => {
+    if (!(await requireSalesManager(c))) return c.json({ error: "sales-head or root only" }, 403);
     const positionId = String(c.req.param("positionId") ?? "");
     const body: any = (await readBody(c)) ?? {};
     const wanted = [...new Set(cleanStates(body.regions).map((s) => s.toUpperCase()))];

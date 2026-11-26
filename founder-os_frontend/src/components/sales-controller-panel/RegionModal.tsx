@@ -2,14 +2,13 @@
 
 import React, { useState } from "react";
 import Modal from "../Modal";
-import { updateRegion } from "@/hr/api";
-import type { HrRegion } from "@/hr/regions";
+import { updateSalesRegion, type SalesRegion } from "@/sales/regions";
 
 const field = "w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 dark:border-zinc-700 dark:bg-zinc-950";
 const label = "mb-1 block text-[11px] font-bold uppercase tracking-wide text-zinc-500";
 
 export default function RegionModal({ region, onClose, onSaved }: {
-  region: HrRegion;
+  region: SalesRegion;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -26,7 +25,7 @@ export default function RegionModal({ region, onClose, onSaved }: {
     if (!name.trim()) { setErr("Enter a region name."); return; }
     setBusy(true); setErr(null);
     try {
-      await updateRegion(region.code, {
+      await updateSalesRegion(region.code, {
         name: name.trim(), tlLevel, order: Number(order) || 0, active,
         states: states.split(",").map((s) => s.trim()).filter(Boolean),
       });
@@ -37,7 +36,7 @@ export default function RegionModal({ region, onClose, onSaved }: {
   };
 
   return (
-    <Modal title={`Region ${region.code}`} subtitle="HR owns the label, the team-lead tier and the states served by this region." onClose={onClose}>
+    <Modal title={`Region ${region.code}`} subtitle="Sales owns the label, the team-lead tier and the states served by this region." onClose={onClose}>
       <form onSubmit={submit} className="space-y-3">
         <div>
           <label className={label}>Name</label>
@@ -47,7 +46,7 @@ export default function RegionModal({ region, onClose, onSaved }: {
         <div className="grid gap-2 sm:grid-cols-2">
           <div>
             <label className={label}>Team-lead tier</label>
-            <select value={tlLevel} onChange={(e) => setTlLevel(e.target.value as HrRegion["tlLevel"])} className={field}>
+            <select value={tlLevel} onChange={(e) => setTlLevel(e.target.value as SalesRegion["tlLevel"])} className={field}>
               <option value="TL1">TL1</option>
               <option value="TL2">TL2</option>
             </select>

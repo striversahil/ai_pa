@@ -9,6 +9,8 @@ import RehomeEstimateSection from "@/components/telecalling/RehomeEstimateSectio
 import SalesHolidaysSection from "@/components/telecalling/SalesHolidaysSection";
 import ClientSegmentSection from "@/components/telecalling/ClientSegmentSection";
 import OrganizationTab from "@/components/human-resources/OrganizationTab";
+import SalesRegionsSection from "./sales-controller-panel/SalesRegionsSection";
+import { fetchSalesRegions } from "@/sales/regions";
 import { type RosterRow } from "./TelecallingDashboard";
 import { workspaceDataUrl } from "@/workspaces/api";
 import { hasSalesManagerAccess, TELECALLING_EVENTS } from "./sales-controller-panel/helpers";
@@ -49,10 +51,14 @@ export default function SalesControllerPanel() {
     { events: TELECALLING_EVENTS },
   );
 
+  // Region catalog + chart-seat allotment: the sales head owns these here.
+  const regions = useLiveQuery(fetchSalesRegions, { events: TELECALLING_EVENTS, pollMs: 60000 });
+
   const refreshAll = useCallback(() => {
     tele.refresh();
     roster.refresh();
-  }, [tele, roster]);
+    regions.refresh();
+  }, [tele, roster, regions]);
 
   if (!canManage) {
     return (
@@ -103,19 +109,24 @@ export default function SalesControllerPanel() {
         refreshAll={refreshAll}
       />
       <ExportDataSection rosterRows={roster.data?.telecallers ?? []} showRisk />
+      {!!regions.error && !regions.loading && (
+        <p className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs font-semibold text-rose-600 dark:text-rose-300">
+          Region catalog failed to load — {String((regions.error as any)?.message ?? regions.error)}
+        </p>
+      )}
+      {regions.data && <SalesRegionsSection data={regions.data} onChanged={() => regions.refresh()} />}
       {/* Sales team & access — the Organization chart scoped to Sales. There is
-          no separate roster: region, hierarchy and allotment are HR master data
-          (HR → Controller → Sales regions) and this card is the same person
-          save at Sales scope. */}
+          no separate roster: a person save owns the seat, and the chart itself
+          is HR-owned (read-only here — no add/edit/delete position). */}
       <section className="space-y-3">
         <h3 className="text-lg font-bold">Sales team &amp; access</h3>
         <p className="text-xs text-zinc-500">
-          Regions and the team-lead hierarchy are defined in HR → Controller → Sales regions. Edit a person here to seat them; the roster is their employee record.
+          The region catalog above drives the form. Edit a person here to seat them; their employee record is the roster, and the chart structure stays with HR.
         </p>
         {rosterError && (
           <p className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs font-semibold text-rose-600 dark:text-rose-300">{rosterError}</p>
         )}
-        <OrganizationTab department="Sales" />
+        <OrganizationTab department="Sales" chartEditable={false} />
       </section>
     </div>
   );

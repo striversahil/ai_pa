@@ -610,7 +610,7 @@ Worker-only and writes broadcast the existing `human-resources` event.
   active seats, role mappings or position standards. `loginPosition` only drives suggestions in
   the employee picker; access remains in Users & Permissions. The frontend selector and graph
   consume the live rows and fall back to the bundled chart when the table is unavailable.
-- **Sales regions + team-lead hierarchy (0175)** — the taxonomies that used to be hard-coded in
+- **Sales regions + team-lead hierarchy (0175)** — owned by the **Sales Controller** (sales-head/root), not HR: the taxonomies that used to be hard-coded in
   `automations/telecalling/regions.ts` are HR master data. `HumanResourcesRegion` keeps the code
   fixed (`R1`–`R4`: `Estimate.region`, `ClientClass.masterRegion`, holidays, targets and the
   board's region buckets all store it) and makes `name`, `tlLevel`, `states`, `order` and
@@ -621,11 +621,12 @@ Worker-only and writes broadcast the existing `human-resources` event.
   decides from the seat title: a telecaller/field-staff seat takes exactly one active, allotted
   region; a team-lead seat takes **exactly two different** ones and may omit `tlLevel` (inferred
   when both regions share a tier, otherwise the form must ask). Reads: `GET /api/org/regions`
-  (viewer-open, used by the person drawer) and `GET /api/human-resources/regions` (HR, adds seat
-  counts + chart positions for the allotment matrix). Writes: `PATCH
-  /api/human-resources/regions/:code` (root/admin/`human-resources`; bumps the `est` rev because
-  the board payload caches the taxonomy) and `PUT /api/human-resources/position-regions/:positionId`
-  (refuses to drop a region an active seated employee still holds → 409). The telecalling board
+  (viewer-open, used by the person drawer) and `GET /api/sales/regions` (`requireSalesManager`, adds
+  seat counts + chart positions for the allotment matrix). Writes: `PATCH
+  /api/sales/regions/:code` (sales-head/root; bumps the `est` rev because the board payload caches
+  the taxonomy) and `PUT /api/sales/position-regions/:positionId` (refuses to drop a region an
+  active seated employee still holds → 409). The Sales mount of the chart passes
+  `chartEditable={false}`: seats are edited, positions are not — HR keeps add/edit/delete. The telecalling board
   overlays the DB rows onto its bundled fallback (`loadSalesRegions`), so a fresh DB and a renamed
   region behave the same.
 

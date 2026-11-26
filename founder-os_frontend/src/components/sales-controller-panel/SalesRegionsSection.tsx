@@ -1,19 +1,18 @@
 "use client";
 
-// SalesRegionsSection — the HR Controller's region table + position allotment.
+// SalesRegionsSection — the Sales Controller's region table + position allotment.
 // Region codes are fixed (R1–R4); HR edits the name, the TL tier, the states
 // and which chart seats may hold each region. An empty tick row = every region,
 // so untouched chart positions keep working.
 import React, { useState } from "react";
-import { savePositionRegions } from "@/hr/api";
-import type { HrRegion, HrRegionsData } from "@/hr/regions";
+import { savePositionRegions, type SalesRegion, type SalesRegionsData } from "@/sales/regions";
 import RegionModal from "./RegionModal";
 
 export default function SalesRegionsSection({ data, onChanged }: {
-  data: HrRegionsData;
+  data: SalesRegionsData;
   onChanged: () => void;
 }) {
-  const [editing, setEditing] = useState<HrRegion | null>(null);
+  const [editing, setEditing] = useState<SalesRegion | null>(null);
   const [matrix, setMatrix] = useState<Record<string, string[]>>(data.allotment);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
