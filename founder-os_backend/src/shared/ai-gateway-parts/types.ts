@@ -89,10 +89,19 @@ export interface CompletionRequest {
    * Generic — works for every current and future provider in PROVIDERS.
    */
   sessionKey?: string;
-  /** Optional per-attempt wall-clock cap (ms). Hung attempts abort fast so
-   *  rotation moves on; callers with a UI budget (copilot) set this, batch
-   *  runners leave it unset (current unbounded behavior). */
+  /** Per-attempt wall-clock cap (ms). Defaults to 60s (non-stream) / 120s
+   *  (stream). A hung attempt aborts and the request rotates immediately. */
   timeoutMs?: number;
+  /** First-token deadline (stream) or first-byte deadline (non-stream), ms.
+   *  When exceeded the attempt aborts and the SAME request rotates to the
+   *  next key/provider at once. Defaults: 20s stream, 30s non-stream. */
+  ttftMs?: number;
+  /** Max key/provider attempts for this request. Defaults: 6 pool-wide,
+   *  3 when a provider leg is pinned, 1 for a pinned key (playground probe). */
+  maxAttempts?: number;
+  /** Wall-clock budget across every attempt (default 300s pool-wide,
+   *  120s provider-pinned). Stops a chain of slow providers from hanging. */
+  totalTimeoutMs?: number;
   /** Probe cap for the pre-fallback primary model only (ms). Lets callers
    *  sample an advanced-but-flaky model cheaply: the FIRST attempt(s) on the
    *  requested model abort fast, while post-fallback attempts use timeoutMs.

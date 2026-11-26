@@ -20,7 +20,7 @@
 import { AiGateway } from "./ai-gateway-parts/io";
 
 // Pieces split into ./ai-gateway-parts/ (importable on their own); re-exported for compat.
-export { gatewayUsageKey, PAID_CHAT_ROUTING, PROVIDERS, AiGatewayError, KeyPool, keyFingerprintId, extractJson, buildVisionUserContent } from "./ai-gateway-parts/pure";
+export { gatewayUsageKey, PAID_CHAT_ROUTING, PROVIDERS, OPENROUTER_TEXT_MODEL, AiGatewayError, KeyPool, keyFingerprintId, extractJson, buildVisionUserContent } from "./ai-gateway-parts/pure";
 export { setGatewayMetricSink, emitGatewayMetric, classifyGatewayError, GATEWAY_ERROR_WEIGHTS, FATAL_ERROR_KINDS } from "./ai-gateway-parts/metrics";
 export { DEFAULT_AI_HEALTH, parseAiHealthConfig, scoreKeyHealth } from "./ai-gateway-parts/health";
 export type { GatewayCallMetric, GatewayErrorKind } from "./ai-gateway-parts/metrics";

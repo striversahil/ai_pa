@@ -760,16 +760,27 @@ Gateway design (one place, one chain, direct egress):
   inside the least-failures tier; `round-robin`: cycles the healthy tier).
   `sessionKey` still sticky-pins while healthy. A key is eligible only while
   `enabled` (runtime), `allowed` (persisted switch) and its provider is on.
-- **Failure handling**: 401/403 → key disabled permanently; 429 → cooldown
-  (exponential backoff, honors `retry-after`; 1015 cools briefly + rotates);
-  402/quota → 5-min cooldown; 5xx/network → short cooldown + rotate immediately;
-  attempts = pool size (min 3). Separately, the **health sweep** scores each
-  configured key and auto-disables it below the threshold (or after 3
-  consecutive auth/quota failures) — see the key-health block below.
+- **Failure handling**: 401/403 → key disabled permanently; 404/405 → the whole
+  provider is quarantined for 5 min (a retired model slug is not a key fault);
+  429 → cooldown (honors `retry-after`; 1015 cools briefly) and the next key is
+  tried **immediately**; 402/quota → 5-min cooldown; 5xx/network → short
+  cooldown + rotate. **Immediate failover (2026-11-27)**: every attempt takes a
+  fresh key, never sleeps between attempts, and is aborted at a first-byte
+  deadline (30 s non-stream) or first-token deadline (20 s stream) plus a total
+  attempt cap, so one dead API can never hold an enquiry. A pinned key
+  (playground) is tried exactly once; a provider leg gets 3 tries, a pool-wide
+  call 6, each leg budgeted at 120 s. A caller cancel is never charged to the
+  key, and a stream that already delivered a delta is never retried (no
+  duplicate text). Separately, the **health sweep** scores each configured key
+  and auto-disables it below the threshold (or after 3 consecutive auth/quota
+  failures) — see the key-health block below.
 - **Providers** (all OpenAI `/chat/completions` wire format): whatever the
   Setting list + env pool holds — OpenRouter, Requestly, DeepSeek, custom free
   tiers. Each leg serves its own configured model (Setting `model`, else the
-  provider default). Adding a vendor = one Settings card, no code.
+  provider default). OpenRouter's free default and vision default are the same
+  live multimodel (`nvidia/nemotron-3.5-super-vl:free`); retired slugs are never
+  used and are filtered out of `OPENROUTER_FREE_MODELS`. Adding a vendor = one
+  Settings card, no code.
 - **Output is uncapped (founder rule 2026-11-27)**: no gateway request ever
   sends `max_tokens`, so every call (runners, copilot, enquiry AI, playground)
   runs to the model's own maximum. `maxTokens` is still accepted on

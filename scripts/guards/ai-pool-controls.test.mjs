@@ -13,7 +13,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { rmSync, mkdirSync } from 'node:fs';
+import { rmSync, mkdirSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { BACKEND_DIR, REPO_ROOT, bundleToFile } from './_bundle.mjs';
 
@@ -93,6 +93,15 @@ describe('key/provider switches', () => {
     assert.ok(p.select());
   });
 
+  it('quarantines a whole provider on HTTP 404 and clears on re-enable', () => {
+    const p = pool([{ key: A }]);
+    const key = p.select();
+    p.reportFailure(key, Object.assign(new Error('HTTP 404: no longer available'), { status: 404 }));
+    assert.equal(p.select(), null);
+    p.setProviderEnabled('free1', true);
+    assert.ok(p.select());
+  });
+
   it('JS runner port honours the same switches', () => {
     const p = new JsPool();
     p.registerProvider('free1', 'https://free.invalid/v1', 'm', [{ key: A, enabled: false }, { key: B }]);
@@ -101,6 +110,23 @@ describe('key/provider switches', () => {
     assert.equal(p.select(), null);
     p.setProviderEnabled('free1', true);
     assert.ok(p.select());
+  });
+});
+
+describe('failover contract', () => {
+  it('ships a live OpenRouter default, never a retired slug', () => {
+    assert.match(mod.OPENROUTER_TEXT_MODEL, /^nvidia\//);
+    assert.notEqual(mod.OPENROUTER_TEXT_MODEL, 'inclusionai/ling-3.0-flash-sante:free');
+    const js = readFileSync(join(REPO_ROOT, 'scripts', 'ai-gateway.js'), 'utf8');
+    assert.ok(js.includes(mod.OPENROUTER_TEXT_MODEL), 'JS runner port must mirror the TS default model');
+  });
+
+  it('rotates immediately on failure and enforces a first-token deadline', () => {
+    const io = readFileSync(join(BACKEND_DIR, 'src', 'shared', 'ai-gateway-parts', 'io.ts'), 'utf8');
+    assert.match(io, /first-token timeout/);
+    assert.match(io, /immediate failover/);
+    // No sleeping between keys: the next API is tried at once.
+    assert.doesNotMatch(io, /await sleep\(/);
   });
 });
 

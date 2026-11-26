@@ -23,7 +23,7 @@ export async function resolveAiChain(
   env: Record<string, unknown>,
   forceProvider?: string,
 ): Promise<AiLeg[]> {
-  let health: Array<{ provider?: string; enabled?: boolean; cooldownUntil?: number }> = [];
+  let health: Array<{ provider?: string; enabled?: boolean; allowed?: boolean; cooldownUntil?: number }> = [];
   let order: Array<{ id: string; model: string }> = [];
   try {
     const gw = getGateway(env as any);
@@ -40,7 +40,7 @@ export async function resolveAiChain(
   }
   const now = Date.now();
   const usable = new Set(
-    health.filter((h) => h?.provider && h.enabled !== false && (h.cooldownUntil ?? 0) <= now)
+    health.filter((h) => h?.provider && h.enabled !== false && h.allowed !== false && (h.cooldownUntil ?? 0) <= now)
       .map((h) => String(h.provider)),
   );
   if (usable.size === 0) return [];

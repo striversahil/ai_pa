@@ -74,6 +74,9 @@ export function registerAiPlaygroundRoutes(app: Hono<{ Bindings: Bindings }>): v
       const out = await gw.complete({
         messages: spec.messages, provider: spec.provider, keyId: spec.keyId,
         temperature: spec.temperature,
+        // The probe measures its own key: no failover, and the first-token
+        // deadline equals the probe cap so a slow model is not cut early.
+        ttftMs: spec.timeoutMs,
         timeoutMs: spec.timeoutMs, source: 'playground',
       } as any);
       return c.json({
@@ -115,6 +118,9 @@ export function registerAiPlaygroundRoutes(app: Hono<{ Bindings: Bindings }>): v
           for await (const chunk of gw.stream({
             messages, provider: spec.provider, keyId: spec.keyId,
             temperature: spec.temperature,
+            // Pinned probe: one key, no rotation; the first-token deadline is
+            // the probe cap (the UI measures TTFT itself).
+            ttftMs: spec.timeoutMs,
             timeoutMs: spec.timeoutMs, source: 'playground',
             signal: c.req.raw.signal,
           } as any)) {

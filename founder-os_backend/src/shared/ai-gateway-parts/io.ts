@@ -2,7 +2,7 @@
 // ai-gateway.ts re-exports everything public here, so existing imports keep working.
 import { cacheGet, cacheSet, cacheKeys } from "../cache";
 import { logger } from "../logger";
-import { gatewayUsageKey, GATEWAY_USAGE_TTL_MS, GATEWAY_USAGE_PREFIX, MODEL_DOWN_TTL_MS, KeyPool, OPENROUTER_TEXT_MODEL, PROVIDERS, hashAI, FALLBACK_MODEL, sleep, AiGatewayError, extractJson } from "./pure";
+import { gatewayUsageKey, GATEWAY_USAGE_TTL_MS, GATEWAY_USAGE_PREFIX, MODEL_DOWN_TTL_MS, KeyPool, OPENROUTER_TEXT_MODEL, PROVIDERS, hashAI, FALLBACK_MODEL, AiGatewayError, extractJson, DEFAULT_TTFT_MS, DEFAULT_FIRST_BYTE_MS, DEFAULT_ATTEMPT_TIMEOUT_MS, DEFAULT_STREAM_TIMEOUT_MS, MAX_ATTEMPTS } from "./pure";
 import { emitGatewayMetric, classifyGatewayError, metricSource } from "./metrics";
 import type { KeyHealth, ProviderConfig, CompletionRequest, CompletionResult, AiKey, ToolCall } from "./types";
 
@@ -89,7 +89,12 @@ export class AiGateway {
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
-    if (models.length > 0) this.openrouterModels = [...new Set(models)];
+    if (models.length > 0) {
+      // Never rotate onto a slug the provider retired (they 404 every key).
+      const retired = new Set(['inclusionai/ling-3.0-flash-sante:free', 'dots-studio/dots-3-note-preview:free']);
+      const clean = [...new Set(models)].filter((m) => !retired.has(m));
+      if (clean.length > 0) this.openrouterModels = clean;
+    }
   }
 
   get keyCount(): number {
@@ -179,10 +184,16 @@ export class AiGateway {
         if (hit) { logger.info?.(`[AiGateway] cache hit ${aiCacheKey.slice(0, 24)}`); return hit; }
       } catch {}
     }
-    // Standardized: fail fast, respect retry-after, no 50× hammer.
-    // Heavy app will queue at caller, not in gateway. 3 attempts max.
-    const MIN_ATTEMPTS = 3;
-    const maxAttempts = Math.max(MIN_ATTEMPTS, Math.min(this.pool.size || MIN_ATTEMPTS, 5));
+    // Failover policy (2026-11-27): one fresh key per attempt, immediate
+    // rotation on failure/timeout (never sleep while a user waits), and a
+    // pinned key (playground) is probed exactly once. Pool-wide requests get
+    // up to 6 tries; a pinned provider leg gets 3 so the caller's chain moves
+    // on to the next API. A total budget stops a run of slow providers.
+    const maxAttempts = req.keyId
+      ? 1
+      : Math.max(1, Number(req.maxAttempts) || (req.provider ? 3 : MAX_ATTEMPTS));
+    const totalBudgetMs = Math.max(1_000, Number(req.totalTimeoutMs) || (req.provider ? 120_000 : 300_000));
+    const deadline = startedAt + totalBudgetMs;
     const wantsVision = req.messages.some((m) => Array.isArray(m.content));
     // Model rotation (OpenRouter text requests only): every ROTATE_EVERY
     // consecutive 429s moves to the next OPENROUTER_FREE_MODELS entry,
@@ -213,6 +224,7 @@ export class AiGateway {
       fellBack = true;
     }
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (Date.now() >= deadline) break;
       const key = req.keyId
         ? this.findKey(req.keyId) ?? this.pool.select(req.provider, req.sessionKey)
         : this.pool.select(req.provider, req.sessionKey);
@@ -258,6 +270,9 @@ export class AiGateway {
         return result;
       } catch (err) {
         lastErr = err;
+        // A caller-side cancel/timeout is not a provider fault: never cool or
+        // disable a key because the browser closed the tab.
+        if (req.signal?.aborted) throw err;
         // Hung model channel (timeout, no HTTP status — caller cancels
         // excluded): record the outage, switch to the fallback model, retry
         // immediately. Keys are never rotated for a hang — every key would
@@ -315,207 +330,177 @@ export class AiGateway {
           key.cooldownUntil = Date.now() + cd;
           key.lastError = `429 retry ${attempt + 1}/${maxAttempts}${rotatedModel ? ` (${rotatedModel})` : ''} — rotated to next key`;
           // Standardized backoff: 0.8s, 1.6s, 3.2s cap 5s — max 3 attempts total, then fail fast.
+          emitFailure(key, err);
           if (attempt < maxAttempts - 1) {
-            const backoff = Math.min(retryAfter ?? 800 * Math.pow(2, attempt), 5_000);
-            logger.warn?.(`[AiGateway] 429 on ${key.id}, retry ${attempt + 1}/${maxAttempts} after ${backoff}ms`);
-            await sleep(backoff);
+            logger.warn?.(`[AiGateway] 429 on ${key.id}, rotating immediately to the next key (attempt ${attempt + 1}/${maxAttempts})`);
             continue;
           }
-          emitFailure(key, err);
           const e2: any = new Error(`HTTP 429: Rate-limited (retry after ${Math.round((retryAfter ?? 60_000)/1000)}s)`);
           e2.status = 429; e2.retryAfter = retryAfter ?? 60_000;
           throw e2;
         }
         emitFailure(key, err);
-        const retryAfter = this.extractRetryAfter(err);
-        const cooldown = this.pool.reportFailure(key, err, retryAfter);
-        logger.warn?.(`[AiGateway] attempt ${attempt + 1}/${maxAttempts} failed on ${key.id}: ${err instanceof Error ? err.message : String(err)}`);
-        if (cooldown > 0 && attempt < maxAttempts - 1) {
-          await sleep(Math.min(cooldown, 5_000));
-        }
+        this.pool.reportFailure(key, err, this.extractRetryAfter(err));
+        logger.warn?.(`[AiGateway] attempt ${attempt + 1}/${maxAttempts} failed on ${key.id}: ${err instanceof Error ? err.message : String(err)} — immediate failover`);
       }
     }
     throw new AiGatewayError(`All AI keys exhausted after ${maxAttempts} attempts`, lastErr, maxAttempts);
   }
 
-  /** Streaming: yields content/reasoning/tool deltas via SSE (OpenAI `stream:true`). */
+  /** Streaming: yields content/reasoning/tool deltas via SSE (OpenAI stream:true).
+   *
+   *  Failover (2026-11-27): each attempt gets a first-token deadline
+   *  (ttftMs, default 20 s) and an overall cap (timeoutMs, default 120 s).
+   *  A non-OK response, network error, or first-token timeout cools that key
+   *  and rotates to the next API immediately — but only while NOTHING has been
+   *  delivered (after the first delta a retry would duplicate output).
+   *  A pinned keyId (Settings playground) is probed exactly once, no rotation.
+   */
   async *stream(req: CompletionRequest): AsyncGenerator<{ contentDelta?: string; reasoningDelta?: string; toolCallDelta?: any[]; finishReason?: string; usage?: any }, void, unknown> {
     const startedAt = Date.now();
-    let firstTokenAt = 0;
-    // Skip a flagged-down model outright (mirrors complete()'s entry check
-    // — most turns never pay the probe).
+    // Keep complete()'s flagged-model skip: most turns never pay the probe.
     const requestedFlaky = req.model && FALLBACK_MODEL[req.model] ? req.model : null;
     if (requestedFlaky && (await modelFlagged(requestedFlaky))) {
-      logger.warn?.(`[AiGateway] stream: ${requestedFlaky} flagged down — starting on ${FALLBACK_MODEL[requestedFlaky]}`);
+      logger.warn?.('[AiGateway] stream: ' + requestedFlaky + ' flagged down — starting on ' + FALLBACK_MODEL[requestedFlaky]);
       req = { ...req, model: FALLBACK_MODEL[requestedFlaky] };
     }
-    // Unflagged flaky model: first-data probe (probeTimeoutMs) — give up fast
-    // when the model sends NOTHING at all, but never strangle a stream that
-    // has started flowing. Flagged/fine models stream under the full timeoutMs.
-    const probing = !!requestedFlaky && req.model === requestedFlaky && !!req.probeTimeoutMs;
-    const streamCap = req.timeoutMs;
-    const probeMs = probing ? req.probeTimeoutMs : undefined;
-    const key = req.keyId ? this.findKey(req.keyId) ?? this.pool.select(req.provider, req.sessionKey) : this.pool.select(req.provider, req.sessionKey);
-    if (!key) throw new AiGatewayError('No AI key available (pool empty or all disabled)');
-    const provider = PROVIDERS[key.provider] ?? PROVIDERS.groq;
     const wantsVision = req.messages.some((m) => Array.isArray(m.content));
-    const model = req.model || (wantsVision ? this.visionModelOverride || provider.visionModel || provider.defaultModel : provider.defaultModel);
-    const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: `Bearer ${key.key}`, 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' };
-    // Founder rule (2026-11-27): every call runs to the model's own maximum
-    // output — max_tokens is never sent; req.maxTokens is intentionally ignored.
-    const body: Record<string, unknown> = {
-      model, messages: req.messages, temperature: req.temperature ?? 0.2,
-      ...(Array.isArray(req.tools) && req.tools.length > 0 ? { tools: req.tools } : {}),
-      ...(req.toolChoice ? { tool_choice: req.toolChoice } : {}),
-      ...provider.extraParams, ...(req.extraParams ?? {}), stream: true,
-    };
-    if (req.json && provider.jsonMode) body.response_format = provider.jsonMode;
-    if (provider.reasoningObject && !req.reasoningOff) (body as any).reasoning = { enabled: true };
-    else if (provider.supportsReasoning && req.reasoningEffort && !req.reasoningOff) (body as any).reasoning_effort = req.reasoningEffort;
-    const url = this.gatewayBaseURL(provider);
-    const payload = JSON.stringify(body);
-    // Direct egress for streams — a single attempt; failures surface to the
-    // caller (runTurn falls back to non-streaming across the chain).
-    let res: Response | null = null;
-    try {
-      res = await fetch(url, { method: 'POST', headers, body: payload, signal: this.combineSignals(req.signal, streamCap) });
-    } catch (e) {
-      // Caller aborted (tab closed / playground Stop): not a provider fault.
-      if ((e as any)?.name === 'AbortError') throw e;
-      const timedOut = (e as any)?.name === 'TimeoutError' || /timeout/i.test(String((e as any)?.message ?? ''));
-      if (timedOut && req.model && FALLBACK_MODEL[req.model]) {
-        await flagModelDown(req.model);
-        const err = new Error(`AI model ${req.model} timed out (fallback to ${FALLBACK_MODEL[req.model]} engaged) — retry the call`);
+    // One fresh key per attempt. A pinned key is a probe (exactly one try);
+    // a provider leg gets 3 tries so the caller's chain moves on quickly.
+    const maxAttempts = req.keyId ? 1 : Math.max(1, Number(req.maxAttempts) || (req.provider ? 3 : MAX_ATTEMPTS));
+    const totalBudget = Math.max(1_000, Number(req.totalTimeoutMs) || (req.provider ? 120_000 : 300_000));
+    const deadline = startedAt + totalBudget;
+    let lastErr: unknown;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (Date.now() >= deadline) break;
+      const attemptStartedAt = Date.now();
+      const key = req.keyId ? this.findKey(req.keyId) ?? this.pool.select(req.provider, req.sessionKey) : this.pool.select(req.provider, req.sessionKey);
+      if (!key) {
+        if (attempt === 0) throw new AiGatewayError('No AI key available (pool empty or all disabled)');
+        break;
+      }
+      const provider = PROVIDERS[key.provider] ?? PROVIDERS.groq;
+      const model = req.model || (wantsVision ? this.visionModelOverride || provider.visionModel || provider.defaultModel : provider.defaultModel);
+      const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key.key, 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' };
+      // Founder rule (2026-11-27): every call runs to the model's own maximum
+      // output — max_tokens is never sent; req.maxTokens is intentionally ignored.
+      const body: Record<string, unknown> = {
+        model, messages: req.messages, temperature: req.temperature ?? 0.2,
+        ...(Array.isArray(req.tools) && req.tools.length > 0 ? { tools: req.tools } : {}),
+        ...(req.toolChoice ? { tool_choice: req.toolChoice } : {}),
+        ...provider.extraParams, ...(req.extraParams ?? {}), stream: true,
+      };
+      if (req.json && provider.jsonMode) body.response_format = provider.jsonMode;
+      if (provider.reasoningObject && !req.reasoningOff) (body as any).reasoning = { enabled: true };
+      else if (provider.supportsReasoning && req.reasoningEffort && !req.reasoningOff) (body as any).reasoning_effort = req.reasoningEffort;
+      const url = this.gatewayBaseURL(provider);
+      const payload = JSON.stringify(body);
+
+      const ctrl = new AbortController();
+      const caller = req.signal;
+      let callerAborted = !!caller?.aborted;
+      const onCallerAbort = () => { callerAborted = true; try { ctrl.abort(); } catch { /* ignore */ } };
+      if (caller) caller.addEventListener('abort', onCallerAbort, { once: true });
+      const streamCap = Number(req.timeoutMs) > 0 ? Number(req.timeoutMs) : DEFAULT_STREAM_TIMEOUT_MS;
+      const capTimer = setTimeout(() => ctrl.abort(this.timeoutError('AI stream timeout')), streamCap);
+      const ttftMs = Number(req.ttftMs) > 0 ? Number(req.ttftMs) : DEFAULT_TTFT_MS;
+      let ttftTimer: ReturnType<typeof setTimeout> | undefined = setTimeout(
+        () => ctrl.abort(this.timeoutError('AI first-token timeout')), ttftMs,
+      );
+      let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+      let delivered = false;
+      let lastUsage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null = null;
+      let firstTokenAt = 0;
+      const cleanup = () => {
+        if (ttftTimer) { clearTimeout(ttftTimer); ttftTimer = undefined; }
+        clearTimeout(capTimer);
+        caller?.removeEventListener('abort', onCallerAbort);
+      };
+
+      try {
+        if (callerAborted) {
+          const e: any = new Error('Aborted'); e.name = 'AbortError'; throw e;
+        }
+        const res = await fetch(url, { method: 'POST', headers, body: payload, signal: ctrl.signal });
+        if (!res.ok) {
+          const text = await res.text().catch(() => '');
+          const err: any = new Error('HTTP ' + res.status + ': ' + text.slice(0, 300));
+          err.status = res.status;
+          err.retryAfter = this.parseRetryAfter(res.headers);
+          throw err;
+        }
+        if (!res.body) throw new Error('AI stream returned no body');
+        reader = (res.body as ReadableStream<Uint8Array>).getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        while (true) {
+          const read = await reader.read();
+          if (!read || read.done) break;
+          buf += decoder.decode(read.value, { stream: true });
+          const lines = buf.split('\n');
+          buf = lines.pop() ?? '';
+          for (const rawLine of lines) {
+            const line = rawLine.trim();
+            if (!line.startsWith('data: ')) continue;
+            const data = line.slice(6).trim();
+            if (data === '[DONE]' || data === '') continue;
+            // Data is flowing: the model is alive. Keep the overall cap only.
+            if (ttftTimer) { clearTimeout(ttftTimer); ttftTimer = undefined; }
+            try {
+              const json: any = JSON.parse(data);
+              const choice = json.choices?.[0];
+              if (!choice) { if (json.usage) { lastUsage = json.usage; yield { usage: json.usage }; } continue; }
+              const delta = choice.delta ?? {};
+              if (!firstTokenAt && (delta.content || delta.reasoning_content || delta.reasoning)) firstTokenAt = Date.now() - attemptStartedAt;
+              if (typeof delta.content === 'string' && delta.content) { delivered = true; yield { contentDelta: delta.content }; }
+              if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) { delivered = true; yield { reasoningDelta: delta.reasoning_content }; }
+              // OpenRouter/DeepSeek streams thinking as delta.reasoning (NOT
+              // reasoning_content) — without this the chat "Thinking" UI gets
+              // nothing on the paid lane.
+              if (typeof delta.reasoning === 'string' && delta.reasoning) { delivered = true; yield { reasoningDelta: delta.reasoning }; }
+              if (Array.isArray(delta.tool_calls) && delta.tool_calls.length) { delivered = true; yield { toolCallDelta: delta.tool_calls }; }
+              if (choice.finish_reason) { delivered = true; yield { finishReason: choice.finish_reason }; }
+              if (json.usage) { lastUsage = json.usage; yield { usage: json.usage }; }
+            } catch { /* ignore parse */ }
+          }
+        }
+        this.pool.reportSuccess(key);
+        logger.info?.('[AiGateway] stream served by ' + key.id + ' (' + provider.id + '/' + model + ')');
+        if (lastUsage) await logGatewayUsage(lastUsage);
         emitGatewayMetric({
-          provider: key.provider, keyId: key.id, ok: false, status: null,
-          errorKind: "timeout", latencyMs: Date.now() - startedAt, streamed: true,
+          provider: key.provider, keyId: key.id, ok: true, status: 200,
+          latencyMs: Date.now() - attemptStartedAt, ttftMs: firstTokenAt || null, streamed: true,
+          promptTokens: lastUsage?.prompt_tokens ?? null,
+          completionTokens: lastUsage?.completion_tokens ?? null,
+          totalTokens: lastUsage?.total_tokens ?? null,
           source: metricSource(req),
         });
+        return;
+      } catch (e: any) {
+        // Caller cancel/stop is not a provider fault.
+        if (callerAborted || caller?.aborted) throw e;
+        const timedOut = ctrl.signal.aborted;
+        const err = timedOut ? ((ctrl.signal.reason as Error) ?? this.timeoutError('AI stream timeout')) : e;
+        emitGatewayMetric({
+          provider: key.provider, keyId: key.id, ok: false, status: Number((e as any)?.status) || null,
+          errorKind: classifyGatewayError(Number((e as any)?.status) || null, String((err as any)?.message ?? err)),
+          latencyMs: Date.now() - attemptStartedAt, ttftMs: firstTokenAt || null, streamed: true,
+          source: metricSource(req),
+        });
+        this.pool.reportFailure(key, err);
+        lastErr = err;
+        const tail = delivered ? ' (after delivery — no retry)' : ' — immediate failover';
+        logger.warn?.('[AiGateway] stream attempt ' + (attempt + 1) + '/' + maxAttempts + ' failed on ' + key.id + ': ' + String((err as any)?.message ?? err) + tail);
+        if (!delivered) continue;
         throw err;
+      } finally {
+        cleanup();
+        try { ctrl.abort(); } catch { /* ignore */ }
+        try { reader?.releaseLock(); } catch { /* ignore */ }
       }
-      emitGatewayMetric({
-        provider: key.provider, keyId: key.id, ok: false, status: null,
-        errorKind: classifyGatewayError(null, String((e as any)?.message ?? e)),
-        latencyMs: Date.now() - startedAt, streamed: true, source: metricSource(req),
-      });
-      throw e;
     }
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      const err: any = new Error(`HTTP ${res.status}: ${text.slice(0, 300)}`);
-      err.status = res.status; err.retryAfter = this.parseRetryAfter(res.headers);
-      // Feed pool health so the next turn rotates away from a 429'd key.
-      try { this.pool.reportFailure(key, err, err.retryAfter); } catch {}
-      emitGatewayMetric({
-        provider: key.provider, keyId: key.id, ok: false, status: res.status,
-        errorKind: classifyGatewayError(res.status, err.message),
-        latencyMs: Date.now() - startedAt, streamed: true, source: metricSource(req),
-      });
-      throw err;
-    }
-    if (!res.body) return;
-    const reader = (res.body as ReadableStream<Uint8Array>).getReader();
-    const decoder = new TextDecoder();
-    let buf = '';
-    let gotData = false;
-    // Last provider-reported token usage seen on this stream (OpenRouter
-    // sends `usage` on the final chunk). Logged once the consumer drains
-    // the stream — streamTurn always consumes to completion, and the await
-    // below guarantees the KV write lands before the isolate freezes.
-    let lastUsage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null = null;
-    // Probe failure: the model sent nothing before the first-data deadline —
-    // flag it down (caller falls back to the fallback model) and throw a
-    // retryable error shaped like the whole-stream timeout below.
-    const failProbe = async (): Promise<never> => {
-      try { await reader.cancel(); } catch { /* ignore */ }
-      if (req.model && FALLBACK_MODEL[req.model]) await flagModelDown(req.model);
-      // The read-loop catch below records this timeout exactly once.
-      throw new Error(`AI model ${req.model} first token timeout (fallback to ${req.model && FALLBACK_MODEL[req.model]} engaged) — retry the call`);
-    };
-    try {
-      // First-data deadline: abort only while NOTHING has arrived yet. A
-      // stalled model fails fast onto the fallback; a flowing stream is never
-      // strangled no matter how long the answer runs.
-      const firstDataDeadline = probeMs ? Date.now() + probeMs : 0;
-      while (true) {
-        let read: Awaited<ReturnType<typeof reader.read>> | undefined;
-        if (firstDataDeadline > 0 && !gotData) {
-          const remain = firstDataDeadline - Date.now();
-          if (remain <= 0) {
-            await failProbe();
-            continue;
-          }
-          let timer: ReturnType<typeof setTimeout> | undefined;
-          try {
-            read = await Promise.race([
-              reader.read(),
-              new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error('probe-timeout')), remain); }),
-            ]);
-          } catch (e: any) {
-            if (e?.message === 'probe-timeout') {
-              await failProbe();
-              continue;
-            }
-            throw e;
-          } finally {
-            if (timer) clearTimeout(timer);
-          }
-        } else {
-          read = await reader.read();
-        }
-        if (!read || read.done) break;
-        buf += decoder.decode(read.value, { stream: true });
-        const lines = buf.split('\n');
-        buf = lines.pop() ?? '';
-        for (const rawLine of lines) {
-          const line = rawLine.trim();
-          if (!line.startsWith('data: ')) continue;
-          const data = line.slice(6).trim();
-          if (data === '[DONE]' || data === '') continue;
-          gotData = true;
-          try {
-            const json: any = JSON.parse(data);
-            const choice = json.choices?.[0];
-            if (!choice) { if (json.usage) { lastUsage = json.usage; yield { usage: json.usage }; } continue; }
-            const delta = choice.delta ?? {};
-            if (!firstTokenAt && (delta.content || delta.reasoning_content || delta.reasoning)) firstTokenAt = Date.now() - startedAt;
-            if (typeof delta.content === 'string' && delta.content) yield { contentDelta: delta.content };
-            if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) yield { reasoningDelta: delta.reasoning_content };
-            // OpenRouter/DeepSeek streams thinking as `delta.reasoning` (NOT
-            // `reasoning_content`) — without this the chat "Thinking" UI gets
-            // nothing on the paid lane.
-            if (typeof delta.reasoning === 'string' && delta.reasoning) yield { reasoningDelta: delta.reasoning };
-            if (Array.isArray(delta.tool_calls) && delta.tool_calls.length) yield { toolCallDelta: delta.tool_calls };
-            if (choice.finish_reason) yield { finishReason: choice.finish_reason };
-            if (json.usage) { lastUsage = json.usage; yield { usage: json.usage }; }
-          } catch { /* ignore parse */ }
-        }
-      }
-    } catch (e) {
-      if ((e as any)?.name === 'AbortError') throw e;
-      emitGatewayMetric({
-        provider: key.provider, keyId: key.id, ok: false, status: null,
-        errorKind: classifyGatewayError(null, String((e as any)?.message ?? e)),
-        latencyMs: Date.now() - startedAt, ttftMs: firstTokenAt || null, streamed: true,
-        source: metricSource(req),
-      });
-      throw e;
-    } finally {
-      try { reader.releaseLock(); } catch {}
-    }
-    this.pool.reportSuccess(key);
-    // Same audit for streams (chat serves streamed turns — without this,
-    // streamed legs are invisible in the tail).
-    logger.info?.(`[AiGateway] stream served by ${key.id} (${provider.id}/${model})`);
-    if (lastUsage) await logGatewayUsage(lastUsage);
-    emitGatewayMetric({
-      provider: key.provider, keyId: key.id, ok: true, status: 200,
-      latencyMs: Date.now() - startedAt, ttftMs: firstTokenAt || null, streamed: true,
-      promptTokens: lastUsage?.prompt_tokens ?? null,
-      completionTokens: lastUsage?.completion_tokens ?? null,
-      totalTokens: lastUsage?.total_tokens ?? null,
-      source: metricSource(req),
-    });
+    throw new AiGatewayError('All AI keys exhausted after ' + maxAttempts + ' stream attempts', lastErr, maxAttempts);
   }
 
   /** Convenience: complete + parse JSON (falls back to extracting the first
@@ -576,16 +561,55 @@ export class AiGateway {
     // Direct OpenAI-compatible call — the single gateway has no lanes,
     // tunnels, or per-provider egress paths. Failures return to complete()
     // for key rotation + retry.
+    //
+    // Per-attempt abort (2026-11-27): caller cancel + first-byte deadline
+    // (headers) + total attempt cap. A provider that accepts the socket but
+    // never answers must not hold the user's enquiry hostage — abort, cool
+    // that key, and rotate to the next API immediately.
     const url = this.gatewayBaseURL(provider);
-    const res = await fetch(url, { method: 'POST', headers, body: payload, signal: this.combineSignals(req.signal, req.timeoutMs) });
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      const err: any = new Error(`HTTP ${res.status}: ${text.slice(0, 300)}`);
-      err.status = res.status;
-      err.retryAfter = this.parseRetryAfter(res.headers);
-      throw err;
+    const ctrl = new AbortController();
+    const caller = req.signal;
+    const onCallerAbort = () => { try { ctrl.abort((caller as any)?.reason); } catch { ctrl.abort(); } };
+    if (caller) {
+      if (caller.aborted) onCallerAbort();
+      else caller.addEventListener('abort', onCallerAbort, { once: true });
     }
-    const data: any = await res.json();
+    const waitStartedAt = Date.now();
+    const firstByteMs = Number(req.ttftMs) > 0 ? Number(req.ttftMs) : DEFAULT_FIRST_BYTE_MS;
+    const attemptCapMs = Number(req.timeoutMs) > 0 ? Number(req.timeoutMs) : DEFAULT_ATTEMPT_TIMEOUT_MS;
+    let firstByteTimer: ReturnType<typeof setTimeout> | undefined = setTimeout(
+      () => ctrl.abort(this.timeoutError('AI first-byte timeout')), firstByteMs,
+    );
+    let capTimer: ReturnType<typeof setTimeout> | undefined;
+    const cleanupTimers = () => {
+      if (firstByteTimer) { clearTimeout(firstByteTimer); firstByteTimer = undefined; }
+      if (capTimer) { clearTimeout(capTimer); capTimer = undefined; }
+      caller?.removeEventListener('abort', onCallerAbort);
+    };
+    let data: any;
+    try {
+      const res = await fetch(url, { method: 'POST', headers, body: payload, signal: ctrl.signal });
+      if (firstByteTimer) { clearTimeout(firstByteTimer); firstByteTimer = undefined; }
+      capTimer = setTimeout(
+        () => ctrl.abort(this.timeoutError('AI call timeout')),
+        Math.max(1, attemptCapMs - (Date.now() - waitStartedAt)),
+      );
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        const err: any = new Error(`HTTP ${res.status}: ${text.slice(0, 300)}`);
+        err.status = res.status;
+        err.retryAfter = this.parseRetryAfter(res.headers);
+        throw err;
+      }
+      data = await res.json();
+    } catch (e: any) {
+      // The caller's own abort/cancel stays an AbortError (never a key fault).
+      if (caller?.aborted) throw e;
+      if (ctrl.signal.aborted) throw (ctrl.signal.reason ?? this.timeoutError('AI call aborted'));
+      throw e;
+    } finally {
+      cleanupTimers();
+    }
     const msg: any = data?.choices?.[0]?.message ?? {};
     const rawContent: unknown = msg?.content ?? '';
     // Some vision models return content as parts — flatten to text.
@@ -614,17 +638,11 @@ export class AiGateway {
     };
   }
 
-  /** Merge caller abort + per-attempt timeout into one signal (edge-safe). */
-  private combineSignals(signal: AbortSignal | undefined, timeoutMs: number | undefined): AbortSignal | undefined {
-    if (!timeoutMs || timeoutMs <= 0) return signal;
-    try {
-      const t = AbortSignal.timeout(timeoutMs);
-      if (!signal) return t;
-      if (typeof (AbortSignal as any).any === 'function') return (AbortSignal as any).any([signal, t]);
-      return signal;
-    } catch {
-      return signal;
-    }
+  /** Error name 'TimeoutError' so callers/metrics classify timeouts as such. */
+  private timeoutError(message: string): Error {
+    const e: any = new Error(message);
+    e.name = 'TimeoutError';
+    return e;
   }
 
   private extractRetryAfter(err: unknown): number | undefined {    if (err && typeof err === 'object') {

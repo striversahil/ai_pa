@@ -26,8 +26,10 @@
  */
 
 // ── Provider registry (mirror of TS) ─────────────────────────────────────────
-const OPENROUTER_TEXT_MODEL = 'inclusionai/ling-3.0-flash-sante:free';
-const OPENROUTER_VISION_MODEL = 'dots-studio/dots-3-note-preview:free';
+// The 2026-10 slugs (ling-3.0-flash-sante / dots-3-note-preview) were retired
+// by OpenRouter (404 on every key); this multimodel serves text + vision.
+const OPENROUTER_TEXT_MODEL = 'nvidia/nemotron-3.5-super-vl:free';
+const OPENROUTER_VISION_MODEL = 'nvidia/nemotron-3.5-super-vl:free';
 /** Default OpenRouter routing for the paid chat lane (mirror of TS
  *  PAID_CHAT_ROUTING): `order` (not `only`) so a throttled first choice
  *  spills forward instead of failing. */
@@ -48,7 +50,7 @@ const PROVIDERS = {
     reasoningObject: true,
     // NOTE: free-tier OpenRouter models reject response_format (no
     // structured-outputs) → jsonMode intentionally absent; JSON enforced via prompt + extractJson.
-    // Text + vision SPLIT (2026-10-01): old unified slug lost its free tier (404).
+    // One free multimodel serves text + vision (2026-11-27).
     defaultModel: OPENROUTER_TEXT_MODEL,
     visionModel: OPENROUTER_VISION_MODEL,
   },

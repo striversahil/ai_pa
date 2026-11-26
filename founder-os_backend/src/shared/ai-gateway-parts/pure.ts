@@ -1,22 +1,8 @@
 // Extracted verbatim from ai-gateway.ts by scripts/refactor/split-module.mjs.
 // ai-gateway.ts re-exports everything public here, so existing imports keep working.
 import { logger } from "../logger";
+import { hashAI } from "./usage";
 import type { ProviderConfig, AiKey, KeyHealth, MessageContent, ImagePart } from "./types";
-
-export const GATEWAY_USAGE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
-
-export const GATEWAY_USAGE_PREFIX = 'ai:usage:';
-
-export function gatewayUsageKey(date = new Date()): string {
-  return `${GATEWAY_USAGE_PREFIX}${date.toISOString().slice(0, 10)}`;
-}
-
-// Stable hash for AI cache keys (djb2)
-export function hashAI(s: string): string {
-  let h = 5381;
-  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
-  return h.toString(36);
-}
 
 // ── Model fallback ───────────────────────────────────────────────────────────
 // Advanced model first, safe model on hang: when the requested model stalls
@@ -29,9 +15,21 @@ export const FALLBACK_MODEL: Record<string, string> = {};
 
 export const MODEL_DOWN_TTL_MS = 10 * 60_000;
 
-export const OPENROUTER_TEXT_MODEL = 'inclusionai/ling-3.0-flash-sante:free';
+// Failover budgets (2026-11-27): each attempt is bounded so a dead key can
+// never hang a request; overridable per request via CompletionRequest.
+export const DEFAULT_TTFT_MS = 20_000;
+export const DEFAULT_FIRST_BYTE_MS = 30_000;
+export const DEFAULT_ATTEMPT_TIMEOUT_MS = 60_000;
+export const DEFAULT_STREAM_TIMEOUT_MS = 120_000;
+export const MAX_ATTEMPTS = 6;
+/** How long a provider is skipped after an HTTP 404/405 (dead model/route). */
+export const PROVIDER_COOLDOWN_MS = 5 * 60_000;
 
-export const OPENROUTER_VISION_MODEL = 'dots-studio/dots-3-note-preview:free';
+// Live free OpenRouter multimodel (the old ling-3.0-sante / dots-3-note slugs
+// were retired and 404'd every key); serves text + vision.
+export const OPENROUTER_TEXT_MODEL = 'nvidia/nemotron-3.5-super-vl:free';
+
+export const OPENROUTER_VISION_MODEL = 'nvidia/nemotron-3.5-super-vl:free';
 
 /** Default OpenRouter routing for the paid lane: `order` (not `only`) so
  *  a throttled/outed first choice spills forward instead of failing. Lives
@@ -55,11 +53,10 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
     // NOTE: free-tier OpenRouter models reject response_format (no
     // structured-outputs) → jsonMode intentionally absent; JSON is enforced
     // via prompt + the extractJson fallback in completeJson instead.
-    // Text + vision are SPLIT (2026-10-01): no single free model does both —
-    // the old unified slug lost its free tier (404). Text → sante (lean,
-    // proven 25/25 intake), vision (photos attached) → dots preview.
-    // Reasoning models burn ~25KB chain-of-thought — callers must budget
-    // maxTokens ≥24000, not 4000 (else finish=length truncation).
+    // One free multimodel now serves both text and vision (2026-11-27); the
+    // old split slugs (ling-3.0-flash-sante / dots-3-note-preview) were both
+    // retired by OpenRouter and caused a 100% 404 rate across every free key.
+    // Reasoning models burn long chain-of-thought — calls run uncapped.
     defaultModel: OPENROUTER_TEXT_MODEL,
     visionModel: OPENROUTER_VISION_MODEL,
   },
@@ -81,7 +78,7 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
     reasoningObject: true,
     extraParams: PAID_CHAT_ROUTING,
     defaultModel: 'deepseek/deepseek-v4.1-flash',
-    visionModel: 'dots-studio/dots-3-note-preview:free',
+    visionModel: OPENROUTER_VISION_MODEL,
   },
 };
 
@@ -125,16 +122,29 @@ export class KeyPool {
    *  that is off contributes nothing to selection, but its keys stay registered
    *  so toggling it back on is instant and health history is preserved. */
   private providersOff = new Set<string>();
+  /** Runtime provider quarantine on 404/405 (dead model/route); not persisted. */
+  private providersCooling = new Map<string, number>();
 
   setProviderEnabled(provider: string, enabled: boolean): void {
     const pid = String(provider ?? '').trim();
     if (!pid) return;
-    if (enabled) this.providersOff.delete(pid);
+    if (enabled) { this.providersOff.delete(pid); this.providersCooling.delete(pid); }
     else this.providersOff.add(pid);
   }
 
+  /** Skip a provider whose route/model is gone (404/405) for a short window. */
+  coolProvider(provider: string, ms = PROVIDER_COOLDOWN_MS): void {
+    const pid = String(provider ?? '').trim();
+    if (!pid) return;
+    const until = Date.now() + Math.max(1_000, ms);
+    this.providersCooling.set(pid, Math.max(this.providersCooling.get(pid) ?? 0, until));
+  }
+
   providerEnabled(provider: string): boolean {
-    return !this.providersOff.has(provider);
+    if (this.providersOff.has(provider)) return false;
+    const until = this.providersCooling.get(provider) ?? 0;
+    if (until && until <= Date.now()) { this.providersCooling.delete(provider); return true; }
+    return until === 0;
   }
 
   /** Global selection strategy (Setting `ai:strategy`). */
@@ -314,6 +324,14 @@ export class KeyPool {
       logger.warn?.(`[AiGateway] key ${key.id} DISABLED (HTTP ${status}): ${key.lastError}`);
       return 0;
     }
+    // 404/405 = the provider's model or route no longer exists. Rotating its
+    // other keys is pointless (they share the route), so quarantine the whole
+    // provider and let the caller fail over to the next API immediately.
+    if (status === 404 || status === 405) {
+      this.coolProvider(key.provider);
+      logger.warn?.(`[AiGateway] provider ${key.provider} cooled after HTTP ${status} on ${key.id}: ${key.lastError}`);
+      return 0;
+    }
     if (status === 429) {
       const cd = retryAfterMs ?? Math.min(60_000 * Math.pow(2, Math.min(key.failures, 5)), 10 * 60_000);
       key.cooldownUntil = Date.now() + cd;
@@ -335,7 +353,8 @@ export class KeyPool {
     return 0;
   }
 
-  extractStatus(err: unknown): number | null {    if (err && typeof err === 'object') {
+  extractStatus(err: unknown): number | null {
+    if (err && typeof err === 'object') {
       const e = err as any;
       if (typeof e.status === 'number') return e.status;
       if (typeof e.statusCode === 'number') return e.statusCode;
@@ -372,4 +391,5 @@ export class KeyPool {
 // ── Gateway ──────────────────────────────────────────────────────────────────
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+export { GATEWAY_USAGE_TTL_MS, GATEWAY_USAGE_PREFIX, gatewayUsageKey, hashAI } from "./usage";
 export { extractJson, buildVisionUserContent } from "./text";
