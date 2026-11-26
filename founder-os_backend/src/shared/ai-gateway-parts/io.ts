@@ -324,10 +324,14 @@ export class AiGateway {
             rotatedModel = this.openrouterModels[this.modelIdx];
             logger.warn?.(`[AiGateway] 429 streak x${streak429} — rotating OpenRouter model to ${rotatedModel}`);
           }
-          key.failures++;
-          key.lastFailureAt = Date.now();
-          const cd = Math.min(retryAfter ?? 60_000 * Math.pow(2, Math.min(key.failures - 1, 3)), 600_000);
-          key.cooldownUntil = Date.now() + cd;
+          // A pinned probe (playground) reports its result; it must not mutate
+          // the production pool (the operator decides what to disable).
+          if (!req.keyId) {
+            key.failures++;
+            key.lastFailureAt = Date.now();
+            const cd = Math.min(retryAfter ?? 60_000 * Math.pow(2, Math.min(key.failures - 1, 3)), 600_000);
+            key.cooldownUntil = Date.now() + cd;
+          }
           key.lastError = `429 retry ${attempt + 1}/${maxAttempts}${rotatedModel ? ` (${rotatedModel})` : ''} — rotated to next key`;
           // Standardized backoff: 0.8s, 1.6s, 3.2s cap 5s — max 3 attempts total, then fail fast.
           emitFailure(key, err);
@@ -340,7 +344,7 @@ export class AiGateway {
           throw e2;
         }
         emitFailure(key, err);
-        this.pool.reportFailure(key, err, this.extractRetryAfter(err));
+        if (!req.keyId) this.pool.reportFailure(key, err, this.extractRetryAfter(err));
         logger.warn?.(`[AiGateway] attempt ${attempt + 1}/${maxAttempts} failed on ${key.id}: ${err instanceof Error ? err.message : String(err)} — immediate failover`);
       }
     }
@@ -488,7 +492,7 @@ export class AiGateway {
           latencyMs: Date.now() - attemptStartedAt, ttftMs: firstTokenAt || null, streamed: true,
           source: metricSource(req),
         });
-        this.pool.reportFailure(key, err);
+        if (!req.keyId) this.pool.reportFailure(key, err);
         lastErr = err;
         const tail = delivered ? ' (after delivery — no retry)' : ' — immediate failover';
         logger.warn?.('[AiGateway] stream attempt ' + (attempt + 1) + '/' + maxAttempts + ' failed on ' + key.id + ': ' + String((err as any)?.message ?? err) + tail);
