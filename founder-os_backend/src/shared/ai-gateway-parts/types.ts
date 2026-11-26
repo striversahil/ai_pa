@@ -22,7 +22,13 @@ export interface AiKey {
   provider: string;
   key: string;
   label: string;
+  /** Runtime health: false = the provider rejected this key (401/403).
+   *  Never persisted; resets with the isolate. */
   enabled: boolean;
+  /** Operator/health switch from Setting `ai:providers` (providers[].keys[].
+   *  enabled === false). Persisted, so a disabled key stays out of pool
+   *  selection across isolates and cold starts. */
+  allowed: boolean;
   failures: number;
   cooldownUntil: number;
   lastError: string | null;
@@ -33,7 +39,7 @@ export interface AiKey {
 
 export type KeyHealth = Pick<
   AiKey,
-  'id' | 'label' | 'provider' | 'enabled' | 'failures' | 'cooldownUntil' | 'lastError' | 'lastUsedAt' | 'successCount'
+  'id' | 'label' | 'provider' | 'enabled' | 'allowed' | 'failures' | 'cooldownUntil' | 'lastError' | 'lastUsedAt' | 'successCount'
 >;
 
 // ── Request / response ───────────────────────────────────────────────────────
@@ -104,6 +110,9 @@ export interface CompletionRequest {
     *  routing for the paid chat lane). */
    extraParams?: Record<string, unknown>;
    signal?: AbortSignal;
+  /** Telemetry origin: "app" (default) or "playground" (Settings probe).
+   *  Playground rows stay in the call ledger but never move key health. */
+  source?: string;
   /** OpenAI-style function tools (passed through verbatim). */
   tools?: ToolDefinition[];
   toolChoice?: 'auto' | 'none' | { type: 'function'; function: { name: string } };

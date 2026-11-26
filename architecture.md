@@ -460,6 +460,14 @@ leaderboard, notifications, chat) renders `employeeDisplayName()` =
 truth `shared/employee-name.ts` ↔ frontend mirror `hr/display.ts`; guard
 `employee-display-name`. Payroll snapshots/PDFs and identity matching keep the legal name.
 
+**Hiring kit (2026-11-26, migration 0170).** Each position holds any number of JD / SOP /
+questionnaire PDFs (`HumanResourcesPositionDoc.kind` is plain TEXT; bytes live in `CHAT_FILES`
+KV under `hrdocs/`) plus one optional `videoUrl`. `PATCH /api/human-resources/hiring-positions/:id`
+accepts `name` and/or `videoUrl`; backend `cleanVideoUrl` and the FE mirror both add `https://` to
+bare hosts and reject every non-http(s) scheme before saving. The tab renders a third questionnaire
+slot plus an inline walkthrough paste/open/remove row; completeness = all three PDF kinds + a link.
+Guard `hiring-kit`.
+
 ### 3.2d Procurement queue ownership — manual conclude only (2026-11-21)
 
 The sourcing queue is the procurement desk's own worklist, not a mirror of the estimate lifecycle.
@@ -720,20 +728,25 @@ Gateway design (one place, one chain, direct egress):
 - **Key pool**: `KeyPool` in the gateway owns every key with per-key health
   (`failures`, `cooldownUntil`, `enabled`, `successCount`, `lastError`).
 - **Key config**: Setting `ai:providers` BYOK JSON first (root-only Settings UI,
-  20 providers × 10 keys max, OpenAI-compatible `{id,baseUrl,model,keys}`;
-  never echoed — GET/PUT redact to ids + counts). Env `AI_KEYS` +
+  20 providers × 10 keys max, OpenAI-compatible `{id,baseUrl,model,keys,enabled}`;
+  never echoed — GET/PUT redact to ids/labels/last4 + counts). Env `AI_KEYS` +
   legacy per-provider vars append as fallback. Placeholders ignored. Deduped.
+  `providers[].enabled=false` and `keys[].enabled=false` are **pure filters**:
+  nothing is deleted, selection simply skips them; re-enabling restores them.
 - **Chain**: `resolveAiChain()` — Setting list order, then env-only providers;
   every caller (copilot chat, enquiry extraction, vision intake, catalogue
   lookup, runners via `POST /api/ai/complete`) walks the same legs with the
   same sticky `sessionKey`. No per-task providers, no relay, no paid lane.
 - **Selection**: global `ai:strategy` (`least-used-first` default: random
   inside the least-failures tier; `round-robin`: cycles the healthy tier).
-  `sessionKey` still sticky-pins while healthy.
+  `sessionKey` still sticky-pins while healthy. A key is eligible only while
+  `enabled` (runtime), `allowed` (persisted switch) and its provider is on.
 - **Failure handling**: 401/403 → key disabled permanently; 429 → cooldown
   (exponential backoff, honors `retry-after`; 1015 cools briefly + rotates);
   402/quota → 5-min cooldown; 5xx/network → short cooldown + rotate immediately;
-  attempts = pool size (min 3).
+  attempts = pool size (min 3). Separately, the **health sweep** scores each
+  configured key and auto-disables it below the threshold (or after 3
+  consecutive auth/quota failures) — see the key-health block below.
 - **Providers** (all OpenAI `/chat/completions` wire format): whatever the
   Setting list + env pool holds — OpenRouter, Requestly, DeepSeek, custom free
   tiers. Each leg serves its own configured model (Setting `model`, else the
@@ -745,8 +758,42 @@ Gateway design (one place, one chain, direct egress):
   `scripts/runner-lib.js` `groq()/groqJson()/aiText()` are thin wrappers
   over the endpoint (local-gateway fallback), so existing runners needed zero
   call-site changes. `GET /api/ai/health` shows strategy + per-provider
-  usable/total (no keys); `POST /api/ai/providers` manages the list
-  merge-safely (root only, redacted responses).
+  usable/total (no keys); for root it also returns the redacted provider
+  config with per-key health/controls. `POST /api/ai/providers` manages the
+  list merge-safely (root only, redacted responses).
+
+**AI key health + Settings playground (2026-11-27, mig `0174`)** — the pool
+measures itself instead of only reacting per request:
+- **Ledger**: every provider call emits one `GatewayCallMetric` (provider,
+  fingerprint key id, ok/status/error kind, latency, TTFT, tokens, streamed,
+  `source`). The Worker's request middleware wires the sink in `createApp()`
+  and writes to D1 `AiKeyCall` with `waitUntil` (the call never waits on D1);
+  the Express path and `scripts/ai-gateway.js` leave the sink unset. 30-day
+  retention, pruned by the sweep.
+- **Score** (`shared/ai-gateway-parts/health.ts`, pure): `100 × (0.5·reliability
+  + 0.3·speed + 0.2·throughput)` over the newest ≤50 non-playground calls in
+  24 h. Reliability subtracts weighted failures (auth/quota 1.0, timeout/network
+  0.7, bad_response 0.5, server 0.4, rate_limit 0.2); speed maps streamed TTFT
+  between `ttftGoodMs`/5000 and `ttftBadMs` (neutral 70 when a key has no
+  streamed sample); throughput maps tokens/sec against `tpsTarget` 40.
+- **Policy** (Setting `ai:health`, defaults below): `threshold 40` = auto-disable,
+  `atRisk 60` = amber, `minSamples 5`, `autoDisable true` (set false for
+  observe-only). The native `* * * * *` cron runs `runAiKeyHealthSweep` every
+  5 min in all hours, writes `keys[].health` back into `ai:providers`, and a
+  failure path disables a key immediately on 3 consecutive auth/quota errors.
+  Manual re-enable clears the disable reason and stamps `healthResetAt` so old
+  samples cannot re-kill the key; there is no auto-recovery.
+- **Controls**: `PATCH /api/ai/providers/:id` and
+  `PATCH /api/ai/providers/:id/keys/:kid` (root, `:kid` = the public
+  fingerprint id) flip the persisted switches; `GET /api/ai/key-calls?limit=`
+  is the drill-down.
+- **Playground**: `POST /api/ai/test` and `POST /api/ai/test/stream` (root only)
+  pin an exact key and measure that key — streamed SSE events `meta|delta|done|error`
+  carry TTFT/latency/TPS/tokens. Probes are stored `source='playground'` and are
+  excluded from health, so a slow manual test can never disable a key. The UI
+  is Settings → AI gateway (`components/settings/ai-gateway/`), with the live
+  pool, provider/key switches, health badges, threshold editor and the chat
+  playground; transcripts stay client-side.
 
 **Omniroute is NOT the production AI path** — it's the final fallback inside the pool.
 

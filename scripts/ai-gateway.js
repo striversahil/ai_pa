@@ -173,6 +173,19 @@ class KeyPool {
     this.keys = [];
     this.strategy = 'least-used-first';
     this.rrCursor = 0;
+    this.providersOff = new Set();
+  }
+
+  /** Provider-level switch (Setting providers[].enabled === false). TS parity. */
+  setProviderEnabled(provider, enabled) {
+    const pid = String(provider || '').trim();
+    if (!pid) return;
+    if (enabled) this.providersOff.delete(pid);
+    else this.providersOff.add(pid);
+  }
+
+  providerEnabled(provider) {
+    return !this.providersOff.has(provider);
   }
 
   /** Global selection strategy (Setting `ai:strategy`). TS parity. */
@@ -183,10 +196,11 @@ class KeyPool {
   getStrategy() { return this.strategy; }
 
   /** Register a Setting-defined OpenAI-compatible provider + its keys. TS parity. */
-  registerProvider(id, baseURL, model, keys) {
+  registerProvider(id, baseURL, model, keys, enabled = true) {
     const pid = String(id ?? '').trim();
     const url = String(baseURL ?? '').trim().replace(/\/+$/, '');
     if (!pid || !url) return;
+    this.setProviderEnabled(pid, enabled !== false);
     if (!PROVIDERS[pid]) {
       PROVIDERS[pid] = {
         id: pid,
@@ -196,12 +210,16 @@ class KeyPool {
         defaultModel: String(model || '').trim() || 'default',
       };
     }
-    const seen = new Set(this.keys.map((k) => k.key));
+    const seen = new Map(this.keys.map((k) => [k.key, k]));
     for (const k of keys ?? []) {
       const kv = String((k && k.key) ?? '').trim();
-      if (!kv || seen.has(kv)) continue;
-      seen.add(kv);
-      this.keys.push(this.makeKey(pid, kv, String((k && k.label) ?? '').trim() || undefined));
+      if (!kv) continue;
+      const allowed = (k && k.enabled) !== false;
+      const existing = seen.get(kv);
+      if (existing) { existing.allowed = allowed; continue; }
+      const made = this.makeKey(pid, kv, String((k && k.label) ?? '').trim() || undefined, allowed);
+      seen.set(kv, made);
+      this.keys.push(made);
     }
   }
 
@@ -248,12 +266,12 @@ class KeyPool {
     console.log(`[AiGateway] loaded ${this.keys.length} keys: ${this.keys.map((k) => `${k.provider}:${k.label}`).join(', ')}`);
   }
 
-  makeKey(provider, key, label) {
+  makeKey(provider, key, label, allowed = true) {
     const fp = key.length > 12 ? `${key.slice(0, 6)}...${key.slice(-4)}` : '***';
     return {
       id: `${provider}:${fp}`,
       provider, key, label: label || fp,
-      enabled: true, failures: 0, cooldownUntil: 0,
+      enabled: true, allowed, failures: 0, cooldownUntil: 0,
       lastError: null, lastFailureAt: 0, lastUsedAt: 0, successCount: 0,
     };
   }
@@ -278,7 +296,7 @@ class KeyPool {
    */
   select(provider, sessionKey) {
     const now = Date.now();
-    let pool = this.keys.filter((k) => k.enabled && k.cooldownUntil <= now);
+    let pool = this.keys.filter((k) => k.enabled && k.allowed && k.cooldownUntil <= now && this.providerEnabled(k.provider));
     if (provider) {
       const f = pool.filter((k) => k.provider === provider);
       if (f.length > 0) pool = f;
@@ -351,7 +369,7 @@ class KeyPool {
     const now = Date.now();
     let min = 0;
     for (const k of this.keys) {
-      if (!k.enabled) continue;
+      if (!k.enabled || !k.allowed || !this.providerEnabled(k.provider)) continue;
       const wait = k.cooldownUntil - now;
       if (wait > 0 && (min === 0 || wait < min)) min = wait;
     }
@@ -360,7 +378,7 @@ class KeyPool {
 
   health() {
     return this.keys.map((k) => ({
-      id: k.id, label: k.label, provider: k.provider, enabled: k.enabled,
+      id: k.id, label: k.label, provider: k.provider, enabled: k.enabled, allowed: k.allowed,
       failures: k.failures, cooldownUntil: k.cooldownUntil, lastError: k.lastError,
       lastUsedAt: k.lastUsedAt, successCount: k.successCount,
     }));

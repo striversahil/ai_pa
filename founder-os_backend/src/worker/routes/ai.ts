@@ -8,44 +8,19 @@
 // is ever accepted in the request or echoed in the response — the pool lives
 // server-side (env keys + Setting `ai:providers` JSON). Secrets stay secrets.
 import type { Hono } from 'hono';
-import { requireSecret, notifyLive, type Bindings } from '../context';
+import { notifyLive, type Bindings } from '../context';
 import { LiveEvent } from '../../live';
-import { ROOT_EMAIL } from '../../modules/auth/types';
-import { getViewerMe } from '../viewer';
 import { readBody } from '../http';
-import { getGateway } from '../../shared/ai-gateway';
-import { getAppSettings, getAppSetting, setAppSetting, parseAiProvidersJson, validateAiProvidersJson } from '../../shared/app-settings';
-
-async function authorized(c: any): Promise<boolean> {
-  if (requireSecret(c)) return true;
-  try {
-    await getViewerMe(c);
-    return true;
-  } catch { return false; }
-}
-
-async function rootOnly(c: any): Promise<boolean> {
-  try {
-    const me = await getViewerMe(c);
-    if ((me as any)?.isRoot) return true;
-    const email = String((me as any)?.user?.email ?? '').toLowerCase();
-    return email === String(ROOT_EMAIL).toLowerCase();
-  } catch { return false; }
-}
+import { getAppSetting, setAppSetting, parseAiProvidersJson, validateAiProvidersJson, type AiProvidersCfg } from '../../shared/app-settings';
+import { authorized, rootOnly, gatewayForRequest } from './ai-shared';
+import { registerAiControlRoutes } from './ai-controls';
+import { registerAiPlaygroundRoutes } from './ai-playground';
+import { loadRedactedProviders } from '../ai-gateway-health';
 
 /** Redacted config for responses: ids + key counts, never key material. */
 function redacted(cfg: { providers: Array<{ id: string; baseUrl: string; model: string; keys: unknown[] }> } | null) {
   if (!cfg) return { providers: [] as Array<unknown> };
   return { providers: cfg.providers.map((p) => ({ id: p.id, baseUrl: p.baseUrl, model: p.model, keys: p.keys.length })) };
-}
-
-async function gatewayForRequest(c: any) {
-  const gw = getGateway(c.env as any);
-  try {
-    const settings = await getAppSettings();
-    gw.configureFromSettings(settings as any);
-  } catch { /* fail-open to env pool */ }
-  return gw;
 }
 
 export function registerAiRoutes(app: Hono<{ Bindings: Bindings }>): void {
@@ -66,7 +41,13 @@ export function registerAiRoutes(app: Hono<{ Bindings: Bindings }>): void {
       }
       health = [...byProv.entries()].map(([provider, v]) => ({ provider, ...v }));
     } catch { /* ignore */ }
-    return c.json({ ok: true, strategy: gw.strategy(), providers: health, keys: gw.keyCount });
+    // Root gets the persisted control/health state too (labels, last4, scores,
+    // disabled-by) — never key material. Staff/runner responses stay as before.
+    let config: Awaited<ReturnType<typeof loadRedactedProviders>> | null = null;
+    if (await rootOnly(c)) {
+      try { config = await loadRedactedProviders(c.env as any); } catch { config = null; }
+    }
+    return c.json({ ok: true, strategy: gw.strategy(), providers: health, keys: gw.keyCount, ...(config ? { config } : {}) });
   });
 
   // ── Provider management (root only, merge-safe) ─────────────────────────
@@ -81,7 +62,7 @@ export function registerAiRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const action = String((body as any)?.action ?? '');
     try {
       const raw = await getAppSetting('ai:providers');
-      const cur = parseAiProvidersJson(raw) ?? { providers: [] as Array<{ id: string; baseUrl: string; model: string; keys: Array<{ key: string; label?: string }> }> };
+      const cur: AiProvidersCfg = parseAiProvidersJson(raw) ?? { providers: [] };
       if (action === 'upsert-provider') {
         const id = String((body as any)?.id ?? '').trim();
         const baseUrl = String((body as any)?.baseUrl ?? '').trim().replace(/\/+$/, '');
@@ -138,7 +119,10 @@ export function registerAiRoutes(app: Hono<{ Bindings: Bindings }>): void {
       } else {
         return c.json({ error: 'unknown action' }, 400);
       }
-      await setAppSetting('ai:providers', JSON.stringify({ providers: cur.providers }));
+      await setAppSetting('ai:providers', JSON.stringify({
+        ...(cur.strategy ? { strategy: cur.strategy } : {}),
+        providers: cur.providers,
+      }));
       try { notifyLive(c, { type: LiveEvent.Settings }); } catch { /* non-fatal */ }
       return c.json({ ok: true, ...redacted(validateAiProvidersJson(JSON.stringify({ providers: cur.providers }))) });
     } catch (e: any) {
@@ -177,4 +161,9 @@ export function registerAiRoutes(app: Hono<{ Bindings: Bindings }>): void {
       return c.json({ error: String((e as any)?.message ?? 'AI call failed').slice(0, 300) }, status as any);
     }
   });
+
+  // Pool switches (provider + per-key enable) and the telemetry drill-down.
+  registerAiControlRoutes(app);
+  // Pinned playground probes (JSON + SSE) — root only, never changes strategy.
+  registerAiPlaygroundRoutes(app);
 }

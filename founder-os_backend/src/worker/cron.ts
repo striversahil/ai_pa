@@ -289,6 +289,23 @@ async function runScheduled(event: { cron?: string; scheduledTime?: number }, en
     })(),
   );
 
+  // AI key health sweep — every 5 min, ALL hours (a key that died at 02:00
+  // is still dead at 09:00; telemetry must not sleep). Native D1: scores the
+  // last 24 h of calls, auto-disables under-threshold keys, prunes >30 d.
+  if (min % 5 === 0) {
+    ctx.waitUntil(
+      (async () => {
+        try {
+          const { runAiKeyHealthSweep } = await import('./ai-gateway-health');
+          const r = await runAiKeyHealthSweep(env);
+          if (r.disabled > 0) console.log(`[cron] ai-health disabled ${r.disabled} key(s)`);
+        } catch (e: any) {
+          console.error('[cron] ai-health sweep failed:', String(e?.message ?? e).slice(0, 160));
+        }
+      })(),
+    );
+  }
+
   // neodove-refresh every 5 min in ops hours (native D1 write). Paused in
   // quiet hours — NeoDove is a Zoho/NeoDove-backed analysis source.
   if (min % 5 === 0 && isOpsWindow(now)) {

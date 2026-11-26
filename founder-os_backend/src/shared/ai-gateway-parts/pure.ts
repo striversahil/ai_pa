@@ -107,12 +107,35 @@ export function detectProvider(key: string): string {
 
 export type AiStrategy = 'least-used-first' | 'round-robin';
 
+/** Stable public id for a stored key: provider + first6/last4. Used by the
+ *  pool AND by the Settings telemetry (which never stores the raw secret),
+ *  so a health row can always be matched back to its key. */
+export function keyFingerprintId(provider: string, key: string): string {
+  const fp = key.length > 12 ? `${key.slice(0, 6)}...${key.slice(-4)}` : '***';
+  return `${provider}:${fp}`;
+}
+
 // ── Key pool ─────────────────────────────────────────────────────────────────
 export class KeyPool {
   private keys: AiKey[] = [];
   private omnirouteBaseURL = '';
   private strategy: AiStrategy = 'least-used-first';
   private rrCursor = 0;
+  /** Provider-level switch (Setting providers[].enabled === false). A provider
+   *  that is off contributes nothing to selection, but its keys stay registered
+   *  so toggling it back on is instant and health history is preserved. */
+  private providersOff = new Set<string>();
+
+  setProviderEnabled(provider: string, enabled: boolean): void {
+    const pid = String(provider ?? '').trim();
+    if (!pid) return;
+    if (enabled) this.providersOff.delete(pid);
+    else this.providersOff.add(pid);
+  }
+
+  providerEnabled(provider: string): boolean {
+    return !this.providersOff.has(provider);
+  }
 
   /** Global selection strategy (Setting `ai:strategy`). */
   setStrategy(s: unknown): void {
@@ -122,7 +145,7 @@ export class KeyPool {
   getStrategy(): AiStrategy { return this.strategy; }
 
   /** Register a Setting-defined OpenAI-compatible provider + its keys. */
-  registerProvider(id: string, baseURL: string, model: string, keys: Array<{ key: string; label?: string }>): void {
+  registerProvider(id: string, baseURL: string, model: string, keys: Array<{ key: string; label?: string; enabled?: boolean }>, enabled = true): void {
     const pid = String(id ?? '').trim();
     const url = String(baseURL ?? '').trim().replace(/\/+$/, '');
     if (!pid || !url) return;
@@ -135,12 +158,22 @@ export class KeyPool {
         defaultModel: String(model || '').trim() || 'default',
       };
     }
-    const seen = new Set<string>(this.keys.map((k) => k.key));
+    this.setProviderEnabled(pid, enabled !== false);
+    const seen = new Map<string, AiKey>(this.keys.map((k) => [k.key, k]));
     for (const k of keys ?? []) {
       const kv = String((k as any)?.key ?? '').trim();
-      if (!kv || seen.has(kv)) continue;
-      seen.add(kv);
-      this.keys.push(this.makeKey(pid, kv, String((k as any)?.label ?? '').trim() || undefined));
+      if (!kv) continue;
+      const allowed = (k as any)?.enabled !== false;
+      const existing = seen.get(kv);
+      if (existing) {
+        // Re-registering the same key must NOT reset runtime health; only the
+        // persisted operator switch is reconciled here.
+        existing.allowed = allowed;
+        continue;
+      }
+      const made = this.makeKey(pid, kv, String((k as any)?.label ?? '').trim() || undefined, allowed);
+      seen.set(kv, made);
+      this.keys.push(made);
     }
   }
 
@@ -204,11 +237,11 @@ export class KeyPool {
     logger.info?.(`[AiGateway] loaded ${this.keys.length} keys: ${this.keys.map((k) => `${k.provider}:${k.label}`).join(', ')}`);
   }
 
-  private makeKey(provider: string, key: string, label?: string): AiKey {
-    const fp = key.length > 12 ? `${key.slice(0, 6)}...${key.slice(-4)}` : '***';
+  private makeKey(provider: string, key: string, label?: string, allowed = true): AiKey {
+    const id = keyFingerprintId(provider, key);
     return {
-      id: `${provider}:${fp}`, provider, key, label: label || fp,
-      enabled: true, failures: 0, cooldownUntil: 0,
+      id, provider, key, label: label || id.slice(provider.length + 1),
+      enabled: true, allowed, failures: 0, cooldownUntil: 0,
       lastError: null, lastFailureAt: 0, lastUsedAt: 0, successCount: 0,
     };
   }
@@ -235,7 +268,7 @@ export class KeyPool {
    */
   select(provider?: string, sessionKey?: string): AiKey | null {
     const now = Date.now();
-    let pool = this.keys.filter((k) => k.enabled && k.cooldownUntil <= now);
+    let pool = this.keys.filter((k) => k.enabled && k.allowed && k.cooldownUntil <= now && this.providerEnabled(k.provider));
     if (provider) {
       const filtered = pool.filter((k) => k.provider === provider);
       if (filtered.length > 0) pool = filtered;
@@ -313,7 +346,7 @@ export class KeyPool {
 
   health(): KeyHealth[] {
     return this.keys.map((k) => ({
-      id: k.id, label: k.label, provider: k.provider, enabled: k.enabled,
+      id: k.id, label: k.label, provider: k.provider, enabled: k.enabled, allowed: k.allowed,
       failures: k.failures, cooldownUntil: k.cooldownUntil, lastError: k.lastError,
       lastUsedAt: k.lastUsedAt, successCount: k.successCount,
     }));
@@ -324,7 +357,7 @@ export class KeyPool {
     const now = Date.now();
     let min = 0;
     for (const k of this.keys) {
-      if (!k.enabled) continue;
+      if (!k.enabled || !k.allowed || !this.providerEnabled(k.provider)) continue;
       const wait = k.cooldownUntil - now;
       if (wait > 0 && (min === 0 || wait < min)) min = wait;
     }
@@ -339,59 +372,4 @@ export class KeyPool {
 // ── Gateway ──────────────────────────────────────────────────────────────────
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Extract the first JSON object/array from model prose (fenced block or
- *  balanced-brace scan). Returns null when nothing parses. */
-export function extractJson(raw: string): unknown | null {
-  const str = String(raw ?? '').trim();
-  if (!str) return null;
-  try {
-    return JSON.parse(str);
-  } catch { /* fall through */ }
-  const fenced = str.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fenced) {
-    try {
-      return JSON.parse(fenced[1].trim());
-    } catch { /* fall through */ }
-  }
-  let start = str.indexOf('{');
-  if (start === -1) start = str.indexOf('[');
-  if (start === -1) return null;
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let i = start; i < str.length; i++) {
-    const ch = str[i];
-    if (inString) {
-      if (escaped) { escaped = false; continue; }
-      if (ch === '\\') { escaped = true; continue; }
-      if (ch === '"') inString = false;
-      continue;
-    }
-    if (ch === '"') { inString = true; continue; }
-    if (ch === '{' || ch === '[') depth++;
-    else if (ch === '}' || ch === ']') {
-      depth--;
-      if (depth === 0) {
-        try {
-          return JSON.parse(str.slice(start, i + 1));
-        } catch { return null; }
-      }
-    }
-  }
-  return null;
-}
-
-/** Build a vision user message: text + image URLs (data-URI or https).
- *  Images beyond maxImages are dropped (caller should send thumbnails).
- *  Accepts raw URL strings or { url } objects. */
-export function buildVisionUserContent(text: string, imageUrls: Array<string | { url?: unknown }>, maxImages = 4): MessageContent {  const imgs = (Array.isArray(imageUrls) ? imageUrls : [])
-    .map((u) => (u != null && typeof u === 'object' ? (u as { url?: unknown }).url : u))
-    .map((u) => String(u ?? '').trim())
-    .filter((u) => u.length > 0 && (u.startsWith('data:image/') || u.startsWith('http')))
-    .slice(0, Math.max(0, maxImages));
-  if (imgs.length === 0) return text;
-  return [
-    { type: 'text', text },
-    ...imgs.map((url): ImagePart => ({ type: 'image_url', image_url: { url } })),
-  ];
-}
+export { extractJson, buildVisionUserContent } from "./text";

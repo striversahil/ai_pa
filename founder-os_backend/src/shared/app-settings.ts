@@ -74,8 +74,16 @@ export const APP_SETTINGS: Record<string, AppSettingSpec> = {
   'ai:providers': {
     key: 'ai:providers',
     label: 'AI providers (BYOK)',
-    hint: 'JSON: {"providers":[{"id,baseUrl,model,keys:[{key,label}]}]}. OpenAI-compatible endpoints only. Keys stay server-side.',
+    hint: 'JSON: {"providers":[{"id,baseUrl,model,keys:[{key,label,enabled}]}]}. OpenAI-compatible endpoints only. Keys stay server-side.',
     kind: 'jsonlarge',
+    options: [],
+    default: '',
+  },
+  'ai:health': {
+    key: 'ai:health',
+    label: 'AI key health thresholds',
+    hint: 'JSON: {"threshold":40,"atRisk":60,"minSamples":5,"tpsTarget":40,"ttftGoodMs":800,"ttftBadMs":5000,"autoDisable":true}. A key below threshold (with enough samples) is auto-disabled; set autoDisable=false to observe only.',
+    kind: 'json',
     options: [],
     default: '',
   },
@@ -120,12 +128,37 @@ export async function setAppSetting(key: string, value: string): Promise<void> {
 
 // ── AI providers (BYOK) — Setting JSON shape ──────────────────────────────
 // mirror: scripts/ai-gateway.js (validateAiProvidersJson port)
-export interface AiProviderKeyCfg { key: string; label?: string }
+export interface AiProviderKeyHealthCfg {
+  score: number;
+  samples: number;
+  reliability?: number;
+  speed?: number;
+  throughput?: number;
+  atRisk?: boolean;
+  lastErrorKind?: string;
+  evaluatedAt?: string;
+}
+export interface AiProviderKeyCfg {
+  key: string;
+  label?: string;
+  /** Operator or health auto-disable. Absent/true = selectable. */
+  enabled?: boolean;
+  disabledBy?: 'user' | 'health';
+  disabledAt?: string;
+  disabledReason?: string;
+  /** Last computed score (written by the native cron sweep). */
+  health?: AiProviderKeyHealthCfg;
+  /** Manual re-enable marker: samples older than this never auto-disable
+   *  the key again (no stale score can immediately kill it). */
+  healthResetAt?: string;
+}
 export interface AiProviderCfg {
   id: string;
   baseUrl: string;
   model: string;
   keys: AiProviderKeyCfg[];
+  /** Provider-level switch; absent/true = in the pool. */
+  enabled?: boolean;
 }
 export interface AiProvidersCfg {
   strategy?: string;
@@ -163,9 +196,49 @@ export function validateAiProvidersJson(raw: string): AiProvidersCfg {
       if (kv.length < 8 || kv.length > 500) throw new Error(`ai:providers: bad key for "${id}"`);
       if (kseen.has(kv)) continue;
       kseen.add(kv);
-      kout.push({ key: kv, label: String((k as any)?.label ?? '').trim().slice(0, 40) || undefined });
+      const entry: AiProviderKeyCfg = {
+        key: kv,
+        label: String((k as any)?.label ?? '').trim().slice(0, 40) || undefined,
+      };
+      // Control + telemetry fields survive a Settings round-trip (the UI only
+      // ever sends key material + labels; this validator runs on BOTH the
+      // generic settings write and the health sweep's server-side write).
+      if ((k as any)?.enabled === false) {
+        entry.enabled = false;
+        const by = String((k as any)?.disabledBy ?? '').trim();
+        if (by === 'user' || by === 'health') entry.disabledBy = by;
+        const at = String((k as any)?.disabledAt ?? '').trim();
+        if (at) entry.disabledAt = at.slice(0, 40);
+        const reason = String((k as any)?.disabledReason ?? '').trim();
+        if (reason) entry.disabledReason = reason.slice(0, 200);
+      }
+      const h = (k as any)?.health;
+      if (h && typeof h === 'object') {
+        const score = Number(h.score);
+        if (Number.isFinite(score)) {
+          const hout: AiProviderKeyHealthCfg = {
+            score: Math.max(0, Math.min(100, Math.round(score))),
+            samples: Math.max(0, Math.min(10000, Math.round(Number(h.samples) || 0))),
+          };
+          for (const f of ['reliability', 'speed', 'throughput'] as const) {
+            const n = Number((h as any)[f]);
+            if (Number.isFinite(n)) hout[f] = Math.max(0, Math.min(100, Math.round(n)));
+          }
+          if (typeof h.atRisk === 'boolean') hout.atRisk = h.atRisk;
+          const kind = String(h.lastErrorKind ?? '').trim();
+          if (kind) hout.lastErrorKind = kind.slice(0, 24);
+          const at = String(h.evaluatedAt ?? '').trim();
+          if (at) hout.evaluatedAt = at.slice(0, 40);
+          entry.health = hout;
+        }
+      }
+      const reset = String((k as any)?.healthResetAt ?? '').trim();
+      if (reset) entry.healthResetAt = reset.slice(0, 40);
+      kout.push(entry);
     }
-    out.push({ id, baseUrl, model, keys: kout });
+    const pout: AiProviderCfg = { id, baseUrl, model, keys: kout };
+    if ((p as any)?.enabled === false) pout.enabled = false;
+    out.push(pout);
   }
   const strategy = String((parsed as any)?.strategy ?? '').trim();
   if (strategy && !['round-robin', 'least-used-first'].includes(strategy)) {

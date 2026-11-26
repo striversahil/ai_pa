@@ -3,6 +3,7 @@
 import { cacheGet, cacheSet, cacheKeys } from "../cache";
 import { logger } from "../logger";
 import { gatewayUsageKey, GATEWAY_USAGE_TTL_MS, GATEWAY_USAGE_PREFIX, MODEL_DOWN_TTL_MS, KeyPool, OPENROUTER_TEXT_MODEL, PROVIDERS, hashAI, FALLBACK_MODEL, sleep, AiGatewayError, extractJson } from "./pure";
+import { emitGatewayMetric, classifyGatewayError, metricSource } from "./metrics";
 import type { KeyHealth, ProviderConfig, CompletionRequest, CompletionResult, AiKey, ToolCall } from "./types";
 
 export async function logGatewayUsage(usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }): Promise<void> {
@@ -118,7 +119,7 @@ export class AiGateway {
         const model = String(p?.model ?? '').trim();
         const keys = Array.isArray(p?.keys) ? p.keys : [];
         if (!id || !baseUrl || !model || keys.length === 0) continue;
-        this.pool.registerProvider(id, baseUrl, model, keys.slice(0, 10));
+        this.pool.registerProvider(id, baseUrl, model, keys.slice(0, 10), p?.enabled !== false);
       }
     } catch { /* fail-open: bad JSON never breaks chat */ }
   }
@@ -129,6 +130,13 @@ export class AiGateway {
 
   health(): KeyHealth[] {
     return this.pool.health();
+  }
+
+  /** Direct key lookup for the Settings playground (pinned probe, no strategy).
+   *  Disabled keys are still returned on purpose: a root user testing a key
+   *  that is currently off must see WHY it is off. */
+  getKey(id: string): AiKey | null {
+    return this.findKey(String(id ?? ""));
   }
 
   private gatewayBaseURL(provider: ProviderConfig): string {
@@ -155,6 +163,7 @@ export class AiGateway {
    * and CF cache keys (method+URL+body) are unaffected by Bearer rotation.
    */
   async complete(req: CompletionRequest): Promise<CompletionResult> {
+    const startedAt = Date.now();
     // Standardized app-wide: KV response cache (5m) + single-flight + fail-fast 429.
     // Caches identical prompts (enquiry extraction re-tries, duplicate saves) to cut RPM without extra keys.
     const cacheable = !req.signal?.aborted && (req.json || false) && !req.tools?.length;
@@ -188,6 +197,16 @@ export class AiGateway {
     // over once (flagged for 10 min so later calls skip the probe).
     let activeModel: string | undefined = req.model;
     let fellBack = false;
+    // One ledger row per failed attempt (not just the final throw), so a key's
+    // 429/5xx streak is attributable in health instead of landing on the pool.
+    const emitFailure = (key: any, err: unknown) => {
+      const status = this.pool.extractStatus(err);
+      emitGatewayMetric({
+        provider: key.provider, keyId: key.id, ok: false, status,
+        errorKind: classifyGatewayError(status, String((err as any)?.message ?? err)),
+        latencyMs: Date.now() - startedAt, streamed: false, source: metricSource(req),
+      });
+    };
     if (activeModel && FALLBACK_MODEL[activeModel] && (await modelFlagged(activeModel))) {
       logger.warn?.(`[AiGateway] ${activeModel} flagged down — starting on ${FALLBACK_MODEL[activeModel]}`);
       activeModel = FALLBACK_MODEL[activeModel];
@@ -202,6 +221,11 @@ export class AiGateway {
         const retryAfter = waitMs > 0 ? Math.min(waitMs, 60_000) : 60_000;
         const e: any = new Error(`HTTP 429: Rate-limited (retry after ${Math.round(retryAfter/1000)}s)`);
         e.status = 429; e.retryAfter = retryAfter;
+        emitGatewayMetric({
+          provider: req.provider ?? "pool", keyId: "pool:none", ok: false, status: 429,
+          errorKind: "rate_limit", latencyMs: Date.now() - startedAt, streamed: false,
+          source: metricSource(req),
+        });
         throw e;
       }
       const provider = PROVIDERS[key.provider] ?? PROVIDERS.groq;
@@ -223,6 +247,14 @@ export class AiGateway {
           try { await cacheSet(aiCacheKey, result, 5 * 60 * 1000); } catch {}
         }
         if (result.usage) await logGatewayUsage(result.usage);
+        emitGatewayMetric({
+          provider: key.provider, keyId: key.id, ok: true, status: 200,
+          latencyMs: Date.now() - startedAt, streamed: false,
+          promptTokens: result.usage?.prompt_tokens ?? null,
+          completionTokens: result.usage?.completion_tokens ?? null,
+          totalTokens: result.usage?.total_tokens ?? null,
+          source: metricSource(req),
+        });
         return result;
       } catch (err) {
         lastErr = err;
@@ -254,6 +286,7 @@ export class AiGateway {
             key.lastFailureAt = Date.now();
             key.lastError = `429 Cloudflare 1015`;
             logger.warn?.(`[AiGateway] 429 Cloudflare 1015 on ${key.id} — cooling ${Math.round(cd/1000)}s (raw ${Math.round(rawCd/1000)}s), rotating to next key (attempt ${attempt + 1}/${maxAttempts})`);
+            emitFailure(key, err);
             if (attempt >= maxAttempts - 1) {
               const e: any = new Error(`HTTP 429: Rate-limited (Cloudflare 1015, retry after ${Math.round(cd/1000)}s)`);
               e.status = 429; e.retryAfter = cd; throw e;
@@ -288,10 +321,12 @@ export class AiGateway {
             await sleep(backoff);
             continue;
           }
+          emitFailure(key, err);
           const e2: any = new Error(`HTTP 429: Rate-limited (retry after ${Math.round((retryAfter ?? 60_000)/1000)}s)`);
           e2.status = 429; e2.retryAfter = retryAfter ?? 60_000;
           throw e2;
         }
+        emitFailure(key, err);
         const retryAfter = this.extractRetryAfter(err);
         const cooldown = this.pool.reportFailure(key, err, retryAfter);
         logger.warn?.(`[AiGateway] attempt ${attempt + 1}/${maxAttempts} failed on ${key.id}: ${err instanceof Error ? err.message : String(err)}`);
@@ -305,6 +340,8 @@ export class AiGateway {
 
   /** Streaming: yields content/reasoning/tool deltas via SSE (OpenAI `stream:true`). */
   async *stream(req: CompletionRequest): AsyncGenerator<{ contentDelta?: string; reasoningDelta?: string; toolCallDelta?: any[]; finishReason?: string; usage?: any }, void, unknown> {
+    const startedAt = Date.now();
+    let firstTokenAt = 0;
     // Skip a flagged-down model outright (mirrors complete()'s entry check
     // — most turns never pay the probe).
     const requestedFlaky = req.model && FALLBACK_MODEL[req.model] ? req.model : null;
@@ -342,11 +379,24 @@ export class AiGateway {
     try {
       res = await fetch(url, { method: 'POST', headers, body: payload, signal: this.combineSignals(req.signal, streamCap) });
     } catch (e) {
+      // Caller aborted (tab closed / playground Stop): not a provider fault.
+      if ((e as any)?.name === 'AbortError') throw e;
       const timedOut = (e as any)?.name === 'TimeoutError' || /timeout/i.test(String((e as any)?.message ?? ''));
       if (timedOut && req.model && FALLBACK_MODEL[req.model]) {
         await flagModelDown(req.model);
-        throw new Error(`AI model ${req.model} timed out (fallback to ${FALLBACK_MODEL[req.model]} engaged) — retry the call`);
+        const err = new Error(`AI model ${req.model} timed out (fallback to ${FALLBACK_MODEL[req.model]} engaged) — retry the call`);
+        emitGatewayMetric({
+          provider: key.provider, keyId: key.id, ok: false, status: null,
+          errorKind: "timeout", latencyMs: Date.now() - startedAt, streamed: true,
+          source: metricSource(req),
+        });
+        throw err;
       }
+      emitGatewayMetric({
+        provider: key.provider, keyId: key.id, ok: false, status: null,
+        errorKind: classifyGatewayError(null, String((e as any)?.message ?? e)),
+        latencyMs: Date.now() - startedAt, streamed: true, source: metricSource(req),
+      });
       throw e;
     }
     if (!res.ok) {
@@ -355,6 +405,11 @@ export class AiGateway {
       err.status = res.status; err.retryAfter = this.parseRetryAfter(res.headers);
       // Feed pool health so the next turn rotates away from a 429'd key.
       try { this.pool.reportFailure(key, err, err.retryAfter); } catch {}
+      emitGatewayMetric({
+        provider: key.provider, keyId: key.id, ok: false, status: res.status,
+        errorKind: classifyGatewayError(res.status, err.message),
+        latencyMs: Date.now() - startedAt, streamed: true, source: metricSource(req),
+      });
       throw err;
     }
     if (!res.body) return;
@@ -373,6 +428,7 @@ export class AiGateway {
     const failProbe = async (): Promise<never> => {
       try { await reader.cancel(); } catch { /* ignore */ }
       if (req.model && FALLBACK_MODEL[req.model]) await flagModelDown(req.model);
+      // The read-loop catch below records this timeout exactly once.
       throw new Error(`AI model ${req.model} first token timeout (fallback to ${req.model && FALLBACK_MODEL[req.model]} engaged) — retry the call`);
     };
     try {
@@ -421,6 +477,7 @@ export class AiGateway {
             const choice = json.choices?.[0];
             if (!choice) { if (json.usage) { lastUsage = json.usage; yield { usage: json.usage }; } continue; }
             const delta = choice.delta ?? {};
+            if (!firstTokenAt && (delta.content || delta.reasoning_content || delta.reasoning)) firstTokenAt = Date.now() - startedAt;
             if (typeof delta.content === 'string' && delta.content) yield { contentDelta: delta.content };
             if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) yield { reasoningDelta: delta.reasoning_content };
             // OpenRouter/DeepSeek streams thinking as `delta.reasoning` (NOT
@@ -433,6 +490,15 @@ export class AiGateway {
           } catch { /* ignore parse */ }
         }
       }
+    } catch (e) {
+      if ((e as any)?.name === 'AbortError') throw e;
+      emitGatewayMetric({
+        provider: key.provider, keyId: key.id, ok: false, status: null,
+        errorKind: classifyGatewayError(null, String((e as any)?.message ?? e)),
+        latencyMs: Date.now() - startedAt, ttftMs: firstTokenAt || null, streamed: true,
+        source: metricSource(req),
+      });
+      throw e;
     } finally {
       try { reader.releaseLock(); } catch {}
     }
@@ -441,6 +507,14 @@ export class AiGateway {
     // streamed legs are invisible in the tail).
     logger.info?.(`[AiGateway] stream served by ${key.id} (${provider.id}/${model})`);
     if (lastUsage) await logGatewayUsage(lastUsage);
+    emitGatewayMetric({
+      provider: key.provider, keyId: key.id, ok: true, status: 200,
+      latencyMs: Date.now() - startedAt, ttftMs: firstTokenAt || null, streamed: true,
+      promptTokens: lastUsage?.prompt_tokens ?? null,
+      completionTokens: lastUsage?.completion_tokens ?? null,
+      totalTokens: lastUsage?.total_tokens ?? null,
+      source: metricSource(req),
+    });
   }
 
   /** Convenience: complete + parse JSON (falls back to extracting the first

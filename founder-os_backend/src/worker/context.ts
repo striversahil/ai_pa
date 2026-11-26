@@ -25,6 +25,8 @@ import { refreshNeodoveReport, istDateStr as neodoveTodayIst } from '../automati
 import { isSystemGeneratedComment } from '../shared/systemComment';
 import { getEstimatesPayload } from '../shared/estimates-cache';
 import { getViewerMe } from './viewer';
+import { setGatewayMetricSink } from '../shared/ai-gateway-parts/metrics';
+import { recordKeyCall } from './ai-gateway-health';
 import { readViewAsCookie, isReadOnlyViewAsRequest } from '../modules/auth/view-as-pure';
 import { publicDataPaths } from '../modules/workspaces/catalog';
 
@@ -403,6 +405,15 @@ export function validateChatId(chatId: string): string | null {
 // ── App factory (middleware + boot + auth gate) ─────────────────────────────
 export function createApp(): Hono<{ Bindings: Bindings }> {
   const app = new Hono<{ Bindings: Bindings }>();
+  // AI gateway telemetry: every provider call emits one metric. The ledger
+  // write rides waitUntil, so completion latency is never coupled to D1.
+  app.use('*', async (c, next) => {
+    setGatewayMetricSink((metric) => {
+      const p = recordKeyCall(c.env as any, metric);
+      try { c.executionCtx.waitUntil(p); } catch { void p.catch(() => {}); }
+    });
+    await next();
+  });
   // Tight CORS: reflect only known frontend origins; never `*` on an
   // authenticated API. Same-origin (Pages proxy) needs no CORS headers.
   // Direct browser → Worker calls (e.g. a token extractor running on a
