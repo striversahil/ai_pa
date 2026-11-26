@@ -610,6 +610,24 @@ Worker-only and writes broadcast the existing `human-resources` event.
   active seats, role mappings or position standards. `loginPosition` only drives suggestions in
   the employee picker; access remains in Users & Permissions. The frontend selector and graph
   consume the live rows and fall back to the bundled chart when the table is unavailable.
+- **Sales regions + team-lead hierarchy (0175)** — the taxonomies that used to be hard-coded in
+  `automations/telecalling/regions.ts` are HR master data. `HumanResourcesRegion` keeps the code
+  fixed (`R1`–`R4`: `Estimate.region`, `ClientClass.masterRegion`, holidays, targets and the
+  board's region buckets all store it) and makes `name`, `tlLevel`, `states`, `order` and
+  `active` editable; `HumanResourcesPositionRegion` allots regions to a chart seat (unique
+  `positionId+regionCode`, **no rows = every active region**, so adding the table never
+  invalidates existing seats). There is no second roster: `GET /api/org/people` + the one
+  `PUT /api/org/people/:id` save is the only writer, and `modules/org/regions.ts#validateSalesPosting`
+  decides from the seat title: a telecaller/field-staff seat takes exactly one active, allotted
+  region; a team-lead seat takes **exactly two different** ones and may omit `tlLevel` (inferred
+  when both regions share a tier, otherwise the form must ask). Reads: `GET /api/org/regions`
+  (viewer-open, used by the person drawer) and `GET /api/human-resources/regions` (HR, adds seat
+  counts + chart positions for the allotment matrix). Writes: `PATCH
+  /api/human-resources/regions/:code` (root/admin/`human-resources`; bumps the `est` rev because
+  the board payload caches the taxonomy) and `PUT /api/human-resources/position-regions/:positionId`
+  (refuses to drop a region an active seated employee still holds → 409). The telecalling board
+  overlays the DB rows onto its bundled fallback (`loadSalesRegions`), so a fresh DB and a renamed
+  region behave the same.
 
 ### 3.3 Trigger dispatch
 `POST /api/trigger/:slug` runs the matching automation (auth required). On the Worker,

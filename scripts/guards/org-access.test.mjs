@@ -68,8 +68,8 @@ describe('org person contract (one save, server-decided)', () => {
   });
 
   it('save reuses existing services (validation, phone, pair rule, mirror) — never rewritten; access NOT via HR', () => {
-    assert.ok(io.includes('tlPairError'), 'TL1 pair rule reused');
-    assert.ok(io.includes('isValidRegion'), 'region validation reused');
+    assert.ok(io.includes('validateSalesPosting') && io.includes('impliedTlLevel'), 'HR region catalog + allotment validation reused');
+    assert.ok(read(join('modules', 'org', 'regions.ts')).includes('loadPositionAllotment'), 'chart-seat allotment lives in modules/org/regions.ts');
     assert.ok(io.includes('normalizeAgentPhone'), 'office-phone normalization reused');
     assert.ok(io.includes('updateEmployee'), 'employee master write reused');
     assert.ok(io.includes("mirrorRosterRow"), 'roster rows mirror into core');
@@ -77,9 +77,23 @@ describe('org person contract (one save, server-decided)', () => {
     assert.ok(io.includes('Users & Permissions') && !io.includes('setUserScopes'), 'HR save never writes scopes (roles own access)');
   });
 
-  it('region is required for sales staff, second region is Team-Lead-only', () => {
-    assert.ok(io.includes('region required for sales staff'), 'region must be required');
-    assert.ok(io.includes('second region is Team-Lead-only') || io.includes('Team-Lead-only'), 'region2 must be TL-only');
+  it('region rules: one region for staff, exactly two for a Team Lead, second region TL-only', () => {
+    const regions = read(join('modules', 'org', 'regions.ts'));
+    assert.ok(regions.includes('region required for sales staff'), 'region must be required');
+    assert.ok(regions.includes('needs exactly two different regions'), 'Team Lead covers exactly two regions');
+    assert.ok(io.includes('Team-Lead-only'), 'region2 must be TL-only');
+    assert.ok(io.includes('chartRow?.id'), 'the seat allotment is validated against the real chart position');
+  });
+
+  it('HR owns the region catalog + position allotment (Worker-only routes, one form)', () => {
+    const route = read(join('worker', 'routes', 'human-resources-regions.ts'));
+    assert.ok(route.includes('/api/human-resources/regions'), 'region edit endpoint');
+    assert.ok(route.includes('/api/human-resources/position-regions/:positionId'), 'allotment endpoint');
+    assert.ok(route.includes('canManage'), 'HR/root only');
+    const drawer = readFe(join('org', 'OrgPersonDrawer.tsx'));
+    assert.ok(drawer.includes('allotment') && drawer.includes('regionOptions'), 'person form filters regions by seat allotment');
+    const tab = readFe(join('components', 'human-resources', 'ControllerTab.tsx'));
+    assert.ok(tab.includes('SalesRegionsSection'), 'HR Controller mounts the region table + allotment matrix');
   });
 
   it('telecalling keeps the roster READ and no write endpoints', () => {

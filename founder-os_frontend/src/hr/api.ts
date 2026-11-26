@@ -5,6 +5,7 @@ import type {
 import type { HrAsset, HrAssetsData, HrAssetType, HrPositionAsset } from "./assets";
 import type { HrControllerData, HrLookup, LookupKind } from "./lookups";
 import type { MemberDocumentsPayload } from "./member-documents";
+import type { HrRegion, HrRegionsData } from "./regions";
 
 export async function readError(res: Response): Promise<string> {
   try {
@@ -236,6 +237,25 @@ export async function archiveLookup(kind: LookupKind, id: string): Promise<HrLoo
 
 export async function fetchExpenseCategories(includeArchived = false): Promise<HrLookup[]> {
   return (await fetchController()).expenseCategories.filter((c) => includeArchived || c.active);
+}
+
+// ── Sales regions + position allotment (HR Controller) ─────────────────────
+
+export async function fetchRegions(): Promise<HrRegionsData> {
+  const res = await fetch("/api/human-resources/regions", { cache: "no-store" });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
+export async function updateRegion(code: string, body: Record<string, unknown>): Promise<HrRegion> {
+  const res = await jsonRequest(`/api/human-resources/regions/${encodeURIComponent(code)}`, "PATCH", body);
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
+export async function savePositionRegions(positionId: string, regions: string[]): Promise<void> {
+  const res = await jsonRequest(`/api/human-resources/position-regions/${encodeURIComponent(positionId)}`, "PUT", { regions });
+  if (!res.ok) throw new Error(await readError(res));
 }
 
 // ── Employee assets + position standards ────────────────────────────────────

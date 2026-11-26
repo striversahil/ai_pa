@@ -10,7 +10,7 @@
 import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
 import OrgPositionPicker from "@/components/human-resources/OrgPositionPicker";
-import { saveOrgPerson, type OrgChartPosition, type OrgPerson } from "@/org/api";
+import { saveOrgPerson, type OrgChartPosition, type OrgPerson, type OrgRegion } from "@/org/api";
 import { isSalesRosterTitle, regionRulesFor } from "@/org/access";
 import { REGIONS } from "@/telecalling/regions";
 
@@ -19,9 +19,13 @@ const label = "block text-[11px] font-bold uppercase tracking-wide text-zinc-500
 
 const TL_LEVELS = ["", "TL1", "TL2"];
 
-export default function OrgPersonDrawer({ person, positions, onClose, onSaved }: {
+export default function OrgPersonDrawer({ person, positions, regions = [], allotment = {}, onClose, onSaved }: {
   person: OrgPerson;
   positions: OrgChartPosition[];
+  /** HR region catalog; the bundled taxonomy is the fallback. */
+  regions?: OrgRegion[];
+  /** Chart position id → allowed region codes (empty = no restriction). */
+  allotment?: Record<string, string[]>;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -44,6 +48,14 @@ export default function OrgPersonDrawer({ person, positions, onClose, onSaved }:
   const rules = regionRulesFor(title, chartPosition?.loginPosition);
   const showSales = isSalesRosterTitle(title, chartPosition?.loginPosition);
 
+  // Region options come from HR (name + active) and, when the chart seat has an
+  // allotment, only the regions that seat may hold. No rows = every region.
+  const allowed = chartPosition ? (allotment[chartPosition.id] ?? []) : [];
+  const regionOptions = (regions.length
+    ? regions.filter((r) => r.active !== false)
+    : REGIONS.map((r) => ({ id: r.id, code: r.id, name: r.name, tlLevel: r.tl, states: r.states, order: 0, active: true })))
+    .filter((r) => !allowed.length || allowed.includes(r.code));
+
   useEffect(() => {
     if (!showSales) return;
     let alive = true;
@@ -58,11 +70,9 @@ export default function OrgPersonDrawer({ person, positions, onClose, onSaved }:
   const submit = async () => {
     setErr(null);
     if (!chartPosition) { setErr("Seating needs a chart title — free-text designations are edited in HR → Employees"); return; }
-    if (rules.region && !region) { setErr("Region required for sales staff (R1–R4)"); return; }
-    if (rules.region2 && tlLevel === "TL1" && region && region2 && region === region2) {
-      setErr("A TL1 needs two DIFFERENT regions");
-      return;
-    }
+    if (rules.region && !region) { setErr("Pick the region this person works"); return; }
+    if (rules.region2 && !region2) { setErr("A Team Lead covers exactly two regions — pick the second"); return; }
+    if (rules.region2 && region === region2) { setErr("The two regions must be DIFFERENT"); return; }
     setBusy(true);
     try {
       const neoParts = neoLink ? String(neoLink).split("‖") : [];
@@ -106,7 +116,8 @@ export default function OrgPersonDrawer({ person, positions, onClose, onSaved }:
                 <label className={label}>Region *</label>
                 <select value={region} onChange={(e) => setRegion(e.target.value)} className={field}>
                   <option value="">Pick region…</option>
-                  {REGIONS.map((r) => <option key={r.id} value={r.id}>{r.id} · {r.name}</option>)}
+                  {regionOptions.map((r) => <option key={r.code} value={r.code}>{r.code} · {r.name}</option>)}
+                  {!regionOptions.length && <option value="">No region allotted to this position — ask HR</option>}
                 </select>
               </div>
               {rules.region2 && (
@@ -114,14 +125,14 @@ export default function OrgPersonDrawer({ person, positions, onClose, onSaved }:
                   <label className={label}>Second region (Team Lead covers two)</label>
                   <select value={region2} onChange={(e) => setRegion2(e.target.value)} className={field}>
                     <option value="">Pick second region…</option>
-                    {REGIONS.filter((r) => r.id !== region).map((r) => <option key={r.id} value={r.id}>{r.id} · {r.name}</option>)}
+                    {regionOptions.filter((r) => r.code !== region).map((r) => <option key={r.code} value={r.code}>{r.code} · {r.name}</option>)}
                   </select>
                 </div>
               )}
             </div>
             <div className="grid gap-2 sm:grid-cols-2">
               <div>
-                <label className={label}>Hierarchy</label>
+                <label className={label}>Hierarchy (blank = from region tier)</label>
                 <select value={tlLevel} onChange={(e) => setTlLevel(e.target.value)} className={field}>
                   {TL_LEVELS.map((t) => <option key={t} value={t}>{t === "" ? "—" : t}</option>)}
                 </select>

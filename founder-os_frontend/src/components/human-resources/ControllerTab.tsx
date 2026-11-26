@@ -2,9 +2,10 @@
 
 import React, { useState } from "react";
 import { useLiveDashboard } from "@/hooks/useLiveData";
-import { archiveLookup, fetchController } from "@/hr/api";
+import { archiveLookup, fetchController, fetchRegions } from "@/hr/api";
 import type { HrLookup, LookupKind } from "@/hr/lookups";
 import LookupModal from "./LookupModal";
+import SalesRegionsSection from "./SalesRegionsSection";
 
 const SECTIONS: Array<{ kind: LookupKind; title: string; hint: string }> = [
   { kind: "document-types", title: "Employee documents", hint: "The checklist every employee must provide. Required items are flagged." },
@@ -13,7 +14,13 @@ const SECTIONS: Array<{ kind: LookupKind; title: string; hint: string }> = [
 ];
 
 export default function ControllerTab() {
-  const dash = useLiveDashboard(fetchController, { events: ["human-resources"], pollMs: 60000 });
+  const dash = useLiveDashboard(async () => {
+    const [controller, regions] = await Promise.all([
+      fetchController(),
+      fetchRegions().catch(() => null),
+    ]);
+    return { ...controller, regions };
+  }, { events: ["human-resources"], pollMs: 60000 });
   const [modal, setModal] = useState<{ kind: LookupKind; item: HrLookup | null } | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -46,6 +53,10 @@ export default function ControllerTab() {
       {err && <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-500">{err}</div>}
       {dash.loading && !dash.data && <div className="py-10 text-center text-sm text-zinc-500 animate-pulse">Loading controller…</div>}
       {Boolean(dash.error) && <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-500">{String(dash.error)}</div>}
+
+      {dash.data?.regions && (
+        <SalesRegionsSection data={dash.data.regions} onChanged={() => dash.refresh()} />
+      )}
 
       <div className="grid gap-4 xl:grid-cols-3">
         {SECTIONS.map((section) => {

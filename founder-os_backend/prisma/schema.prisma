@@ -1894,6 +1894,36 @@ model HumanResourcesPositionAsset {
   @@index([assetTypeId])
 }
 
+// ── Sales regions (HR Controller) ───────────────────────────────────────────
+// Region CODES stay R1–R4 (Estimate.region + ClientClass.masterRegion store
+// them); HR owns the label, team-lead tier and states list. Allotment rows say
+// which regions a chart seat may hold — none = every active region.
+model HumanResourcesRegion {
+  id        String   @id @default(uuid())
+  code      String   @unique
+  name      String
+  tlLevel   String   @default("TL1")
+  states    String   @default("[]")
+  order     Int      @default(0)
+  active    Boolean  @default(true)
+  createdBy String?
+  updatedBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model HumanResourcesPositionRegion {
+  id            String   @id @default(uuid())
+  orgPositionId String
+  regionCode    String
+  seatCap       Int?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([orgPositionId, regionCode])
+  @@index([orgPositionId])
+}
+
 model LinkedinPost {
   id            String   @id @default(uuid())
   batchDate     String

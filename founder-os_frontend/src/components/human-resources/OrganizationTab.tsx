@@ -9,7 +9,7 @@
 import dynamic from "next/dynamic";
 import { useMemo, useState } from "react";
 import { useLiveDashboard } from "@/hooks/useLiveData";
-import { deleteChartPosition, fetchOrgChart, fetchOrgPeople, type OrgChartPosition, type OrgPerson } from "@/org/api";
+import { deleteChartPosition, fetchOrgChart, fetchOrgPeople, fetchOrgRegions, type OrgChartPosition, type OrgPerson } from "@/org/api";
 import OrgInspector from "@/org/OrgInspector";
 import OrgPersonDrawer from "@/org/OrgPersonDrawer";
 import ChartPositionModal from "./ChartPositionModal";
@@ -18,8 +18,12 @@ const OrgGraphCanvas = dynamic(() => import("@/org/OrgGraphCanvas"), { ssr: fals
 
 export default function OrganizationTab({ department }: { department?: string } = {}) {
   const dash = useLiveDashboard(async () => {
-    const [org, chart] = await Promise.all([fetchOrgPeople(department ?? null), fetchOrgChart()]);
-    return { ...org, chart };
+    const [org, chart, regionCatalog] = await Promise.all([
+      fetchOrgPeople(department ?? null),
+      fetchOrgChart(),
+      fetchOrgRegions().catch(() => ({ regions: [], allotment: {} })),
+    ]);
+    return { ...org, chart, regionCatalog };
   }, { events: ["human-resources", "telecalling"], deps: [department ?? ""], pollMs: 60000 });
   const [selected, setSelected] = useState<string | null>(null);
   const [editing, setEditing] = useState<OrgPerson | null>(null);
@@ -29,6 +33,7 @@ export default function OrganizationTab({ department }: { department?: string } 
 
   const people: OrgPerson[] = dash.data?.people ?? [];
   const positions: OrgChartPosition[] = dash.data?.chart.positions ?? [];
+  const regionCatalog = dash.data?.regionCatalog ?? { regions: [], allotment: {} };
   const canManageChart = !!dash.data?.chart.canManage;
 
   const peopleByTitle = useMemo(() => {
@@ -142,6 +147,8 @@ export default function OrganizationTab({ department }: { department?: string } 
         <OrgPersonDrawer
           person={editing}
           positions={positions}
+          regions={regionCatalog.regions}
+          allotment={regionCatalog.allotment}
           onClose={() => setEditing(null)}
           onSaved={() => dash.refresh()}
         />

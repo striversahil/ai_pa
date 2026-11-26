@@ -15,6 +15,7 @@ import { DATE_RE, istDate } from "../util";
 import { cached, cacheGet, cacheRevs } from "../../../shared/cache";
 import { resolveDrillScope, buildRegionDrill, buildAllRegionFollowUps, loadRoster } from "./drill";
 import { isValidRegion, REGIONS, tlRegions, DAILY_TL_RESELLER_TARGET, TL_LEVELS } from "../regions";
+import { loadSalesRegions } from "../../../modules/org/regions";
 import type { TlLevel, RegionId } from "../regions";
 import { loadDeclinedSnapshot } from "../declined";
 import type { DeclinedEstimate, DeclinedAgg } from "../declined";
@@ -376,6 +377,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   const [
     neodoveMap,
     telecallers,
+    salesRegionRows,
     epoch,
     enquiryLeadCounts,
     creatorIndex,
@@ -391,6 +393,9 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       ? getNeodoveRangeMap(periodRangeInfo.from, periodRangeInfo.to)
       : getNeodoveAgentMap(requestedDay),
     prisma.telecaller.findMany({ where: { deleted: false }, orderBy: { order: 'asc' } }),
+    // HR-owned region labels/tiers (fallback: the bundled taxonomy). One read
+    // per compute; R1–R4 stay the identity every target already keys on.
+    loadSalesRegions(prisma),
     getEpochDate(),
     getEnquiryLeadCounts(leadFrom, leadTo).catch(() => new Map<string, number>()),
     loadCreatorIndex(),
@@ -1045,8 +1050,12 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     rehomedWon.push({ row: r as AcceptedEstimate, home, seg });
   }
 
+  const regionDefs = REGIONS.map((r) => {
+    const row = (salesRegionRows as any[]).find((x) => String(x.code) === r.id);
+    return row ? { ...r, name: String(row.name), tl: row.tlLevel as 'TL1' | 'TL2', states: row.states as string[] } : r;
+  });
   const regions: RegionRow[] = [];
-  for (const def of REGIONS) {
+  for (const def of regionDefs) {
     // Team Leads are NOT telecallers (founder 2026-11-05: `type='team_lead'`
     // is its own role) — they hang off the TL strip, never the staff rail.
     const members = (telecallers as any[]).filter((t) => String((t as any).region ?? '') === def.id && String((t as any).type ?? 'telecaller') !== 'team_lead')
@@ -1388,7 +1397,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       generatedAt: new Date().toISOString(),
       computeMs: Date.now() - t0,
       // Sales taxonomy: the region table first-class in the payload.
-      taxonomy: REGIONS.map((r) => ({ id: r.id, name: r.name, tl: r.tl, states: r.states })),
+      taxonomy: regionDefs.map((r) => ({ id: r.id, name: r.name, tl: r.tl, states: r.states })),
       tlLevels: TL_LEVELS,
       canManage,
       unmatchedSentCount: unmappedCount,

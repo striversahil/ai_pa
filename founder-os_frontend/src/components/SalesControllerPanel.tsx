@@ -103,11 +103,15 @@ export default function SalesControllerPanel() {
         refreshAll={refreshAll}
       />
       <ExportDataSection rosterRows={roster.data?.telecallers ?? []} showRisk />
-      {/* Sales team & access — the Organization chart scoped to Sales (the
-          Controller's roster editor retired 2026-11-14: one person save owns
-          position, region(s), WhatsApp, NeoDove mapping and access). */}
+      {/* Sales team & access — the Organization chart scoped to Sales. There is
+          no separate roster: region, hierarchy and allotment are HR master data
+          (HR → Controller → Sales regions) and this card is the same person
+          save at Sales scope. */}
       <section className="space-y-3">
         <h3 className="text-lg font-bold">Sales team &amp; access</h3>
+        <p className="text-xs text-zinc-500">
+          Regions and the team-lead hierarchy are defined in HR → Controller → Sales regions. Edit a person here to seat them; the roster is their employee record.
+        </p>
         {rosterError && (
           <p className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs font-semibold text-rose-600 dark:text-rose-300">{rosterError}</p>
         )}

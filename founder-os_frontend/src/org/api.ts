@@ -153,6 +153,29 @@ export async function saveOrgPerson(employeeId: string, input: AssignPersonInput
   if (!res.ok) throw new Error(await readError(res));
 }
 
+export interface OrgRegion {
+  id: string;
+  code: string;
+  name: string;
+  tlLevel: "TL1" | "TL2";
+  states: string[];
+  order: number;
+  active: boolean;
+}
+
+export interface OrgRegionsResponse {
+  regions: OrgRegion[];
+  /** Chart position id → allowed region codes; absent = every active region. */
+  allotment: Record<string, string[]>;
+}
+
+/** HR-owned region catalog + per-position allotment (drives the person form). */
+export async function fetchOrgRegions(): Promise<OrgRegionsResponse> {
+  const res = await fetch("/api/org/regions", { cache: "no-store" });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
 /** Root-only, idempotent: create employee rows for roster rows lacking one. */
 export async function backfillOrgEmployees(): Promise<{ created: number; skipped: number }> {
   const res = await fetch("/api/org/backfill", { method: "POST" });

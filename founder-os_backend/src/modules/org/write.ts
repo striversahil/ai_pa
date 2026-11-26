@@ -4,10 +4,10 @@
 // (never raw SQL here). All rules live in ./access.ts (pure).
 import type { AuthStore } from "../auth/store-parts/types";
 import { canManagePerson, rosterTypeFor, isChartTitle, retireRosterOnSave } from "./access";
-import { getChartTitleLookup } from "./chart/store";
+import { getChartTitleLookup, getChartRowByTitle } from "./chart/store";
+import { impliedTlLevel, validateSalesPosting } from "./regions";
 import { fail, normEmail } from "./types";
 import type { AssignInput } from "./types";
-import { isValidRegion, isValidTlLevel, tlPairError } from "../../automations/telecalling/service";
 import { normalizeAgentPhone } from "../../automations/telecalling/util";
 
 /** The single person save: position, sales fields, access, active. */
@@ -34,17 +34,11 @@ export async function assignPerson(opts: {
   )) fail(403, "Not your department — ask HR or root");
 
   const rosterType = rosterTypeFor(title, chartLookup?.get(title));
+  const chartRow = rosterType ? await getChartRowByTitle(title) : null;
   let region = input.region !== undefined ? String(input.region ?? "") : undefined;
   let region2 = input.region2 !== undefined ? String(input.region2 ?? "") : undefined;
   let tlLevel = input.tlLevel !== undefined ? String(input.tlLevel ?? "") : undefined;
-  if (rosterType) {
-    if (region !== undefined && region !== "" && !isValidRegion(region)) fail(400, "region must be R1–R4");
-    if (region2 !== undefined && region2 !== "" && !isValidRegion(region2)) fail(400, "region2 must be R1–R4");
-    if (rosterType !== "team_lead" && region2) fail(400, "second region is Team-Lead-only");
-    if (tlLevel !== undefined && tlLevel !== "" && !isValidTlLevel(tlLevel)) fail(400, "tlLevel must be TL1 or TL2 (or unset)");
-    const pairErr = tlPairError(tlLevel ?? "", region ?? "", rosterType === "team_lead" ? (region2 ?? "") : "");
-    if (pairErr) fail(400, pairErr);
-  }
+  if (rosterType && rosterType !== "team_lead" && region2) fail(400, "second region is Team-Lead-only");
 
   // ── Access lives ONLY in Users & Permissions (roles carry one chart
   //  position each). The HR person save never touches scopes — any scopes
@@ -95,12 +89,16 @@ export async function assignPerson(opts: {
       neodoveUserName: input.neodoveUserName !== undefined ? (input.neodoveUserName || null) : ((existing as any)?.neodoveUserName ?? null),
       deleted: false,
     };
-    // Re-validate the final pair (partial updates re-check the whole TL1 pair).
-    const finalErr = tlPairError(
-      String(data.tlLevel ?? ""), String(data.region ?? ""),
-      rosterType === "team_lead" ? String(data.region2 ?? "") : "",
-    );
-    if (finalErr) fail(400, finalErr);
+    // HR owns the region catalog + seat allotment: validate the FINAL posting
+    // (a partial update still re-checks the whole pair).
+    if (rosterType === "team_lead" && !String(data.tlLevel ?? "")) {
+      data.tlLevel = await impliedTlLevel(prisma, String(data.region ?? ""), String(data.region2 ?? ""));
+    }
+    const postingErr = await validateSalesPosting(prisma, {
+      rosterType, region: String(data.region ?? ""), region2: String(data.region2 ?? ""),
+      tlLevel: String(data.tlLevel ?? ""), positionId: chartRow?.id ? String(chartRow.id) : null,
+    });
+    if (postingErr) fail(400, postingErr);
     let rowId: string;
     if (existing) {
       const updated: any = await prisma.telecaller.update({ where: { id: (existing as any).id }, data });

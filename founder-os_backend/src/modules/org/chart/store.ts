@@ -91,6 +91,15 @@ export async function getChartTitleLookup(): Promise<Map<string, string | null> 
   }
 }
 
+/** Active chart row for an exact title (null when the chart has no such seat). */
+export async function getChartRowByTitle(title: string): Promise<OrgChartRow | null> {
+  try {
+    const rows = await listChartRows();
+    const key = String(title ?? "").trim();
+    return (rows.find((r) => r.active !== false && String(r.title).trim() === key) as OrgChartRow) ?? null;
+  } catch { return null; }
+}
+
 export async function getChartRow(id: string): Promise<OrgChartRow | null> {
   const row = await model().findUnique({ where: { id: String(id) } }) as any;
   return row ? { ...row, isTop: !!row.isTop, isHead: !!row.isHead, active: row.active !== false } : null;
