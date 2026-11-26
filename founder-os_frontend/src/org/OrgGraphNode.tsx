@@ -8,11 +8,12 @@
 import { memo } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import type { OrgPerson } from "@/org/api";
-import { wingOfDepartment, type OrgWing } from "@/hr/organization";
+import type { OrgWing } from "@/hr/organization";
 
 export interface OrgNodeData extends Record<string, unknown> {
   title: string;
   department: string | null;
+  wing: OrgWing;
   isTop: boolean;
   people: OrgPerson[];
   selected: boolean;
@@ -47,7 +48,7 @@ function OrgGraphNode({ data }: NodeProps) {
   const d = data as unknown as OrgNodeData;
   const active = d.people.filter((p) => p.employee.active);
   const logins = active.filter((p) => p.login).length;
-  const wing = wingOfDepartment(d.department);
+  const wing = d.isTop ? null : d.wing;
   const style = (wing && WING_STYLES[wing]) || FALLBACK;
   return (
     <div

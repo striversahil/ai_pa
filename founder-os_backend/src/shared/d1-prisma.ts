@@ -57,6 +57,13 @@ const BOOL_FIELDS: Record<string, string[]> = {
   DigitalMarketingOpenTaskEntry: [],
   DigitalMarketingOpenTaskAttachment: [],
   HumanResourcesMember: ['deleted', 'active', 'useCharacterName'],
+  HumanResourcesDocumentType: ['required', 'active'],
+  HumanResourcesMemberDocument: ['deleted'],
+  HumanResourcesExpenseCategory: ['active'],
+  HumanResourcesAssetType: ['active'],
+  HumanResourcesAsset: ['deleted'],
+  HumanResourcesPositionAsset: ['required'],
+  OrgChartPosition: ['isTop', 'isHead', 'active'],
   HumanResourcesTask: ['deleted'],
   HumanResourcesExpense: ['deleted'],
   HumanResourcesFundTxn: ['deleted'],
@@ -84,6 +91,7 @@ const BOOL_FIELDS: Record<string, string[]> = {
   PaymentCustomer: ['whatsappOptIn'],
   PaymentReminder: [],
   DebtorsExportEvent: [],
+  DebtorsTopPick: [],
   PaymentCustomerRemark: ['deleted'],
   ManualCallLog: [],
   FieldVisit: [],
@@ -148,6 +156,13 @@ const DATE_FIELDS: Record<string, string[]> = {
   DigitalMarketingOpenTaskEntry: ['createdAt', 'updatedAt'],
   DigitalMarketingOpenTaskAttachment: ['createdAt'],
   HumanResourcesMember: ['createdAt', 'salaryTemplateAppliedAt'],
+  HumanResourcesDocumentType: ['createdAt', 'updatedAt'],
+  HumanResourcesMemberDocument: ['createdAt', 'updatedAt'],
+  HumanResourcesExpenseCategory: ['createdAt', 'updatedAt'],
+  HumanResourcesAssetType: ['createdAt', 'updatedAt'],
+  HumanResourcesAsset: ['createdAt', 'updatedAt'],
+  HumanResourcesPositionAsset: ['createdAt', 'updatedAt'],
+  OrgChartPosition: ['createdAt', 'updatedAt'],
   HumanResourcesTask: ['createdAt', 'updatedAt'],
   HumanResourcesExpense: ['createdAt', 'updatedAt'],
   HumanResourcesFundTxn: ['createdAt', 'updatedAt'],
@@ -183,6 +198,7 @@ const DATE_FIELDS: Record<string, string[]> = {
   PaymentCustomer: ['optInAt', 'createdAt', 'updatedAt'],
   PaymentReminder: ['createdAt'],
   DebtorsExportEvent: ['createdAt'],
+  DebtorsTopPick: ['createdAt'],
   PaymentCustomerRemark: ['createdAt', 'deletedAt'],
   ManualCallLog: ['createdAt', 'updatedAt'],
   FieldVisit: ['checkInAt', 'lastPingAt', 'checkOutAt', 'createdAt', 'updatedAt'],
@@ -322,6 +338,13 @@ const ID_FIELDS: Record<string, string> = {
   HumanResourcesInventoryTxn: 'id',
   HumanResourcesHiringPosition: 'id',
   HumanResourcesPositionDoc: 'id',
+  HumanResourcesDocumentType: 'id',
+  HumanResourcesMemberDocument: 'id',
+  HumanResourcesExpenseCategory: 'id',
+  HumanResourcesAssetType: 'id',
+  HumanResourcesAsset: 'id',
+  HumanResourcesPositionAsset: 'id',
+  OrgChartPosition: 'id',
   HumanResourcesTaskLog: 'id',
   ProductItem: 'id',
   KypGuide: 'id',
@@ -340,6 +363,7 @@ const ID_FIELDS: Record<string, string> = {
   PaymentCustomer: 'id',
   PaymentReminder: 'id',
   DebtorsExportEvent: 'id',
+  DebtorsTopPick: 'id',
   PaymentCustomerRemark: 'id',
   ManualCallLog: 'id',
   FieldVisit: 'id',
@@ -410,11 +434,18 @@ const UNIQUE_FIELDS: Record<string, string[]> = {
   MessageLineage: ['waMessageId'],
   DebtorInvoice: ['invoiceNo', 'customerName'],
   DebtorInvoiceAttachment: ['kvKey'],
+  DebtorsTopPick: ['customerKey'],
   PaymentCollection: ['dedupKey'],
   PaymentCustomer: ['customerKey'],
   PaymentReminder: ['dedupKey'],
   HumanResourcesHiringPosition: ['nameKey'],
   HumanResourcesPositionDoc: ['kvKey'],
+  HumanResourcesDocumentType: ['nameKey'],
+  HumanResourcesMemberDocument: ['kvKey'],
+  HumanResourcesExpenseCategory: ['nameKey'],
+  HumanResourcesAssetType: ['nameKey'],
+  HumanResourcesPositionAsset: ['orgPositionId', 'assetTypeId'],
+  OrgChartPosition: ['titleKey'],
   ProductItem: ['name'],
   Vendor: ['name'],
   StockItem: ['sku'],
@@ -553,6 +584,38 @@ const RELATIONS: Record<string, Record<string, { model: string; fk: string; one?
     leaves: { model: 'HumanResourcesLeave', fk: 'memberId' },
     salarySlips: { model: 'HumanResourcesSalarySlip', fk: 'memberId' },
     salaryTemplate: { model: 'HumanResourcesSalaryTemplate', fk: 'salaryTemplateId', one: true },
+    memberDocuments: { model: 'HumanResourcesMemberDocument', fk: 'memberId' },
+    assets: { model: 'HumanResourcesAsset', fk: 'memberId' },
+  },
+  HumanResourcesDocumentType: {
+    documents: { model: 'HumanResourcesMemberDocument', fk: 'documentTypeId' },
+  },
+  HumanResourcesMemberDocument: {
+    member: { model: 'HumanResourcesMember', fk: 'memberId', one: true },
+    documentType: { model: 'HumanResourcesDocumentType', fk: 'documentTypeId', one: true },
+  },
+  HumanResourcesExpenseCategory: {
+    expenses: { model: 'HumanResourcesExpense', fk: 'categoryId' },
+  },
+  HumanResourcesExpense: {
+    categoryRef: { model: 'HumanResourcesExpenseCategory', fk: 'categoryId', one: true },
+  },
+  HumanResourcesAssetType: {
+    assets: { model: 'HumanResourcesAsset', fk: 'assetTypeId' },
+    positionAssets: { model: 'HumanResourcesPositionAsset', fk: 'assetTypeId' },
+  },
+  HumanResourcesAsset: {
+    member: { model: 'HumanResourcesMember', fk: 'memberId', one: true },
+    assetType: { model: 'HumanResourcesAssetType', fk: 'assetTypeId', one: true },
+  },
+  HumanResourcesPositionAsset: {
+    orgPosition: { model: 'OrgChartPosition', fk: 'orgPositionId', one: true },
+    assetType: { model: 'HumanResourcesAssetType', fk: 'assetTypeId', one: true },
+  },
+  OrgChartPosition: {
+    reportsTo: { model: 'OrgChartPosition', fk: 'reportsToId', one: true },
+    reports: { model: 'OrgChartPosition', fk: 'reportsToId' },
+    positionAssets: { model: 'HumanResourcesPositionAsset', fk: 'orgPositionId' },
   },
   HumanResourcesTask: {
     assignedTo: { model: 'HumanResourcesMember', fk: 'assignedToId', one: true },
@@ -931,7 +994,10 @@ class D1Model {
     for (const r of rows) {
       for (const c of cols) params.push(serialize(r[c]));
     }
-    const query = `INSERT INTO ${this.table()} (${cols.map(qid).join(', ')}) VALUES ${placeholders}`;
+    // Prisma's skipDuplicates ignores any unique violation; a bare
+    // ON CONFLICT DO NOTHING covers composite and multi-unique tables.
+    const conflict = args.skipDuplicates ? ' ON CONFLICT DO NOTHING' : '';
+    const query = `INSERT INTO ${this.table()} (${cols.map(qid).join(', ')}) VALUES ${placeholders}${conflict}`;
     const { meta } = await this.db.prepare(query).bind(...params).run();
     return { count: meta.changes };
   }
@@ -953,9 +1019,7 @@ class D1Model {
     for (const r of enriched as any[]) {
       for (const c of cols) params.push(serialize((r as any)[c]));
     }
-    const conflict = args.skipDuplicates && UNIQUE_FIELDS[model]?.length === 1
-      ? ` ON CONFLICT (${qid(UNIQUE_FIELDS[model][0])}) DO NOTHING`
-      : '';
+    const conflict = args.skipDuplicates ? ' ON CONFLICT DO NOTHING' : '';
     const query = `INSERT INTO ${this.table()} (${cols.map(qid).join(', ')}) VALUES ${placeholders}${conflict}`;
     await this.db.prepare(query).bind(...params).run();
     const ids = enriched.map((r: any) => r[ID_FIELDS[model]]).filter(Boolean);
@@ -1205,6 +1269,13 @@ export class D1PrismaClient {
   get humanResourcesInventoryTxn() { return this.model('HumanResourcesInventoryTxn'); }
   get humanResourcesHiringPosition() { return this.model('HumanResourcesHiringPosition'); }
   get humanResourcesPositionDoc() { return this.model('HumanResourcesPositionDoc'); }
+  get humanResourcesDocumentType() { return this.model('HumanResourcesDocumentType'); }
+  get humanResourcesMemberDocument() { return this.model('HumanResourcesMemberDocument'); }
+  get humanResourcesExpenseCategory() { return this.model('HumanResourcesExpenseCategory'); }
+  get humanResourcesAssetType() { return this.model('HumanResourcesAssetType'); }
+  get humanResourcesAsset() { return this.model('HumanResourcesAsset'); }
+  get humanResourcesPositionAsset() { return this.model('HumanResourcesPositionAsset'); }
+  get orgChartPosition() { return this.model('OrgChartPosition'); }
   get humanResourcesTaskLog() { return this.model('HumanResourcesTaskLog'); }
   // Product Line master (migration 0046).
   get productItem() { return this.model('ProductItem'); }
@@ -1230,6 +1301,7 @@ export class D1PrismaClient {
   // Dated CRM remark log (migration 0085) — append-only history.
   get paymentCustomerRemark() { return this.model('PaymentCustomerRemark'); }
   get debtorsExportEvent() { return this.model('DebtorsExportEvent'); }
+  get debtorsTopPick() { return this.model('DebtorsTopPick'); }
   // Manual connected-call log (TEMPORARY migration 0102).
   get manualCallLog() { return this.model('ManualCallLog'); }
   // Android call recording devices + events (migration 0107).

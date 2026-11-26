@@ -20,6 +20,7 @@ export function expenseJson(row: any) {
     title: row.title ?? '',
     expenseType: row.expenseType ?? 'variable',
     category: row.category ?? null,
+    categoryId: row.categoryId ?? null,
     amount: Number(row.amount) || 0,
     expenseDate: row.expenseDate ?? null,
     expenseMonth: row.expenseMonth ?? null,

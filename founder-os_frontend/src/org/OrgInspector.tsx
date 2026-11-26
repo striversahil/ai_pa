@@ -7,8 +7,8 @@
 // (one chart position per role) — the inspector shows each login's
 // role-derived positions so the chart reads cleanly. Edit opens the person
 // drawer (position, sales fields, active only — never access).
-import type { OrgPerson } from "@/org/api";
-import { orgPosition, responsibilityLine, wingOfTitle } from "@/hr/organization";
+import type { OrgChartPosition, OrgPerson } from "@/org/api";
+import { positionFromChart, responsibilityLine } from "@/hr/organization";
 import { relActive } from "@/lib/format";
 
 const WING_CHIP: Record<string, string> = {
@@ -41,14 +41,19 @@ function SalesLine({ p }: { p: OrgPerson }) {
   );
 }
 
-export default function OrgInspector({ title, people, onEdit, onClose }: {
-  title: string;
+export default function OrgInspector({ position, positions, people, canManage, onEdit, onEditPosition, onDeletePosition, onClose }: {
+  position: OrgChartPosition;
+  positions: OrgChartPosition[];
   people: OrgPerson[];
+  canManage: boolean;
   onEdit: (p: OrgPerson) => void;
+  onEditPosition: (p: OrgChartPosition) => void;
+  onDeletePosition: (p: OrgChartPosition) => void;
   onClose: () => void;
 }) {
-  const pos = orgPosition(title);
-  const wing = wingOfTitle(title);
+  const title = position.title;
+  const pos = positionFromChart(position, positions);
+  const wing = position.isTop ? null : position.wing;
   const active = people.filter((p) => p.employee.active);
   const inactive = people.filter((p) => !p.employee.active);
   const logins = active.filter((p) => p.login).length;
@@ -65,9 +70,15 @@ export default function OrgInspector({ title, people, onEdit, onClose }: {
             )}
           </h3>
           <p className="mt-0.5 text-[11px] text-zinc-500">
-            {pos ? responsibilityLine(pos) : "Top of the chart"}
-            {pos?.department ? ` · ${pos.department}` : ""}
+            {position.isTop ? "Top of the chart" : responsibilityLine(pos)}
+            {pos.department ? ` · ${pos.department}` : ""}
           </p>
+          {canManage && (
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              <button onClick={() => onEditPosition(position)} className="rounded-lg bg-zinc-100 px-2 py-1 text-[10px] font-bold text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300">Edit position</button>
+              {!position.isTop && <button onClick={() => onDeletePosition(position)} className="rounded-lg px-2 py-1 text-[10px] font-bold text-rose-500 hover:bg-rose-500/10">Delete</button>}
+            </div>
+          )}
         </div>
         <button onClick={onClose} className="rounded-lg px-2 py-1 text-xs font-bold text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800" title="Unpin">✕</button>
       </div>

@@ -570,6 +570,39 @@ today, and that path is byte-identical to the pre-feature computation (guard-ass
   The historical view's empty state names the date (`asOf`), never "nothing was ever imported".
   Guard: `scripts/guards/debtors-invoice-sort.test.mjs`.
 
+### 3.2g HR documents, controller lists, assets and the editable org chart (migrations 0171–0173)
+
+Four HR gaps were closed without changing the frozen Express routes; every endpoint below is
+Worker-only and writes broadcast the existing `human-resources` event.
+
+- **Employee documents** — HR owns the checklist (`HumanResourcesDocumentType`: name, required,
+  order, active) and uploads one file per type per employee (`HumanResourcesMemberDocument`).
+  `GET/POST /api/human-resources/members/:id/documents` lists/uploads (multipart
+  `documentTypeId`, optional `title`, `file`), `DELETE /api/human-resources/member-docs/:id`
+  soft-deletes, `GET …/:id/file` streams from KV `hrdocs/emp/<uuid>.<ext>`. Limits: 20 MB,
+  PDF/JPEG/PNG/WebP. The list returns the types in order with their files and a required
+  completeness count; an upload is rejected when the type is archived.
+- **Expense categories** — controller-owned `HumanResourcesExpenseCategory` instead of free text.
+  `HumanResourcesExpense.categoryId` is nullable for historical rows and is backfilled by
+  `lower(trim(category))` in 0171; new/edited expenses must resolve an **active** category
+  (`lookups.ts#resolveExpenseCategory`). The old `category` text column stays as the display/legacy
+  value, so reports that read it keep working.
+- **Assets** — `HumanResourcesAsset` is the thing an employee holds (type, label, identifier,
+  specs, status, dates, notes); `HumanResourcesAssetType` is controller-owned. Role standards are
+  `HumanResourcesPositionAsset` (chart position + type, quantity, required, spec note; unique
+  pair). `GET/POST/PATCH/DELETE /api/human-resources/assets` and
+  `/api/human-resources/position-assets`. This is deliberately separate from office Inventory.
+- **Editable org chart** — `OrgChartPosition` (0172) replaces the read-only JSON as the runtime
+  chart; `organization.json`/frontend `ORG_CHART_JSON` remain the verbatim seed/fallback
+  (`org-chart-parity` + `org-chart-edit` guards). Lazy seed `modules/org/chart/seed.ts` inserts the
+  top first then the rest in 5-row chunks (`skipDuplicates`, below D1's bound-parameter cap). `GET /api/org/chart` is viewer-open; writes
+  (`POST/PATCH/DELETE /api/org/chart/positions`) require root/admin or the `human-resources`
+  scope. Writes validate title uniqueness, known `loginPosition`, wing/department, cycle-free
+  reporting, head→top, and block deleting the top, renaming/deleting a position with children,
+  active seats, role mappings or position standards. `loginPosition` only drives suggestions in
+  the employee picker; access remains in Users & Permissions. The frontend selector and graph
+  consume the live rows and fall back to the bundled chart when the table is unavailable.
+
 ### 3.3 Trigger dispatch
 `POST /api/trigger/:slug` runs the matching automation (auth required). On the Worker,
 cron-driven automations are reached via GitHub Actions → `curl /api/trigger/:slug`.

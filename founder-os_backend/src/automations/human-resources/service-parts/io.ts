@@ -15,7 +15,7 @@ import { reopenRequiresReason } from "../delegation-parse";
 import { listPendingLeaveRequests } from "../leave-requests";
 import { normId, emailTokens, expenseJson, fundTxnJson, splitTaskBuckets } from "./pure";
 import { employeeDisplayName } from "../../../shared/employee-name";
-
+import { resolveExpenseCategory } from "../lookups";
 export async function resolveSelfHumanResourcesMember(
   asId: unknown,
   me: { user?: { email?: string | null; name?: string | null } } | null,
@@ -70,7 +70,6 @@ export async function resolveSelfHumanResourcesMember(
   }
   return null;
 }
-
 export async function computeDashboard(today: string, month: string, scope: HrScope | null) {
   const nowTime = istTimeStr();
   const isAdmin = !scope || scope.isAdmin;
@@ -308,9 +307,10 @@ export async function deleteTask(id: string, actor: string | null) {
   });
   await invalidateHumanResourcesCache();
 }
-
 export async function createExpense(input: Record<string, any>, actor: string | null) {
   const data = cleanExpenseCreate(input);
+  if (!data.categoryId) throw new HrError('Pick an expense category from the Controller list');
+  await resolveExpenseCategory(data);
   const row = await prisma.humanResourcesExpense.create({
     data: { ...data, createdBy: actor, updatedBy: actor },
   });
@@ -330,6 +330,8 @@ export async function updateExpense(
     throw new HrError('You can only edit expenses you created', 403);
   }
   const patch = cleanExpensePatch(input);
+  if (patch.categoryId === null || (patch.category !== undefined && patch.categoryId === undefined)) throw new HrError('Pick an expense category from the Controller list');
+  if (patch.categoryId !== undefined) await resolveExpenseCategory(patch, { allowArchived: String(patch.categoryId) === String(current.categoryId ?? '') });
   const row = await prisma.humanResourcesExpense.update({
     where: { id }, data: { ...patch, updatedBy: actor },
   });
@@ -352,7 +354,6 @@ export async function deleteExpense(
   });
   await invalidateHumanResourcesCache();
 }
-
 export async function createFundTxn(input: Record<string, any>, actor: string | null) {
   const data = cleanFundTxnCreate(input);
   const row = await prisma.humanResourcesFundTxn.create({

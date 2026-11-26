@@ -4,6 +4,7 @@
 // (never raw SQL here). All rules live in ./access.ts (pure).
 import type { AuthStore } from "../auth/store-parts/types";
 import { canManagePerson, rosterTypeFor, isChartTitle, retireRosterOnSave } from "./access";
+import { getChartTitleLookup } from "./chart/store";
 import { fail, normEmail } from "./types";
 import type { AssignInput } from "./types";
 import { isValidRegion, isValidTlLevel, tlPairError } from "../../automations/telecalling/service";
@@ -23,14 +24,16 @@ export async function assignPerson(opts: {
   if (!title) fail(400, "position required");
   // The chart is the only source of positions — free-text designations are
   // refused (same rule the HR employee form enforces client-side).
-  if (!isChartTitle(title)) fail(400, "pick the organization position from the chart");
+  const chartLookup = await getChartTitleLookup().catch(() => null);
+  const chartHasTitle = chartLookup ? chartLookup.has(title) : isChartTitle(title);
+  if (!chartHasTitle) fail(400, "pick the organization position from the chart");
   const dept = String(current.department ?? "");
   if (!canManagePerson(
     { isRoot: me?.isRoot, isAdmin: me?.isAdmin, scopes: me?.scopes, roles: me?.roles },
     { title, department: dept || null },
   )) fail(403, "Not your department — ask HR or root");
 
-  const rosterType = rosterTypeFor(title);
+  const rosterType = rosterTypeFor(title, chartLookup?.get(title));
   let region = input.region !== undefined ? String(input.region ?? "") : undefined;
   let region2 = input.region2 !== undefined ? String(input.region2 ?? "") : undefined;
   let tlLevel = input.tlLevel !== undefined ? String(input.tlLevel ?? "") : undefined;

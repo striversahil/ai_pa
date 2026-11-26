@@ -5,6 +5,7 @@
 // sees Sales, dept scopes see their own.
 import type { AuthStore } from "../auth/store-parts/types";
 import { canManagePerson, positionScopes, chartTitleToPosition } from "./access";
+import { getChartTitleLookup } from "./chart/store";
 import { fail, normEmail, isPrivileged, heldScopes } from "./types";
 import { employeeDisplayName } from '../../shared/employee-name';
 import type { OrgPerson, OrgPeople } from "./types";
@@ -58,6 +59,7 @@ export async function getOrgPeople(opts: {
     loadLastLogins(opts.db),
   ]);
 
+  const chartLookup = await getChartTitleLookup().catch(() => null);
   const allRoles = await store.listRoles().catch(() => [] as any[]);
   const rolePos = new Map<string, string>();
   for (const role of (allRoles as any[])) {
@@ -101,7 +103,7 @@ export async function getOrgPeople(opts: {
     if (login) claimedLoginIds.add(String((login as any).id));
     if (roster) claimedRosterIds.add(String((roster as any).id));
     const title = String((emp as any).designation ?? "");
-    const loginKey = chartTitleToPosition(title);
+    const loginKey = (chartLookup ? chartLookup.get(title) : chartTitleToPosition(title)) ?? "";
     const suggested = loginKey ? positionScopes(loginKey) : [];
     let loginScopes: string[] = [];
     let loginRoles: string[] = [];
@@ -151,6 +153,7 @@ export async function getOrgPeople(opts: {
         neodoveUserName: (roster as any).neodoveUserName ?? null,
       } : null,
       suggestedScopes: suggested,
+      loginPosition: loginKey || null,
       canManage: canManagePerson(
         { isRoot: me?.isRoot, isAdmin: me?.isAdmin, scopes: me?.scopes, roles: me?.roles },
         { title, department: dept },

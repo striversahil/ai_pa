@@ -1,13 +1,16 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Modal from "../Modal";
+import { SearchSelect } from "../ui/SearchSelect";
 import {
   EXPENSE_TYPES, EXPENSE_TYPE_LABEL, PAYMENT_MODES, PAYMENT_MODE_LABEL,
   type ExpenseType, type HrExpense, type PaymentMode,
 } from "@/hr/types";
 import { jsonRequest, readError } from "@/hr/api";
 import { defaultDateForMonth } from "@/hr/format";
+import { fetchExpenseCategories } from "@/hr/api";
+import type { HrLookup } from "@/hr/lookups";
 
 export default function ExpenseFormModal({ expense, month, initialType, onClose, onSaved }: {
   expense?: HrExpense | null;
@@ -21,17 +24,34 @@ export default function ExpenseFormModal({ expense, month, initialType, onClose,
   const [expenseType, setExpenseType] = useState<ExpenseType>(expense?.expenseType ?? initialType);
   const [amount, setAmount] = useState(expense ? String(expense.amount) : "");
   const [expenseDate, setExpenseDate] = useState(expense?.expenseDate ?? defaultDateForMonth(month));
-  const [category, setCategory] = useState(expense?.category ?? "");
+  const [categories, setCategories] = useState<HrLookup[]>([]);
+  const [categoryId, setCategoryId] = useState(expense?.categoryId ?? "");
   const [paymentMode, setPaymentMode] = useState<PaymentMode | "">(expense?.paymentMode ?? "");
   const [notes, setNotes] = useState(expense?.notes ?? "");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    fetchExpenseCategories(!!expense)
+      .then((rows) => {
+        if (!alive) return;
+        setCategories(rows);
+        if (!expense?.categoryId && expense?.category) {
+          const match = rows.find((c) => c.active && c.name.toLowerCase() === expense.category!.toLowerCase());
+          if (match) setCategoryId(match.id);
+        }
+      })
+      .catch((e) => { if (alive) setErr(e instanceof Error ? e.message : "Could not load categories"); });
+    return () => { alive = false; };
+  }, [expense]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     const n = Number(amount);
     if (!title.trim()) { setErr("Title is required"); return; }
     if (!Number.isFinite(n) || n <= 0) { setErr("Enter an amount greater than 0"); return; }
+    if (!categoryId) { setErr("Pick a category from the Controller list"); return; }
     setBusy(true); setErr(null);
     try {
       const body: Record<string, unknown> = {
@@ -39,7 +59,7 @@ export default function ExpenseFormModal({ expense, month, initialType, onClose,
         expenseType,
         amount: n,
         expenseDate,
-        category: category.trim() || null,
+        categoryId,
         paymentMode: paymentMode || null,
         notes: notes.trim() || null,
       };
@@ -89,8 +109,15 @@ export default function ExpenseFormModal({ expense, month, initialType, onClose,
             </select>
           </div>
           <div className="sm:col-span-2">
-            <label className={label}>Category (optional)</label>
-            <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="e.g. Rent, utilities, hiring, travel" className={field} />
+            <label className={label}>Category</label>
+            <SearchSelect
+              value={categoryId}
+              options={categories.filter((c) => c.active || c.id === expense?.categoryId).map((c) => ({ value: c.id, label: c.active ? c.name : c.name + " (archived)" }))}
+              onChange={setCategoryId}
+              placeholder={categories.length ? "Pick a category…" : "No categories yet — add one in Controller"}
+              clearLabel={null}
+            />
+            <p className="mt-1 text-[10px] text-zinc-500">HR owns this list under Controller → Expense categories.</p>
           </div>
         </div>
         <div>

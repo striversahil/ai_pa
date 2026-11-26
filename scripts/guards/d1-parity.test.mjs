@@ -15,7 +15,7 @@
 // Exit: 0 = parity, 1 = drift.
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { BACKEND_DIR } from './_bundle.mjs';
 
@@ -34,12 +34,21 @@ const ALLOWLIST = new Map([
   ['ChatMessage', 'raw-SQL chat store (chat_message table)'],
   ['ChatReadState', 'raw-SQL chat store (chat_read_state table)'],
   ['ChatMember', 'raw-SQL chat store (chat_member table)'],
+  ['RateBatch', 'raw-SQL product-line batch store (RateBatch table)'],
+  ['CorePositionRole', 'core_* join table, read only by raw core SQL'],
 ]);
 
 const REGISTRIES = ['BOOL_FIELDS', 'DATE_FIELDS', 'ID_FIELDS', 'UNIQUE_FIELDS', 'FLOAT_FIELDS', 'RELATIONS'];
 
 function schemaModels() {
-  const text = readFileSync(join(BACKEND_DIR, 'prisma', 'schema.prisma'), 'utf8');
+  // The Prisma schema is split: main + prisma/core/*.prisma + prisma/helpers/*.prisma.
+  const root = join(BACKEND_DIR, 'prisma');
+  const files = [
+    join(root, 'schema.prisma'),
+    ...readdirSync(join(root, 'core')).filter((f) => f.endsWith('.prisma')).map((f) => join(root, 'core', f)),
+    ...readdirSync(join(root, 'helpers')).filter((f) => f.endsWith('.prisma')).map((f) => join(root, 'helpers', f)),
+  ];
+  const text = files.map((f) => readFileSync(f, 'utf8')).join('\n');
   return [...text.matchAll(/^model (\w+)/gm)].map((m) => m[1]);
 }
 

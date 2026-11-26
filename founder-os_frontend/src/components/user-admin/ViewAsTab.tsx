@@ -14,9 +14,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/auth/AuthContext";
-import { fetchOrgPeople, type OrgPerson } from "@/org/api";
+import { fetchOrgChart, fetchOrgPeople, type OrgChartPosition, type OrgPerson } from "@/org/api";
 import { fetchViewAsLog, type ViewAsLogRow } from "@/api/auth-view-as";
-import { ORG_POSITIONS } from "@/hr/organization";
 import { fmtIstDateTime } from "@/lib/format";
 import { useHashRoute } from "@/hooks/useHashRoute";
 
@@ -33,6 +32,7 @@ export function ViewAsTab() {
   const { me, isViewingAs, enterViewAs, exitViewAs, viewAsBusy } = useAuth();
   const { navigate } = useHashRoute();
   const [people, setPeople] = useState<OrgPerson[]>([]);
+  const [positions, setPositions] = useState<OrgChartPosition[]>([]);
   const [log, setLog] = useState<ViewAsLogRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -44,8 +44,9 @@ export function ViewAsTab() {
     setLoading(true);
     setError(null);
     try {
-      const [org, rows] = await Promise.all([fetchOrgPeople(), fetchViewAsLog()]);
+      const [org, rows, chart] = await Promise.all([fetchOrgPeople(), fetchViewAsLog(), fetchOrgChart().catch(() => null)]);
       setPeople(Array.isArray(org?.people) ? org.people : []);
+      setPositions(chart?.positions ?? []);
       setLog(Array.isArray(rows) ? rows : []);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load the chart");
@@ -66,13 +67,13 @@ export function ViewAsTab() {
       if (!byTitle.has(t)) byTitle.set(t, []);
       byTitle.get(t)!.push(p);
     }
-    const order = ORG_POSITIONS.map((x) => x.title);
+    const order = positions.map((x) => x.title);
     const titles = [...order.filter((t) => byTitle.has(t)), ...[...byTitle.keys()].filter((t) => !order.includes(t))];
     return titles.map((title) => ({
       title,
       people: (byTitle.get(title) ?? []).sort((a, b) => ((a.employee.displayName || a.employee.name) || "").localeCompare((b.employee.displayName || b.employee.name) || "")),
     }));
-  }, [people]);
+  }, [people, positions]);
 
   // Default to the first position that actually has someone with a login.
   useEffect(() => {

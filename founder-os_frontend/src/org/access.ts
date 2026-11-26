@@ -7,22 +7,27 @@
 /** Chart titles that hold a sales-roster row. */
 export const ORG_SALES_TITLES: readonly string[] = ["Team Lead", "Telecaller", "Field Staff"];
 
-export function rosterTypeFor(title: string): "telecaller" | "field_staff" | "team_lead" | null {
+export function rosterTypeFor(title: string, loginPosition?: string | null): "telecaller" | "field_staff" | "team_lead" | null {
   switch (String(title ?? "").trim()) {
     case "Telecaller": return "telecaller";
     case "Field Staff": return "field_staff";
     case "Team Lead": return "team_lead";
+  }
+  switch (String(loginPosition ?? "").trim()) {
+    case "telecaller": return "telecaller";
+    case "field-staff": return "field_staff";
+    case "team-lead": return "team_lead";
     default: return null;
   }
 }
 
-export function isSalesRosterTitle(title: string): boolean {
-  return rosterTypeFor(title) !== null;
+export function isSalesRosterTitle(title: string, loginPosition?: string | null): boolean {
+  return rosterTypeFor(title, loginPosition) !== null;
 }
 
 /** Which sales fields the editor shows for this position. */
-export function regionRulesFor(title: string): { region: boolean; region2: boolean; whatsapp: boolean; neodove: boolean } {
-  const t = rosterTypeFor(title);
+export function regionRulesFor(title: string, loginPosition?: string | null): { region: boolean; region2: boolean; whatsapp: boolean; neodove: boolean } {
+  const t = rosterTypeFor(title, loginPosition);
   if (!t) return { region: false, region2: false, whatsapp: false, neodove: false };
   return { region: true, region2: t === "team_lead", whatsapp: true, neodove: true };
 }

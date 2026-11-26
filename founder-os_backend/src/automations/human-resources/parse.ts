@@ -129,6 +129,7 @@ export function cleanExpenseCreate(input: Record<string, any>): ExpenseInput {
     title,
     expenseType,
     category: nullableText(input.category, 100),
+    categoryId: nullableText(input.categoryId, 100),
     amount: positiveAmount(input.amount),
     expenseDate,
     expenseMonth: expenseDate.slice(0, 7),
@@ -146,6 +147,7 @@ export function cleanExpensePatch(input: Record<string, any>): Partial<ExpenseIn
   }
   if (input.expenseType !== undefined) out.expenseType = oneOf(input.expenseType, EXPENSE_TYPES, 'expenseType');
   if (input.category !== undefined) out.category = nullableText(input.category, 100);
+  if (input.categoryId !== undefined) out.categoryId = nullableText(input.categoryId, 100);
   if (input.amount !== undefined) out.amount = positiveAmount(input.amount);
   if (input.expenseDate !== undefined) {
     const expenseDate = String(input.expenseDate ?? '').slice(0, 10);

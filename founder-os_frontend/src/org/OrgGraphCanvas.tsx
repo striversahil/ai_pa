@@ -2,15 +2,16 @@
 
 // OrgGraphCanvas — the chart as a pan/zoom node graph (React Flow, ssr:false).
 //
-// Pure layout (~40 lines, no dagre): depth from the reports_to chain, x by
-// order in the layer. Nodes are position faces; click pins the inspector rail.
+// Positions come from GET /api/org/chart (HR-editable DB rows), people from
+// GET /api/org/people. Layout is pure: depth from reportsToId, x by order in
+// the layer. Nodes are position faces; click pins the inspector rail.
 import { useMemo } from "react";
 import {
   ReactFlow, MiniMap, Controls, Background, BackgroundVariant,
   type Node, type Edge,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { buildOrgTree, wingOfDepartment, type OrgTreeNode } from "@/hr/organization";
+import { buildChartTree, type LiveChartPosition, type LiveOrgTreeNode, type OrgWing } from "@/hr/organization";
 import type { OrgPerson } from "@/org/api";
 import OrgGraphNode, { WING_STYLES, type OrgNodeData } from "./OrgGraphNode";
 
@@ -22,20 +23,13 @@ const WING_HEX: Record<string, string> = {
   Operations: "#f59e0b",
 };
 
-/** Legend row for the three wings (positions each wing covers). */
-const WING_LEGEND: Array<{ wing: "Sales" | "Marketing" | "Operations"; covers: string }> = [
-  { wing: "Sales", covers: "Sales Head · Team Lead · Telecaller · Field Staff" },
-  { wing: "Marketing", covers: "Digital Marketing Sr · Jr" },
-  { wing: "Operations", covers: "MIS · Procurement · HR · Accounts" },
-];
-
 const NODE_W = 228;
 const GAP_X = 48;
 const GAP_Y = 150;
 
-function depthOf(title: string, parentOf: Map<string, string | null>): number {
+function depthOf(id: string, parentOf: Map<string, string | null>): number {
   let depth = 0;
-  let cur: string | null | undefined = title;
+  let cur: string | null | undefined = id;
   const seen = new Set<string>();
   while (cur && !seen.has(cur)) {
     seen.add(cur);
@@ -47,10 +41,18 @@ function depthOf(title: string, parentOf: Map<string, string | null>): number {
   return depth;
 }
 
-export default function OrgGraphCanvas({ people, selected, onSelect }: {
+function flatten(root: LiveOrgTreeNode): LiveOrgTreeNode[] {
+  const out: LiveOrgTreeNode[] = [];
+  const walk = (n: LiveOrgTreeNode) => { out.push(n); n.children.forEach(walk); };
+  walk(root);
+  return out;
+}
+
+export default function OrgGraphCanvas({ positions, people, selected, onSelect }: {
+  positions: LiveChartPosition[];
   people: OrgPerson[];
   selected: string | null;
-  onSelect: (title: string | null) => void;
+  onSelect: (id: string | null) => void;
 }) {
   const peopleByTitle = useMemo(() => {
     const map = new Map<string, OrgPerson[]>();
@@ -64,19 +66,22 @@ export default function OrgGraphCanvas({ people, selected, onSelect }: {
     return map;
   }, [people]);
 
+  const legend = useMemo(() => {
+    return (["Sales", "Marketing", "Operations"] as OrgWing[]).map((wing) => ({
+      wing,
+      covers: positions.filter((p) => p.wing === wing).map((p) => p.title).join(" · ") || "No positions",
+    }));
+  }, [positions]);
+
   const { nodes, edges } = useMemo(() => {
-    const tree = buildOrgTree();
-    const flat: OrgTreeNode[] = [];
-    const walk = (n: OrgTreeNode) => { flat.push(n); n.children.forEach(walk); };
-    walk(tree);
+    const tree = buildChartTree(positions);
+    if (!tree) return { nodes: [] as Node[], edges: [] as Edge[] };
+    const flat = flatten(tree);
     const parentOf = new Map<string, string | null>();
+    for (const n of flat) parentOf.set(n.id, n.isTop || n.isScopedRoot ? null : n.reportsToId);
+    const byDepth = new Map<number, LiveOrgTreeNode[]>();
     for (const n of flat) {
-      if (n.isTop) parentOf.set(n.title, null);
-      else parentOf.set(n.title, n.reportsTo);
-    }
-    const byDepth = new Map<number, OrgTreeNode[]>();
-    for (const n of flat) {
-      const d = depthOf(n.title, parentOf);
+      const d = depthOf(n.id, parentOf);
       const list = byDepth.get(d) ?? [];
       list.push(n);
       byDepth.set(d, list);
@@ -90,39 +95,40 @@ export default function OrgGraphCanvas({ people, selected, onSelect }: {
         const data: OrgNodeData = {
           title: n.title,
           department: n.department,
+          wing: n.wing,
           isTop: n.isTop,
           people: nodePeople,
-          selected: selected === n.title,
+          selected: selected === n.id,
         };
         nodes.push({
-          id: n.title,
+          id: n.id,
           type: "orgNode",
           position: { x: i * (NODE_W + GAP_X) - width / 2, y: depth * GAP_Y },
           data: data as unknown as Record<string, unknown>,
         });
-        if (!n.isTop && n.reportsTo && flat.some((f) => f.title === n.reportsTo)) {
+        if (!n.isTop && n.reportsToId && flat.some((f) => f.id === n.reportsToId)) {
           edges.push({
-            id: `${n.reportsTo}->${n.title}`,
-            source: n.reportsTo!,
-            target: n.title,
+            id: n.reportsToId + "->" + n.id,
+            source: n.reportsToId,
+            target: n.id,
             style: { strokeWidth: 2 },
           });
         }
       });
     }
     return { nodes, edges };
-  }, [peopleByTitle, selected]);
+  }, [positions, peopleByTitle, selected]);
 
   return (
     <div className="relative h-[520px] w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
       <div className="pointer-events-none absolute left-3 top-3 z-10 flex flex-wrap gap-1.5">
-        {WING_LEGEND.map(({ wing, covers }) => (
+        {legend.map(({ wing, covers }) => (
           <span
             key={wing}
             title={covers}
             className="flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white/95 px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide text-zinc-600 shadow-sm dark:border-zinc-700 dark:bg-zinc-950/95 dark:text-zinc-300"
           >
-            <span className={`h-2 w-2 rounded-full ${WING_STYLES[wing].dot}`} />
+            <span className={"h-2 w-2 rounded-full " + WING_STYLES[wing].dot} />
             {wing}
           </span>
         ))}
@@ -142,7 +148,7 @@ export default function OrgGraphCanvas({ people, selected, onSelect }: {
         <MiniMap
           pannable
           zoomable
-          nodeColor={(n) => WING_HEX[wingOfDepartment(String((n.data as any)?.department ?? "")) ?? ""] ?? "#a1a1aa"}
+          nodeColor={(n) => WING_HEX[String((n.data as any)?.wing ?? "")] ?? "#a1a1aa"}
         />
         <Controls showInteractive={false} />
       </ReactFlow>

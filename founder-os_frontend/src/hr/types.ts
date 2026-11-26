@@ -377,6 +377,7 @@ export interface HrExpense {
   id: string;
   title: string;
   expenseType: ExpenseType;
+  categoryId: string | null;
   category: string | null;
   amount: number;
   expenseDate: string | null;

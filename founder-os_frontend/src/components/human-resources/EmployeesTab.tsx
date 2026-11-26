@@ -3,16 +3,18 @@
 import React, { useMemo, useState } from "react";
 import ConfirmDialog from "../ui/ConfirmDialog";
 import EmployeeFormModal from "./EmployeeFormModal";
+import EmployeeDocumentsModal from "./EmployeeDocumentsModal";
 import { useLiveDashboard } from "@/hooks/useLiveData";
 import type { HrEmployee } from "@/hr/types";
 import { jsonRequest, listMembers, readError } from "@/hr/api";
 import { initials, money, shortDate } from "@/hr/format";
 
-function EmployeeCard({ employee, onEdit, onToggle, onDelete }: {
+function EmployeeCard({ employee, onEdit, onToggle, onDelete, onDocs }: {
   employee: HrEmployee;
   onEdit: (e: HrEmployee) => void;
   onToggle: (e: HrEmployee) => void;
   onDelete: (e: HrEmployee) => void;
+  onDocs: (e: HrEmployee) => void;
 }) {
   return (
     <div className={`rounded-xl border p-3 ${employee.active ? "border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950" : "border-zinc-200/60 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/40"}`}>
@@ -44,6 +46,7 @@ function EmployeeCard({ employee, onEdit, onToggle, onDelete }: {
           </div>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
+          <button onClick={() => onDocs(employee)} className="rounded-lg px-2 py-1 text-[11px] font-semibold text-indigo-600 hover:bg-indigo-500/10 dark:text-indigo-400">Documents</button>
           <button onClick={() => onEdit(employee)} className="rounded-lg px-2 py-1 text-[11px] font-semibold text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800">Edit</button>
           <button onClick={() => onToggle(employee)} className={`rounded-lg px-2 py-1 text-[11px] font-semibold ${employee.active ? "text-amber-600 hover:bg-amber-500/10 dark:text-amber-400" : "text-emerald-600 hover:bg-emerald-500/10 dark:text-emerald-400"}`}>{employee.active ? "Deactivate" : "Activate"}</button>
           <button onClick={() => onDelete(employee)} className="rounded-lg px-2 py-1 text-[11px] font-semibold text-rose-500 hover:bg-rose-500/10">Remove</button>
@@ -60,6 +63,7 @@ export default function EmployeesTab() {
   const [query, setQuery] = useState("");
   const [view, setView] = useState<"active" | "inactive" | "all">("active");
   const [form, setForm] = useState<{ open: boolean; employee: HrEmployee | null }>({ open: false, employee: null });
+  const [docsFor, setDocsFor] = useState<HrEmployee | null>(null);
   const [deleting, setDeleting] = useState<HrEmployee | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -136,12 +140,13 @@ export default function EmployeesTab() {
       ) : (
         <div className="grid gap-2 lg:grid-cols-2">
           {filtered.map((employee) => (
-            <EmployeeCard key={employee.id} employee={employee} onEdit={(e) => setForm({ open: true, employee: e })} onToggle={toggle} onDelete={setDeleting} />
+            <EmployeeCard key={employee.id} employee={employee} onEdit={(e) => setForm({ open: true, employee: e })} onToggle={toggle} onDelete={setDeleting} onDocs={setDocsFor} />
           ))}
         </div>
       )}
 
       {form.open && <EmployeeFormModal employee={form.employee} onClose={() => setForm({ open: false, employee: null })} onSaved={() => dash.refresh()} />}
+      {docsFor && <EmployeeDocumentsModal employee={docsFor} onClose={() => setDocsFor(null)} />}
 
       <ConfirmDialog
         open={!!deleting}

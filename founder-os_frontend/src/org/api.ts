@@ -35,6 +35,8 @@ export interface OrgPerson {
   roster: OrgRoster | null;
   /** Dashboard scopes this position suggests (pre-checked in the editor). */
   suggestedScopes: string[];
+  /** Chart login position (display/suggestion only). */
+  loginPosition?: string | null;
   canManage: boolean;
   /** True when employee.email + loginEmail are both set but differ. */
   emailMismatch?: boolean;
@@ -62,6 +64,67 @@ export async function fetchOrgPeople(department?: string | null): Promise<OrgPeo
     ? `/api/org/people?department=${encodeURIComponent(department)}`
     : "/api/org/people";
   const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
+export type OrgWing = "Sales" | "Marketing" | "Operations";
+
+export interface OrgChartPosition {
+  id: string;
+  title: string;
+  titleKey: string;
+  department: string | null;
+  wing: OrgWing;
+  reportsToId: string | null;
+  reportsTo: string | null;
+  isTop: boolean;
+  isHead: boolean;
+  loginPosition: string | null;
+  order: number;
+}
+
+export interface OrgChartResponse {
+  positions: OrgChartPosition[];
+  top: string | null;
+  departments: Array<{ name: string; headTitle: string | null; count: number }>;
+  canManage: boolean;
+  source: "db" | "seed";
+}
+
+export interface ChartPositionInput {
+  title?: string;
+  department?: string | null;
+  wing?: OrgWing;
+  reportsToId?: string | null;
+  isHead?: boolean;
+  loginPosition?: string | null;
+}
+
+export async function fetchOrgChart(): Promise<OrgChartResponse> {
+  const res = await fetch("/api/org/chart", { cache: "no-store" });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
+export async function createChartPosition(input: ChartPositionInput): Promise<OrgChartPosition> {
+  const res = await fetch("/api/org/chart/positions", {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input),
+  });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
+export async function updateChartPosition(id: string, input: ChartPositionInput): Promise<OrgChartPosition> {
+  const res = await fetch(`/api/org/chart/positions/${encodeURIComponent(id)}`, {
+    method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(input),
+  });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
+export async function deleteChartPosition(id: string): Promise<{ ok: true }> {
+  const res = await fetch(`/api/org/chart/positions/${encodeURIComponent(id)}`, { method: "DELETE" });
   if (!res.ok) throw new Error(await readError(res));
   return res.json();
 }

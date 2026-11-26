@@ -6,7 +6,7 @@ import { USER_ADMIN_SCOPE } from "@/auth/permissions";
 import AdminTable from "./admin/AdminTable";
 import { Drawer, UserDrawer, RoleDrawer, displayNameOf } from "./admin/AdminDrawers";
 import { ORG_POSITIONS } from "@/hr/organization";
-import { fetchOrgPeople, backfillOrgEmployees } from "@/org/api";
+import { fetchOrgChart, fetchOrgPeople, backfillOrgEmployees } from "@/org/api";
 import { createRole as apiCreateRole, updateRole as apiUpdateRole } from "@/api/auth-roles";
 import type { ScopeRow, RoleRow, UserRow, DashboardRow } from "./admin/AdminDrawers";
 import type { Tab } from "./user-admin/types";
@@ -24,6 +24,7 @@ export default function UserAdmin() {
   const [tab, setTab] = useState<Tab>("users");
   const [roleFilter, setRoleFilter] = useState("");
   const [managingId, setManagingId] = useState<string | null>(null);
+  const [chartTitles, setChartTitles] = useState<string[]>(() => ORG_POSITIONS.map((p) => p.title));
   const [orphans, setOrphans] = useState<{ logins: { id: string; email: string; name: string }[]; roster: { id: string; name: string; email: string | null; type: string }[] } | null>(null);
   const [orphansBusy, setOrphansBusy] = useState(false);
   const [backfillMsg, setBackfillMsg] = useState<string | null>(null);
@@ -37,12 +38,14 @@ export default function UserAdmin() {
   }, []);
 
   const load = useCallback(async () => {
-    const [u, s, r, d] = await Promise.all([
+    const [u, s, r, d, chart] = await Promise.all([
       fetch("/api/auth/users").then((res) => res.json()),
       fetch("/api/auth/scopes").then((res) => res.json()),
       fetch("/api/auth/roles").then((res) => res.json()),
       fetch("/api/automations").then((res) => res.json()),
+      fetchOrgChart().catch(() => null),
     ]);
+    if (chart?.positions?.length) setChartTitles(chart.positions.map((p) => p.title));
     const usersArr: UserRow[] = (Array.isArray(u) ? u : []).filter((x: any) => !x.isRoot);
     setUsers(usersArr);
     setScopes(Array.isArray(s) ? s : []);
@@ -208,7 +211,7 @@ export default function UserAdmin() {
 
   if (!me || !canManage) return <div className="p-8 text-zinc-500">Admin access required.</div>;
 
-  const positionTitles = ORG_POSITIONS.map((x) => x.title);
+  const positionTitles = chartTitles;
   const orphanCount = (orphans?.logins.length ?? 0) + (orphans?.roster.length ?? 0);
 
   const tabs: { key: Tab; label: string; count?: number }[] = [

@@ -52,6 +52,7 @@ export interface ExpenseInput {
   title: string;
   expenseType: ExpenseType;
   category: string | null;
+  categoryId: string | null;
   amount: number;
   expenseDate: string;
   expenseMonth: string;

@@ -47,6 +47,8 @@ export interface OrgPerson {
   login: OrgLogin | null;
   roster: OrgRoster | null;
   suggestedScopes: string[];
+  /** Chart login position for this employee (display/suggestion only). */
+  loginPosition: string | null;
   canManage: boolean;
   /** True when employee.email + loginEmail are both set but differ — the card
    *  shows a mismatch badge so alias-Gmail links stay visible. */

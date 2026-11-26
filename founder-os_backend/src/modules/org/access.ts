@@ -13,18 +13,25 @@ import { POSITION_SUGGESTED_SCOPES } from "../auth/positions";
 export const ORG_SALES_TITLES: readonly string[] = ["Team Lead", "Telecaller", "Field Staff"];
 
 /** Roster `type` for a chart title (null = not a roster position). */
-export function rosterTypeFor(title: string): "telecaller" | "field_staff" | "team_lead" | null {
+export function rosterTypeFor(title: string, loginPosition?: string | null): "telecaller" | "field_staff" | "team_lead" | null {
   switch (String(title ?? "").trim()) {
     case "Telecaller": return "telecaller";
     case "Field Staff": return "field_staff";
     case "Team Lead": return "team_lead";
+  }
+  // Custom chart titles can carry the same roster duties through the login
+  // position HR assigned to that node.
+  switch (String(loginPosition ?? "").trim()) {
+    case "telecaller": return "telecaller";
+    case "field-staff": return "field_staff";
+    case "team-lead": return "team_lead";
     default: return null;
   }
 }
 
 /** True only for the Sales titles that accept a roster row. */
-export function isSalesRosterTitle(title: string): boolean {
-  return rosterTypeFor(title) !== null;
+export function isSalesRosterTitle(title: string, loginPosition?: string | null): boolean {
+  return rosterTypeFor(title, loginPosition) !== null;
 }
 
 /** Sales-head anchor rule (pure): the person save must never auto-retire the
@@ -41,8 +48,8 @@ export function retireRosterOnSave(opts: { rosterType: "telecaller" | "field_sta
 }
 
 /** Region rules for the editor: which sales fields appear per position. */
-export function regionRulesFor(title: string): { region: boolean; region2: boolean; whatsapp: boolean; neodove: boolean } {
-  const t = rosterTypeFor(title);
+export function regionRulesFor(title: string, loginPosition?: string | null): { region: boolean; region2: boolean; whatsapp: boolean; neodove: boolean } {
+  const t = rosterTypeFor(title, loginPosition);
   if (!t) return { region: false, region2: false, whatsapp: false, neodove: false };
   // Founder rule: every sales roster row carries region + office-phone
   // mapping (NeoDove) + WhatsApp. TL1 adds the second region.

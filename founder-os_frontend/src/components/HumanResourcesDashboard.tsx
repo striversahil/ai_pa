@@ -13,11 +13,13 @@ import LeavesTab from "./human-resources/LeavesTab";
 import PayrollTab from "./human-resources/PayrollTab";
 import ExpensesTab from "./human-resources/ExpensesTab";
 import InventoryTab from "./human-resources/InventoryTab";
+import AssetsTab from "./human-resources/AssetsTab";
+import ControllerTab from "./human-resources/ControllerTab";
 import type { HrDashboardData } from "@/hr/types";
 import { currentMonthIST, monthLabel, shiftMonth } from "@/hr/format";
 import { workspaceDataUrl } from "@/workspaces/api";
 
-type HrView = "organization" | "employees" | "hiring-kit" | "delegation" | "attendance" | "leaves" | "payroll" | "expenses" | "inventory";
+type HrView = "organization" | "employees" | "hiring-kit" | "delegation" | "attendance" | "leaves" | "payroll" | "controller" | "expenses" | "inventory" | "assets";
 
 type HrTab = { key: HrView; label: string; icon: string };
 
@@ -34,6 +36,7 @@ const GROUPS: { label: string; tabs: HrTab[] }[] = [
       { key: "leaves", label: "Leaves & holidays", icon: "◒" },
       { key: "payroll", label: "Payroll", icon: "₹" },
       { key: "delegation", label: "Delegation", icon: "☑" },
+      { key: "controller", label: "Controller", icon: "⚙" },
     ],
   },
   {
@@ -41,6 +44,7 @@ const GROUPS: { label: string; tabs: HrTab[] }[] = [
     tabs: [
       { key: "expenses", label: "Expenses", icon: "▦" },
       { key: "inventory", label: "Inventory", icon: "▤" },
+      { key: "assets", label: "Assets", icon: "▣" },
     ],
   },
 ];
@@ -66,8 +70,10 @@ export default function HumanResourcesDashboard({ onNavigate }: { onNavigate?: (
     attendance: null,
     leaves: data ? (data.leaves?.pendingCount ?? 0) : null,
     payroll: null,
+    controller: null,
     expenses: data ? data.expenses.summary.fixedCount + data.expenses.summary.variableCount + data.expenses.summary.fieldStaffCount : null,
     inventory: data ? data.inventory.summary.itemCount : null,
+    assets: null,
   };
 
   return (
@@ -98,7 +104,7 @@ export default function HumanResourcesDashboard({ onNavigate }: { onNavigate?: (
               <div key={group.label} className="space-y-1.5">
                 <div className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-zinc-400">{group.label}</div>
                 <nav className="flex flex-row flex-wrap gap-2">
-                  {group.tabs.map((t) => {
+                  {group.tabs.filter((t) => (t.key === "assets" || t.key === "controller" ? !!data?.meta.canManage : true)).map((t) => {
                     const active = view === t.key;
                     const count = counts[t.key];
                     return (
@@ -161,6 +167,8 @@ export default function HumanResourcesDashboard({ onNavigate }: { onNavigate?: (
           {data && view === "inventory" && (
             <InventoryTab data={data} canManage={data.meta.canManage} onRefresh={() => dash.refresh()} />
           )}
+          {view === "assets" && <AssetsTab canManage={!!data?.meta.canManage} />}
+          {view === "controller" && <ControllerTab />}
         </div>
       </div>
     </div>

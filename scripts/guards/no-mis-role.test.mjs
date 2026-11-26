@@ -42,6 +42,8 @@ const allowlist = new Set([
   'scripts/guards/org-access.test.mjs',
   // org graph wing legend — names the chart title, grants nothing
   'founder-os_frontend/src/org/OrgGraphCanvas.tsx',
+  // backend chart seed — MIS is a position TITLE with no login position
+  'founder-os_backend/src/modules/org/chart/seed.ts',
 ]);
 
 const NOISE = /mis-imported|mismatch|mis-aimed|dismiss|promise|promis|missing|admission|optimis|permission|permis|submit|transmit/i;

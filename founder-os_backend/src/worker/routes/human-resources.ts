@@ -4,7 +4,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import { notifyLive, LiveEvent, type Bindings } from '../context';
-import { ScopeKeys } from '../../modules/auth/types';
 import {
   createExpense, createFundTxn, createTask, deleteExpense, deleteFundTxn, deleteTask,
   resolveSelfHumanResourcesMember, updateExpense, updateFundTxn, updateTask,
@@ -36,30 +35,8 @@ import {
 import {
   defaultDocTitle, isHiringDocKind, isPdfUpload, MAX_HIRING_DOC_BYTES,
 } from '../../automations/human-resources/hiring-positions-parse';
-import { requireViewer } from '../viewer';
-import { readBody, writeError } from '../http';
-
-function actorLabel(me: any): string | null {
-  return me?.user?.name ?? me?.user?.email ?? null;
-}
-
-async function access(c: any) {
-  const me = await requireViewer(c).catch(() => null);
-  if (!me) return { me: null, canManage: false, error: c.json({ error: 'Authentication required' }, 401) };
-  const scopes = (me.scopes ?? []) as string[];
-  if (!me.isAdmin && !scopes.includes(ScopeKeys.HumanResources)) {
-    return { me, canManage: false, error: c.json({ error: "Requires 'human-resources' permission" }, 403) };
-  }
-  return {
-    me,
-    canManage: !!me.isAdmin || scopes.includes('human-resources'),
-    error: null,
-  };
-}
-
-function errorResponse(c: any, e: unknown) {
-  return writeError(c, e, 'request failed');
-}
+import { readBody } from '../http';
+import { access, actorLabel, errorResponse } from './hr-route-shared';
 
 export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>): void {
   // ── Employee master (HR/root full access) ────────────────────────────────
@@ -515,6 +492,7 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
     const a = await access(c);
     if (a.error) return a.error;
     const body = await readBody(c);
+    if (!body?.categoryId) return c.json({ error: 'Pick an expense category from the Controller list' }, 400);
     try {
       const row = await createExpense(body || {}, actorLabel(a.me));
       notifyLive(c, { type: LiveEvent.HumanResources });

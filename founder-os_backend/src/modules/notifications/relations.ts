@@ -12,7 +12,7 @@
 // Live SQLite foreign keys ("fk") and the curated no-FK application joins
 // ("app") are merged at runtime in ./schema.ts.
 //
-// source-hash: 0d4d4e55f6ac
+// source-hash: 40d29211b7cb
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type RelationKind = 'orm' | 'declared';
@@ -29,7 +29,7 @@ export interface TableRelation {
   kind: RelationKind;
 }
 
-export const RELATIONS_SOURCE_HASH = "0d4d4e55f6ac";
+export const RELATIONS_SOURCE_HASH = "40d29211b7cb";
 
 export const TABLE_RELATIONS: readonly TableRelation[] = [
   { from: "AccountsTaskAttachment", field: "logId", model: "AccountsTaskLog", ref: "id", kind: "orm" },
@@ -73,7 +73,14 @@ export const TABLE_RELATIONS: readonly TableRelation[] = [
   { from: "EstimateAssignment", field: "estimateId", model: "Estimate", ref: "estimateId", kind: "declared" },
   { from: "EstimateAssignment", field: "estimateId", model: "Estimate", ref: "id", kind: "orm" },
   { from: "EstimateAssignment", field: "telecallerId", model: "Telecaller", ref: "id", kind: "orm" },
+  { from: "HumanResourcesAsset", field: "assetTypeId", model: "HumanResourcesAssetType", ref: "id", kind: "orm" },
+  { from: "HumanResourcesAsset", field: "memberId", model: "HumanResourcesMember", ref: "id", kind: "orm" },
+  { from: "HumanResourcesAssetType", field: "assetTypeId", model: "HumanResourcesAsset", ref: "id", kind: "orm" },
+  { from: "HumanResourcesAssetType", field: "assetTypeId", model: "HumanResourcesPositionAsset", ref: "id", kind: "orm" },
   { from: "HumanResourcesAttendance", field: "memberId", model: "HumanResourcesMember", ref: "id", kind: "orm" },
+  { from: "HumanResourcesDocumentType", field: "documentTypeId", model: "HumanResourcesMemberDocument", ref: "id", kind: "orm" },
+  { from: "HumanResourcesExpense", field: "categoryId", model: "HumanResourcesExpenseCategory", ref: "id", kind: "orm" },
+  { from: "HumanResourcesExpenseCategory", field: "categoryId", model: "HumanResourcesExpense", ref: "id", kind: "orm" },
   { from: "HumanResourcesHiringPosition", field: "positionId", model: "HumanResourcesPositionDoc", ref: "id", kind: "orm" },
   { from: "HumanResourcesInventoryItem", field: "itemId", model: "HumanResourcesInventoryTxn", ref: "id", kind: "orm" },
   { from: "HumanResourcesInventoryTxn", field: "itemId", model: "HumanResourcesInventoryItem", ref: "id", kind: "orm" },
@@ -83,7 +90,13 @@ export const TABLE_RELATIONS: readonly TableRelation[] = [
   { from: "HumanResourcesMember", field: "memberId", model: "HumanResourcesAttendance", ref: "id", kind: "orm" },
   { from: "HumanResourcesMember", field: "memberId", model: "HumanResourcesLeave", ref: "id", kind: "orm" },
   { from: "HumanResourcesMember", field: "memberId", model: "HumanResourcesSalarySlip", ref: "id", kind: "orm" },
+  { from: "HumanResourcesMember", field: "memberId", model: "HumanResourcesMemberDocument", ref: "id", kind: "orm" },
+  { from: "HumanResourcesMember", field: "memberId", model: "HumanResourcesAsset", ref: "id", kind: "orm" },
   { from: "HumanResourcesMember", field: "salaryTemplateId", model: "HumanResourcesSalaryTemplate", ref: "id", kind: "orm" },
+  { from: "HumanResourcesMemberDocument", field: "documentTypeId", model: "HumanResourcesDocumentType", ref: "id", kind: "orm" },
+  { from: "HumanResourcesMemberDocument", field: "memberId", model: "HumanResourcesMember", ref: "id", kind: "orm" },
+  { from: "HumanResourcesPositionAsset", field: "assetTypeId", model: "HumanResourcesAssetType", ref: "id", kind: "orm" },
+  { from: "HumanResourcesPositionAsset", field: "orgPositionId", model: "OrgChartPosition", ref: "id", kind: "orm" },
   { from: "HumanResourcesPositionDoc", field: "positionId", model: "HumanResourcesHiringPosition", ref: "id", kind: "orm" },
   { from: "HumanResourcesSalaryComponent", field: "memberId", model: "HumanResourcesMember", ref: "id", kind: "orm" },
   { from: "HumanResourcesSalaryComponent", field: "templateId", model: "HumanResourcesSalaryTemplate", ref: "id", kind: "orm" },
@@ -100,6 +113,7 @@ export const TABLE_RELATIONS: readonly TableRelation[] = [
   { from: "MarketingCampaignRun", field: "campaignId", model: "MarketingCampaign", ref: "id", kind: "declared" },
   { from: "MarketingLead", field: "campaignId", model: "MarketingCampaign", ref: "id", kind: "declared" },
   { from: "MessageLineage", field: "taskId", model: "WaTask", ref: "id", kind: "orm" },
+  { from: "OrgChartPosition", field: "orgPositionId", model: "HumanResourcesPositionAsset", ref: "id", kind: "orm" },
   { from: "OverrideLog", field: "taskId", model: "WaTask", ref: "id", kind: "orm" },
   { from: "ProductItem", field: "productId", model: "KypGuide", ref: "id", kind: "orm" },
   { from: "ProductItem", field: "productId", model: "VendorRate", ref: "id", kind: "orm" },

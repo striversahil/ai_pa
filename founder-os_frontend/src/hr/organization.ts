@@ -204,6 +204,117 @@ export function suggestOrgTitle(designation: string | null | undefined): string 
   return target;
 }
 
+/** A live chart row from `GET /api/org/chart` (DB-backed, HR-editable). */
+export interface LiveChartPosition {
+  id: string;
+  title: string;
+  department: string | null;
+  wing: OrgWing;
+  reportsToId: string | null;
+  reportsTo?: string | null;
+  isTop: boolean;
+  isHead: boolean;
+  loginPosition: string | null;
+  order: number;
+}
+
+export interface LiveOrgTreeNode extends OrgTreeNode {
+  id: string;
+  wing: OrgWing;
+  reportsToId: string | null;
+  loginPosition: string | null;
+  /** True for a department-scoped root that is not the company top. */
+  isScopedRoot?: boolean;
+  children: LiveOrgTreeNode[];
+}
+
+/** Convert a live chart row to the responsibility shape the rail reads. */
+export function positionFromChart(row: LiveChartPosition, all: LiveChartPosition[]): OrgPosition {
+  return {
+    title: row.title,
+    department: String(row.department ?? ""),
+    reportsTo: all.find((p) => p.id === row.reportsToId)?.title ?? (row.reportsTo ?? ""),
+    leads: all.filter((p) => p.reportsToId === row.id).map((p) => p.title),
+    isHead: row.isHead,
+  };
+}
+
+/** Build the reporting tree from live rows (top node included). */
+export function buildChartTree(rows: LiveChartPosition[]): LiveOrgTreeNode | null {
+  if (!rows.length) return null;
+  const top = rows.find((r) => r.isTop) ?? null;
+  const rootRow = top ?? rows.find(
+    (r) => !r.reportsToId || !rows.some((p) => p.id === r.reportsToId),
+  ) ?? null;
+  const nodeFor = (r: LiveChartPosition): LiveOrgTreeNode => ({
+    id: r.id,
+    title: r.title,
+    department: r.department,
+    reportsTo: rows.find((p) => p.id === r.reportsToId)?.title ?? r.reportsTo ?? null,
+    reportsToId: r.reportsToId,
+    leads: [],
+    isHead: r.isHead,
+    isTop: false,
+    wing: r.wing,
+    loginPosition: r.loginPosition,
+    children: [],
+  });
+
+  // A department-scoped view (e.g. Sales Controller) has the top's children but
+  // not the top row. Promote its first parentless row to the visible root so
+  // the graph never goes blank.
+  if (!rootRow) {
+    const root: LiveOrgTreeNode = {
+      id: "__scope-root", title: "Organization", department: null,
+      reportsTo: null, reportsToId: null, leads: [], isHead: true, isTop: true,
+      isScopedRoot: true, wing: rows[0].wing, loginPosition: null, children: [],
+    };
+    for (const r of rows) root.children.push(nodeFor(r));
+    root.leads = root.children.map((c) => c.title);
+    return root;
+  }
+
+  const nodes = new Map<string, LiveOrgTreeNode>();
+  for (const r of rows) {
+    if (r.id === rootRow.id) continue;
+    nodes.set(r.id, nodeFor(r));
+  }
+  const root: LiveOrgTreeNode = {
+    id: rootRow.id,
+    title: rootRow.title,
+    department: top ? null : rootRow.department,
+    reportsTo: null,
+    reportsToId: null,
+    leads: [],
+    isHead: rootRow.isHead,
+    isTop: !!top,
+    isScopedRoot: !top,
+    wing: rootRow.wing,
+    loginPosition: top ? null : rootRow.loginPosition,
+    children: [],
+  };
+  const orphans: LiveOrgTreeNode[] = [];
+  for (const r of rows) {
+    if (r.id === rootRow.id) continue;
+    const node = nodes.get(r.id)!;
+    const parent = r.reportsToId === rootRow.id ? root : nodes.get(String(r.reportsToId ?? ""));
+    if (parent) parent.children.push(node);
+    else orphans.push(node);
+  }
+  root.children.push(...orphans);
+  root.leads = root.children.map((c) => c.title);
+  return root;
+}
+
+/** Known dashboard login-position keys, for the chart editor's select. */
+export const LOGIN_POSITION_OPTIONS: Array<{ key: string; label: string }> = (() => {
+  const byKey = new Map<string, string>();
+  for (const [title, keys] of Object.entries(LOGIN_POSITIONS_BY_TITLE)) {
+    for (const key of keys) if (!byKey.has(key)) byKey.set(key, title);
+  }
+  return [...byKey.entries()].map(([key, label]) => ({ key, label }));
+})();
+
 export interface OrgTreeNode {
   title: string;
   /** null on the synthetic top node (the top position is not a chart row). */

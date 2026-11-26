@@ -2,6 +2,9 @@ import type {
   HrDelegationBoard, HrDelegationTask, HrEmployee, HrHiringPosition, HrLeave,
   HrMyLeave, HrPositionDoc, HrSalaryPreview, HrSalaryTemplate, HrTaskLog, HiringDocKind,
 } from "./types";
+import type { HrAsset, HrAssetsData, HrAssetType, HrPositionAsset } from "./assets";
+import type { HrControllerData, HrLookup, LookupKind } from "./lookups";
+import type { MemberDocumentsPayload } from "./member-documents";
 
 export async function readError(res: Response): Promise<string> {
   try {
@@ -203,6 +206,87 @@ export async function applyLeaveRequest(payload: Record<string, unknown>): Promi
   const res = await jsonRequest("/api/leave/requests", "POST", payload);
   if (!res.ok) throw new Error(await readError(res));
   return res.json();
+}
+
+// ── Controller lists (document types, expense categories, asset types) ───────
+
+export async function fetchController(): Promise<HrControllerData> {
+  const res = await fetch("/api/human-resources/controller", { cache: "no-store" });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
+export async function createLookup(kind: LookupKind, body: Record<string, unknown>): Promise<HrLookup> {
+  const res = await jsonRequest("/api/human-resources/controller/" + kind, "POST", body);
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
+export async function updateLookup(kind: LookupKind, id: string, body: Record<string, unknown>): Promise<HrLookup> {
+  const res = await jsonRequest("/api/human-resources/controller/" + kind + "/" + id, "PATCH", body);
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
+export async function archiveLookup(kind: LookupKind, id: string): Promise<HrLookup> {
+  const res = await fetch("/api/human-resources/controller/" + kind + "/" + id, { method: "DELETE" });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
+export async function fetchExpenseCategories(includeArchived = false): Promise<HrLookup[]> {
+  return (await fetchController()).expenseCategories.filter((c) => includeArchived || c.active);
+}
+
+// ── Employee assets + position standards ────────────────────────────────────
+
+export async function fetchAssets(): Promise<HrAssetsData> {
+  const res = await fetch("/api/human-resources/assets", { cache: "no-store" });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
+export async function saveAsset(body: Record<string, unknown>, id?: string): Promise<HrAsset> {
+  const res = await jsonRequest("/api/human-resources/assets" + (id ? "/" + id : ""), id ? "PATCH" : "POST", body);
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
+export async function removeAsset(id: string): Promise<void> {
+  const res = await fetch("/api/human-resources/assets/" + id, { method: "DELETE" });
+  if (!res.ok) throw new Error(await readError(res));
+}
+
+export async function savePositionAsset(body: Record<string, unknown>, id?: string): Promise<HrPositionAsset> {
+  const res = await jsonRequest("/api/human-resources/position-assets" + (id ? "/" + id : ""), id ? "PATCH" : "POST", body);
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
+export async function removePositionAsset(id: string): Promise<void> {
+  const res = await fetch("/api/human-resources/position-assets/" + id, { method: "DELETE" });
+  if (!res.ok) throw new Error(await readError(res));
+}
+
+// ── Employee documents ──────────────────────────────────────────────────────
+
+export async function fetchMemberDocuments(memberId: string): Promise<MemberDocumentsPayload> {
+  const res = await fetch("/api/human-resources/members/" + encodeURIComponent(memberId) + "/documents", { cache: "no-store" });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
+export async function uploadMemberDocument(memberId: string, documentTypeId: string, file: File): Promise<void> {
+  const form = new FormData();
+  form.append("documentTypeId", documentTypeId);
+  form.append("file", file);
+  const res = await fetch("/api/human-resources/members/" + encodeURIComponent(memberId) + "/documents", { method: "POST", body: form });
+  if (!res.ok) throw new Error(await readError(res));
+}
+
+export async function deleteMemberDocument(documentId: string): Promise<void> {
+  const res = await fetch("/api/human-resources/member-docs/" + encodeURIComponent(documentId), { method: "DELETE" });
+  if (!res.ok) throw new Error(await readError(res));
 }
 
 export async function cancelLeaveRequest(id: string): Promise<void> {

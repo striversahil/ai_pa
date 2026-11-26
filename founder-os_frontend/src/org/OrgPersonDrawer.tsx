@@ -10,18 +10,18 @@
 import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
 import OrgPositionPicker from "@/components/human-resources/OrgPositionPicker";
-import { saveOrgPerson, type OrgPerson } from "@/org/api";
+import { saveOrgPerson, type OrgChartPosition, type OrgPerson } from "@/org/api";
 import { isSalesRosterTitle, regionRulesFor } from "@/org/access";
 import { REGIONS } from "@/telecalling/regions";
-import { isOrgTitle } from "@/hr/organization";
 
 const field = "w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-3 py-2 text-sm outline-none focus:border-indigo-500";
 const label = "block text-[11px] font-bold uppercase tracking-wide text-zinc-500 mb-1";
 
 const TL_LEVELS = ["", "TL1", "TL2"];
 
-export default function OrgPersonDrawer({ person, onClose, onSaved }: {
+export default function OrgPersonDrawer({ person, positions, onClose, onSaved }: {
   person: OrgPerson;
+  positions: OrgChartPosition[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -40,8 +40,9 @@ export default function OrgPersonDrawer({ person, onClose, onSaved }: {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const rules = regionRulesFor(title);
-  const showSales = isSalesRosterTitle(title);
+  const chartPosition = positions.find((p) => p.title === title.trim()) ?? null;
+  const rules = regionRulesFor(title, chartPosition?.loginPosition);
+  const showSales = isSalesRosterTitle(title, chartPosition?.loginPosition);
 
   useEffect(() => {
     if (!showSales) return;
@@ -56,9 +57,9 @@ export default function OrgPersonDrawer({ person, onClose, onSaved }: {
 
   const submit = async () => {
     setErr(null);
-    if (!isOrgTitle(title)) { setErr("Seating needs a chart title — free-text designations are edited in HR → Employees"); return; }
+    if (!chartPosition) { setErr("Seating needs a chart title — free-text designations are edited in HR → Employees"); return; }
     if (rules.region && !region) { setErr("Region required for sales staff (R1–R4)"); return; }
-    if (title === "Team Lead" && tlLevel === "TL1" && region && region2 && region === region2) {
+    if (rules.region2 && tlLevel === "TL1" && region && region2 && region === region2) {
       setErr("A TL1 needs two DIFFERENT regions");
       return;
     }

@@ -1421,6 +1421,8 @@ model HumanResourcesMember {
   attendance            HumanResourcesAttendance[]
   leaves                HumanResourcesLeave[]
   salarySlips           HumanResourcesSalarySlip[]
+  memberDocuments       HumanResourcesMemberDocument[]
+  assets                HumanResourcesAsset[]
 
   @@index([deleted, order])
   @@index([deleted, active, order])
@@ -1657,8 +1659,10 @@ model HumanResourcesTaskLog {
 model HumanResourcesExpense {
   id           String   @id @default(uuid())
   title        String
-  expenseType  String // fixed | variable
+  expenseType  String // fixed | variable | field_staff
   category     String?
+  categoryId   String?
+  categoryRef  HumanResourcesExpenseCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   amount       Float
   expenseDate  String // YYYY-MM-DD IST
   expenseMonth String // YYYY-MM IST
@@ -1757,6 +1761,137 @@ model HumanResourcesPositionDoc {
 
   @@index([positionId])
   @@index([positionId, kind])
+}
+
+
+model HumanResourcesDocumentType {
+  id          String   @id @default(uuid())
+  name        String
+  nameKey     String   @unique
+  description String?
+  required    Boolean  @default(false)
+  order       Int      @default(0)
+  active      Boolean  @default(true)
+  createdBy   String?
+  updatedBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  documents   HumanResourcesMemberDocument[]
+
+  @@index([active, order])
+}
+
+model HumanResourcesMemberDocument {
+  id             String   @id @default(uuid())
+  memberId       String
+  member         HumanResourcesMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  documentTypeId String
+  documentType   HumanResourcesDocumentType @relation(fields: [documentTypeId], references: [id], onDelete: Restrict)
+  title          String   @default("")
+  fileName       String
+  mime           String   @default("application/pdf")
+  size           Int      @default(0)
+  kvKey          String   @unique
+  uploadedBy     String   @default("")
+  deleted        Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([memberId, deleted])
+  @@index([documentTypeId])
+}
+
+model HumanResourcesExpenseCategory {
+  id        String   @id @default(uuid())
+  name      String
+  nameKey   String   @unique
+  order     Int      @default(0)
+  active    Boolean  @default(true)
+  createdBy String?
+  updatedBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  expenses  HumanResourcesExpense[]
+
+  @@index([active, order])
+}
+
+model OrgChartPosition {
+  id             String   @id @default(uuid())
+  title          String
+  titleKey       String   @unique
+  department     String?
+  wing           String   @default("Operations")
+  reportsToId    String?
+  reportsTo      OrgChartPosition? @relation("OrgChartReportsTo", fields: [reportsToId], references: [id], onDelete: SetNull)
+  reports        OrgChartPosition[] @relation("OrgChartReportsTo")
+  isTop          Boolean  @default(false)
+  isHead         Boolean  @default(false)
+  loginPosition  String?
+  order          Int      @default(0)
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  positionAssets HumanResourcesPositionAsset[]
+
+  @@index([reportsToId])
+  @@index([active, order])
+}
+
+model HumanResourcesAssetType {
+  id             String   @id @default(uuid())
+  name           String
+  nameKey        String   @unique
+  defaultSpecs   String?
+  order          Int      @default(0)
+  active         Boolean  @default(true)
+  createdBy      String?
+  updatedBy      String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  assets         HumanResourcesAsset[]
+  positionAssets HumanResourcesPositionAsset[]
+
+  @@index([active, order])
+}
+
+model HumanResourcesAsset {
+  id          String   @id @default(uuid())
+  memberId    String
+  member      HumanResourcesMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  assetTypeId String
+  assetType   HumanResourcesAssetType @relation(fields: [assetTypeId], references: [id], onDelete: Restrict)
+  label       String   @default("")
+  identifier  String?
+  specs       String?
+  status      String   @default("assigned") // assigned | in_repair | returned | lost
+  assignedOn  String // YYYY-MM-DD IST
+  returnedOn  String? // YYYY-MM-DD IST
+  notes       String?
+  deleted     Boolean  @default(false)
+  createdBy   String?
+  updatedBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([memberId, deleted])
+  @@index([assetTypeId, status])
+}
+
+model HumanResourcesPositionAsset {
+  id            String   @id @default(uuid())
+  orgPositionId String
+  orgPosition   OrgChartPosition @relation(fields: [orgPositionId], references: [id], onDelete: Cascade)
+  assetTypeId   String
+  assetType     HumanResourcesAssetType @relation(fields: [assetTypeId], references: [id], onDelete: Restrict)
+  quantity      Int      @default(1)
+  specNote      String?
+  required      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([orgPositionId, assetTypeId])
+  @@index([assetTypeId])
 }
 
 model LinkedinPost {
