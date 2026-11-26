@@ -10,6 +10,14 @@ import { matchGradeRule } from "../intake-grade-rules";
 import type { LiveCatalog, KypKey } from "./types";
 import { normTok, ROUTER_SYSTEM, isRateLimited, lookupDeterministic, lookupToken, LOOKUP_FALLBACK_SYSTEM, buildLookupList, SPEC_CHECK_SYSTEM } from "./pure";
 
+// Intake runs on free-tier models that routinely take 60-90 s for a real
+// enquiry. The gateway owns the per-attempt cap and key failover; a second
+// short AbortController here used to cancel the call at 20 s, which looks like
+// a caller abort to the gateway, so it neither rotated keys nor recorded the
+// failure. Let the gateway enforce the deadline instead.
+const INTAKE_CALL_TIMEOUT_MS = 90_000;
+const INTAKE_TOTAL_TIMEOUT_MS = 95_000;
+
 export async function loadLiveCatalog(): Promise<LiveCatalog> {
   const rows = await getProductIndex().catch(() => []);
   const products: MatchProduct[] = rows.map((p) => ({
@@ -128,17 +136,17 @@ export async function runVisionIntake(
   outer: for (const leg of chain) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const ac = new AbortController();
-        const t = setTimeout(() => ac.abort(), 20_000);
-        try {
-          routed = await gateway.completeJson<any>({
-            messages: [{ role: 'system', content: ROUTER_SYSTEM }, { role: 'user', content }],
-            temperature: 0, json: true, maxTokens: 24000, provider: leg.provider, ...(leg.model ? { model: leg.model } : {}), signal: ac.signal as any,
-            // Splitting lines needs no chain-of-thought — thinking tokens are
-            // billed output with zero UI use on this path.
-            reasoningOff: true,
-          });
-        } finally { clearTimeout(t); }
+        routed = await gateway.completeJson<any>({
+          messages: [{ role: 'system', content: ROUTER_SYSTEM }, { role: 'user', content }],
+          temperature: 0, json: true, maxTokens: 24000, provider: leg.provider, ...(leg.model ? { model: leg.model } : {}),
+          timeoutMs: INTAKE_CALL_TIMEOUT_MS,
+          ttftMs: 45_000,
+          totalTimeoutMs: INTAKE_TOTAL_TIMEOUT_MS,
+          maxAttempts: 2,
+          // Splitting lines needs no chain-of-thought — thinking tokens are
+          // billed output with zero UI use on this path.
+          reasoningOff: true,
+        });
         const gate = countDroppedLines((routed as any)?.lines);
         if (gate.total > 0 && gate.dropped > 0 && gate.dropped / gate.total >= 0.5) {
           console.log(`[vision-intake] ${id}: provider=${leg.provider} attempt ${attempt + 1}/2 dropped content (${gate.dropped}/${gate.total} lines names-only) — trying next provider`);
@@ -349,19 +357,18 @@ export async function runVisionIntake(
       const idx: number[] = [];
       kypHits.forEach((h, i) => { if (!h) idx.push(i); });
       const input = idx.map((i, k) => `${k}. ${[lines[i].verbatim, lines[i].name, lines[i].dims, lines[i].spec, lines[i].qty].filter(Boolean).join(' | ')}`.slice(0, 600)).join('\n');
-      const ac2 = new AbortController();
-      const t2 = setTimeout(() => ac2.abort(), 20_000);
-      let out: any;
-      try {
-          out = await gateway.completeJson<any>({
-            messages: [
-              { role: 'system', content: `${LOOKUP_FALLBACK_SYSTEM}\nCatalogue (category NUMBER. Category: Item[aliases]; ...):\n${buildLookupList(liveCats, liveProducts)}` },
-              { role: 'user', content: `Match each line:\n${input}` },
-            ],
-            temperature: 0, json: true, maxTokens: 24000, provider: successLeg.provider, ...(successLeg.model ? { model: successLeg.model } : {}), signal: ac2.signal as any,
-            reasoningOff: true,
-          });
-      } finally { clearTimeout(t2); }
+      const out = await gateway.completeJson<any>({
+        messages: [
+          { role: 'system', content: `${LOOKUP_FALLBACK_SYSTEM}\nCatalogue (category NUMBER. Category: Item[aliases]; ...):\n${buildLookupList(liveCats, liveProducts)}` },
+          { role: 'user', content: `Match each line:\n${input}` },
+        ],
+        temperature: 0, json: true, maxTokens: 24000, provider: successLeg.provider, ...(successLeg.model ? { model: successLeg.model } : {}),
+        timeoutMs: INTAKE_CALL_TIMEOUT_MS,
+        ttftMs: 45_000,
+        totalTimeoutMs: INTAKE_TOTAL_TIMEOUT_MS,
+        maxAttempts: 2,
+        reasoningOff: true,
+      });
       const matches = Array.isArray(out?.matches) ? out.matches : [];
       idx.forEach((lineIdx, k) => {
         const m = matches[k] || {};
@@ -452,19 +459,18 @@ export async function runVisionIntake(
       return `Item ${k} spec: "${specText}"\nChecklist:\n${checklist}`;
     }).join('\n\n---\n\n');
     try {
-      const ac3 = new AbortController();
-      const t3 = setTimeout(() => ac3.abort(), 20_000);
-      let raw: any;
-      try {
-        raw = await gateway.completeJson<any>({
-          messages: [
-            { role: 'system', content: SPEC_CHECK_SYSTEM },
-            { role: 'user', content: checksInput },
-          ],
-          temperature: 0, json: true, maxTokens: 24000, provider: successLeg.provider, ...(successLeg.model ? { model: successLeg.model } : {}), signal: ac3.signal as any,
-          reasoningOff: true,
-        });
-      } finally { clearTimeout(t3); }
+      const raw = await gateway.completeJson<any>({
+        messages: [
+          { role: 'system', content: SPEC_CHECK_SYSTEM },
+          { role: 'user', content: checksInput },
+        ],
+        temperature: 0, json: true, maxTokens: 24000, provider: successLeg.provider, ...(successLeg.model ? { model: successLeg.model } : {}),
+        timeoutMs: INTAKE_CALL_TIMEOUT_MS,
+        ttftMs: 45_000,
+        totalTimeoutMs: INTAKE_TOTAL_TIMEOUT_MS,
+        maxAttempts: 2,
+        reasoningOff: true,
+      });
       const checks = Array.isArray(raw?.checks) ? raw.checks : [];
       checkableIdx.forEach((lineIdx, k) => {
         const c = checks[k] || {};

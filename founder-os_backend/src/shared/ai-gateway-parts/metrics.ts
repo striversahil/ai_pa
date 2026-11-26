@@ -29,12 +29,17 @@ export const FATAL_ERROR_KINDS: ReadonlySet<GatewayErrorKind> = new Set(["auth",
 export function classifyGatewayError(status: number | null | undefined, message: string): GatewayErrorKind {
   const msg = String(message ?? "");
   const s = Number(status ?? 0);
+  // HTTP status wins over words in the body: a 503 whose error text happens to
+  // contain "quota" is an upstream outage, NOT a dead key. Classifying it as
+  // quota made three transient 503s permanently disable every free key.
   if (s === 401 || s === 403 || /\b(401|403)\b|unauthorized|invalid api key|invalid_api_key/i.test(msg)) return "auth";
-  if (s === 402 || /quota|billing|insufficient|exceeded your current/i.test(msg)) return "quota";
-  if (s === 429 || /\b429\b|rate.?limit|1015/i.test(msg)) return "rate_limit";
+  if (s === 402) return "quota";
+  if (s === 429) return "rate_limit";
+  if (s >= 500) return "server";
   if (/timeout|timed out|abort|ETIMEDOUT|EAI_AGAIN/i.test(msg)) return "timeout";
   if (/ECONN|ENOTFOUND|fetch failed|socket|network/i.test(msg)) return "network";
-  if (s >= 500 || /\b5\d\d\b|internal server|bad gateway|unavailable/i.test(msg)) return "server";
+  if (/quota|billing|insufficient|exceeded your current/i.test(msg)) return "quota";
+  if (/\b5\d\d\b|internal server|bad gateway|unavailable/i.test(msg)) return "server";
   if (/json|parse|unexpected token|empty response|no choices/i.test(msg)) return "bad_response";
   return "unknown";
 }

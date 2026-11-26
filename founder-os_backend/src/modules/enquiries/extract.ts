@@ -248,6 +248,12 @@ export async function extractEnquiryFieldsRobust(
           provider: leg.provider,
           ...(leg.model ? { model: leg.model } : {}),
           json: true,
+          // Free-tier models can take 60-90 s on a full enquiry prompt. Give
+          // the provider one real chance, then let the chain move on.
+          timeoutMs: 90_000,
+          ttftMs: 45_000,
+          totalTimeoutMs: 95_000,
+          maxAttempts: 2,
           // Field extraction needs no chain-of-thought — thinking tokens are
           // billed output with zero UI use on this path.
           reasoningOff: true,
