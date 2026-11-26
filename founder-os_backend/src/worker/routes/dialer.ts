@@ -73,7 +73,8 @@ function registerPhoneRoutes(app: Hono<{ Bindings: Bindings }>): void {
   });
 
   app.post('/api/android/pair-restore', async (c) => {
-    if (await ipLimited(c, 'pairrestore', 10)) return c.json({ error: 'Too many attempts — retry in a minute' }, 429);
+    // One office IP serves every agent's phone, and the app retries on a bad network.
+    if (await ipLimited(c, 'pairrestore', 40)) return c.json({ error: 'Too many attempts — retry in a minute' }, 429);
     const deviceId = String((await readBody(c))?.deviceId ?? '').trim().slice(0, 64);
     if (deviceId.length < 8) return c.json({ error: 'deviceId required' }, 400);
     const out = await restoreByDevice(c.env.DB, deviceId);

@@ -88,6 +88,7 @@ export function normalizeConfig(raw: any, actor = ''): DialerConfig {
     shiftEnd,
     retryGapMin: clampInt(raw?.retryGapMin, 5, 24 * 60, DEFAULT_CONFIG.retryGapMin),
     retryMax: clampInt(raw?.retryMax, 0, 10, DEFAULT_CONFIG.retryMax),
+    connectedMinSec: clampInt(raw?.connectedMinSec, 0, 600, DEFAULT_CONFIG.connectedMinSec),
     dispositions: cleanDispositions(raw?.dispositions),
     breakReasons: cleanBreaks(raw?.breakReasons),
     scheduledBreaks: cleanScheduled(raw?.scheduledBreaks),
@@ -118,6 +119,9 @@ export function dispositionOf(cfg: DialerConfig, key: string): Disposition | nul
  * - callback disposition with a time → back in the queue at that time
  * - retry disposition under the attempt cap → back after retryGapMin
  * - retry disposition at the cap → unreachable (never re-queued)
+ * - retry disposition on a call with ≥ connectedMinSec talk time → done
+ *   (it connected; re-dialing a customer the agent already spoke to is the
+ *   "repeat calls on connected calls" bug — the disposition itself is kept)
  * - anything else → done
  */
 export function queueOutcome(
@@ -126,10 +130,14 @@ export function queueOutcome(
   attempts: number,
   callbackAt: string | null,
   now = Date.now(),
+  talkSec = 0,
 ): { status: 'pending' | 'done' | 'unreachable'; source: string; dueAt: string | null } {
   const d = dispositionOf(cfg, dispositionKey);
   if (d?.callback && callbackAt && Number.isFinite(Date.parse(callbackAt))) {
     return { status: 'pending', source: 'callback', dueAt: new Date(Date.parse(callbackAt)).toISOString() };
+  }
+  if (d?.retry && cfg.connectedMinSec > 0 && talkSec >= cfg.connectedMinSec) {
+    return { status: 'done', source: '', dueAt: null };
   }
   if (d?.retry && attempts < cfg.retryMax) {
     return { status: 'pending', source: 'retry', dueAt: new Date(now + cfg.retryGapMin * 60_000).toISOString() };

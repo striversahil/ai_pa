@@ -21,6 +21,8 @@ data class DialerConfig(
     val shiftEnd: String = "21:00",
     val retryGapMin: Int = 120,
     val retryMax: Int = 3,
+    /** Talk time ≥ this = connected: the server never re-dials it, whatever the disposition. 0 = off. */
+    val connectedMinSec: Int = 15,
     val dispositions: List<Disposition> = DEFAULT_DISPOSITIONS,
     val breakReasons: List<BreakReason> = DEFAULT_BREAKS,
     val scheduledBreaks: List<ScheduledBreak> = emptyList(),
@@ -78,6 +80,7 @@ data class DialerConfig(
                     shiftEnd = o.optString("shiftEnd", "21:00"),
                     retryGapMin = o.optInt("retryGapMin", 120),
                     retryMax = o.optInt("retryMax", 3),
+                    connectedMinSec = o.optInt("connectedMinSec", 15),
                     dispositions = o.optJSONArray("dispositions").map {
                         Disposition(it.getString("key"), it.getString("label"), it.optBoolean("connected"), it.optBoolean("retry"), it.optBoolean("callback"))
                     }.ifEmpty { DEFAULT_DISPOSITIONS },

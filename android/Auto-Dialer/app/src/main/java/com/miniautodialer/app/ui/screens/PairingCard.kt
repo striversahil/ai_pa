@@ -39,15 +39,28 @@ fun PairingCard() {
 
     // Reinstalled on a phone that is still paired in Founder OS: reconnect by
     // itself (same phone id), no new code needed. Unpaired phones get "none".
+    // A first launch right after install often has no network yet: retry before
+    // showing the form, and keep a "Check again" button for later.
     var restoring by remember { mutableStateOf(code == null) }
-    LaunchedEffect(Unit) {
+    var restoreTry by remember { mutableIntStateOf(0) }
+    var restoreNote by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(restoreTry) {
         if (code != null) return@LaunchedEffect
-        val res = runCatching { Api(session).pairRestore() }.getOrNull()
-        if (res?.optString("status") == "paired") {
-            session.savePaired(res.getString("token"), res.optString("agent"), res.optString("telecallerId"))
-            SyncScheduler.schedulePeriodic(ctx)
-            SyncRunner.run(ctx)
+        restoring = true
+        var answer: String? = null
+        for (attempt in 0 until 4) {
+            val res = runCatching { Api(session).pairRestore() }.getOrNull()
+            answer = res?.optString("status")
+            if (answer == "paired") {
+                session.savePaired(res!!.getString("token"), res.optString("agent"), res.optString("telecallerId"))
+                SyncScheduler.schedulePeriodic(ctx)
+                SyncRunner.run(ctx)
+                return@LaunchedEffect
+            }
+            if (answer == "none") break // the server answered: this phone is not paired
+            delay(3_000L * (attempt + 1))
         }
+        restoreNote = if (answer == "none") null else "Could not reach Founder OS to check this phone. Connect to the internet and tap Check again."
         restoring = false
     }
 
@@ -101,6 +114,8 @@ fun PairingCard() {
                 },
                 modifier = Modifier.fillMaxWidth().height(52.dp),
             ) { Icon(Icons.Filled.Link, null); Spacer(Modifier.width(8.dp)); Text(if (busy) "Connecting…" else "Connect") }
+            restoreNote?.let { InfoCard(it, color = Color(0xFFEA580C)) }
+            TextButton(onClick = { restoreNote = null; restoreTry++ }) { Text("Was this phone connected before? Check again") }
         } else {
             Text("Tell your sales head this code:", style = MaterialTheme.typography.bodyLarge)
             Text(code!!.chunked(3).joinToString(" "), fontSize = 44.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold,

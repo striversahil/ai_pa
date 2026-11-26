@@ -33,7 +33,7 @@ function Check({ checked, onChange, label }: { checked: boolean; onChange: (v: b
 }
 
 export function DialerSettings({ config, agents, onSave }: { config: DialerConfig; agents: AgentOption[]; onSave: (cfg: DialerConfig) => Promise<void> }) {
-  const withDefaults = (c: DialerConfig): DialerConfig => ({ ...c, scheduledBreaks: c.scheduledBreaks ?? [], trackPhoneCalls: c.trackPhoneCalls ?? true });
+  const withDefaults = (c: DialerConfig): DialerConfig => ({ ...c, scheduledBreaks: c.scheduledBreaks ?? [], trackPhoneCalls: c.trackPhoneCalls ?? true, connectedMinSec: c.connectedMinSec ?? 15 });
   const [draft, setDraft] = useState<DialerConfig>(withDefaults(config));
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -77,6 +77,7 @@ export function DialerSettings({ config, agents, onSave }: { config: DialerConfi
         </label>
         <NumberField id="dl-gap" label="Retry busy / no answer after" value={draft.retryGapMin} min={5} max={1440} suffix="min" onChange={(v) => set("retryGapMin", v)} />
         <NumberField id="dl-max" label="Stop re-queuing after" value={draft.retryMax} min={1} max={10} suffix="not-connected tries" onChange={(v) => set("retryMax", v)} />
+        <NumberField id="dl-talk" label="Never re-dial calls with talk time ≥" value={draft.connectedMinSec} min={0} max={600} suffix="sec (0 = off)" onChange={(v) => set("connectedMinSec", v)} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">

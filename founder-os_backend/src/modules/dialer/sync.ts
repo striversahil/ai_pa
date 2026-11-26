@@ -52,7 +52,6 @@ async function syncCalls(db: Db, list: any[], device: { deviceId: string; teleca
       out.acceptedCalls.push(id); // acknowledged, never stored
       continue;
     }
-    const before: any = await db.prepare('SELECT disposition FROM DeviceCall WHERE idempotencyKey = ?').bind(call.idempotencyKey).first();
     await insertCalls(db, [call], device.telecallerId);
     if (fromPhone) await db.prepare(`UPDATE DeviceCall SET origin='phone' WHERE idempotencyKey=?`).bind(call.idempotencyKey).run();
     const disposition = toKey(raw?.disposition);
@@ -68,11 +67,13 @@ async function syncCalls(db: Db, list: any[], device: { deviceId: string; teleca
         String(raw?.customerId ?? '').slice(0, 64), raw?.manual ? 1 : 0, raw?.autoSaved ? 1 : 0,
         new Date().toISOString(), call.idempotencyKey,
       ).run();
-      // Settle the queue row once, on the first disposition this call receives.
+      // Settle the queue row once per call (settleQueueRow is idempotent by time).
       // NOT_DISPOSED (timer ran out with talk time) is not a retry: the row closes
-      // and the report flags the call for review.
-      if (queueId && !before?.disposition) {
-        await settleQueueRow(db, cfg, device.telecallerId, queueId, disposition, callbackAt);
+      // and the report flags the call for review; a retry disposition on a call
+      // with real talk time closes too (cfg.connectedMinSec).
+      if (queueId) {
+        await settleQueueRow(db, cfg, device.telecallerId, queueId, disposition, callbackAt,
+          { attemptAt: call.attemptAt, durationSec: call.durationSec });
       }
     }
     out.acceptedCalls.push(id);

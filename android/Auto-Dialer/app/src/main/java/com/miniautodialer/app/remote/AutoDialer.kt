@@ -312,6 +312,11 @@ object AutoDialer {
     suspend fun save(ctx: Context, call: CallInfo, key: String?, remarks: String, callbackAt: Long?, auto: Boolean, continueAfter: Boolean = true) {
         if (_state.value !is State.Disposing) return
         val cfg = session.config
+        // The call-log row can land after the 15 s search: read it once more so a
+        // connected call is never saved with 0 s (= "not answered", re-dialed).
+        @Suppress("NAME_SHADOWING")
+        val call = if (call.log != null) call else CallManager.pending.value
+            ?.let { CallManager.findInCallLog(ctx, it) }?.let { call.copy(log = it, searching = false) } ?: call
         val dur = call.log?.durationSec ?: 0
         val finalKey = key ?: if (dur <= 0) DialerConfig.NOT_ANSWERED else DialerConfig.NOT_DISPOSED
         val d = cfg.disposition(finalKey)

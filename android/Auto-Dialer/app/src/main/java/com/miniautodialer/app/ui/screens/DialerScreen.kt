@@ -170,13 +170,21 @@ private fun DispositionPanel(
 ) {
     val cfg = MiniDialerApp.session.config
     Text("${s.call.name} · ${s.call.phone}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+    val talk = s.call.log?.durationSec ?: 0
+    val connected = cfg.connectedMinSec > 0 && talk >= cfg.connectedMinSec
     Text(
         when {
-            s.call.log != null -> "Talk time ${Fmt.duration(s.call.log.durationSec)}"
+            connected -> "Connected · talk time ${Fmt.duration(talk)}"
+            s.call.log != null -> "Talk time ${Fmt.duration(talk)}"
             s.call.searching -> "Reading talk time from the call log…"
-            else -> "No talk time found (not answered)"
-        }, color = Color.Gray
+            else -> "No talk time found yet"
+        }, color = if (connected) CallGreen else Color.Gray, fontWeight = if (connected) FontWeight.Bold else null
     )
+    // A retry disposition on a call that clearly connected: say what will happen (it is not re-dialed).
+    if (connected && cfg.disposition(picked)?.retry == true) {
+        Text("This call connected (${Fmt.duration(talk)} talk time), so it will not be dialed again. Pick what the customer said if you spoke to them.",
+            color = Color(0xFFEA580C), style = MaterialTheme.typography.bodySmall)
+    }
     LinearProgressIndicator(progress = { s.secsLeft / cfg.dispositionSec.toFloat().coerceAtLeast(1f) }, modifier = Modifier.fillMaxWidth())
     Text(when {
             s.heldByCall -> "Timer held: the phone is on a call. The next dial waits until it ends."

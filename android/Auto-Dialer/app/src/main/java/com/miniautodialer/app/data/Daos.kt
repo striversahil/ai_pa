@@ -16,7 +16,7 @@ FROM customers c
 WHERE (:q = '' OR c.name LIKE '%' || :q || '%' OR c.phone LIKE '%' || :q || '%'
        OR c.company LIKE '%' || :q || '%' OR c.location LIKE '%' || :q || '%')
   AND (:cat = '' OR c.category = :cat)
-ORDER BY c.name COLLATE NOCASE
+ORDER BY lastCallAt IS NULL, lastCallAt DESC, c.name COLLATE NOCASE
 """
 
 @Dao

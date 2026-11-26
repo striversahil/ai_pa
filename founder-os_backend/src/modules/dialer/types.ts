@@ -49,6 +49,11 @@ export interface DialerConfig {
    */
   retryGapMin: number;
   retryMax: number;
+  /**
+   * A call with at least this much talk time connected: it is never re-dialed,
+   * even when the agent picks a retry disposition (Not Answered/Busy/…). 0 = off.
+   */
+  connectedMinSec: number;
   dispositions: Disposition[];
   breakReasons: BreakReason[];
   scheduledBreaks: ScheduledBreak[];
@@ -93,6 +98,7 @@ export const DEFAULT_CONFIG: DialerConfig = {
   shiftEnd: '21:00',
   retryGapMin: 120,
   retryMax: 3,
+  connectedMinSec: 15,
   dispositions: DEFAULT_DISPOSITIONS,
   breakReasons: DEFAULT_BREAK_REASONS,
   scheduledBreaks: [],

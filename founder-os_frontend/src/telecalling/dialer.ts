@@ -35,6 +35,8 @@ export interface DialerConfig {
   shiftEnd: string;
   retryGapMin: number;
   retryMax: number;
+  /** mirror: backend modules/dialer/types.ts — talk time ≥ this closes the lead even on a retry disposition. */
+  connectedMinSec: number;
   dispositions: Disposition[];
   breakReasons: BreakReason[];
   scheduledBreaks: ScheduledBreak[];

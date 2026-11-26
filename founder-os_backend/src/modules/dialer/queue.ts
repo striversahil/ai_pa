@@ -83,16 +83,24 @@ export async function listDue(db: Db, telecallerId: string, limit = 50): Promise
   return { items, waiting: Number(later?.n ?? 0) };
 }
 
-/** Close or re-queue a queue row after its disposition. No-op for foreign rows. */
+/**
+ * Close or re-queue a queue row after its disposition. No-op for foreign rows.
+ * Idempotent by time: a row already touched after this call was placed was
+ * settled by it (a resend), so it is left alone. That also heals a sync that
+ * died between saving the disposition and settling — the old "first disposition
+ * only" rule left such rows pending forever and the lead was dialed again.
+ */
 export async function settleQueueRow(
   db: Db, cfg: DialerConfig, telecallerId: string, queueId: string, disposition: string, callbackAt: string | null,
+  call: { attemptAt: string; durationSec: number },
 ): Promise<void> {
   const row: any = await db.prepare(
-    `SELECT id, attempts, status FROM DialerQueue WHERE id = ? AND telecallerId = ? LIMIT 1`,
+    `SELECT id, attempts, status, updatedAt FROM DialerQueue WHERE id = ? AND telecallerId = ? LIMIT 1`,
   ).bind(queueId, telecallerId).first();
   if (!row || row.status !== 'pending') return;
+  if (String(row.updatedAt ?? '') > call.attemptAt) return;
   const attempts = Number(row.attempts ?? 0) + 1;
-  const next = queueOutcome(cfg, disposition, attempts, callbackAt);
+  const next = queueOutcome(cfg, disposition, attempts, callbackAt, Date.now(), call.durationSec);
   const now = new Date().toISOString();
   await db.prepare(
     `UPDATE DialerQueue SET status=?, source=COALESCE(NULLIF(?, ''), source), dueAt=COALESCE(?, dueAt),
