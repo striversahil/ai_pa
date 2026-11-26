@@ -769,7 +769,12 @@ Gateway design (one place, one chain, direct egress):
   Setting list + env pool holds — OpenRouter, Requestly, DeepSeek, custom free
   tiers. Each leg serves its own configured model (Setting `model`, else the
   provider default). Adding a vendor = one Settings card, no code.
-- **Surface**: `POST /api/ai/complete` (`{messages, temperature, maxTokens,
+- **Output is uncapped (founder rule 2026-11-27)**: no gateway request ever
+  sends `max_tokens`, so every call (runners, copilot, enquiry AI, playground)
+  runs to the model's own maximum. `maxTokens` is still accepted on
+  `CompletionRequest`/`POST /api/ai/complete` for wire compatibility but is
+  ignored.
+- **Surface**: `POST /api/ai/complete` (`{messages, temperature,
   model?, provider?, json?, sessionKey?, timeoutMs?}` → `{content, provider,
   model, usage}`; viewer session OR `SHARED_SECRET`) is the single endpoint;
   `gateway.complete()/completeJson()` is the same pool in-process.
@@ -807,9 +812,9 @@ measures itself instead of only reacting per request:
   is the drill-down.
 - **Playground**: `POST /api/ai/test` and `POST /api/ai/test/stream` (root only)
   pin an exact key and measure that key — streamed SSE events `meta|delta|done|error`
-  carry TTFT/latency/TPS/tokens. **Max output defaults to the model's own maximum**
-  (no `max_tokens` field is sent; an explicit value is honoured up to 200k) and
-  long answers get a 120 s default / 5 min cap stream. Probes are stored `source='playground'` and are
+  carry TTFT/latency/TPS/tokens. Output is the model's own maximum (the gateway
+  never sends `max_tokens` anywhere), and long answers get a 120 s default /
+  5 min cap stream. Probes are stored `source='playground'` and are
   excluded from health, so a slow manual test can never disable a key. The UI
   is Settings → AI gateway (`components/settings/ai-gateway/`), with the live
   pool, provider/key switches, health badges, threshold editor and the chat

@@ -74,6 +74,7 @@ export interface ToolCall {
 export interface CompletionRequest {
   messages: ChatMessage[];
   temperature?: number;
+  /** Ignored: every gateway call runs to the model's own maximum output. */
   maxTokens?: number;
   provider?: string;
   keyId?: string;

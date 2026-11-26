@@ -20,7 +20,6 @@ export function PlaygroundPanel({ providers }: { providers: AiProviderInfo[] }) 
   const [selectedId, setSelectedId] = useState("");
   const [prompt, setPrompt] = useState("Reply with exactly: hello from the gateway.");
   const [system, setSystem] = useState("");
-  const [maxTokens, setMaxTokens] = useState(""); // "" → no max_tokens (model max)
   const [output, setOutput] = useState("");
   const [metrics, setMetrics] = useState<ProbeMetrics | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -50,15 +49,6 @@ export function PlaygroundPanel({ providers }: { providers: AiProviderInfo[] }) 
   const liveTps = running && firstTokenMs != null && elapsed > firstTokenMs
     ? (output.length / 4) / ((elapsed - firstTokenMs) / 1000)
     : null;
-  // Blank means "the model's own maximum": the field is omitted entirely so the
-  // provider decides. An explicit value is capped at a frontier-sized ceiling.
-  const maxTokensValue = (() => {
-    const raw = maxTokens.trim();
-    if (!raw) return undefined;
-    const n = Math.round(Number(raw));
-    return Number.isFinite(n) && n > 0 ? Math.min(200_000, n) : undefined;
-  })();
-
   const run = async () => {
     if (!selected) return;
     const ctrl = new AbortController();
@@ -71,7 +61,7 @@ export function PlaygroundPanel({ providers }: { providers: AiProviderInfo[] }) 
       await streamProbe(
         {
           provider: selected.provider.id, keyId: selected.key.id,
-          prompt: prompt.trim(), system: system.trim() || undefined, maxTokens: maxTokensValue,
+          prompt: prompt.trim(), system: system.trim() || undefined,
         },
         {
           onDelta: (text) => {
@@ -95,7 +85,7 @@ export function PlaygroundPanel({ providers }: { providers: AiProviderInfo[] }) 
     <div className="rounded-lg border border-[var(--border-card)] p-3 space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         <p className="text-xs font-extrabold text-[var(--text-primary)] flex-1">Test a key (live)</p>
-        <span className="text-[10px] text-[var(--text-tertiary)]">pinned key · streamed · not saved</span>
+        <span className="text-[10px] text-[var(--text-tertiary)]">pinned key · streamed · model max output · not saved</span>
       </div>
 
       {options.length === 0 ? (
@@ -107,13 +97,6 @@ export function PlaygroundPanel({ providers }: { providers: AiProviderInfo[] }) 
               className={`${INPUT} flex-1 min-w-[14rem]`}>
               {options.map((o) => <option key={o.key.id} value={o.key.id}>{o.label}</option>)}
             </select>
-            <label className="flex items-center gap-1 text-[10px] text-[var(--text-tertiary)]"
-              title="Leave blank for the model's own maximum output (no max_tokens is sent).">
-              max output
-              <input type="number" min={1} max={200000} value={maxTokens} placeholder="model max" disabled={running}
-                onChange={(e) => setMaxTokens(e.target.value)}
-                className={`${INPUT} w-24`} />
-            </label>
             {running ? (
               <button type="button" onClick={() => abortRef.current?.abort()}
                 className="px-3 py-2 bg-red-500/10 text-red-500 font-bold text-[11px] rounded-lg cursor-pointer border-0">

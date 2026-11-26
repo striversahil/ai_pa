@@ -361,9 +361,10 @@ export class AiGateway {
     const wantsVision = req.messages.some((m) => Array.isArray(m.content));
     const model = req.model || (wantsVision ? this.visionModelOverride || provider.visionModel || provider.defaultModel : provider.defaultModel);
     const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: `Bearer ${key.key}`, 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' };
+    // Founder rule (2026-11-27): every call runs to the model's own maximum
+    // output — max_tokens is never sent; req.maxTokens is intentionally ignored.
     const body: Record<string, unknown> = {
       model, messages: req.messages, temperature: req.temperature ?? 0.2,
-      ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
       ...(Array.isArray(req.tools) && req.tools.length > 0 ? { tools: req.tools } : {}),
       ...(req.toolChoice ? { tool_choice: req.toolChoice } : {}),
       ...provider.extraParams, ...(req.extraParams ?? {}), stream: true,
@@ -551,11 +552,12 @@ export class AiGateway {
       // Browser-like UA: some providers/WAFs block bare Workers/undici UAs.
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     };
+    // Founder rule (2026-11-27): every call runs to the model's own maximum
+    // output — max_tokens is never sent; req.maxTokens is intentionally ignored.
     const body: Record<string, unknown> = {
       model,
       messages: req.messages,
       temperature: req.temperature ?? 0.2,
-      ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
       ...(Array.isArray(req.tools) && req.tools.length > 0 ? { tools: req.tools } : {}),
       ...(req.toolChoice ? { tool_choice: req.toolChoice } : {}),
       ...provider.extraParams,

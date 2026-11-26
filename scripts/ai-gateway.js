@@ -570,7 +570,8 @@ class AiGateway {
       model,
       messages: req.messages,
       temperature: req.temperature === undefined ? 0.2 : req.temperature,
-      ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
+      // Founder rule (2026-11-27): every call runs to the model's own maximum
+      // output — max_tokens is never sent; req.maxTokens is intentionally ignored.
       ...(Array.isArray(req.tools) && req.tools.length > 0 ? { tools: req.tools } : {}),
       ...(req.toolChoice ? { tool_choice: req.toolChoice } : {}),
       ...(provider.extraParams || {}),

@@ -15,10 +15,8 @@ import { rootOnly, gatewayForRequest } from './ai-shared';
 import { classifyGatewayError } from '../../shared/ai-gateway-parts/metrics';
 
 const MAX_PROMPT = 8000;
-// No max_tokens is sent by default: the provider then lets the model generate
-// up to its OWN maximum output. An explicit value is honoured up to a generous
-// ceiling (current frontier models sit well under this).
-const MAX_TOKENS_CAP = 200_000;
+// Every gateway call (including this probe) runs to the model's own maximum
+// output — no max_tokens is ever sent, so no output cap is applied here.
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_TIMEOUT_MS = 300_000;
 
@@ -26,7 +24,6 @@ interface ProbeSpec {
   provider: string;
   keyId: string;
   messages: Array<{ role: 'system' | 'user'; content: string }>;
-  maxTokens?: number;
   temperature: number;
   timeoutMs: number;
 }
@@ -40,17 +37,13 @@ function parseProbe(body: any): ProbeSpec | { error: string } {
   if (!keyId) return { error: 'keyId required' };
   if (!prompt) return { error: 'prompt required' };
   if (prompt.length > MAX_PROMPT) return { error: `prompt too long (max ${MAX_PROMPT} chars)` };
-  const rawTokens = Number(body?.maxTokens);
-  const maxTokens = Number.isFinite(rawTokens) && rawTokens > 0
-    ? Math.min(MAX_TOKENS_CAP, Math.round(rawTokens))
-    : undefined; // omit → the model's own maximum output
   const temperature = typeof body?.temperature === 'number' ? Math.max(0, Math.min(2, body.temperature)) : 0.2;
   // Long generations need room: a max-output answer can stream for minutes.
   const timeoutMs = Math.max(1000, Math.min(MAX_TIMEOUT_MS, Number(body?.timeoutMs) || DEFAULT_TIMEOUT_MS));
   const messages: Array<{ role: 'system' | 'user'; content: string }> = [];
   if (system) messages.push({ role: 'system', content: system.slice(0, 2000) });
   messages.push({ role: 'user', content: prompt });
-  return { provider, keyId, messages, maxTokens, temperature, timeoutMs };
+  return { provider, keyId, messages, temperature, timeoutMs };
 }
 
 /** Ensure the pinned key exists AND belongs to the named provider. */
@@ -80,7 +73,7 @@ export function registerAiPlaygroundRoutes(app: Hono<{ Bindings: Bindings }>): v
       const t0 = Date.now();
       const out = await gw.complete({
         messages: spec.messages, provider: spec.provider, keyId: spec.keyId,
-        maxTokens: spec.maxTokens, temperature: spec.temperature,
+        temperature: spec.temperature,
         timeoutMs: spec.timeoutMs, source: 'playground',
       } as any);
       return c.json({
@@ -121,7 +114,7 @@ export function registerAiPlaygroundRoutes(app: Hono<{ Bindings: Bindings }>): v
         try {
           for await (const chunk of gw.stream({
             messages, provider: spec.provider, keyId: spec.keyId,
-            maxTokens: spec.maxTokens, temperature: spec.temperature,
+            temperature: spec.temperature,
             timeoutMs: spec.timeoutMs, source: 'playground',
             signal: c.req.raw.signal,
           } as any)) {

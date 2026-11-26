@@ -32,7 +32,7 @@ export async function getKeyCalls(limit = 100): Promise<{ ok: boolean; rows: Key
 }
 
 export async function probeKey(payload: {
-  provider: string; keyId: string; prompt: string; system?: string; maxTokens?: number;
+  provider: string; keyId: string; prompt: string; system?: string;
 }): Promise<ProbeResult & { provider: string; model: string }> {
   return api.post("/api/ai/test", payload);
 }
@@ -47,7 +47,7 @@ export interface StreamHandlers {
 /** POST /api/ai/test/stream — hand-parsed SSE (the Pages proxy forwards the
  *  Worker stream unchanged; EventSource is GET-only so fetch is required). */
 export async function streamProbe(
-  payload: { provider: string; keyId: string; prompt: string; system?: string; maxTokens?: number },
+  payload: { provider: string; keyId: string; prompt: string; system?: string },
   handlers: StreamHandlers,
   signal?: AbortSignal,
 ): Promise<void> {
