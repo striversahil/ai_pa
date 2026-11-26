@@ -54,6 +54,14 @@ export interface DialerConfig {
    * even when the agent picks a retry disposition (Not Answered/Busy/…). 0 = off.
    */
   connectedMinSec: number;
+  /**
+   * "Lead time": after a call the agent can pause auto-dialing for this many
+   * minutes (once per call) to work the lead; the disposition window resumes
+   * when it ends. Logged as a LEAD_TIME break. 0 = the button is hidden.
+   */
+  leadTimeMin: number;
+  /** Follow-ups / callbacks can be set at most this many days ahead. */
+  followUpMaxDays: number;
   dispositions: Disposition[];
   breakReasons: BreakReason[];
   scheduledBreaks: ScheduledBreak[];
@@ -99,6 +107,8 @@ export const DEFAULT_CONFIG: DialerConfig = {
   retryGapMin: 120,
   retryMax: 3,
   connectedMinSec: 15,
+  leadTimeMin: 10,
+  followUpMaxDays: 30,
   dispositions: DEFAULT_DISPOSITIONS,
   breakReasons: DEFAULT_BREAK_REASONS,
   scheduledBreaks: [],
@@ -110,7 +120,24 @@ export const DEFAULT_CONFIG: DialerConfig = {
 export const CONFIG_KEY = 'dialer:config';
 
 /** Live agent states the phone reports (DeviceRegistration.liveState). */
-export const LIVE_STATES = new Set(['idle', 'dialing', 'on_call', 'disposition', 'break', 'manual', 'paused', 'off_shift']);
+export const LIVE_STATES = new Set(['idle', 'dialing', 'on_call', 'disposition', 'lead_time', 'break', 'manual', 'paused', 'off_shift']);
+
+/** Break reason the phone logs for an agent's "Lead time" pause (not a Controller break reason). */
+export const LEAD_TIME_REASON = 'LEAD_TIME';
+
+/** One push batch as the Controller sees it in the dialer (backend: queue.ts listBatches). */
+export interface DialerBatchView {
+  batchId: string;
+  createdAt: string;
+  region: string;
+  state: string;
+  requestedByName: string;
+  agents: number;
+  total: number;
+  waiting: number;
+  worked: number;
+  removed: number;
+}
 
 export interface QueueItemView {
   id: string;

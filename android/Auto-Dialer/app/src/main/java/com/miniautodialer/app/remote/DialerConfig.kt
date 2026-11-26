@@ -23,6 +23,10 @@ data class DialerConfig(
     val retryMax: Int = 3,
     /** Talk time ≥ this = connected: the server never re-dials it, whatever the disposition. 0 = off. */
     val connectedMinSec: Int = 15,
+    /** Minutes the agent may pause auto-dialing after a call ("Lead time", once per call). 0 = off. */
+    val leadTimeMin: Int = 10,
+    /** Follow-ups / callbacks at most this many days ahead (date picker limit). */
+    val followUpMaxDays: Int = 30,
     val dispositions: List<Disposition> = DEFAULT_DISPOSITIONS,
     val breakReasons: List<BreakReason> = DEFAULT_BREAKS,
     val scheduledBreaks: List<ScheduledBreak> = emptyList(),
@@ -46,6 +50,8 @@ data class DialerConfig(
         val IST: ZoneId = ZoneId.of("Asia/Kolkata")
         const val NOT_DISPOSED = "NOT_DISPOSED"
         const val NOT_ANSWERED = "NOT_ANSWERED"
+        /** Break reason logged for an agent's Lead time pause (backend LEAD_TIME_REASON). */
+        const val LEAD_TIME = "LEAD_TIME"
 
         val DEFAULT_DISPOSITIONS = listOf(
             Disposition("CONNECTED", "Connected", true, false, false),
@@ -81,6 +87,8 @@ data class DialerConfig(
                     retryGapMin = o.optInt("retryGapMin", 120),
                     retryMax = o.optInt("retryMax", 3),
                     connectedMinSec = o.optInt("connectedMinSec", 15),
+                    leadTimeMin = o.optInt("leadTimeMin", 10),
+                    followUpMaxDays = o.optInt("followUpMaxDays", 30).coerceAtLeast(1),
                     dispositions = o.optJSONArray("dispositions").map {
                         Disposition(it.getString("key"), it.getString("label"), it.optBoolean("connected"), it.optBoolean("retry"), it.optBoolean("callback"))
                     }.ifEmpty { DEFAULT_DISPOSITIONS },

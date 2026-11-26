@@ -3,7 +3,7 @@
 // One row per paired phone: live state, sync backlog, queue and today's totals.
 import { Badge } from "@/components/ui";
 import { relActive } from "@/lib/format";
-import { LIVE_STATE_LABEL, fmtDuration, stateTone, type BoardRow } from "@/telecalling/dialer";
+import { LIVE_STATE_LABEL, breakLabel, fmtDuration, stateTone, type BoardRow } from "@/telecalling/dialer";
 
 const TONE = { good: "success", watch: "warning", bad: "danger" } as const;
 
@@ -47,7 +47,7 @@ export function LiveBoard({
                     {LIVE_STATE_LABEL[r.liveState] ?? r.liveState}
                   </Badge>
                   <span className="block text-zinc-500">
-                    {brk ? `${brk.reason.toLowerCase()} · ${fmtDuration(brk.durationSec)}${brk.overrunSec > 0 ? ` (+${fmtDuration(brk.overrunSec)} over)` : ""}`
+                    {brk ? `${breakLabel(null, brk.reason).toLowerCase()} ·${fmtDuration(brk.durationSec)}${brk.overrunSec > 0 ? ` (+${fmtDuration(brk.overrunSec)} over)` : ""}`
                       : r.liveState === "offline" ? `seen ${relActive(r.lastSeenAt)}` : r.liveDetail}
                   </span>
                 </td>

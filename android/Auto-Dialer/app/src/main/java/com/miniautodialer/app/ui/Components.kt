@@ -22,6 +22,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.miniautodialer.app.MiniDialerApp
 import com.miniautodialer.app.data.Customer
 import com.miniautodialer.app.data.Outcome
 import com.miniautodialer.app.util.Fmt
@@ -191,14 +192,27 @@ fun SearchField(value: String, onChange: (String) -> Unit, placeholder: String, 
     )
 }
 
-/** Date + time picker with quick presets. */
+/** Last day a follow-up may be set on: today + the sales head's `followUpMaxDays`. */
+fun followUpLastDay(): java.time.LocalDate =
+    java.time.LocalDate.now().plusDays(MiniDialerApp.session.config.followUpMaxDays.toLong())
+
+/** End of [followUpLastDay] in local millis (presets and picks never go past it). */
+fun followUpLimitMillis(): Long = Fmt.toMillis(followUpLastDay().atTime(23, 59))
+
+/** Date + time picker with quick presets. Dates run from today to the sales head's follow-up limit. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DateTimePickerDialog(initial: Long, onDismiss: () -> Unit, onPicked: (Long) -> Unit) {
     var step by remember { mutableIntStateOf(0) }
-    val init = Fmt.ldt(initial)
+    val init = Fmt.ldt(initial.coerceIn(System.currentTimeMillis(), followUpLimitMillis()))
+    val firstUtc = java.time.LocalDate.now().atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli()
+    val lastUtc = followUpLastDay().atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli()
     val dateState = rememberDatePickerState(
-        initialSelectedDateMillis = init.toLocalDate().atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli()
+        initialSelectedDateMillis = init.toLocalDate().atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli(),
+        selectableDates = object : SelectableDates {
+            override fun isSelectableDate(utcTimeMillis: Long) = utcTimeMillis in firstUtc..lastUtc
+            override fun isSelectableYear(year: Int) = year in java.time.LocalDate.now().year..followUpLastDay().year
+        },
     )
     val timeState = rememberTimePickerState(init.hour, init.minute, false)
     if (step == 0) {
@@ -215,7 +229,7 @@ fun DateTimePickerDialog(initial: Long, onDismiss: () -> Unit, onPicked: (Long) 
             confirmButton = {
                 TextButton(onClick = {
                     val d = Instant.ofEpochMilli(dateState.selectedDateMillis ?: initial).atZone(ZoneOffset.UTC).toLocalDate()
-                    onPicked(Fmt.toMillis(LocalDateTime.of(d, LocalTime.of(timeState.hour, timeState.minute))))
+                    onPicked(Fmt.toMillis(LocalDateTime.of(d, LocalTime.of(timeState.hour, timeState.minute))).coerceAtMost(followUpLimitMillis()))
                     onDismiss()
                 }) { Text("OK") }
             },
@@ -224,8 +238,16 @@ fun DateTimePickerDialog(initial: Long, onDismiss: () -> Unit, onPicked: (Long) 
     }
 }
 
-/** Quick callback presets. */
+/**
+ * Quick callback presets, minus any past the follow-up limit. The first three
+ * are always inside it (the limit is at least 1 day), so `[2]` stays valid.
+ */
 fun callbackPresets(): List<Pair<String, Long>> {
+    val limit = followUpLimitMillis()
+    return allPresets().filter { it.second <= limit }
+}
+
+private fun allPresets(): List<Pair<String, Long>> {
     val now = LocalDateTime.now()
     val tomorrow10 = now.toLocalDate().plusDays(1).atTime(10, 0)
     return listOf(

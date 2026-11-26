@@ -16,8 +16,11 @@ import { DialerSettings } from "./DialerSettings";
 import { AppDownload } from "./AppDownload";
 import { Recordings } from "./Recordings";
 import { Unreachable } from "./Unreachable";
+import { DialerBatches } from "./DialerBatches";
 
-type Pending = { kind: "reset" | "unpair"; id: string; name: string } | null;
+type Pending = { kind: "reset" | "unpair" | "batch"; id: string; name: string } | null;
+
+const CONFIRM_TITLE = { reset: "Reset", unpair: "Unpair", batch: "Remove batch" } as const;
 
 export default function AutoDialerSection({ rosterRows }: { rosterRows: RosterRow[] }) {
   const [day, setDay] = useState(istToday());
@@ -33,6 +36,7 @@ export default function AutoDialerSection({ rosterRows }: { rosterRows: RosterRo
   const report = useLiveQuery(() => dialerApi.report(day), { ...opts, deps: [day] });
   const recordings = useLiveQuery(() => dialerApi.recordings(day), { ...opts, deps: [day] });
   const unreachable = useLiveQuery(() => dialerApi.unreachable(7), opts);
+  const batches = useLiveQuery(() => dialerApi.batches(30), opts);
   const source = useLiveQuery(dialerApi.callSource, { events: ["telecalling"] });
   // New builds come from GitHub, not a live event; the server caches 5 min.
   const app = useLiveQuery(dialerApi.app, { ...opts, pollMs: 300_000 });
@@ -52,8 +56,9 @@ export default function AutoDialerSection({ rosterRows }: { rosterRows: RosterRo
   const doConfirm = async () => {
     if (!confirm) return;
     setBusy(true);
-    await run(() => (confirm.kind === "reset" ? dialerApi.reset(confirm.id, wipeToday) : dialerApi.revokeDevice(confirm.id)));
-    report.refresh(); recordings.refresh();
+    await run(() => (confirm.kind === "reset" ? dialerApi.reset(confirm.id, wipeToday)
+      : confirm.kind === "batch" ? dialerApi.removeBatch(confirm.id) : dialerApi.revokeDevice(confirm.id)));
+    report.refresh(); recordings.refresh(); batches.refresh();
     setBusy(false);
     setConfirm(null);
     setWipeToday(false);
@@ -121,6 +126,14 @@ export default function AutoDialerSection({ rosterRows }: { rosterRows: RosterRo
       </div>
 
       <div className="space-y-2">
+        <h4 className="text-xs font-bold uppercase tracking-wide text-zinc-500">Pushed batches · last 30 days</h4>
+        {batches.data ? (
+          <DialerBatches batches={batches.data.batches}
+            onRemove={(b) => setConfirm({ kind: "batch", id: b.batchId, name: `${b.waiting} waiting lead(s) from ${[b.region, b.state].filter(Boolean).join(" · ") || "this batch"}` })} />
+        ) : <p className="text-[11px] text-zinc-500">Loading…</p>}
+      </div>
+
+      <div className="space-y-2">
         <h4 className="text-xs font-bold uppercase tracking-wide text-zinc-500">Not reachable · gave up after {config?.retryMax ?? "N"} tries · last 7 days</h4>
         {unreachable.data ? <Unreachable items={unreachable.data.items} config={config} /> : <p className="text-[11px] text-zinc-500">Loading…</p>}
       </div>
@@ -133,8 +146,8 @@ export default function AutoDialerSection({ rosterRows }: { rosterRows: RosterRo
       <ConfirmDialog
         open={!!confirm}
         busy={busy}
-        title={confirm?.kind === "reset" ? `Reset ${confirm?.name}?` : `Unpair ${confirm?.name}'s phone?`}
-        message={confirm?.kind === "reset" ? (
+        title={confirm?.kind === "reset" ? `Reset ${confirm?.name}?` : confirm?.kind === "batch" ? `Remove ${confirm?.name}?` : `Unpair ${confirm?.name}'s phone?`}
+        message={confirm?.kind === "batch" ? "Every waiting lead of this batch (new, retries and callbacks) leaves the agents' dialers. Phones drop them on their next sync, within a minute while the dialer is open. Calls already made stay in the report. Pushing the leads again queues them again." : confirm?.kind === "reset" ? (
           <div className="space-y-2">
             <p>Leads waiting in the queue are pulled back, any open break is ended, and the status goes back to idle.</p>
             <label className="flex items-start gap-2">
@@ -146,7 +159,7 @@ export default function AutoDialerSection({ rosterRows }: { rosterRows: RosterRo
             </label>
           </div>
         ) : "The phone stops syncing and must be paired again. Anything it has not synced yet stays on the phone until it is re-paired. An open break is ended."}
-        confirmLabel={confirm?.kind === "reset" ? (wipeToday ? "Reset and delete today" : "Reset") : "Unpair"}
+        confirmLabel={confirm?.kind === "reset" && wipeToday ? "Reset and delete today" : CONFIRM_TITLE[confirm?.kind ?? "reset"]}
         onCancel={() => { setConfirm(null); setWipeToday(false); }}
         onConfirm={() => void doConfirm()}
       />

@@ -33,7 +33,7 @@ function Check({ checked, onChange, label }: { checked: boolean; onChange: (v: b
 }
 
 export function DialerSettings({ config, agents, onSave }: { config: DialerConfig; agents: AgentOption[]; onSave: (cfg: DialerConfig) => Promise<void> }) {
-  const withDefaults = (c: DialerConfig): DialerConfig => ({ ...c, scheduledBreaks: c.scheduledBreaks ?? [], trackPhoneCalls: c.trackPhoneCalls ?? true, connectedMinSec: c.connectedMinSec ?? 15 });
+  const withDefaults = (c: DialerConfig): DialerConfig => ({ ...c, scheduledBreaks: c.scheduledBreaks ?? [], trackPhoneCalls: c.trackPhoneCalls ?? true, connectedMinSec: c.connectedMinSec ?? 15, leadTimeMin: c.leadTimeMin ?? 10, followUpMaxDays: c.followUpMaxDays ?? 30 });
   const [draft, setDraft] = useState<DialerConfig>(withDefaults(config));
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -78,7 +78,13 @@ export function DialerSettings({ config, agents, onSave }: { config: DialerConfi
         <NumberField id="dl-gap" label="Retry busy / no answer after" value={draft.retryGapMin} min={5} max={1440} suffix="min" onChange={(v) => set("retryGapMin", v)} />
         <NumberField id="dl-max" label="Stop re-queuing after" value={draft.retryMax} min={1} max={10} suffix="not-connected tries" onChange={(v) => set("retryMax", v)} />
         <NumberField id="dl-talk" label="Never re-dial calls with talk time ≥" value={draft.connectedMinSec} min={0} max={600} suffix="sec (0 = off)" onChange={(v) => set("connectedMinSec", v)} />
+        <NumberField id="dl-lead" label="Lead time after a call" value={draft.leadTimeMin} min={0} max={120} suffix="min (0 = off)" onChange={(v) => set("leadTimeMin", v)} />
+        <NumberField id="dl-followup" label="Follow-ups up to" value={draft.followUpMaxDays} min={1} max={365} suffix="days ahead" onChange={(v) => set("followUpMaxDays", v)} />
       </div>
+      <p className="text-[11px] text-zinc-500">
+        Lead time: after a call the agent can tap <b>Lead time</b> once to stop auto-dialing for this long; the disposition continues when it ends. It shows on the live board and in the report as a &quot;Lead time&quot; break.
+        Follow-ups: the phone&apos;s date picker stops at this many days ahead (app 1.2.5+), and later dates sent by older apps are cut to the limit.
+      </p>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="space-y-1.5">

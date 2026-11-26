@@ -11,6 +11,7 @@
 // Controller side (/api/dialer/*, sales head / root):
 //   GET  /api/dialer/pair-requests  ·  POST /api/dialer/pair-requests/:id/approve|reject
 //   GET|PUT /api/dialer/config  ·  GET /api/dialer/board  ·  GET /api/dialer/report?day=
+//   GET /api/dialer/batches?days=  ·  POST /api/dialer/batches/:id/remove (whole push batch off every agent's queue)
 //   POST /api/dialer/queue/recall  ·  GET /api/dialer/unreachable?days=  ·  POST /api/dialer/agents/:id/reset {wipeToday?}  ·  GET /api/dialer/app (latest APK version) · GET /api/dialer/app/download
 // Handlers stay thin: logic in modules/dialer/*.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -21,7 +22,7 @@ import { istDay } from '../../modules/device-calls/types';
 import { cacheGet, cacheSet } from '../../shared/cache';
 import { invalidateDeviceCallCaches } from '../../automations/telecalling/device-calls';
 import { createPairRequest, listPendingRequests, approveRequest, rejectRequest, claimRequest, restoreByDevice } from '../../modules/dialer/pairing';
-import { getConfig, saveConfig, listDue, recallQueue, listUnreachable } from '../../modules/dialer/queue';
+import { getConfig, saveConfig, listDue, recallQueue, listUnreachable, listBatches, removeBatch } from '../../modules/dialer/queue';
 import { scheduledFor } from '../../modules/dialer/pure';
 import { applySync } from '../../modules/dialer/sync';
 import { dayReport, liveBoard } from '../../modules/dialer/report';
@@ -187,6 +188,19 @@ function registerControllerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     if (!(await manager(c))) return c.json({ error: 'sales-head or root only' }, 403);
     const days = Math.max(1, Math.min(90, Number(c.req.query('days') ?? 7) || 7));
     return c.json({ items: await listUnreachable(c.env.DB, new Date(Date.now() - days * 86_400_000).toISOString()) });
+  });
+
+  app.get('/api/dialer/batches', async (c) => {
+    if (!(await manager(c))) return c.json({ error: 'sales-head or root only' }, 403);
+    const days = Math.max(1, Math.min(90, Number(c.req.query('days') ?? 30) || 30));
+    return c.json({ batches: await listBatches(c.env.DB, new Date(Date.now() - days * 86_400_000).toISOString()) });
+  });
+
+  app.post('/api/dialer/batches/:batchId/remove', async (c) => {
+    if (!(await manager(c))) return c.json({ error: 'sales-head or root only' }, 403);
+    const removed = await removeBatch(c.env.DB, c.req.param('batchId'));
+    notifyLive(c, { type: LiveEvent.DeviceCalls, action: 'batch-removed' });
+    return c.json({ ok: true, removed });
   });
 
   app.post('/api/dialer/queue/recall', async (c) => {

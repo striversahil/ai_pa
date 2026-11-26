@@ -7,7 +7,7 @@ import { insertCalls } from '../device-calls/store';
 import { istDay } from '../device-calls/types';
 import { getConfig, settleQueueRow } from './queue';
 import { LIVE_STATES } from './types';
-import { toKey } from './pure';
+import { capCallback, toKey } from './pure';
 
 type Db = D1Database;
 const MAX_OFFLINE_DAYS = 90;
@@ -56,7 +56,7 @@ async function syncCalls(db: Db, list: any[], device: { deviceId: string; teleca
     if (fromPhone) await db.prepare(`UPDATE DeviceCall SET origin='phone' WHERE idempotencyKey=?`).bind(call.idempotencyKey).run();
     const disposition = toKey(raw?.disposition);
     const queueId = String(raw?.queueId ?? '').slice(0, 64) || null;
-    const callbackAt = isoOrNull(raw?.callbackAt);
+    const callbackAt = capCallback(isoOrNull(raw?.callbackAt), call.attemptAt, cfg.followUpMaxDays);
     if (disposition) {
       await db.prepare(
         `UPDATE DeviceCall SET disposition=?, remarks=?, callbackAt=?, queueId=COALESCE(?, queueId),

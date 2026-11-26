@@ -37,6 +37,10 @@ export interface DialerConfig {
   retryMax: number;
   /** mirror: backend modules/dialer/types.ts — talk time ≥ this closes the lead even on a retry disposition. */
   connectedMinSec: number;
+  /** mirror: backend types.ts — minutes an agent may pause dialing after a call ("Lead time"), 0 = off. */
+  leadTimeMin: number;
+  /** mirror: backend types.ts — follow-ups/callbacks at most this many days ahead. */
+  followUpMaxDays: number;
   dispositions: Disposition[];
   breakReasons: BreakReason[];
   scheduledBreaks: ScheduledBreak[];
@@ -128,6 +132,29 @@ export interface UnreachableLead {
   updatedAt: string;
 }
 
+/** A dialer push batch (backend mirror: modules/dialer/types.ts DialerBatchView). */
+export interface DialerBatch {
+  batchId: string;
+  createdAt: string;
+  region: string;
+  state: string;
+  requestedByName: string;
+  agents: number;
+  total: number;
+  waiting: number;
+  worked: number;
+  removed: number;
+}
+
+/** Break key the phone logs for "Lead time" (backend LEAD_TIME_REASON). */
+export const LEAD_TIME_REASON = "LEAD_TIME";
+
+/** Label for a break reason key, including the phone's own Lead time pause. */
+export function breakLabel(config: DialerConfig | null, key: string): string {
+  if (key === LEAD_TIME_REASON) return "Lead time";
+  return config?.breakReasons.find((b) => b.key === key)?.label ?? key;
+}
+
 /** Latest phone app build (backend mirror: modules/dialer/app-release.ts AppRelease). */
 export interface AppRelease {
   available: boolean;
@@ -176,6 +203,9 @@ export const dialerApi = {
   callSource: () => call<{ mode: CallSource }>("/api/telecalling/manual-calls/mode"),
   setCallSource: (mode: CallSource) => call<{ mode: CallSource }>("/api/telecalling/manual-calls/mode", json("PUT", { mode })),
   app: () => call<AppRelease>("/api/dialer/app"),
+  batches: (days = 30) => call<{ batches: DialerBatch[] }>(`/api/dialer/batches?days=${days}`),
+  /** Whole batch off every agent's dialer (waiting leads only; calls made stay). */
+  removeBatch: (batchId: string) => call<{ removed: number }>(`/api/dialer/batches/${encodeURIComponent(batchId)}/remove`, json("POST", {})),
   unreachable: (days = 7) => call<{ items: UnreachableLead[] }>(`/api/dialer/unreachable?days=${days}`),
   /** Calls with audio in storage for one IST day (shared call-log route, managers see all agents). */
   recordings: (day: string) =>
@@ -192,6 +222,7 @@ export const LIVE_STATE_LABEL: Record<string, string> = {
   dialing: "Dialing",
   on_call: "On call",
   disposition: "In disposition",
+  lead_time: "Lead time",
   break: "On break",
   manual: "Manual dial",
   paused: "Paused",
@@ -201,7 +232,7 @@ export const LIVE_STATE_LABEL: Record<string, string> = {
 
 /** Severity for the state chip: calling = good, break/idle = watch, offline = bad. */
 export function stateTone(state: string): "good" | "watch" | "bad" {
-  if (state === "on_call" || state === "dialing" || state === "disposition" || state === "manual") return "good";
+  if (state === "on_call" || state === "dialing" || state === "disposition" || state === "lead_time" || state === "manual") return "good";
   if (state === "offline") return "bad";
   return "watch";
 }

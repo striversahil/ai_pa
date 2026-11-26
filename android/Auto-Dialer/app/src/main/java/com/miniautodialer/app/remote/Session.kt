@@ -112,6 +112,20 @@ class Session(private val ctx: Context) {
         get() = sp.getLong("break_start", 0L)
         set(v) = sp.edit().putLong("break_start", v).apply()
 
+    // ── open Lead time pause (survives a restart mid-pause) ─────────────────
+    var leadBreakId: String?
+        get() = sp.getString("lead_id", null)
+        set(v) = sp.edit().putString("lead_id", v).apply()
+    var leadStart: Long
+        get() = sp.getLong("lead_start", 0L)
+        set(v) = sp.edit().putLong("lead_start", v).apply()
+    var leadUntil: Long
+        get() = sp.getLong("lead_until", 0L)
+        set(v) = sp.edit().putLong("lead_until", v).apply()
+    var leadNote: String
+        get() = sp.getString("lead_note", "") ?: ""
+        set(v) = sp.edit().putString("lead_note", v).apply()
+
     companion object {
         /** Founder OS Worker (device routes are token-gated, not cookie-gated). */
         const val DEFAULT_URL = "https://founder-os-worker.connect-bui2.workers.dev"

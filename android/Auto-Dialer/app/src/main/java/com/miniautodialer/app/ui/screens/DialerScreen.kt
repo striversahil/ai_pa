@@ -26,6 +26,7 @@ import androidx.navigation.NavHostController
 import com.miniautodialer.app.MiniDialerApp
 import com.miniautodialer.app.remote.AutoDialer
 import com.miniautodialer.app.remote.AutoDialer.State
+import com.miniautodialer.app.remote.LeadTime
 import com.miniautodialer.app.remote.SyncRunner
 import com.miniautodialer.app.ui.*
 import com.miniautodialer.app.util.CallManager
@@ -191,8 +192,10 @@ private fun DispositionPanel(
         Text("This call connected (${Fmt.duration(talk)} talk time), so it will not be dialed again. Pick what the customer said if you spoke to them.",
             color = Color(0xFFEA580C), style = MaterialTheme.typography.bodySmall)
     }
+    LeadTimeControls(s)
     LinearProgressIndicator(progress = { s.secsLeft / cfg.dispositionSec.toFloat().coerceAtLeast(1f) }, modifier = Modifier.fillMaxWidth())
     Text(when {
+            s.leadUntil > 0 -> "Timer held for lead time. It restarts when lead time ends."
             s.heldByCall -> "Timer held: the phone is on a call. The next dial waits until it ends."
             s.paused -> "Timer paused while you pick the callback time"
             else -> "Saves automatically in ${s.secsLeft}s"
@@ -205,6 +208,24 @@ private fun DispositionPanel(
     OutlinedTextField(remarks, onRemarks, label = { Text("Remarks (optional)") }, modifier = Modifier.fillMaxWidth(), maxLines = 3)
     Button(onClick = onSave, enabled = picked != null, modifier = Modifier.fillMaxWidth().height(52.dp)) {
         Text("Save & next"); Icon(Icons.Filled.SkipNext, null)
+    }
+}
+
+/** "Lead time": stop auto-dialing for the sales head's set minutes to work this lead, once per call. */
+@Composable
+private fun LeadTimeControls(s: State.Disposing) {
+    val min = MiniDialerApp.session.config.leadTimeMin
+    if (s.leadUntil > 0) {
+        var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+        LaunchedEffect(s.leadUntil) { while (true) { now = System.currentTimeMillis(); delay(1_000) } }
+        val left = ((s.leadUntil - now) / 1000).toInt().coerceAtLeast(0)
+        InfoCard("Lead time: ${Fmt.duration(left)} left. Auto-dialing is stopped; pick the disposition when you are done — it continues by itself when lead time ends.",
+            Icons.Filled.Timer, Brand)
+        OutlinedButton(onClick = { LeadTime.end() }, modifier = Modifier.fillMaxWidth()) { Text("End lead time") }
+    } else if (min > 0 && !s.leadUsed) {
+        OutlinedButton(onClick = { LeadTime.start() }, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Filled.Timer, null); Spacer(Modifier.width(6.dp)); Text("Lead time ($min min) — stop dialing")
+        }
     }
 }
 

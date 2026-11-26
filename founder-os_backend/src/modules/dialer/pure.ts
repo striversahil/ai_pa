@@ -89,6 +89,8 @@ export function normalizeConfig(raw: any, actor = ''): DialerConfig {
     retryGapMin: clampInt(raw?.retryGapMin, 5, 24 * 60, DEFAULT_CONFIG.retryGapMin),
     retryMax: clampInt(raw?.retryMax, 0, 10, DEFAULT_CONFIG.retryMax),
     connectedMinSec: clampInt(raw?.connectedMinSec, 0, 600, DEFAULT_CONFIG.connectedMinSec),
+    leadTimeMin: clampInt(raw?.leadTimeMin, 0, 120, DEFAULT_CONFIG.leadTimeMin),
+    followUpMaxDays: clampInt(raw?.followUpMaxDays, 1, 365, DEFAULT_CONFIG.followUpMaxDays),
     dispositions: cleanDispositions(raw?.dispositions),
     breakReasons: cleanBreaks(raw?.breakReasons),
     scheduledBreaks: cleanScheduled(raw?.scheduledBreaks),
@@ -144,6 +146,25 @@ export function queueOutcome(
   }
   if (d?.retry) return { status: 'unreachable', source: '', dueAt: null };
   return { status: 'done', source: '', dueAt: null };
+}
+
+const IST_MS = 5.5 * 3600_000;
+const DAY_MS = 86_400_000;
+
+/**
+ * Callback/follow-up time capped at the Controller's limit: the end (IST) of
+ * the day `maxDays` after the call. The phone's picker already stops there;
+ * this guards older apps. null/invalid stays null.
+ */
+export function capCallback(callbackAt: string | null, attemptAt: string, maxDays: number): string | null {
+  if (!callbackAt) return null;
+  const at = Date.parse(callbackAt);
+  const from = Date.parse(attemptAt);
+  if (!Number.isFinite(at)) return null;
+  if (!Number.isFinite(from) || maxDays <= 0) return callbackAt;
+  const limitIst = Math.floor((from + IST_MS) / DAY_MS) * DAY_MS + (maxDays + 1) * DAY_MS - 1;
+  const limit = limitIst - IST_MS;
+  return at > limit ? new Date(limit).toISOString() : callbackAt;
 }
 
 /** IST hour (0-23) of an ISO timestamp — the report's hourly bucket. */

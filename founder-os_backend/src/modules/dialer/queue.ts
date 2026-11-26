@@ -1,5 +1,5 @@
 // ── Dialer config + per-agent queue persistence (D1) ────────────────────────
-import { CONFIG_KEY, type DialerConfig, type QueueItemView } from './types';
+import { CONFIG_KEY, type DialerBatchView, type DialerConfig, type QueueItemView } from './types';
 import { normalizeConfig, parseStoredConfig, queueOutcome } from './pure';
 import { displayNameForEmail } from '../../shared/employee-name';
 import { loadEmployeeNameIndex } from '../../shared/employee-name-store';
@@ -115,6 +115,38 @@ export async function recallQueue(db: Db, telecallerId: string, batchId?: string
     ? db.prepare(`UPDATE DialerQueue SET status='recalled', updatedAt=? WHERE telecallerId=? AND batchId=? AND status='pending'`).bind(now, telecallerId, batchId)
     : db.prepare(`UPDATE DialerQueue SET status='recalled', updatedAt=? WHERE telecallerId=? AND status='pending'`).bind(now, telecallerId);
   const { meta } = await stmt.run();
+  return Number((meta as any)?.changes ?? 0);
+}
+
+/** Dialer push batches since a time, newest first, with where their leads stand. */
+export async function listBatches(db: Db, sinceIso: string): Promise<DialerBatchView[]> {
+  const res: any = await db.prepare(
+    `SELECT q.batchId, MIN(q.createdAt) AS createdAt, COUNT(*) AS total, COUNT(DISTINCT q.telecallerId) AS agents,
+            SUM(CASE WHEN q.status = 'pending' THEN 1 ELSE 0 END) AS waiting,
+            SUM(CASE WHEN q.status IN ('done', 'unreachable') THEN 1 ELSE 0 END) AS worked,
+            SUM(CASE WHEN q.status = 'recalled' THEN 1 ELSE 0 END) AS removed,
+            b.region, b.state, b.requestedByName
+       FROM DialerQueue q LEFT JOIN NeoDovePushBatch b ON b.id = q.batchId
+      WHERE q.batchId <> '' AND q.createdAt >= ?
+      GROUP BY q.batchId ORDER BY createdAt DESC LIMIT 100`,
+  ).bind(sinceIso).all();
+  return ((res?.results ?? []) as any[]).map((r) => ({
+    batchId: String(r.batchId), createdAt: String(r.createdAt ?? ''),
+    region: String(r.region ?? ''), state: String(r.state ?? ''), requestedByName: String(r.requestedByName ?? ''),
+    agents: Number(r.agents ?? 0), total: Number(r.total ?? 0), waiting: Number(r.waiting ?? 0),
+    worked: Number(r.worked ?? 0), removed: Number(r.removed ?? 0),
+  }));
+}
+
+/**
+ * Take a whole push batch off every agent's dialer: its waiting leads (pushes,
+ * retries and callbacks alike) become `recalled`. Phones drop them on their
+ * next queue pull (≤ 1 min while the dialer is open); calls already made stay.
+ */
+export async function removeBatch(db: Db, batchId: string): Promise<number> {
+  const { meta } = await db.prepare(
+    `UPDATE DialerQueue SET status='recalled', updatedAt=? WHERE batchId=? AND status='pending'`,
+  ).bind(new Date().toISOString(), batchId).run();
   return Number((meta as any)?.changes ?? 0);
 }
 

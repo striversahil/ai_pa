@@ -3,13 +3,13 @@
 // Hour-by-hour calling per agent for one IST day, plus disposition mix and
 // breaks. Connected follows the disposition (talk time can be an operator
 // announcement); "Review" counts calls whose timer ran out with talk time.
-import { activeHours, fmtDuration, hourLabel, type AgentDay, type DialerConfig } from "@/telecalling/dialer";
+import { LEAD_TIME_REASON, activeHours, fmtDuration, hourLabel, type AgentDay, type DialerConfig } from "@/telecalling/dialer";
 
 export function HourlyReport({ agents, config }: { agents: AgentDay[]; config: DialerConfig }) {
   if (agents.length === 0) return <p className="text-[11px] text-zinc-500">No dialer calls or breaks on this day.</p>;
   const hours = activeHours(agents);
   const label = new Map(config.dispositions.map((d) => [d.key, d.label]));
-  const reasons = new Map(config.breakReasons.map((b) => [b.key, b.label]));
+  const reasons = new Map([...config.breakReasons.map((b) => [b.key, b.label] as const), [LEAD_TIME_REASON, "Lead time"] as const]);
 
   return (
     <div className="space-y-4">

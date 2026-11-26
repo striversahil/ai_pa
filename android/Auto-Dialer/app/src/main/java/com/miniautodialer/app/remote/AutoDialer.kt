@@ -45,8 +45,9 @@ object AutoDialer {
         data class Countdown(val item: QueueItem, val secs: Int) : State
         /** [live] = the phone is off-hook for this call (false while the SIM picker / dial is still opening). */
         data class Calling(val name: String, val phone: String, val manual: Boolean, val live: Boolean = false) : State
-        /** [heldByCall] = the phone is on a call, so the timer waits instead of dialing over it. */
-        data class Disposing(val call: CallInfo, val secsLeft: Int, val paused: Boolean, val heldByCall: Boolean = false) : State
+        /** [heldByCall] = phone on a call (timer waits); [leadUntil] > 0 = Lead time running; [leadUsed] = taken for this call. */
+        data class Disposing(val call: CallInfo, val secsLeft: Int, val paused: Boolean, val heldByCall: Boolean = false,
+                             val leadUntil: Long = 0L, val leadUsed: Boolean = false) : State
         /** The dial never reached the network (SIM picker dismissed, dial cancelled): nothing is recorded. */
         data class NotPlaced(val name: String, val phone: String, val manual: Boolean, val queueId: String?) : State
         data class OnBreak(val reasonKey: String, val label: String, val note: String, val startAt: Long, val maxMin: Int) : State
@@ -70,7 +71,7 @@ object AutoDialer {
             is State.NoLeads -> "idle" to s.note
             is State.Countdown -> "dialing" to s.item.name
             is State.Calling -> (if (s.manual) "manual" else if (s.live) "on_call" else "dialing") to s.name
-            is State.Disposing -> "disposition" to s.call.name
+            is State.Disposing -> (if (s.leadUntil > 0) "lead_time" else "disposition") to s.call.name
             is State.NotPlaced -> "idle" to "Call not placed: ${s.name}"
             is State.OnBreak -> "break" to s.label
             is State.Scheduled -> "break" to "${s.label} (scheduled, until ${s.until})"
@@ -239,6 +240,8 @@ object AutoDialer {
                     set(State.Countdown(item, s)); delay(1_000)
                 }
                 if (interrupted || PhoneCallState.inCall(ctx)) continue
+                // The sales head may have removed this lead's batch while counting down.
+                if (dao.queueItem(item.id)?.localStatus != "pending") continue
                 dial(ctx, item)
                 return@launch
             }
@@ -296,7 +299,8 @@ object AutoDialer {
         val item = session.dialQueueId?.let { dao.queueItem(it) }
         val info = CallInfo(pc.customerId, item?.name ?: customer?.name ?: pc.phone, pc.phone, item, session.dialManual, pc.startedAt)
         val total = session.config.dispositionSec
-        set(State.Disposing(info, total, paused = false))
+        // A Lead time pause still open (the app restarted mid-pause) carries on.
+        set(State.Disposing(info, total, paused = false, leadUntil = LeadTime.until, leadUsed = LeadTime.isOpen))
         loop?.cancel()
         loop = scope.launch {
             // Talk time from the call log (it can take a few seconds to appear).
@@ -308,15 +312,22 @@ object AutoDialer {
                 }
                 updateCall { it.copy(searching = false) }
             }
-            var left = total
-            while (left > 0) {
+            while (true) {
                 delay(1_000)
-                val s = _state.value as? State.Disposing ?: return@launch
                 // A call on the phone (incoming, or the agent called back) holds the timer:
                 // auto-saving now would dial the next lead over that live call.
                 val held = PhoneCallState.inCall(ctx)
-                if (held != s.heldByCall) set(s.copy(heldByCall = held))
-                if (!s.paused && !held) { left--; set((_state.value as? State.Disposing ?: return@launch).copy(secsLeft = left)) }
+                // Read the state right before writing it: the screen changes it too (Lead time, pause).
+                val s = _state.value as? State.Disposing ?: return@launch
+                if (s.leadUntil > 0 && System.currentTimeMillis() >= s.leadUntil) {
+                    // Lead time is over: the disposition continues with a fresh window.
+                    LeadTime.close()
+                    set(s.copy(leadUntil = 0L, secsLeft = total, heldByCall = held))
+                    continue
+                }
+                val left = if (s.paused || held || s.leadUntil > 0) s.secsLeft else s.secsLeft - 1
+                if (held != s.heldByCall || left != s.secsLeft) set(s.copy(heldByCall = held, secsLeft = left))
+                if (left <= 0) break
             }
             val s = _state.value as? State.Disposing ?: return@launch
             // save() cancels the timer job, so it must not run inside it.
@@ -334,12 +345,19 @@ object AutoDialer {
         _state.value = s.copy(paused = paused)
     }
 
+    /** Replace the open disposition (Lead time start/end live in LeadTime.kt). */
+    internal fun updateDisposing(f: (State.Disposing) -> State.Disposing?) {
+        val s = _state.value as? State.Disposing ?: return
+        f(s)?.let { set(it) }
+    }
+
     /**
      * Save the disposition. `auto` = the timer ran out: 0 s talk time → Not
      * Answered, otherwise Not Disposed (flagged for review in the report).
      */
     suspend fun save(ctx: Context, call: CallInfo, key: String?, remarks: String, callbackAt: Long?, auto: Boolean, continueAfter: Boolean = true) {
         if (_state.value !is State.Disposing) return
+        LeadTime.close() // saving ends any Lead time pause
         val cfg = session.config
         // The call-log row can land after the 15 s search: read it once more so a
         // connected call is never saved with 0 s (= "not answered", re-dialed).
