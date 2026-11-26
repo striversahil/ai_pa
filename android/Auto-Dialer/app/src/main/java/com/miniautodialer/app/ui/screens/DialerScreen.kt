@@ -87,8 +87,14 @@ private fun DialerPanel() {
             State.OffShift -> InfoCard("Outside shift hours (${session.config.shiftStart}–${session.config.shiftEnd}). Auto-dialing resumes when the shift starts; manual dialing still works.", Icons.Filled.Schedule)
             is State.NoLeads -> InfoCard("${s.note}. New leads from Founder OS appear here automatically.", Icons.Filled.HourglassEmpty)
             is State.Countdown -> NextCard(s.item.name, s.item.mobile, listOf(s.item.company, s.item.place, s.item.clientType), "Calling in ${s.secs}…", s.item.source)
-            is State.Calling -> NextCard(s.name, s.phone, emptyList(),
-                when { !s.live -> "Placing the call…"; s.manual -> "Manual call in progress"; else -> "On call" }, null)
+            is State.Calling -> {
+                NextCard(s.name, s.phone, emptyList(),
+                    when { !s.live -> "Placing the call…"; s.manual -> "Manual call in progress"; else -> "On call" }, null)
+                // SIM picker closed / dial never started: never leave the agent stuck here.
+                if (!s.live) OutlinedButton(onClick = { AutoDialer.cancelDial(ctx) }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Call didn't start? Cancel")
+                }
+            }
             is State.NotPlaced -> {
                 InfoCard("The call to ${s.name} (${s.phone}) was not placed — the SIM picker was closed or the dial was cancelled. Nothing was recorded.",
                     Icons.Filled.PhoneDisabled, Color(0xFFEA580C))

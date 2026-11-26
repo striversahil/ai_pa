@@ -57,6 +57,16 @@ class MainActivity : ComponentActivity() {
         setContent { MiniDialerTheme { AppRoot(intents) } }
     }
 
+    override fun onResume() {
+        super.onResume()
+        AutoDialer.appVisible = true
+    }
+
+    override fun onPause() {
+        AutoDialer.appVisible = false
+        super.onPause()
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         intents.value = intent

@@ -100,6 +100,13 @@ object AutoDialer {
     private val ending = AtomicBoolean(false)
 
     /**
+     * Our screen is in front (MainActivity onResume/onPause). The SIM picker and
+     * the in-call screen both cover it, so "visible + never off-hook" means the
+     * picker was closed without choosing a SIM.
+     */
+    @Volatile var appVisible = false
+
+    /**
      * The app came to the front (or restarted) while a dial is open. Coming back
      * is NOT "the call ended": the phone decides. Live call → stay on Calling;
      * hung up → disposition; never went off-hook and nothing in the call log →
@@ -118,6 +125,8 @@ object AutoDialer {
         repeat(5) { attempt ->
             if (PhoneCallState.inCall(ctx)) { markLive(ctx, pc); return }
             if (session.dialSawCall || CallManager.findInCallLog(ctx, pc) != null) { callEnded(ctx); return }
+            // Covered again (the picker is still/now showing): not cancelled; the watcher keeps going.
+            if (!session.dialSawCall && !appVisible) return
             if (attempt < 4) delay(1_000) // the call can still be opening right after the picker
         }
         notPlaced(ctx, pc)
@@ -136,10 +145,12 @@ object AutoDialer {
     private fun watch(ctx: Context) {
         loop?.cancel()
         loop = scope.launch {
+            var visibleTicks = 0
             while (true) {
                 delay(700)
                 if (!session.dialActive) return@launch
                 if (PhoneCallState.inCall(ctx)) {
+                    visibleTicks = 0
                     if (!session.dialSawCall) {
                         session.dialSawCall = true
                         (_state.value as? State.Calling)?.let { set(it.copy(live = true)) }
@@ -147,6 +158,15 @@ object AutoDialer {
                 } else if (session.dialSawCall) {
                     scope.launch { callEnded(ctx) }
                     return@launch
+                } else {
+                    // Never off-hook yet. Our screen back in front for ~1.4 s (two polls,
+                    // past the first moments of the dial when the picker is still opening)
+                    // = the SIM picker was dismissed: decide now instead of waiting on a
+                    // resume event (fast dismissals happened inside the old 1.5 s guard,
+                    // and some phones leave their own dialer showing instead).
+                    visibleTicks = if (appVisible) visibleTicks + 1 else 0
+                    val age = System.currentTimeMillis() - (CallManager.pending.value?.startedAt ?: 0L)
+                    if (visibleTicks >= 2 && age >= 2_500) { visibleTicks = 0; onResume(ctx) }
                 }
             }
         }
@@ -161,6 +181,15 @@ object AutoDialer {
         session.dialActive = false
         session.dialSawCall = false
         set(State.NotPlaced(name, pc.phone, manual, queueId))
+    }
+
+    /** Agent's escape hatch while "Placing the call…": only when the phone never went off-hook. */
+    fun cancelDial(ctx: Context) {
+        val pc = CallManager.pending.value ?: return
+        if (session.dialSawCall || PhoneCallState.inCall(ctx)) return
+        scope.launch {
+            if (CallManager.findInCallLog(ctx, pc) != null) callEnded(ctx) else notPlaced(ctx, pc)
+        }
     }
 
     /** "Call again" after a cancelled dial: same lead (or the same manual number), no record of the cancel. */
