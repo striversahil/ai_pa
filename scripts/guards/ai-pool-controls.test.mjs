@@ -113,12 +113,43 @@ describe('key/provider switches', () => {
   });
 });
 
-describe('failover contract', () => {
-  it('ships a live OpenRouter default, never a retired slug', () => {
-    assert.match(mod.OPENROUTER_TEXT_MODEL, /^nvidia\//);
-    assert.notEqual(mod.OPENROUTER_TEXT_MODEL, 'inclusionai/ling-3.0-flash-sante:free');
+describe('Settings-only pool (founder decision 2026-11-27)', () => {
+  it('ignores env AI keys and has no built-in/OpenRouter provider', () => {
+    const gw = new mod.AiGateway({
+      AI_KEYS: 'openrouter:sk-or-env-only',
+      OPENROUTER_API_KEYS: 'sk-or-env-only-2',
+      OPENROUTER_PAID_API_KEY: 'sk-or-env-only-3',
+    });
+    assert.equal(gw.keyCount, 0, 'env keys must never populate the pool');
+    assert.equal(mod.PROVIDERS.openrouter, undefined);
+    assert.equal(mod.PROVIDERS['openrouter-paid'], undefined);
+    const io = readFileSync(join(BACKEND_DIR, 'src', 'shared', 'ai-gateway-parts', 'io.ts'), 'utf8');
+    const pure = readFileSync(join(BACKEND_DIR, 'src', 'shared', 'ai-gateway-parts', 'pure.ts'), 'utf8');
+    assert.doesNotMatch(io, /loadFromEnv|OPENROUTER|process\.env\.AI_KEYS/);
+    assert.doesNotMatch(pure, /loadFromEnv|OPENROUTER|process\.env\.AI_KEYS/);
+  });
+
+  it('reconfigures from the Setting: registers, updates and prunes keys', () => {
+    const gw = new mod.AiGateway();
+    const cfg = (keys) => ({
+      'ai:providers': JSON.stringify({
+        providers: [{ id: 'free1', baseUrl: 'https://free.invalid/v1', model: 'm', keys }],
+      }),
+    });
+    gw.configureFromSettings(cfg([{ key: A }, { key: B }]));
+    assert.equal(gw.keyCount, 2);
+    gw.configureFromSettings(cfg([{ key: A }]));
+    assert.equal(gw.keyCount, 1, 'deleted Setting key leaves a warm isolate');
+    assert.equal(gw.health()[0].id, mod.keyFingerprintId('free1', A));
+    gw.configureFromSettings({ 'ai:providers': JSON.stringify({ providers: [] }) });
+    assert.equal(gw.keyCount, 0, 'valid empty Setting clears the pool');
+  });
+
+  it('JS runner helpers load no env keys and expose no local gateway', () => {
     const js = readFileSync(join(REPO_ROOT, 'scripts', 'ai-gateway.js'), 'utf8');
-    assert.ok(js.includes(mod.OPENROUTER_TEXT_MODEL), 'JS runner port must mirror the TS default model');
+    assert.doesNotMatch(js, /loadFromEnv|OPENROUTER|AI_KEYS|getGateway/);
+    const runner = readFileSync(join(REPO_ROOT, 'scripts', 'runner-lib.js'), 'utf8');
+    assert.doesNotMatch(runner, /gateway\.complete|loadFromEnv/);
   });
 
   it('rotates immediately on failure and enforces a first-token deadline', () => {

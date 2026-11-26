@@ -2,7 +2,7 @@
 // ai-gateway.ts re-exports everything public here, so existing imports keep working.
 import { cacheGet, cacheSet, cacheKeys } from "../cache";
 import { logger } from "../logger";
-import { gatewayUsageKey, GATEWAY_USAGE_TTL_MS, GATEWAY_USAGE_PREFIX, MODEL_DOWN_TTL_MS, KeyPool, OPENROUTER_TEXT_MODEL, PROVIDERS, hashAI, FALLBACK_MODEL, AiGatewayError, extractJson, DEFAULT_TTFT_MS, DEFAULT_FIRST_BYTE_MS, DEFAULT_ATTEMPT_TIMEOUT_MS, DEFAULT_STREAM_TIMEOUT_MS, MAX_ATTEMPTS } from "./pure";
+import { gatewayUsageKey, GATEWAY_USAGE_TTL_MS, GATEWAY_USAGE_PREFIX, MODEL_DOWN_TTL_MS, KeyPool, PROVIDERS, hashAI, FALLBACK_MODEL, AiGatewayError, extractJson, DEFAULT_TTFT_MS, DEFAULT_FIRST_BYTE_MS, DEFAULT_ATTEMPT_TIMEOUT_MS, DEFAULT_STREAM_TIMEOUT_MS, MAX_ATTEMPTS } from "./pure";
 import { emitGatewayMetric, classifyGatewayError, metricSource } from "./metrics";
 import type { KeyHealth, ProviderConfig, CompletionRequest, CompletionResult, AiKey, ToolCall } from "./types";
 
@@ -64,10 +64,6 @@ export async function flagModelDown(model: string): Promise<void> {
 export class AiGateway {
   private pool = new KeyPool();
   private visionModelOverride = '';
-  /** Rotating OpenRouter free-model list (OPENROUTER_FREE_MODELS). Text
-   *  requests cycle through these as 429s persist; vision stays pinned. */
-  private openrouterModels: string[] = [OPENROUTER_TEXT_MODEL];
-  private modelIdx = 0;
   // Cloudflare AI Gateway (standardized): when CLOUDFLARE_ACCOUNT_ID + CF_AIG_GATEWAY_ID are set,
   // all providers route via https://gateway.ai.cloudflare.com/v1/{account}/{gateway}/...
   // as reverse proxy with caching/rate-limiting/logging. Custom providers use `custom-{slug}`.
@@ -78,31 +74,27 @@ export class AiGateway {
     if (env) this.configure(env);
   }
 
+  /** Env is used ONLY for transport settings (CF AI Gateway proxy + vision
+   *  override). AI keys/providers come exclusively from Setting
+   *  `ai:providers` via configureFromSettings() — founder decision
+   *  2026-11-27. Never load AI_KEYS or provider keys here. */
   configure(env: Record<string, unknown>): void {
-    this.pool.loadFromEnv(env);
     const v = String((env as any)?.VISION_MODEL ?? '').trim();
     if (v) this.visionModelOverride = v;
     const aigAcc = String((env as any)?.CLOUDFLARE_ACCOUNT_ID ?? (env as any)?.CF_AIG_ACCOUNT_ID ?? '').trim();
     const aigId = String((env as any)?.CF_AIG_GATEWAY_ID ?? (env as any)?.AI_GATEWAY_ID ?? 'founder-os').trim();
     if (aigAcc) { this.aigAccount = aigAcc; this.aigGateway = aigId; }
-    const models = String((env as any)?.OPENROUTER_FREE_MODELS ?? '')
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (models.length > 0) {
-      // Never rotate onto a slug the provider retired (they 404 every key).
-      const retired = new Set(['inclusionai/ling-3.0-flash-sante:free', 'dots-studio/dots-3-note-preview:free']);
-      const clean = [...new Set(models)].filter((m) => !retired.has(m));
-      if (clean.length > 0) this.openrouterModels = clean;
-    }
   }
 
   get keyCount(): number {
     return this.pool.size;
   }
 
-  /** Apply runtime Setting config (ai:strategy + ai:providers JSON). Env keys
-   *  stay loaded; Setting providers merge in (same key deduped). */
+  /** Apply runtime Setting config (ai:strategy + ai:providers JSON).
+   *  The Setting is the WHOLE pool: keys no longer present are pruned, so a
+   *  provider/key deleted in Settings disappears even in a warm isolate.
+   *  Malformed JSON fails OPEN (keeps the last good pool) so a corrupted
+   *  Setting cannot take every AI path down; a valid empty list clears it. */
   configureFromSettings(settings: Record<string, string>): void {
     try {
       const s = String(settings?.['ai:strategy'] ?? '').trim();
@@ -110,22 +102,30 @@ export class AiGateway {
     } catch { /* ignore */ }
     try {
       const raw = String(settings?.['ai:providers'] ?? '').trim();
-      if (!raw) return;
-      const parsed: any = JSON.parse(raw);
+      if (!raw) { this.pool.retainKeys(new Set()); return; }
+      let parsed: any;
+      try { parsed = JSON.parse(raw); } catch { return; }
       const list = Array.isArray(parsed) ? parsed : parsed?.providers;
       if (!Array.isArray(list)) return;
       if (typeof parsed?.strategy === 'string') {
         const ps = String(parsed.strategy).trim();
         if (ps === 'round-robin' || ps === 'least-used-first') this.pool.setStrategy(ps);
       }
+      const keep = new Set<string>();
       for (const p of list.slice(0, 20)) {
         const id = String(p?.id ?? '').trim();
         const baseUrl = String(p?.baseUrl ?? p?.baseURL ?? '').trim();
         const model = String(p?.model ?? '').trim();
         const keys = Array.isArray(p?.keys) ? p.keys : [];
         if (!id || !baseUrl || !model || keys.length === 0) continue;
-        this.pool.registerProvider(id, baseUrl, model, keys.slice(0, 10), p?.enabled !== false);
+        const use = keys.slice(0, 10);
+        this.pool.registerProvider(id, baseUrl, model, use, p?.enabled !== false);
+        for (const k of use) {
+          const kv = String((k as any)?.key ?? '').trim();
+          if (kv) keep.add(kv);
+        }
       }
+      this.pool.retainKeys(keep);
     } catch { /* fail-open: bad JSON never breaks chat */ }
   }
 
@@ -147,7 +147,6 @@ export class AiGateway {
   private gatewayBaseURL(provider: ProviderConfig): string {
     if (this.aigAccount && this.aigGateway) {
       // Standardized Cloudflare AI Gateway reverse proxy (custom providers use custom-{slug})
-      if (provider.id === 'openrouter' || provider.id === 'openrouter-paid') return `https://gateway.ai.cloudflare.com/v1/${this.aigAccount}/${this.aigGateway}/custom-openrouter/api/v1/chat/completions`;
       if (provider.id === 'groq') return `https://gateway.ai.cloudflare.com/v1/${this.aigAccount}/${this.aigGateway}/groq/chat/completions`;
       if (provider.id === 'requestly') return provider.baseURL; // not via gateway
     }
@@ -176,8 +175,8 @@ export class AiGateway {
     let aiCacheKey: string | null = null;
     if (cacheable) {
       try {
-        const prov = req.provider || 'openrouter';
-        const model = req.model || PROVIDERS[prov]?.defaultModel || OPENROUTER_TEXT_MODEL;
+        const prov = req.provider || 'pool';
+        const model = req.model || PROVIDERS[prov]?.defaultModel || '';
         const keyRaw = JSON.stringify({ prov, model, messages: req.messages, temperature: req.temperature ?? 0.2, json: !!req.json });
         aiCacheKey = `ai:resp:${hashAI(keyRaw)}`;
         const hit = await cacheGet<CompletionResult>(aiCacheKey, 5 * 60 * 1000);
@@ -194,14 +193,6 @@ export class AiGateway {
       : Math.max(1, Number(req.maxAttempts) || (req.provider ? 3 : MAX_ATTEMPTS));
     const totalBudgetMs = Math.max(1_000, Number(req.totalTimeoutMs) || (req.provider ? 120_000 : 300_000));
     const deadline = startedAt + totalBudgetMs;
-    const wantsVision = req.messages.some((m) => Array.isArray(m.content));
-    // Model rotation (OpenRouter text requests only): every ROTATE_EVERY
-    // consecutive 429s moves to the next OPENROUTER_FREE_MODELS entry,
-    // spreading quota. Explicit req.model, vision requests, and non-OpenRouter
-    // providers never rotate.
-    const ROTATE_EVERY = 5;
-    let streak429 = 0;
-    let rotatedModel: string | undefined;
     let lastErr: unknown;
     // Model fallback state: an explicitly requested model with a recorded
     // outage starts on its fallback immediately; a mid-call hang switches
@@ -240,9 +231,12 @@ export class AiGateway {
         });
         throw e;
       }
-      const provider = PROVIDERS[key.provider] ?? PROVIDERS.groq;
+      const provider = PROVIDERS[key.provider];
+      if (!provider) {
+        throw new AiGatewayError(`AI provider "${key.provider}" is not configured in Settings`, undefined, attempt + 1);
+      }
       try {
-        const modelOverride = activeModel && activeModel !== req.model ? activeModel : rotatedModel;
+        const modelOverride = activeModel && activeModel !== req.model ? activeModel : undefined;
         const callReq = { ...req };
         if (modelOverride) callReq.model = modelOverride;
         // Cheap probe: pre-fallback attempts on a flaky primary model get
@@ -315,15 +309,6 @@ export class AiGateway {
           // key keeps failing (60s → 120s → 240s → 480s, capped 10 min) so
           // chronic-429 keys stop burning seconds on every rejoin; one
           // success resets the ladder.
-          streak429++;
-          if (
-            !req.model && !wantsVision && provider.id === 'openrouter' &&
-            this.openrouterModels.length > 1 && streak429 % ROTATE_EVERY === 0
-          ) {
-            this.modelIdx = (this.modelIdx + 1) % this.openrouterModels.length;
-            rotatedModel = this.openrouterModels[this.modelIdx];
-            logger.warn?.(`[AiGateway] 429 streak x${streak429} — rotating OpenRouter model to ${rotatedModel}`);
-          }
           // A pinned probe (playground) reports its result; it must not mutate
           // the production pool (the operator decides what to disable).
           if (!req.keyId) {
@@ -332,7 +317,7 @@ export class AiGateway {
             const cd = Math.min(retryAfter ?? 60_000 * Math.pow(2, Math.min(key.failures - 1, 3)), 600_000);
             key.cooldownUntil = Date.now() + cd;
           }
-          key.lastError = `429 retry ${attempt + 1}/${maxAttempts}${rotatedModel ? ` (${rotatedModel})` : ''} — rotated to next key`;
+          key.lastError = `429 retry ${attempt + 1}/${maxAttempts} — rotated to next key`;
           // Standardized backoff: 0.8s, 1.6s, 3.2s cap 5s — max 3 attempts total, then fail fast.
           emitFailure(key, err);
           if (attempt < maxAttempts - 1) {
@@ -384,7 +369,8 @@ export class AiGateway {
         if (attempt === 0) throw new AiGatewayError('No AI key available (pool empty or all disabled)');
         break;
       }
-      const provider = PROVIDERS[key.provider] ?? PROVIDERS.groq;
+      const provider = PROVIDERS[key.provider];
+      if (!provider) throw new AiGatewayError(`AI provider "${key.provider}" is not configured in Settings`);
       const model = req.model || (wantsVision ? this.visionModelOverride || provider.visionModel || provider.defaultModel : provider.defaultModel);
       const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key.key, 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' };
       // Founder rule (2026-11-27): every call runs to the model's own maximum
@@ -459,9 +445,9 @@ export class AiGateway {
               if (!firstTokenAt && (delta.content || delta.reasoning_content || delta.reasoning)) firstTokenAt = Date.now() - attemptStartedAt;
               if (typeof delta.content === 'string' && delta.content) { delivered = true; yield { contentDelta: delta.content }; }
               if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) { delivered = true; yield { reasoningDelta: delta.reasoning_content }; }
-              // OpenRouter/DeepSeek streams thinking as delta.reasoning (NOT
+              // Some providers stream thinking as delta.reasoning (NOT
               // reasoning_content) — without this the chat "Thinking" UI gets
-              // nothing on the paid lane.
+              // nothing.
               if (typeof delta.reasoning === 'string' && delta.reasoning) { delivered = true; yield { reasoningDelta: delta.reasoning }; }
               if (Array.isArray(delta.tool_calls) && delta.tool_calls.length) { delivered = true; yield { toolCallDelta: delta.tool_calls }; }
               if (choice.finish_reason) { delivered = true; yield { finishReason: choice.finish_reason }; }
@@ -556,7 +542,7 @@ export class AiGateway {
       body.response_format = provider.jsonMode;
     }
     if (provider.reasoningObject && !req.reasoningOff) {
-      // OpenRouter-style reasoning switch (ling models etc.).
+      // OpenAI-compatible reasoning switch.
       body.reasoning = { enabled: true };
     } else if (provider.supportsReasoning && req.reasoningEffort && !req.reasoningOff) {
       body.reasoning_effort = req.reasoningEffort;

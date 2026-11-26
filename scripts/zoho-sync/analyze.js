@@ -320,8 +320,8 @@ async function runAnalysisPool(workItems, agentRoster) {
 const LEAD_DETAIL_FIELDS = ['enquiryNumber', 'sourceLead', 'location', 'contactName', 'contactPhone', 'contactEmail', 'leadGeneratedBy'];
 
 async function captureLeadDetails({ estimates, existingByEstId, fetchedByEst }) {
-  const hasLLM = (process.env.GROQ_API_KEYS || process.env.AGNES_API_KEY || process.env.AGNES_API_KEYS || process.env.AI_KEYS || process.env.REQUESTLY_API_KEY || '').split(',').map((k) => k.trim()).filter(Boolean).length;
-  if (!hasLLM) return { rows: 0 };
+  // The Worker owns the Settings-only pool; a missing pool fails the AI call
+  // loudly instead of silently skipping lead capture.
   const pendingCapture = estimates.filter((est) => {
     if (String(est.status ?? '').toLowerCase() !== 'sent') return false;
     const existing = existingByEstId.get(est.estimate_id);

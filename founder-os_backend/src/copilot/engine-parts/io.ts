@@ -1,6 +1,7 @@
 // Extracted verbatim from engine.ts by scripts/refactor/split-module.mjs.
 // engine.ts re-exports everything public here, so existing imports keep working.
 import { getGateway } from "../../shared/ai-gateway";
+import { getAppSettings } from "../../shared/app-settings";
 import type { ChatMessage } from "../../shared/ai-gateway";
 import { cacheGet, cacheSet, cacheKeys } from "../../shared/cache";
 import type { CopilotDef, CopilotProposal, CopilotReply, CopilotActivity } from "../types";
@@ -13,6 +14,12 @@ import { COUNT_TTL_MS, rateWho, usageKey, USAGE_TTL_MS, RATE_WINDOW_MS, BUSY_REP
 
 export async function gatewayReady(env: Record<string, unknown>): Promise<{ ok: boolean; busy: boolean }> {
   const gateway = getGateway(env);
+  // The pool is Setting `ai:providers` ONLY; a fresh isolate has zero keys
+  // until this async load runs, so never report "not configured" before it.
+  try {
+    const settings = await getAppSettings();
+    if (settings) gateway.configureFromSettings(settings as any);
+  } catch { /* settings unavailable — health still reflects the last load */ }
   const now = Date.now();
   const healthy = gateway.health().some((h) => h.enabled && h.cooldownUntil <= now);
   if (!healthy && gateway.keyCount === 0) return { ok: false, busy: false };

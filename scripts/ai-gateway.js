@@ -1,84 +1,18 @@
 #!/usr/bin/env node
 
 /**
- * scripts/ai-gateway.js — JS port of src/shared/ai-gateway.ts for the GitHub
- * Actions runners (CommonJS, no build step). Mirrors the TS module's surface
- * exactly so both runtimes share one key-management contract:
+ * ai-gateway.js — JS helpers for GitHub Actions runners.
  *
- * Key sources (single contract, both runtimes):
- *   env.AI_KEYS = "provider:key:label,..." (explicit provider prefixes;
- *     provider auto-detected when omitted: gsk_→groq, sk-or-*→openrouter)
- *   env.GROQ_API_KEYS = Groq keys (NEVER loaded — founder rule, same gate as TS)
- *   env.OPENROUTER_API_KEYS / env.OPENROUTER_API_KEY = OpenRouter keys
- *   env.OPENROUTER_PAID_API_KEY = paid keys (provider `openrouter-paid`)
- *   env.REQUESTLY_API_KEY(S) = Requestly keys
- * reasoning via reasoning_effort / reasoning objects per provider
- * (reasoningOff suppresses it). Rotation: one fresh key per attempt
- * (bounded, ≤5) — per-key 429 cools (escalating) and rotates; Cloudflare
- * 1015 cools briefly and also rotates. Optional req.sessionKey pins a
- * conversation to one key via consistent hashing (cache affinity, no
- * mid-chat hopping); one-shots spread randomly.
- * req.timeoutMs caps the whole call (runner batch semantic — no first-token
- * probe like the worker path).
- * Deliberate divergences from TS (runner batch design, not drift): no
- * stream(), no KV response cache (in-process model flags only), direct egress
- * only.
+ * The ONLY production AI path is the Worker: POST /api/ai/complete, whose pool
+ * lives exclusively in Setting `ai:providers` (founder decision 2026-11-27).
+ * This file therefore holds NO provider registry, NO env-key loader and NO
+ * local HTTP gateway. It keeps the framework-free helpers plus the KeyPool
+ * used by guards, mirroring the TS pool switches.
  */
-
-// ── Provider registry (mirror of TS) ─────────────────────────────────────────
-// The 2026-10 slugs (ling-3.0-flash-sante / dots-3-note-preview) were retired
-// by OpenRouter (404 on every key); this multimodel serves text + vision.
-const OPENROUTER_TEXT_MODEL = 'nvidia/nemotron-3.5-super-vl:free';
-const OPENROUTER_VISION_MODEL = 'nvidia/nemotron-3.5-super-vl:free';
-/** Default OpenRouter routing for the paid chat lane (mirror of TS
- *  PAID_CHAT_ROUTING): `order` (not `only`) so a throttled first choice
- *  spills forward instead of failing. */
-const PAID_CHAT_ROUTING = { provider: { order: ['streamlake/fp8', 'deepinfra/fp8'], allow_fallbacks: true } };
-const PROVIDERS = {
-  groq: {
-    id: 'groq',
-    baseURL: 'https://api.groq.com/openai/v1/chat/completions',
-    supportsReasoning: true,
-    jsonMode: { type: 'json_object' },
-    defaultModel: 'openai/gpt-oss-120b',
-    visionModel: 'meta-llama/llama-4-scout-17b-16e-instruct',
-  },
-  openrouter: {
-    id: 'openrouter',
-    baseURL: 'https://openrouter.ai/api/v1/chat/completions',
-    supportsReasoning: false,
-    reasoningObject: true,
-    // NOTE: free-tier OpenRouter models reject response_format (no
-    // structured-outputs) → jsonMode intentionally absent; JSON enforced via prompt + extractJson.
-    // One free multimodel serves text + vision (2026-11-27).
-    defaultModel: OPENROUTER_TEXT_MODEL,
-    visionModel: OPENROUTER_VISION_MODEL,
-  },
-  requestly: {
-    id: 'requestly',
-    baseURL: 'https://router.requesty.ai/v1/chat/completions',
-    supportsReasoning: true,
-    jsonMode: { type: 'json_object' },
-    defaultModel: 'nvidia/nemotron-3-ultra-550b-a55b',
-    visionModel: 'nvidia/nemotron-3-ultra-550b-a55b',
-  },
-  // Paid OpenRouter lane: same endpoint as `openrouter`, keys from
-  // OPENROUTER_PAID_API_KEY. Without this entry, `openrouter-paid:` AI_KEYS
-  // entries would fall through to the wrong baseURL (auth failure).
-  'openrouter-paid': {
-    id: 'openrouter-paid',
-    baseURL: 'https://openrouter.ai/api/v1/chat/completions',
-    supportsReasoning: true,
-    reasoningObject: true,
-    extraParams: PAID_CHAT_ROUTING,
-    defaultModel: 'deepseek/deepseek-v4.1-flash',
-    visionModel: OPENROUTER_VISION_MODEL,
-  },
-};
 
 /** Extract the first JSON object/array from model prose (providers without
  *  structured-output support wrap JSON in fences or chatter). */
-function extractJsonModule(raw) {
+function extractJson(raw) {
   const str = String(raw == null ? '' : raw).trim();
   if (!str) return null;
   try {
@@ -130,142 +64,72 @@ function buildVisionUserContent(text, imageUrls, maxImages) {
   return [{ type: 'text', text }, ...imgs.map((url) => ({ type: 'image_url', image_url: { url } }))];
 }
 
-// ── Model fallback ───────────────────────────────────────────────────────────
-// Advanced model first, safe model on hang (mirror of TS contract). Runners
-// are short-lived, so the outage flag lives in-process instead of KV.
-const FALLBACK_MODEL = {};
-const MODEL_DOWN_TTL_MS = 10 * 60 * 1000;
-const modelDown = new Map();
-function modelFlagged(m) {
-  const t = modelDown.get(m);
-  if (!t) return false;
-  if (Date.now() - t > MODEL_DOWN_TTL_MS) { modelDown.delete(m); return false; }
-  return true;
-}
-function flagModelDown(m) { modelDown.set(m, Date.now()); }
-
-class AiGatewayError extends Error {
-  constructor(message, cause, attempts) {
-    super(message);
-    this.name = 'AiGatewayError';
-    this.cause = cause;
-    this.attempts = attempts;
-  }
-}
-
-// djb2 hash (mirror of TS hashAI) — consistent-hash sticky sessions.
+/** djb2 hash (mirror of TS hashAI) — consistent-hash sticky sessions. */
 function hashAI(s) {
   let h = 5381;
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
   return h.toString(36);
 }
 
-// detectProvider: infer provider from key prefix when an AI_KEYS entry omits
-// the explicit provider (mirror of TS).
-function detectProvider(key) {
-  const k = String(key || '').trim();
-  if (k.startsWith('gsk_')) return 'groq';
-  if (k.startsWith('sk-or-') || k.startsWith('sk-or-v1-')) return 'openrouter';
-  return 'openrouter';
-}
+const PROVIDER_COOLDOWN_MS = 5 * 60 * 1000;
 
-// ── Key pool ─────────────────────────────────────────────────────────────────
+/** Pool switches shared by the guards. Keys are supplied ONLY by
+ *  registerProvider() (from Setting `ai:providers`); nothing loads env. */
 class KeyPool {
   constructor() {
     this.keys = [];
     this.strategy = 'least-used-first';
     this.rrCursor = 0;
     this.providersOff = new Set();
+    this.providersCooling = new Map();
   }
 
-  /** Provider-level switch (Setting providers[].enabled === false). TS parity. */
+  /** Provider-level switch (Setting providers[].enabled === false). */
   setProviderEnabled(provider, enabled) {
     const pid = String(provider || '').trim();
     if (!pid) return;
-    if (enabled) this.providersOff.delete(pid);
+    if (enabled) { this.providersOff.delete(pid); this.providersCooling.delete(pid); }
     else this.providersOff.add(pid);
   }
 
-  providerEnabled(provider) {
-    return !this.providersOff.has(provider);
+  /** Skip a provider whose route/model is gone (404/405) for a short window. */
+  coolProvider(provider, ms = PROVIDER_COOLDOWN_MS) {
+    const pid = String(provider || '').trim();
+    if (!pid) return;
+    const until = Date.now() + Math.max(1000, ms);
+    this.providersCooling.set(pid, Math.max(this.providersCooling.get(pid) || 0, until));
   }
 
-  /** Global selection strategy (Setting `ai:strategy`). TS parity. */
+  providerEnabled(provider) {
+    if (this.providersOff.has(provider)) return false;
+    const until = this.providersCooling.get(provider) || 0;
+    if (until && until <= Date.now()) { this.providersCooling.delete(provider); return true; }
+    return until === 0;
+  }
+
   setStrategy(s) {
     this.strategy = s === 'round-robin' ? 'round-robin' : 'least-used-first';
   }
 
   getStrategy() { return this.strategy; }
 
-  /** Register a Setting-defined OpenAI-compatible provider + its keys. TS parity. */
+  /** Register a Setting-defined OpenAI-compatible provider + its keys. */
   registerProvider(id, baseURL, model, keys, enabled = true) {
-    const pid = String(id ?? '').trim();
-    const url = String(baseURL ?? '').trim().replace(/\/+$/, '');
+    const pid = String(id == null ? '' : id).trim();
+    const url = String(baseURL == null ? '' : baseURL).trim().replace(/\/+$/, '');
     if (!pid || !url) return;
     this.setProviderEnabled(pid, enabled !== false);
-    if (!PROVIDERS[pid]) {
-      PROVIDERS[pid] = {
-        id: pid,
-        baseURL: url + '/chat/completions',
-        supportsReasoning: false,
-        reasoningObject: true,
-        defaultModel: String(model || '').trim() || 'default',
-      };
-    }
     const seen = new Map(this.keys.map((k) => [k.key, k]));
-    for (const k of keys ?? []) {
-      const kv = String((k && k.key) ?? '').trim();
+    for (const k of keys || []) {
+      const kv = String((k && k.key) == null ? '' : k.key).trim();
       if (!kv) continue;
       const allowed = (k && k.enabled) !== false;
       const existing = seen.get(kv);
       if (existing) { existing.allowed = allowed; continue; }
-      const made = this.makeKey(pid, kv, String((k && k.label) ?? '').trim() || undefined, allowed);
+      const made = this.makeKey(pid, kv, String((k && k.label) == null ? '' : k.label).trim() || undefined, allowed);
       seen.set(kv, made);
       this.keys.push(made);
     }
-  }
-
-  loadFromEnv(env) {
-    const raw = (v) => (typeof v === 'string' ? v : '');
-    const seen = new Set();
-    const PLACEHOLDER = /^(your[_-]?api[_-]?key.*|replace[_-]?.*|xxx+|placeholder.*|\*+)$/i;
-    const add = (provider, key, label) => {
-      // Founder decision (2026-09-21): Groq keys are NEVER loaded — the models
-      // hallucinate on our workflows. Single gate covers GROQ_API_KEYS,
-      // `groq:` AI_KEYS entries, and gsk_ auto-detect at once.
-      if (provider === 'groq') return;
-      const k = key.trim();
-      if (!k || seen.has(k) || PLACEHOLDER.test(k)) return;
-      seen.add(k);
-      this.keys.push(this.makeKey(provider, k, label));
-    };
-
-    // Key sources: AGNES_API_KEY(S) (primary) + GROQ etc (fallback). AI_KEYS "provider:key:label" honored too.
-    for (const key of raw(env && env.GROQ_API_KEYS).split(',')) add('groq', key);
-    for (const key of raw(env && env.OPENROUTER_API_KEYS).split(',')) add('openrouter', key);
-    for (const key of raw(env && env.OPENROUTER_API_KEY).split(',')) add('openrouter', key);
-    // Paid lane (chat primary): separate provider id so chat pins paid-only.
-    for (const key of raw(env && env.OPENROUTER_PAID_API_KEY).split(',')) add('openrouter-paid', key, 'paid');
-    for (const key of raw(env && env.REQUESTLY_API_KEY).split(',')) add('requestly', key);
-    for (const key of raw(env && env.REQUESTLY_API_KEYS).split(',')) add('requestly', key);
-    const aiKeys = raw(env && env.AI_KEYS);
-    if (aiKeys) {
-      for (const entry of aiKeys.split(',')) {
-        const parts = entry.split(':');
-        if (parts.length >= 2) {
-          let key, label;
-          if (parts.length >= 3) {
-            label = parts[parts.length - 1];
-            key = parts.slice(1, parts.length - 1).join(':');
-          } else {
-            key = parts[1];
-          }
-          add(parts[0].trim() || detectProvider(key), key, label);
-        }
-      }
-    }
-
-    console.log(`[AiGateway] loaded ${this.keys.length} keys: ${this.keys.map((k) => `${k.provider}:${k.label}`).join(', ')}`);
   }
 
   makeKey(provider, key, label, allowed = true) {
@@ -278,24 +142,11 @@ class KeyPool {
     };
   }
 
-  /** Effective failures with time forgiveness: a key whose last error is
-   *  >10 min old rejoins the healthy tier (transient 429s don't exile a key
-   *  forever; repeat offenders stay out). */
   effFailures(k, now) {
     if (k.failures > 0 && k.lastFailureAt > 0 && now - k.lastFailureAt > 10 * 60 * 1000) return 0;
     return k.failures;
   }
 
-  /** Pick a key for one attempt (mirror of TS contract).
-   *
-   *  Generic rotation for every provider (current + future):
-   *  - Only healthy keys compete (enabled + off cooldown), provider-filtered.
-   *  - `sessionKey` set → consistent-hash pin: same conversation lands on the
-   *    same key while healthy (cache affinity; no mid-chat hopping). A
-   *    cooled/failed pin drops out and traffic shifts automatically.
-   *  - Otherwise the global strategy applies (least-used-first random spread
-   *    or round-robin cycle) inside the least-failures tier.
-   */
   select(provider, sessionKey) {
     const now = Date.now();
     let pool = this.keys.filter((k) => k.enabled && k.allowed && k.cooldownUntil <= now && this.providerEnabled(k.provider));
@@ -337,6 +188,10 @@ class KeyPool {
       console.warn(`[AiGateway] key ${key.id} DISABLED (HTTP ${status}): ${key.lastError}`);
       return 0;
     }
+    if (status === 404 || status === 405) {
+      this.coolProvider(key.provider);
+      return PROVIDER_COOLDOWN_MS;
+    }
     if (status === 429) {
       const cd = retryAfterMs || Math.min(60000 * Math.pow(2, Math.min(key.failures, 5)), 10 * 60000);
       key.cooldownUntil = Date.now() + cd;
@@ -364,7 +219,7 @@ class KeyPool {
       if (typeof err.statusCode === 'number') return err.statusCode;
     }
     const m = String((err && err.message) || err).match(/\b(\d{3})\b/);
-    return m ? parseInt(m[1]) : null;
+    return m ? parseInt(m[1], 10) : null;
   }
 
   earliestCooldownMs() {
@@ -391,290 +246,9 @@ class KeyPool {
   }
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-/** Combine a caller signal with an optional whole-call timeoutMs (mirror of
- *  TS combineSignals, minus the first-token probe — runners are batch, so a
- *  single whole-call cap is the honest semantic). Previously a hung model
- *  hung the runner job until GitHub killed it; now callers can cap it. */
-function combineSignals(signal, timeoutMs) {
-  if (timeoutMs == null && !signal) return undefined;
-  if (timeoutMs == null) return signal;
-  const t = AbortSignal.timeout(timeoutMs);
-  if (!signal) return t;
-  if (signal.aborted) return signal;
-  const c = new AbortController();
-  const onAbort = () => c.abort();
-  signal.addEventListener('abort', onAbort, { once: true });
-  t.addEventListener('abort', () => {
-    signal.removeEventListener('abort', onAbort);
-    c.abort();
-  }, { once: true });
-  return c.signal;
-}
-
-// ── Gateway ──────────────────────────────────────────────────────────────────
-class AiGateway {
-  constructor(env) {
-    this.pool = new KeyPool();
-    this.visionModelOverride = '';
-    // Text-model rotation pool (mirror of TS): 429 streaks on model-less text
-    // calls rotate through THESE — default TEXT (a vision default would route
-    // text requests at a vision model on the first 429).
-    this.openrouterModels = [OPENROUTER_TEXT_MODEL];
-    this.modelIdx = 0;
-    if (env) this.configure(env);
-  }
-
-  configure(env) {
-    this.pool.loadFromEnv(env);
-    const v = String((env && env.VISION_MODEL) || '').trim();
-    if (v) this.visionModelOverride = v;
-    const models = String((env && env.OPENROUTER_FREE_MODELS) || '')
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (models.length > 0) this.openrouterModels = [...new Set(models)];
-  }
-
-  get keyCount() {
-    return this.pool.size;
-  }
-
-  health() {
-    return this.pool.health();
-  }
-
-  async complete(req) {
-    // Standardized: fail fast on 429, no 50× hammer. Heavy app queues at caller.
-    const MIN_ATTEMPTS = 3;
-    const ROTATE_EVERY = 5;
-    const maxAttempts = Math.max(MIN_ATTEMPTS, Math.min(this.pool.size || MIN_ATTEMPTS, 5));
-    const wantsVision = Array.isArray(req.messages) && req.messages.some((m) => Array.isArray(m.content));
-    let streak429 = 0;
-    let rotatedModel;
-    let lastErr;
-    let activeModel = req.model;
-    let fellBack = false;
-    if (activeModel && FALLBACK_MODEL[activeModel] && modelFlagged(activeModel)) {
-      console.warn(`[AiGateway] ${activeModel} flagged down — starting on ${FALLBACK_MODEL[activeModel]}`);
-      activeModel = FALLBACK_MODEL[activeModel];
-      fellBack = true;
-    }
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const key = req.keyId
-        ? (this.pool.keys.find((k) => k.id === req.keyId) || this.pool.select(req.provider, req.sessionKey))
-        : this.pool.select(req.provider, req.sessionKey);
-      if (!key) {
-        const waitMs = this.pool.earliestCooldownMs();
-        const retryAfter = waitMs > 0 ? Math.min(waitMs, 60000) : 60000;
-        const e = new Error(`HTTP 429: Rate-limited (retry after ${Math.round(retryAfter/1000)}s)`);
-        e.status = 429; e.retryAfter = retryAfter;
-        throw e;
-      }
-      const provider = PROVIDERS[key.provider] || PROVIDERS.groq;
-      try {
-        const modelOverride = activeModel && activeModel !== req.model ? activeModel : rotatedModel;
-        const result = await this.callProvider(provider, key, modelOverride ? { ...req, model: modelOverride } : req);
-        this.pool.reportSuccess(key);
-        return result;
-      } catch (err) {
-        lastErr = err;
-        // Hung model channel (timeout only): flag the outage, switch models,
-        // retry immediately. Keys are never rotated for a hang.
-        const timedOut = (err && err.name) === 'TimeoutError' || /timeout/i.test(String((err && err.message) || ''));
-        if (timedOut && req.model && FALLBACK_MODEL[req.model] && !fellBack) {
-          fellBack = true;
-          flagModelDown(req.model);
-          console.warn(`[AiGateway] ${req.model} hung — failing over to ${FALLBACK_MODEL[req.model]}`);
-          activeModel = FALLBACK_MODEL[req.model];
-          continue;
-        }
-        const status = this.pool.extractStatus(err);
-        if (status === 429) {
-          const msg = String((err && err.message) || '');
-          const isCf1015 = /1015|error code: 1015/i.test(msg);
-          if (isCf1015) {
-            const retryAfter = err && err.retryAfter;
-            const rawCd = typeof retryAfter === 'number' ? retryAfter : 72000;
-            const cd = Math.min(rawCd, 60000);
-            key.cooldownUntil = Date.now() + cd;
-            key.failures++;
-            key.lastFailureAt = Date.now();
-            key.lastError = `429 Cloudflare 1015`;
-            console.warn(`[AiGateway] 429 Cloudflare 1015 on ${key.id} — cooling ${Math.round(cd/1000)}s (raw ${Math.round(rawCd/1000)}s), rotating to next key (attempt ${attempt + 1}/${maxAttempts})`);
-            if (attempt >= maxAttempts - 1) {
-              const e2 = new Error(`HTTP 429: Rate-limited (Cloudflare 1015, retry after ${Math.round(cd/1000)}s)`);
-              e2.status = 429; e2.retryAfter = cd; throw e2;
-            }
-            continue;
-          }
-          // Per-key quota: escalating cooldown + rotate to the next key.
-          streak429++;
-          if (
-            !req.model && !wantsVision && provider.id === 'openrouter' &&
-            this.openrouterModels.length > 1 && streak429 % ROTATE_EVERY === 0
-          ) {
-            this.modelIdx = (this.modelIdx + 1) % this.openrouterModels.length;
-            rotatedModel = this.openrouterModels[this.modelIdx];
-            console.warn(`[AiGateway] 429 streak x${streak429} — rotating OpenRouter model to ${rotatedModel}`);
-          }
-          const retryAfter = err && err.retryAfter;
-          const rawCd = typeof retryAfter === 'number' ? retryAfter : 60000;
-          key.failures++;
-          key.lastFailureAt = Date.now();
-          // Escalate while the key keeps failing (60s→120s→240s→480s, cap
-          // 10min) so chronic-429 keys stop burning seconds on every rejoin.
-          const cd = Math.min(rawCd, 60000 * Math.pow(2, Math.min(key.failures - 1, 3)), 600000);
-          key.cooldownUntil = Date.now() + cd;
-          key.lastError = `429 rate-limited`;
-          console.warn(`[AiGateway] 429 on ${key.id} — cooling ${Math.round(cd/1000)}s, rotating to next key (attempt ${attempt + 1}/${maxAttempts})`);
-          if (attempt < maxAttempts - 1) {
-            const backoff = Math.min(typeof retryAfter === 'number' ? retryAfter : 800 * Math.pow(2, attempt), 5000);
-            console.warn(`[AiGateway] 429 on ${key.id}, retry ${attempt + 1}/${maxAttempts} after ${backoff}ms`);
-            await sleep(backoff);
-            continue;
-          }
-          const e4 = new Error(`HTTP 429: Rate-limited (retry after ${Math.round((typeof retryAfter === 'number' ? retryAfter : 60000)/1000)}s)`);
-          e4.status = 429; e4.retryAfter = typeof retryAfter === 'number' ? retryAfter : 60000;
-          throw e4;
-        }
-        const cooldown = this.pool.reportFailure(key, err, err && err.retryAfter);
-        console.warn(`[AiGateway] attempt ${attempt + 1}/${maxAttempts} failed on ${key.id}: ${err && err.message ? err.message : err}`);
-        if (cooldown > 0 && attempt < maxAttempts - 1) {
-          await sleep(Math.min(cooldown, 5000));
-        }
-      }
-    }
-    throw new AiGatewayError(`All AI keys exhausted after ${maxAttempts} attempts`, lastErr, maxAttempts);
-  }
-
-  async completeJson(req) {
-    const res = await this.complete({ ...req, json: true });
-    try {
-      return JSON.parse(res.content);
-    } catch {
-      const extracted = extractJsonModule(res.content);
-      if (extracted !== null) return extracted;
-      throw new AiGatewayError(`Failed to parse JSON from ${res.provider} response: ${res.content.slice(0, 200)}`);
-    }
-  }
-
-  async callProvider(provider, key, req) {
-    const wantsVision = Array.isArray(req.messages) && req.messages.some((m) => Array.isArray(m.content));
-    const model = req.model || (wantsVision ? this.visionModelOverride || provider.visionModel || provider.defaultModel : provider.defaultModel);
-    const headers = {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${key.key}`,
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    };
-    const body = {
-      model,
-      messages: req.messages,
-      temperature: req.temperature === undefined ? 0.2 : req.temperature,
-      // Founder rule (2026-11-27): every call runs to the model's own maximum
-      // output — max_tokens is never sent; req.maxTokens is intentionally ignored.
-      ...(Array.isArray(req.tools) && req.tools.length > 0 ? { tools: req.tools } : {}),
-      ...(req.toolChoice ? { tool_choice: req.toolChoice } : {}),
-      ...(provider.extraParams || {}),
-      ...(req.extraParams || {}),
-    };
-    if (req.json && provider.jsonMode) body.response_format = provider.jsonMode;
-    // reasoningOff is canonical (TS); noReasoning kept as a legacy alias.
-    const thinkingOff = req.reasoningOff || req.noReasoning;
-    if (provider.reasoningObject && !thinkingOff) body.reasoning = { enabled: true };
-    else if (provider.supportsReasoning && req.reasoningEffort && !thinkingOff) body.reasoning_effort = req.reasoningEffort;
-
-    const res = await fetch(provider.baseURL, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-      signal: combineSignals(req.signal, req.timeoutMs),
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      const err = new Error(`HTTP ${res.status}: ${text.slice(0, 300)}`);
-      err.status = res.status;
-      err.retryAfter = this.parseRetryAfter(res.headers);
-      throw err;
-    }
-    const data = await res.json();
-    const msg = (data && data.choices && data.choices[0] && data.choices[0].message) || {};
-    const rawContent = msg.content || '';
-    const content = typeof rawContent === 'string'
-      ? rawContent
-      : Array.isArray(rawContent) ? rawContent.map((p) => (p && typeof p.text === 'string' ? p.text : '')).join('') : '';
-    const toolCalls = Array.isArray(msg.tool_calls)
-      ? msg.tool_calls.filter((t) => t && t.function && t.function.name).map((t) => ({
-          id: String(t.id || ''),
-          name: String(t.function.name),
-          arguments: typeof t.function.arguments === 'string' ? t.function.arguments : JSON.stringify(t.function.arguments || {}),
-        }))
-      : undefined;
-    return {
-      content, provider: key.provider, keyId: key.id, model,
-      jsonParsed: !!req.json, usage: data && data.usage,
-      ...(toolCalls && toolCalls.length > 0 ? { toolCalls } : {}),
-    };
-  }
-
-  parseRetryAfter(headers) {
-    const v = headers.get('retry-after') || headers.get('x-ratelimit-reset');
-    if (!v) return undefined;
-    const secs = Number(v);
-    return Number.isFinite(secs) ? secs * 1000 : undefined;
-  }
-}
-
-let _gateway = null;
-function getGateway(env) {
-  if (!_gateway) {
-    _gateway = new AiGateway(env);
-  } else if (env) {
-    _gateway.configure(env);
-  }
-  return _gateway;
-}
-
-// resolveAiChain(env, forceProvider?) — JS mirror of
-// founder-os_backend/src/shared/intake-chain.ts: every healthy pool key is a
-// leg, Setting order first (pool order here). forceProvider pins one leg.
-function resolveIntakeChain(env, forceProvider, opts) {
-  void opts;
-  let health = [];
-  try { health = getGateway(env).health(); } catch { return []; }
-  const now = Date.now();
-  const usable = health.filter((h) => h && h.provider && h.enabled !== false && (h.cooldownUntil || 0) <= now)
-    .map((h) => String(h.provider));
-  if (usable.length === 0) return [];
-  if (forceProvider) return usable.includes(String(forceProvider)) ? [String(forceProvider)] : [];
-  return [...new Set(usable)].sort();
-}
-
-// completeJsonChain(gateway, req, chain) — one JSON turn across the chain:
-// first success wins. Throws the last leg's error when every leg fails so
-// callers keep their existing retry/result handling.
-async function completeJsonChain(gateway, req, chain) {
-  let lastErr = null;
-  for (const provider of (Array.isArray(chain) ? chain : [])) {
-    try {
-      return await gateway.completeJson({ ...req, provider });
-    } catch (e) {
-      lastErr = e;
-      console.warn(`[AiGateway] leg=${provider} failed (${String((e && e.message) || e).slice(0, 120)}) — trying next leg`);
-    }
-  }
-  throw lastErr || new Error('empty chain');
-}
-
 module.exports = {
-  AiGateway,
-  KeyPool,
-  getGateway,
-  PROVIDERS,
-  AiGatewayError,
+  extractJson,
   buildVisionUserContent,
-  extractJson: extractJsonModule,
-  resolveIntakeChain,
-  completeJsonChain,
+  hashAI,
+  KeyPool,
 };

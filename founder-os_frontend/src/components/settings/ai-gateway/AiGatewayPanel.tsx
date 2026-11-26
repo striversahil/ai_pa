@@ -48,7 +48,7 @@ export function AiGatewayPanel() {
 
           {providers.length === 0 && (
             <p className="text-[11px] text-[var(--text-tertiary)]">
-              No custom providers yet — add one below. Until then the pool serves from server env keys only.
+              No providers yet — add one below. The pool is Settings-only: with none configured, AI features stay off until you add keys here.
             </p>
           )}
           {providers.map((p) => (

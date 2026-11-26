@@ -25,62 +25,11 @@ export const MAX_ATTEMPTS = 6;
 /** How long a provider is skipped after an HTTP 404/405 (dead model/route). */
 export const PROVIDER_COOLDOWN_MS = 5 * 60_000;
 
-// Live free OpenRouter multimodel (the old ling-3.0-sante / dots-3-note slugs
-// were retired and 404'd every key); serves text + vision.
-export const OPENROUTER_TEXT_MODEL = 'nvidia/nemotron-3.5-super-vl:free';
-
-export const OPENROUTER_VISION_MODEL = 'nvidia/nemotron-3.5-super-vl:free';
-
-/** Default OpenRouter routing for the paid lane: `order` (not `only`) so
- *  a throttled/outed first choice spills forward instead of failing. Lives
- *  on the provider entry so every paid-leg caller inherits it. */
-export const PAID_CHAT_ROUTING = { provider: { order: ['streamlake/fp8', 'deepinfra/fp8'], allow_fallbacks: true } };
-
-export const PROVIDERS: Record<string, ProviderConfig> = {
-  groq: {
-    id: 'groq',
-    baseURL: 'https://api.groq.com/openai/v1/chat/completions',
-    supportsReasoning: true,
-    jsonMode: { type: 'json_object' },
-    defaultModel: 'openai/gpt-oss-120b',
-    visionModel: 'meta-llama/llama-4-scout-17b-16e-instruct',
-  },
-  openrouter: {
-    id: 'openrouter',
-    baseURL: 'https://openrouter.ai/api/v1/chat/completions',
-    supportsReasoning: false,
-    reasoningObject: true,
-    // NOTE: free-tier OpenRouter models reject response_format (no
-    // structured-outputs) → jsonMode intentionally absent; JSON is enforced
-    // via prompt + the extractJson fallback in completeJson instead.
-    // One free multimodel now serves both text and vision (2026-11-27); the
-    // old split slugs (ling-3.0-flash-sante / dots-3-note-preview) were both
-    // retired by OpenRouter and caused a 100% 404 rate across every free key.
-    // Reasoning models burn long chain-of-thought — calls run uncapped.
-    defaultModel: OPENROUTER_TEXT_MODEL,
-    visionModel: OPENROUTER_VISION_MODEL,
-  },
-  requestly: {
-    id: 'requestly',
-    baseURL: 'https://router.requesty.ai/v1/chat/completions',
-    supportsReasoning: true,
-    jsonMode: { type: 'json_object' },
-    defaultModel: 'nvidia/nemotron-3-ultra-550b-a55b',
-    visionModel: 'nvidia/nemotron-3-ultra-550b-a55b',
-  },
-  // Paid OpenRouter lane: same endpoint as `openrouter`, but keys come only
-  // from OPENROUTER_PAID_API_KEY. defaultModel is deepseek/deepseek-v4.1-flash;
-  // per-request `extraParams.provider` carries the streamlake/fp8 preference.
-  'openrouter-paid': {
-    id: 'openrouter-paid',
-    baseURL: 'https://openrouter.ai/api/v1/chat/completions',
-    supportsReasoning: true,
-    reasoningObject: true,
-    extraParams: PAID_CHAT_ROUTING,
-    defaultModel: 'deepseek/deepseek-v4.1-flash',
-    visionModel: OPENROUTER_VISION_MODEL,
-  },
-};
+// Provider registry is EMPTY by design (founder decision 2026-11-27):
+// the ONLY source is Setting `ai:providers`. registerProvider() fills this
+// from the root-managed Settings list; env vars and hardcoded defaults are
+// ignored, so an unconfigured pool serves ZERO keys — never a built-in default.
+export const PROVIDERS: Record<string, ProviderConfig> = {};
 
 // ── Errors + provider detection ──────────────────────────────────────────────
 export class AiGatewayError extends Error {
@@ -92,14 +41,6 @@ export class AiGatewayError extends Error {
     super(message);
     this.name = 'AiGatewayError';
   }
-}
-
-// detectProvider: infer provider from key prefix when AI_KEYS entry omits explicit provider.
-export function detectProvider(key: string): string {
-  const k = key.trim();
-  if (k.startsWith('gsk_')) return 'groq';
-  if (k.startsWith('sk-or-') || k.startsWith('sk-or-v1-')) return 'openrouter';
-  return 'openrouter';
 }
 
 export type AiStrategy = 'least-used-first' | 'round-robin';
@@ -115,7 +56,6 @@ export function keyFingerprintId(provider: string, key: string): string {
 // ── Key pool ─────────────────────────────────────────────────────────────────
 export class KeyPool {
   private keys: AiKey[] = [];
-  private omnirouteBaseURL = '';
   private strategy: AiStrategy = 'least-used-first';
   private rrCursor = 0;
   /** Provider-level switch (Setting providers[].enabled === false). A provider
@@ -159,7 +99,13 @@ export class KeyPool {
     const pid = String(id ?? '').trim();
     const url = String(baseURL ?? '').trim().replace(/\/+$/, '');
     if (!pid || !url) return;
-    if (!PROVIDERS[pid]) {
+    // The Setting is authoritative: an existing id (e.g. a provider that
+    // used to be env-seeded) must pick up the operator's base URL/model.
+    const cfg = PROVIDERS[pid];
+    if (cfg) {
+      cfg.baseURL = url + '/chat/completions';
+      if (String(model || '').trim()) cfg.defaultModel = String(model).trim();
+    } else {
       PROVIDERS[pid] = {
         id: pid,
         baseURL: url + '/chat/completions',
@@ -187,64 +133,11 @@ export class KeyPool {
     }
   }
 
-  loadFromEnv(env: Record<string, unknown>): void {
-    const raw = (v: unknown) => (typeof v === 'string' ? v : '');
-    this.omnirouteBaseURL = raw(env.OMNIROUTE_BASE_URL).replace(/\/$/, '');
-    if (this.omnirouteBaseURL && PROVIDERS.omniroute) {
-      PROVIDERS.omniroute.baseURL = this.omnirouteBaseURL + '/chat/completions';
-    }
-    // Seed from existing keys: getGateway() re-configures on every call and
-    // loadFromEnv appends, so without this the pool would duplicate on each
-    // request (while preserving per-key health across reconfigures).
-    const seen = new Set<string>(this.keys.map((k) => k.key));
-    const PLACEHOLDER = /^(your[_-]?api[_-]?key.*|replace[_-]?.*|xxx+|placeholder.*|\*+)$/i;
-    const add = (provider: string, key: string, label?: string) => {
-      // Founder decision (2026-09-21): Groq keys are NEVER loaded — the models
-      // hallucinate on our workflows. Dropping them here (single gate) covers
-      // GROQ_API_KEYS, `groq:` AI_KEYS entries, and gsk_ auto-detect at once.
-      // Callers that pinned provider 'groq' degrade via select()'s
-      // empty-filter fallback to the remaining pool.
-      if (provider === 'groq') return;
-      const k = key.trim();
-      if (!k || seen.has(k) || PLACEHOLDER.test(k)) return;
-      seen.add(k);
-      this.keys.push(this.makeKey(provider, k, label));
-    };
-    // 1. Unified AI_KEYS contract: "provider:key:label,..."
-    const aiKeys = raw(env.AI_KEYS);
-    if (aiKeys) {
-      for (const entry of aiKeys.split(',')) {
-        const parts = entry.split(':');
-        if (parts.length >= 2) {
-          const provider = parts[0].trim() || detectProvider(parts[1]);
-          let key: string;
-          let label: string | undefined;
-          if (parts.length >= 3) {
-            label = parts[parts.length - 1];
-            key = parts.slice(1, parts.length - 1).join(':');
-          } else {
-            key = parts[1];
-          }
-          add(provider, key, label);
-        }
-      }
-    }
-    // 2. Legacy per-provider env vars (backwards compat).
-    for (const key of raw(env.GROQ_API_KEYS).split(',')) add('groq', key);
-    for (const key of raw(env.OPENROUTER_API_KEYS).split(',')) add('openrouter', key);
-    for (const key of raw(env.OPENROUTER_API_KEY).split(',')) add('openrouter', key);
-    // Paid lane: separate provider id so paid keys stay identifiable in health.
-    for (const key of raw((env as any).OPENROUTER_PAID_API_KEY).split(',')) add('openrouter-paid', key, 'paid');
-    for (const key of raw(env.REQUESTLY_API_KEY).split(',')) add('requestly', key);
-    for (const key of raw((env as any).REQUESTLY_API_KEYS).split(',')) add('requestly', key);
-    for (const key of raw(env.DEEPSEEK_API_KEYS).split(',')) add('deepseek', key);
-    for (const key of raw(env.TOGETHER_API_KEYS).split(',')) add('together', key);
-    for (const key of raw(env.OPENAI_API_KEYS).split(',')) add('openai', key);
-    for (const key of raw(env.LLM_API_KEY).split(',')) add(detectProvider(key), key);
-    // 3. Legacy omniroute (single key).
-    const omniKey = raw(env.OMNIROUTE_API_KEY);
-    if (omniKey && this.omnirouteBaseURL) add('omniroute', omniKey, 'omniroute');
-    logger.info?.(`[AiGateway] loaded ${this.keys.length} keys: ${this.keys.map((k) => `${k.provider}:${k.label}`).join(', ')}`);
+  /** Drop keys that are no longer in Setting `ai:providers`, so a provider /
+   *  key deleted in the root UI disappears even inside a warm isolate. Runtime
+   *  health of surviving keys is preserved. */
+  retainKeys(keep: Set<string>): void {
+    this.keys = this.keys.filter((k) => keep.has(k.key));
   }
 
   private makeKey(provider: string, key: string, label?: string, allowed = true): AiKey {

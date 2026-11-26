@@ -44,6 +44,7 @@ import { PrismaEnquiryStore } from './modules/enquiries/store-prisma';
 import { createEnquiryStore } from './modules/enquiries/store';
 import { runEnquiryExtraction } from './modules/enquiries/enrichment';
 import { getGateway } from './shared/ai-gateway';
+import { getAppSettings } from './shared/app-settings';
 import { cacheDel } from './shared/cache';
 import {
   MAX_ENQUIRY_FILE_BYTES,
@@ -253,7 +254,7 @@ app.get('/api/enquiries', async (req, res) => {
   const opts: { redact?: boolean; page?: number; limit?: number; cursor?: string; q?: string; aiConfigured?: boolean } | undefined =
     restricted || pageQ !== undefined || limitQ !== undefined || cursorQ !== undefined || qQ !== undefined
       ? {
-          ...(restricted ? { redact: true, aiConfigured: aiConfigured() } : {}),
+          ...(restricted ? { redact: true, aiConfigured: await aiConfigured() } : {}),
           ...(pageQ !== undefined ? { page: Number(pageQ) } : {}),
           ...(limitQ !== undefined ? { limit: Number(limitQ) } : {}),
           ...(cursorQ !== undefined ? { cursor: cursorQ } : {}),
@@ -321,9 +322,12 @@ app.get('/api/enquiries/clients', async (req, res) => {
   }
   res.json([...byKey.values()].sort((a, b) => a.name.localeCompare(b.name)));
 });
-function aiConfigured(): boolean {
+async function aiConfigured(): Promise<boolean> {
   try {
-    return getGateway(process.env as any).keyCount > 0;
+    const gw = getGateway(process.env as any);
+    const settings = await getAppSettings();
+    if (settings) gw.configureFromSettings(settings as any);
+    return gw.keyCount > 0;
   } catch {
     return true;
   }
@@ -493,7 +497,7 @@ app.get('/api/enquiries/queues', async (req, res) => {
         queue: req.query.queue === 'proc-pending' ? 'pending' : 'history',
         cursor: req.query.cursor as string | undefined,
         limit: Number(req.query.limit),
-        aiConfigured: aiConfigured(),
+        aiConfigured: await aiConfigured(),
         all: req.query.all === '1',
       });
       for (const id of ((r.body as any)?.redactionPendingIds ?? []) as string[]) {
@@ -533,7 +537,7 @@ app.get('/api/enquiries/:id', async (req, res) => {
   // the open row whole here on demand (same redaction as the queues).
   if (req.query.view === 'procurement' || EnquiryRoutes.isRestrictedViewer(me as any)) {
     try {
-      const r = await EnquiryRoutes.enquiryGetRedacted(enquiryStore, String(req.params.id), aiConfigured());
+      const r = await EnquiryRoutes.enquiryGetRedacted(enquiryStore, String(req.params.id), await aiConfigured());
       for (const id of ((r.body as any)?.redactionPendingIds ?? []) as string[]) {
         try { void runEnquiryExtractionLocal(String(id)); } catch { /* ignore */ }
       }
@@ -549,7 +553,7 @@ app.get('/api/enquiries/:id/comments', async (req, res) => {
   const me = await enquiryMe(req);
   if (!me) return res.status(401).json({ error: 'Authentication required' });
   const restricted = req.query.view === 'procurement' || EnquiryRoutes.isRestrictedViewer(me as any);
-  const r = await EnquiryRoutes.enquiryComments(enquiryStore, me, req.params.id, restricted ? { redact: true, aiConfigured: aiConfigured() } : undefined);
+  const r = await EnquiryRoutes.enquiryComments(enquiryStore, me, req.params.id, restricted ? { redact: true, aiConfigured: await aiConfigured() } : undefined);
   if (restricted) {
     for (const id of ((r.body as any)?.redactionPendingIds ?? []) as string[]) {
       try { void runEnquiryExtractionLocal(String(id)); } catch { /* ignore */ }

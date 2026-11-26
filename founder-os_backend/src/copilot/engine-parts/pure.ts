@@ -126,9 +126,9 @@ export const MAX_HUMAN_TURNS = 25;
 export const LIMIT_REPLY = 'Limit reached (25 chats) — open a new chat to continue.';
 
 /**
- * Thinking discipline (all copilots): deepseek-v4-flash via OpenRouter has
- * NO thinking-token budget parameter (reasoning.max_tokens is not honored;
- * effort low/medium silently map to high), so the only real lever on
+ * Thinking discipline (all copilots): reasoning models served over
+ * OpenAI-compatible APIs often ignore a thinking-token budget (effort
+ * low/medium may map to high), so the only reliable lever on
  * deliberation length is instruction + context size. This line rides every
  * system prompt: brief, non-repetitive internal reasoning, never
  * re-deriving settled facts. It cuts CoT length without touching quality

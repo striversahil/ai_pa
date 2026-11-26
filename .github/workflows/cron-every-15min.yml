@@ -96,12 +96,6 @@ jobs:
         env:
           WORKER_URL: ${{ secrets.WORKER_URL }}
           SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
-          AGNES_API_KEY: ${{ secrets.AGNES_API_KEY }}
-          AGNES_API_KEYS: ${{ secrets.AGNES_API_KEYS }}
-          GROQ_API_KEYS: ${{ secrets.GROQ_API_KEYS }}
-          REQUESTLY_API_KEY: ${{ secrets.REQUESTLY_API_KEY }}
-          REQUESTLY_API_KEYS: ${{ secrets.REQUESTLY_API_KEYS }}
-          AI_KEYS: ${{ secrets.AI_KEYS }}
           NEODOVE_AGENT_NAMES: Muskan
           ZOHO_FORCE: ${{ github.event.inputs.force == 'true' && '1' || '0' }}
         run: node scripts/zoho-sent-runner.js

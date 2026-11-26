@@ -8,7 +8,7 @@ export interface ProviderConfig {
   baseURL: string;
   extraParams?: Record<string, unknown>;
   supportsReasoning: boolean;
-  /** OpenRouter-style reasoning switch (`reasoning: { enabled: true }`). */
+  /** Reasoning object switch (`reasoning: { enabled: true }`). */
   reasoningObject?: boolean;
   jsonMode?: { type: 'json_object' };
   defaultModel: string;
@@ -136,7 +136,7 @@ export interface CompletionResult {
   jsonParsed: boolean;
   usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
   toolCalls?: ToolCall[];
-  /** Assistant reasoning text (OpenRouter `message.reasoning`), when present. */
+  /** Assistant reasoning text (`message.reasoning`), when present. */
   reasoning?: string;
   /** Provider stop reason (`choices[0].finish_reason`) — lets callers tell
    *  "model chose silence" apart from "cut off by max_tokens" (length). */

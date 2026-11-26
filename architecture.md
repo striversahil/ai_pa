@@ -152,7 +152,7 @@ Worker + GitHub Actions.
 | Database | PostgreSQL (external; `DATABASE_URL`) |
 | Scheduler | `node-cron` (in-process) + `cron-parser` |
 | Queue | BullMQ + Redis (ioredis) — message processing queue |
-| LLM | Unified **AI gateway** (`src/shared/ai-gateway.ts` on Worker/Express, JS port `scripts/ai-gateway.js` on GH runners) → multi-provider OpenAI-compatible endpoints with a managed key pool |
+| LLM | Unified **AI gateway** (`src/shared/ai-gateway.ts` on Worker/Express; GH runners call `POST /api/ai/complete`) → OpenAI-compatible endpoints configured ONLY in Setting `ai:providers` |
 | Embeddings | HuggingFace Router API (384-dim), stored as JSON |
 | Validation | Zod 4 |
 | Logging | Pino (+ pino-pretty) |
@@ -731,28 +731,32 @@ There are **two** ingestion routes from WA Engine Pro (the WhatsApp gateway):
     `founder-os-worker`'s `/api/runner/*` instead. waba-worker + local-runner is the
     local/dev classification path.)
 
-`local-runner.js` ports `deterministicClassifier.ts` rules and calls the legacy Omniroute gateway for
-ambiguous messages; it naturally drains backlog accumulated while the machine was off.
-(Local/dev path only — production GH runners use direct Groq.)
+`local-runner.js` ports `deterministicClassifier.ts` rules and calls a legacy local
+endpoint for ambiguous messages; it naturally drains backlog accumulated while the
+machine was off. (Local/dev path only — it is not part of the production AI pool;
+production GH runners call `POST /api/ai/complete`.)
 
 ## 5. GitHub Actions — AI processing & scheduling
 
 Heavy jobs are standalone Node scripts in repo-root `scripts/` that call the Worker's
-`/api/runner/*` (D1 reads/writes) and make LLM calls through the **unified AI
-gateway** (`scripts/ai-gateway.js`, port of `src/shared/ai-gateway.ts` — the edge-safe
-TS module used by the Worker enquiry extractor and Express `AIService`, so all four
-former LLM paths now share one contract).
+`/api/runner/*` (D1 reads/writes) and get AI **only** through
+`POST /api/ai/complete`. The pool lives in `src/shared/ai-gateway.ts` (edge-safe,
+used by the Worker enquiry extractor and Express `AIService`); `scripts/ai-gateway.js`
+is a small helper/KeyPool port, NOT a local gateway.
 
 Gateway design (one place, one chain, direct egress):
 - **Key pool**: `KeyPool` in the gateway owns every key with per-key health
   (`failures`, `cooldownUntil`, `enabled`, `successCount`, `lastError`).
-- **Key config**: Setting `ai:providers` BYOK JSON first (root-only Settings UI,
+- **Key config**: Setting `ai:providers` BYOK JSON **only** (root-only Settings UI,
   20 providers × 10 keys max, OpenAI-compatible `{id,baseUrl,model,keys,enabled}`;
-  never echoed — GET/PUT redact to ids/labels/last4 + counts). Env `AI_KEYS` +
-  legacy per-provider vars append as fallback. Placeholders ignored. Deduped.
-  `providers[].enabled=false` and `keys[].enabled=false` are **pure filters**:
-  nothing is deleted, selection simply skips them; re-enabling restores them.
-- **Chain**: `resolveAiChain()` — Setting list order, then env-only providers;
+  never echoed — GET/PUT redact to ids/labels/last4 + counts). Env `AI_KEYS`,
+  `OPENROUTER_*`, `REQUESTLY_*`, `AGNES_*` etc. are **ignored** (founder
+  decision 2026-11-27); an empty/missing Setting = an empty pool. The Setting is
+  authoritative on every configure: keys deleted there are pruned from a warm
+  isolate, while surviving keys keep their runtime health. Placeholders ignored.
+  Deduped. `providers[].enabled=false` and `keys[].enabled=false` are **pure
+  filters**: nothing is deleted, selection simply skips them; re-enabling restores.
+- **Chain**: `resolveAiChain()` — the Setting list order and nothing else;
   every caller (copilot chat, enquiry extraction, vision intake, catalogue
   lookup, runners via `POST /api/ai/complete`) walks the same legs with the
   same sticky `sessionKey`. No per-task providers, no relay, no paid lane.
@@ -774,13 +778,11 @@ Gateway design (one place, one chain, direct egress):
   duplicate text). Separately, the **health sweep** scores each configured key
   and auto-disables it below the threshold (or after 3 consecutive auth/quota
   failures) — see the key-health block below.
-- **Providers** (all OpenAI `/chat/completions` wire format): whatever the
-  Setting list + env pool holds — OpenRouter, Requestly, DeepSeek, custom free
-  tiers. Each leg serves its own configured model (Setting `model`, else the
-  provider default). OpenRouter's free default and vision default are the same
-  live multimodel (`nvidia/nemotron-3.5-super-vl:free`); retired slugs are never
-  used and are filtered out of `OPENROUTER_FREE_MODELS`. Adding a vendor = one
-  Settings card, no code.
+- **Providers** (all OpenAI `/chat/completions` wire format): exactly the
+  Setting list — any OpenAI-compatible vendor the operator adds. Each leg serves
+  its own configured model (Setting `model`). There is no built-in provider or
+  default model, so adding/removing a vendor = one Settings card, no code and no
+  deploy.
 - **Output is uncapped (founder rule 2026-11-27)**: no gateway request ever
   sends `max_tokens`, so every call (runners, copilot, enquiry AI, playground)
   runs to the model's own maximum. `maxTokens` is still accepted on
@@ -791,8 +793,8 @@ Gateway design (one place, one chain, direct egress):
   model, usage}`; viewer session OR `SHARED_SECRET`) is the single endpoint;
   `gateway.complete()/completeJson()` is the same pool in-process.
   `scripts/runner-lib.js` `groq()/groqJson()/aiText()` are thin wrappers
-  over the endpoint (local-gateway fallback), so existing runners needed zero
-  call-site changes. `GET /api/ai/health` shows strategy + per-provider
+  over the endpoint and FAIL when the Worker is unreachable — there is no local
+  gateway or env-key fallback. `GET /api/ai/health` shows strategy + per-provider
   usable/total (no keys); for root it also returns the redacted provider
   config with per-key health/controls. `POST /api/ai/providers` manages the
   list merge-safely (root only, redacted responses).
@@ -803,7 +805,7 @@ measures itself instead of only reacting per request:
   fingerprint key id, ok/status/error kind, latency, TTFT, tokens, streamed,
   `source`). The Worker's request middleware wires the sink in `createApp()`
   and writes to D1 `AiKeyCall` with `waitUntil` (the call never waits on D1);
-  the Express path and `scripts/ai-gateway.js` leave the sink unset. 30-day
+  the Express path and the JS runner helpers leave the sink unset. 30-day
   retention, pruned by the sweep.
 - **Score** (`shared/ai-gateway-parts/health.ts`, pure): `100 × (0.5·reliability
   + 0.3·speed + 0.2·throughput)` over the newest ≤50 non-playground calls in
@@ -832,8 +834,6 @@ measures itself instead of only reacting per request:
   pool, provider/key switches, health badges, threshold editor and the chat
   playground; transcripts stay client-side.
 
-**Omniroute is NOT the production AI path** — it's the final fallback inside the pool.
-
 Telecalling production status: the `telecalling` automation is **production-live and
 fully deterministic (no LLM)** — `runLeadConversion()` in
 `founder-os_backend/src/automations/telecalling/service.ts`. Live cadence: `cron-daily-ist.yml`
@@ -854,8 +854,9 @@ Full rules: AGENTS.md "Domain quirks".
 | `cron-every-30min.yml` | `*/30` | `email-brain-index-runner.js` |
 | `cron-daily-ist.yml` | one slot per job family, gated on `inputs.slot` (`all` = manual): **02:30** (08:00 IST) telecalling distribution + `morning-brief-runner.js` · **13:30** (19:00 IST) `eod-summary-runner.js` + `neodove-report-runner.js` (yesterday + N-day backfill) · **19:30** (01:00 IST) baseline-freeze · **21:30** (03:00 IST) data-retention + `linkedin-daily-runner.js` | (15:30 EOD-deduction slot retired 2026-10-22) |
 
-Secrets for runners: `WORKER_URL`, `SHARED_SECRET`, `AI_KEYS` (unified gateway keys;
-legacy `GROQ_API_KEYS`/`OPENROUTER_API_KEYS` + `OMNIROUTE_*` still merged as fallback).
+Secrets for runners: `WORKER_URL`, `SHARED_SECRET`. AI keys are NOT runner
+secrets — they live only in Setting `ai:providers`; runner AI is
+`POST /api/ai/complete`.
 Zoho creds are inferred at runtime from
 `founder-os_backend/zoho_sent/sent_estimates.txt` (cURL export) — no separate Zoho secrets.
 
@@ -925,7 +926,7 @@ Operational notes:
   `/api/trigger`); `/api/status` reporting `automationsLoaded: 0` before such a
   request is expected, not an error.
 - Secrets used by the cron dispatcher and runners: `GITHUB_ACCESS_TOKEN`, `WORKER_URL`,
-  `SHARED_SECRET`, `AI_KEYS` (unified gateway; legacy per-provider `*_API_KEYS` + `OMNIROUTE_*` still merged).
+  `SHARED_SECRET`. AI keys are not runner secrets — the Worker Setting owns them.
    Zoho creds are inferred at runtime from `founder-os_backend/zoho_sent/sent_estimates.txt`.
 
 
@@ -1067,7 +1068,7 @@ The `functions/` dir is excluded from Next typecheck (Pages Functions types come
 | webhook-relay / local-runner | host/process | `node webhook-relay/relay.js`, `node local-runner.js` |
 
 Secrets: `SHARED_SECRET` (Worker + GH Actions + waba-worker), `DATABASE_URL` (Express),
-`WA_ENGINE_API_KEY`, `AI_KEYS` (unified gateway keys; legacy `LLM_API_KEY`/`LLM_BASE_URL`/`LLM_MODEL` Omniroute still merged as last-resort fallback),
+`WA_ENGINE_API_KEY` (AI keys live only in Setting `ai:providers`),
 `GOOGLE_SERVICE_ACCOUNT_JSON`, `GITHUB_ACCESS_TOKEN` (cron dispatch; also `SSH_*` for the
 cPanel host in the root `.env`).
 
@@ -1109,8 +1110,8 @@ Guard: `pages-spa`.
    Worker: add the static import to `registry-worker.ts`.
 
 ### 10.2 New GH Actions runner
-1. Add `scripts/<name>-runner.js`, reuse `runner-lib.js` (`workerRequest` + `groq`/`groqJson` gateway wrappers — full surface in `scripts/ai-gateway.js`; never hand-roll fetch/rotation).
-2. Add a job to the matching workflow with `env: { WORKER_URL, SHARED_SECRET, AI_KEYS }` (legacy `*_API_KEYS`/`OMNIROUTE_*` still work via gateway's backwards-compat merge).
+1. Add `scripts/<name>-runner.js`, reuse `runner-lib.js` (`workerRequest` + `groq`/`groqJson` wrappers over `POST /api/ai/complete`; helpers in `scripts/ai-gateway.js`; never hand-roll fetch rotation).
+2. Add a job to the matching workflow with `env: { WORKER_URL, SHARED_SECRET }`. Do not add AI keys — the Worker's Settings pool owns them.
 
 ### 10.3 New Worker/Express endpoint
 - Express: add a handler in `server.ts` or a router in `src/routes/`.

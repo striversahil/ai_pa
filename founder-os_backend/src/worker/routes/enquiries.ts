@@ -5,7 +5,7 @@ import type { Hono } from 'hono';
 import { enquiryMe, enquirySend, EnquiryRoutes, createEnquiryStore, deps, getEstimatesPayload, adminGuard, type Bindings } from '../context';
 import { chatTurn, clearSalesChat, executeProposal } from '../../modules/enquiries/chat';
 import { cacheDel } from '../../shared/cache';
-import { getGateway } from '../../shared/ai-gateway';
+import { gatewayForRequest } from './ai-shared';
 import { runEnquiryExtraction } from '../../modules/enquiries/enrichment';
 import { runVisionIntake } from '../../modules/enquiries/vision-intake';
 import { isZohoClosedStatus } from '../../modules/enquiries/queues';
@@ -65,10 +65,11 @@ async function runEnquiryAi(c: any, id: string, withIntake: boolean): Promise<vo
   } catch {}
 }
 
-function aiConfigured(c: any): boolean {
+async function aiConfigured(c: any): Promise<boolean> {
   try {
-    return getGateway(c.env as any).keyCount > 0;
+    return (await gatewayForRequest(c)).keyCount > 0;
   } catch {
+    // If Settings cannot be read, do not hide the AI affordance.
     return true;
   }
 }
@@ -317,7 +318,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const opts: { redact?: boolean; page?: number; limit?: number; cursor?: string; q?: string; aiConfigured?: boolean } | undefined =
       restricted || pageQ !== undefined || limitQ !== undefined || cursorQ !== undefined || qQ !== undefined
         ? {
-            ...(restricted ? { redact: true, aiConfigured: aiConfigured(c) } : {}),
+            ...(restricted ? { redact: true, aiConfigured: await aiConfigured(c) } : {}),
             ...(pageQ !== undefined ? { page: Number(pageQ) } : {}),
             ...(limitQ !== undefined ? { limit: Number(limitQ) } : {}),
             ...(cursorQ !== undefined ? { cursor: cursorQ } : {}),
@@ -368,7 +369,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
           queue: qq === 'proc-pending' ? 'pending' : 'history',
           cursor: c.req.query('cursor'),
           limit: Number(c.req.query('limit')),
-          aiConfigured: aiConfigured(c),
+          aiConfigured: await aiConfigured(c),
           all: c.req.query('all') === '1',
         });
         return c.json(r.body, r.status as any);
@@ -596,7 +597,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     // the open row whole here on demand (same redaction as the queues).
     if (c.req.query('view') === 'procurement' || EnquiryRoutes.isRestrictedViewer(me)) {
       try {
-        const r = await EnquiryRoutes.enquiryGetRedacted(createEnquiryStore(c.env), c.req.param('id') ?? '', aiConfigured(c));
+        const r = await EnquiryRoutes.enquiryGetRedacted(createEnquiryStore(c.env), c.req.param('id') ?? '', await aiConfigured(c));
         return c.json(r.body, r.status as any);
       } catch (e: any) {
         return c.json({ error: e?.message ?? 'not found' }, 404);
@@ -615,7 +616,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.get('/api/enquiries/:id/comments', async (c) => {    const me = await enquiryMe(c);
     if (!me) return c.json({ error: 'Authentication required' }, 401);
     const restricted = c.req.query('view') === 'procurement' || EnquiryRoutes.isRestrictedViewer(me);
-    const r = await EnquiryRoutes.enquiryComments(createEnquiryStore(c.env), me, c.req.param('id') ?? '', restricted ? { redact: true, aiConfigured: aiConfigured(c) } : undefined);
+    const r = await EnquiryRoutes.enquiryComments(createEnquiryStore(c.env), me, c.req.param('id') ?? '', restricted ? { redact: true, aiConfigured: await aiConfigured(c) } : undefined);
     return c.json(r.body, r.status as any);
   });
   app.get('/api/enquiries/:id/intake', async (c) => {
@@ -647,7 +648,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     // owner-sensitive. Only users granted access via the admin panel pass.
     const denied = await adminGuard(c); if (denied) return denied;
     try {
-      const gw = getGateway(c.env as any);
+      const gw = await gatewayForRequest(c);
       const { cacheGet, hasKvCache } = await import('../../shared/cache');
       // Pool-wide storm flag: when true, every copilot answers "busy" without
       // touching any key (set on any 429, 120s TTL, refreshed by each new 429).
@@ -673,7 +674,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const body = await readBody(c);
     const msg = String(body?.message ?? 'ping').slice(0, 500);
     try {
-      const gw = getGateway(c.env as any);
+      const gw = await gatewayForRequest(c);
       const res = await gw.complete({ messages: [{ role: 'user', content: msg }], maxTokens: 200 });
       return c.json({ ok: true, provider: res.provider, model: res.model, content: res.content.slice(0, 500), usage: res.usage });
     } catch (e: any) {
@@ -687,7 +688,7 @@ export function registerEnquiryRoutes(app: Hono<{ Bindings: Bindings }>): void {
     const model = String(c.req.query('model') ?? '').trim() || undefined;
     const start = Date.now();
     try {
-      const gw = getGateway(c.env as any);
+      const gw = await gatewayForRequest(c);
       const res = await gw.complete({ messages: [{ role: 'user', content: msg }], ...(model ? { model } : {}), ...(provider ? { provider } : {}), maxTokens: 200 });
       return c.json({ ok: true, provider: res.provider, keyId: res.keyId, model: res.model, ms: Date.now() - start, content: res.content.slice(0, 500), usage: res.usage });
     } catch (e: any) {

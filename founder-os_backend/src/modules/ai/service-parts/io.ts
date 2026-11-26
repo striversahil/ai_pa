@@ -37,14 +37,13 @@ export class AIService {
       LLM_BASE_URL: config.LLM_BASE_URL,
       LLM_MODEL: config.LLM_MODEL,
     });
-    // Setting providers (BYOK list) merge into the pool — without this the
-    // shim would only ever serve env keys. Loaded before the empty check
-    // so a Settings-only pool counts as configured.
+    // Setting providers (BYOK list) ARE the pool. Loaded before the empty
+    // check so a Settings-only pool counts as configured.
     try {
       const { getAppSettings } = await import('../../../shared/app-settings');
       const s = await getAppSettings().catch(() => null);
       if (s) gw.configureFromSettings(s as any);
-    } catch { /* env pool only */ }
+    } catch { /* fail open to the last good pool */ }
     if (isMockLLM || gw.keyCount === 0) {
       throw new Error('LLM is mocked or API key is missing');
     }

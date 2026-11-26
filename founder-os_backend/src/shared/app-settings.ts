@@ -19,15 +19,15 @@ export interface AppSettingSpec {
   default: string;
 }
 
-// OpenRouter model ids look like `org/model` (colons allowed for `:free`
-// variants). Anything else is rejected at write AND read (fail-open to default).
+// Model ids look like `org/model` (colons allowed for variants). Anything else
+// is rejected at write AND read (fail-open to default).
 const MODEL_ID_RE = /^[a-z0-9][a-z0-9._\-/:]{0,119}$/i;
 
 export function isValidSettingValue(spec: AppSettingSpec, v: string): boolean {
   const s = String(v ?? '').trim();
   if (spec.kind === 'textlist') {
     // Empty clears back to the compiled default routing. Otherwise 1-5
-    // OpenRouter provider slugs (letters/digits/dots/dashes/slashes).
+    // provider slugs (letters/digits/dots/dashes/slashes).
     if (!s) return true;
     const parts = s.split(',').map((p) => p.trim()).filter(Boolean);
     return parts.length >= 1 && parts.length <= 5
@@ -116,7 +116,7 @@ export async function setAppSetting(key: string, value: string): Promise<void> {
   if (!isValidSettingValue(spec, v)) {
     throw new Error(spec.kind === 'enum'
       ? `invalid value for ${key}: must be one of ${spec.options.join(', ')}`
-      : `invalid value for ${key}: must be an OpenRouter model id like org/model (≤120 chars)`);
+      : `invalid value for ${key}: must be a model id like org/model (≤120 chars)`);
   }
   if (key === 'ai:providers' && v) validateAiProvidersJson(v);
   await prisma.setting.upsert({

@@ -1,26 +1,25 @@
 /**
  * Unified multi-provider AI gateway — the SINGLE module every AI call in the
- * system routes through. One chain (Setting `ai:providers` order, env keys
- * appended), one global strategy (`ai:strategy`: least-used-first |
- * round-robin), direct OpenAI-compatible egress. Every key in the pool is
- * provider-tagged; the gateway handles strategy selection, 429 cooldown
- * (honors retry-after), 401/403 disable, 5xx rotate.
+ * system routes through. One chain (Setting `ai:providers` order), one global
+ * strategy (`ai:strategy`: least-used-first | round-robin), direct
+ * OpenAI-compatible egress. Every key in the pool is provider-tagged; the
+ * gateway handles strategy selection, 429 cooldown (honors retry-after),
+ * 401/403 disable, 5xx rotate, immediate failover on timeout.
  *
- * Key configuration (single source of truth, both runtimes):
+ * Key configuration (founder decision 2026-11-27 — Settings ONLY):
  *   Setting ai:providers = {"providers":[{"id,baseUrl,model,keys":[...]}]}
  *     (root-managed in Settings → AI gateway; OpenAI-compatible endpoints)
- *   env.AI_KEYS         = "provider:key:label,..."  (fallback pool)
- *   env.AGNES_API_KEY(S) / OPENROUTER_* / REQUESTLY_* = legacy env keys
- *   env.GROQ_API_KEYS   = IGNORED (founder decision 2026-09-21: hallucination quality)
+ *   env.AI_KEYS / OPENROUTER_* / REQUESTLY_* / GROQ_* = IGNORED.
+ *   There is no built-in provider/default: an empty Setting = an empty pool.
+ *   GH Actions never read env keys either — runners call POST /api/ai/complete.
  *
  * Runtime note: edge-safe (no Node-only deps) so it bundles into the
- * Worker via build-worker.mjs. GH Actions consume JS port scripts/ai-gateway.js
- * that mirrors this surface. Both read same AI_KEYS contract.
+ * Worker via build-worker.mjs.
  */
 import { AiGateway } from "./ai-gateway-parts/io";
 
 // Pieces split into ./ai-gateway-parts/ (importable on their own); re-exported for compat.
-export { gatewayUsageKey, PAID_CHAT_ROUTING, PROVIDERS, OPENROUTER_TEXT_MODEL, AiGatewayError, KeyPool, keyFingerprintId, extractJson, buildVisionUserContent } from "./ai-gateway-parts/pure";
+export { gatewayUsageKey, PROVIDERS, AiGatewayError, KeyPool, keyFingerprintId, extractJson, buildVisionUserContent } from "./ai-gateway-parts/pure";
 export { setGatewayMetricSink, emitGatewayMetric, classifyGatewayError, GATEWAY_ERROR_WEIGHTS, FATAL_ERROR_KINDS } from "./ai-gateway-parts/metrics";
 export { DEFAULT_AI_HEALTH, parseAiHealthConfig, scoreKeyHealth } from "./ai-gateway-parts/health";
 export type { GatewayCallMetric, GatewayErrorKind } from "./ai-gateway-parts/metrics";

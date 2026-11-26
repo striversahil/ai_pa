@@ -216,7 +216,7 @@ export function redactedCacheKey(enquiryId: string): string {
 /**
  * Extract structured fields from an enquiry's lead-details text. Uses the
  * unified gateway so it inherits key rotation + retry + rate-limit handling and
- * works across any configured provider (Groq, OpenRouter, DeepSeek, …).
+ * works across any provider configured in Setting `ai:providers`.
  */
 export async function extractEnquiryFieldsRobust(
   env: Record<string, unknown>,
@@ -228,10 +228,6 @@ export async function extractEnquiryFieldsRobust(
     gateway = getGateway(env);
   } catch (err) {
     console.error(`[extract] gateway init failed: ${err instanceof Error ? err.message : String(err)}`);
-    return null;
-  }
-  if (gateway.keyCount === 0) {
-    console.warn('[extract] no AI keys configured (AI_KEYS/GROQ_API_KEYS) — skipping extraction');
     return null;
   }
   try {
@@ -281,12 +277,12 @@ export async function extractEnquiryFields(
   return extractEnquiryFieldsRobust({}, input, agents);
 }
 
-/** @deprecated AI keys are now configured via env.AI_KEYS / GROQ_API_KEYS. */
+/** @deprecated AI keys live only in Setting `ai:providers` (via the gateway). */
 export function pickGroqKey(_env: any): string | null {
   return null;
 }
 
-/** @deprecated AI keys are now configured via env.AI_KEYS / GROQ_API_KEYS. */
+/** @deprecated AI keys live only in Setting `ai:providers` (via the gateway). */
 export function listGroqKeys(_env: any): string[] {
   return [];
 }

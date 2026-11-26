@@ -11,8 +11,7 @@ import { getAppSettings } from '../../shared/app-settings';
 export async function authorized(c: any): Promise<boolean> {
   if (requireSecret(c)) return true;
   try {
-    await getViewerMe(c);
-    return true;
+    return !!(await getViewerMe(c));
   } catch { return false; }
 }
 
@@ -26,13 +25,14 @@ export async function rootOnly(c: any): Promise<boolean> {
   } catch { return false; }
 }
 
-/** Gateway instance with the live Setting config applied (fail-open to env). */
+/** Gateway instance with the live Setting config applied. Malformed/unreadable
+ *  Settings fail open to the last good pool — env keys are never loaded. */
 export async function gatewayForRequest(c: any) {
   const gw = getGateway(c.env as any);
   try {
     const settings = await getAppSettings();
     gw.configureFromSettings(settings as any);
-  } catch { /* fail-open to env pool */ }
+  } catch { /* fail-open to the last good pool */ }
   return gw;
 }
 

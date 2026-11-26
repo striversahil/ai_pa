@@ -21,16 +21,25 @@
  *   POST /api/runner/enquiry-intake/result applies fill-empty-only updates +
  *     KV suggestions for the sales UI.
  *
- * Env: WORKER_URL, SHARED_SECRET, AI_KEYS (single gateway pool —
- *   Setting `ai:providers` order applies server-side; env keys append).
- *   VISION_MODEL override supported by the gateway.
+ * Env: WORKER_URL, SHARED_SECRET. AI is ALWAYS POST /api/ai/complete:
+ *   the key pool lives only in Setting `ai:providers` (root-managed
+ *   Settings UI). Runners hold no AI keys and never read env key vars.
  * Flags: --limit N (cap enquiries per run), --dry-run (no result POSTs).
  */
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { workerRequest } = require('./runner-lib');
-const { getGateway, buildVisionUserContent, resolveIntakeChain, completeJsonChain } = require('./ai-gateway');
+const { workerRequest, aiComplete } = require('./runner-lib');
+const { buildVisionUserContent, extractJson } = require('./ai-gateway');
+
+/** One Worker AI call that MUST return a JSON object. The Worker owns key
+ *  selection/failover; a non-JSON completion is a hard failure here. */
+async function aiJson(req) {
+  const text = await aiComplete({ ...req, json: true });
+  const out = extractJson(text);
+  if (!out || typeof out !== 'object') throw new Error('AI returned no JSON object');
+  return out;
+}
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const limitArg = process.argv.find((a) => a.startsWith('--limit='));
@@ -39,11 +48,6 @@ const CAP = limitArg ? Math.max(1, parseInt(limitArg.split('=')[1], 10)) : 25;
 const missing = [];
 if (!process.env.WORKER_URL) missing.push('WORKER_URL');
 if (!process.env.SHARED_SECRET) missing.push('SHARED_SECRET');
-// Intake runs over the single gateway pool (Setting order, env keys append).
-// Groq is never used in this workflow.
-if (!process.env.AGNES_API_KEYS && !process.env.AGNES_API_KEY && !process.env.OPENROUTER_PAID_API_KEY && !process.env.OPENROUTER_API_KEYS && !process.env.OPENROUTER_API_KEY && !process.env.AI_KEYS) {
-  missing.push('AI_KEYS (or any provider key — Groq is not used here)');
-}
 if (missing.length) {
   console.error(`Missing required env vars: ${missing.join(', ')}`);
   process.exit(1);
@@ -139,13 +143,13 @@ function lookupDeterministic(line) {
   return null;
 }
 
-async function lookupFallbackLLM(gateway, chain, lines) {
+async function lookupFallbackLLM(lines) {
   if (!lines.length) return [];
   const input = lines.map((l, i) => `${i}. ${l.verbatim}${l.spec ? ` | ${l.spec}` : ''}${l.qty ? ` | ${l.qty}` : ''}`.slice(0, 600)).join('\n');
-  const out = await completeJsonChain(gateway, {
+  const out = await aiJson({
     messages: [{ role: 'system', content: LOOKUP_SYSTEM }, { role: 'user', content: `Match each line:\n${input}` }],
-    temperature: 0, json: true, maxTokens: 4000, noReasoning: true,
-  }, chain);
+    temperature: 0, maxTokens: 4000, reasoningOff: true,
+  });
   const matches = Array.isArray(out.matches) ? out.matches : [];
   return lines.map((_, i) => {
     const m = matches[i] || {};
@@ -219,7 +223,7 @@ function routeMatch(score, dimsEqual) {
 
 const canon = (s) => String(s || '').toLowerCase().replace(/["″]/g, ' in ').replace(/[,;]+/g, ' ').replace(/\s+/g, ' ').trim();
 
-async function processEnquiry(gateway, chain, eq) {
+async function processEnquiry(eq) {
   // Call 1 — SEGMENT (vision+text, NO catalogue): pure splitter. Verbatim
   // lines + lead block only; the model never sees KYP so it cannot bend
   // lines toward catalogue names. (ROUTER_LINES intentionally NOT sent.)
@@ -250,17 +254,17 @@ async function processEnquiry(gateway, chain, eq) {
   if (_poolNote.length + images.length > 0 && attachedImgs === 0) {
     console.log(`- ${eq.id}: WARNING ${ _poolNote.length + images.length} image(s) present but none attached to vision call`);
   }
-  // Segment call across the single gateway chain: each leg is tried in
-  // order, first success wins — no same-provider sleep-retry loops.
+  // Segment call through the Worker's Settings-only gateway: the Worker
+  // walks the provider chain; the runner only sees the final JSON.
   let routed;
   let lastErr = null;
   try {
-    routed = await completeJsonChain(gateway, {
+    routed = await aiJson({
       messages: [{ role: 'system', content: ROUTER_SYSTEM }, { role: 'user', content: fullContent }],
       // No reasoning trace (it shares the token budget and truncates the
       // JSON mid-stream); 8k headroom so the full lines array always fits.
-      temperature: 0, json: true, maxTokens: 8000, noReasoning: true,
-    }, chain);
+      temperature: 0, maxTokens: 8000, reasoningOff: true,
+    });
   } catch (e) {
     lastErr = e;
     console.log(`- ${eq.id}: segment failed on every intake leg (${String(e.message).slice(0, 120)})`);
@@ -290,7 +294,7 @@ async function processEnquiry(gateway, chain, eq) {
   }
   if (needsLlm.length > 0) {
     try {
-      const fb = await lookupFallbackLLM(gateway, chain, needsLlm);
+      const fb = await lookupFallbackLLM(needsLlm);
       fb.forEach((r, i) => {
         if (r) { needsLlm[i].category = r.category; nLlm++; }
         else needsLlm[i].category = 'Uncategorized';
@@ -348,15 +352,7 @@ async function processEnquiry(gateway, chain, eq) {
 }
 
 async function main() {
-  const gateway = getGateway(process.env);
-  if (gateway.keyCount === 0) { console.error('No AI keys configured'); process.exit(1); }
-  // Single gateway chain — refuse to run with an empty pool.
-  const chain = resolveIntakeChain(process.env);
-  if (chain.length === 0) {
-    console.error('No AI key in pool — refusing to run');
-    process.exit(1);
-  }
-  console.log(`intake chain: ${chain.join(' → ')}`);
+  // The Worker owns the Settings-only pool and its failover chain.
   const pending = await workerRequest(`/api/runner/enquiry-intake/pending?limit=${CAP}`);
   const rows = Array.isArray(pending.rows) ? pending.rows : [];
   // Claim first (parallel runners split the queue; stale claims expire in
@@ -379,7 +375,7 @@ async function main() {
   for (let i = 0; i < mine.length; i += PARALLEL) {
     const batch = mine.slice(i, i + PARALLEL);
     const results = await Promise.allSettled(batch.map(async (eq) => {
-      const out = await processEnquiry(gateway, chain, eq);
+      const out = await processEnquiry(eq);
       if (DRY_RUN) return { eq, out, posted: false };
       const res = await workerRequest('/api/runner/enquiry-intake/result', {
         method: 'POST',

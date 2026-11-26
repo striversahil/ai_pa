@@ -6,7 +6,7 @@
 //
 // Auth: viewer session OR runner SHARED_SECRET (GH Actions). No key material
 // is ever accepted in the request or echoed in the response — the pool lives
-// server-side (env keys + Setting `ai:providers` JSON). Secrets stay secrets.
+// server-side (Setting `ai:providers` JSON ONLY — env AI keys are ignored).
 import type { Hono } from 'hono';
 import { notifyLive, type Bindings } from '../context';
 import { LiveEvent } from '../../live';
@@ -148,6 +148,9 @@ export function registerAiRoutes(app: Hono<{ Bindings: Bindings }>): void {
         ...((body as any)?.model ? { model: String((body as any).model).slice(0, 120) } : {}),
         ...((body as any)?.provider ? { provider: String((body as any).provider).slice(0, 40) } : {}),
         ...((body as any)?.sessionKey ? { sessionKey: String((body as any).sessionKey).slice(0, 120) } : {}),
+        ...(typeof (body as any)?.timeoutMs === 'number' ? { timeoutMs: Math.max(1_000, Math.min(300_000, (body as any).timeoutMs)) } : {}),
+        ...((body as any)?.reasoningOff ? { reasoningOff: true } : {}),
+        ...((body as any)?.reasoningEffort ? { reasoningEffort: String((body as any).reasoningEffort).slice(0, 20) } : {}),
         ...((body as any)?.json ? { json: true } : {}),
       };
       if ((body as any)?.json) {

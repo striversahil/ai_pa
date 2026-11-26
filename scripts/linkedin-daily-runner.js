@@ -16,7 +16,8 @@
  * (scripts/kie-image.js, KIE_API_KEY).
  * No auto-posting: the batch lands as status=draft for dashboard review.
  *
- * Env: WORKER_URL, SHARED_SECRET, AI_KEYS (or AGNES_API_KEY(S)).
+ * Env: WORKER_URL, SHARED_SECRET. AI goes through POST /api/ai/complete;
+ * the pool lives only in Setting `ai:providers` (no runner AI keys).
  * Manual: IDEA=<P001..P200> (or TOPIC=<same>) runs a single idea;
  * IDEA=AUTO (or TOPIC=AUTO) runs ONE rotation-aware HIGH-priority idea
  * (dashboard "new draft on the fly").
@@ -31,8 +32,6 @@ const { API } = require('../founder-os_backend/src/shared/sync-core/contract');
 const missing = [];
 if (!process.env.WORKER_URL) missing.push('WORKER_URL');
 if (!process.env.SHARED_SECRET) missing.push('SHARED_SECRET');
-const hasLLM = (process.env.AI_KEYS || process.env.AGNES_API_KEY || process.env.AGNES_API_KEYS);
-if (!hasLLM) missing.push('AI_KEYS or AGNES_API_KEY(S)');
 if (missing.length) {
   console.error(`Missing required env vars: ${missing.join(', ')}`);
   process.exit(1);

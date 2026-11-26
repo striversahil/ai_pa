@@ -8,8 +8,8 @@
  * summarize each chat (full or incremental via previous digest) → persist
  * digests, tasks and pending items → mark messages processed.
  *
- * Env: WORKER_URL, SHARED_SECRET, AI_KEYS (single gateway: Setting order, env appended;
- * legacy GROQ/OPENROUTER/REQUESTLY vars still merged) — all via runner-lib.
+ * Env: WORKER_URL, SHARED_SECRET — all via runner-lib. AI keys are NOT read
+ * here: calls go to POST /api/ai/complete and the Worker Setting owns the pool.
  */
 
 const { requireEnv, workerRequest, groqJson } = require('./runner-lib');

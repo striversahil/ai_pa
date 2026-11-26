@@ -8,8 +8,8 @@
  * from the worker → build the same context strings the engines produce →
  * LLM generate the brief → persist as a founder note.
  *
- * Env: WORKER_URL, SHARED_SECRET, AI_KEYS (single gateway: Setting order, env appended;
- * legacy GROQ/OPENROUTER/REQUESTLY vars still merged) — all via runner-lib.
+ * Env: WORKER_URL, SHARED_SECRET — all via runner-lib. AI keys are NOT read
+ * here: calls go to POST /api/ai/complete and the Worker Setting owns the pool.
  */
 
 const { requireEnv, workerRequest, groq } = require('./runner-lib');
