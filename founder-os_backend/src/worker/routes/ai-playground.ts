@@ -15,14 +15,18 @@ import { rootOnly, gatewayForRequest } from './ai-shared';
 import { classifyGatewayError } from '../../shared/ai-gateway-parts/metrics';
 
 const MAX_PROMPT = 8000;
-const MAX_TOKENS_CAP = 1024;
-const DEFAULT_MAX_TOKENS = 256;
+// No max_tokens is sent by default: the provider then lets the model generate
+// up to its OWN maximum output. An explicit value is honoured up to a generous
+// ceiling (current frontier models sit well under this).
+const MAX_TOKENS_CAP = 200_000;
+const DEFAULT_TIMEOUT_MS = 120_000;
+const MAX_TIMEOUT_MS = 300_000;
 
 interface ProbeSpec {
   provider: string;
   keyId: string;
   messages: Array<{ role: 'system' | 'user'; content: string }>;
-  maxTokens: number;
+  maxTokens?: number;
   temperature: number;
   timeoutMs: number;
 }
@@ -39,9 +43,10 @@ function parseProbe(body: any): ProbeSpec | { error: string } {
   const rawTokens = Number(body?.maxTokens);
   const maxTokens = Number.isFinite(rawTokens) && rawTokens > 0
     ? Math.min(MAX_TOKENS_CAP, Math.round(rawTokens))
-    : DEFAULT_MAX_TOKENS;
+    : undefined; // omit → the model's own maximum output
   const temperature = typeof body?.temperature === 'number' ? Math.max(0, Math.min(2, body.temperature)) : 0.2;
-  const timeoutMs = Math.max(1000, Math.min(30000, Number(body?.timeoutMs) || 20000));
+  // Long generations need room: a max-output answer can stream for minutes.
+  const timeoutMs = Math.max(1000, Math.min(MAX_TIMEOUT_MS, Number(body?.timeoutMs) || DEFAULT_TIMEOUT_MS));
   const messages: Array<{ role: 'system' | 'user'; content: string }> = [];
   if (system) messages.push({ role: 'system', content: system.slice(0, 2000) });
   messages.push({ role: 'user', content: prompt });
@@ -80,7 +85,7 @@ export function registerAiPlaygroundRoutes(app: Hono<{ Bindings: Bindings }>): v
       } as any);
       return c.json({
         ok: true, provider: out.provider, keyId: key.id, model: out.model,
-        content: String(out.content ?? '').slice(0, 4000),
+        content: String(out.content ?? ''),
         metrics: completionMetrics(t0, null, out.usage),
       });
     } catch (e: any) {
@@ -130,7 +135,7 @@ export function registerAiPlaygroundRoutes(app: Hono<{ Bindings: Bindings }>): v
           }
           send('done', {
             ...completionMetrics(t0, ttftMs, usage),
-            content: text.slice(0, 4000),
+            content: text,
           });
         } catch (e: any) {
           send('error', {
