@@ -271,16 +271,19 @@ export async function deleteCustomer(
   return { id: key, name };
 }
 
-const MAX_IMPORT_BYTES = 12 * 1024 * 1024;
-
 /** Re-import the master extract (same shape as data/master_data.json).
  *  Upsert-only: rows missing from the file are never deleted — a partial
  *  extract must not wipe the book. Local fields (notes, duplicate review)
- *  survive because the upsert does not touch them. */
+ *  survive because the upsert does not touch them.
+ *
+ *  NO size limit of our own (founder decision 2026-11-27: the 12 MB cap is
+ *  gone). The old check re-serialized the whole body just to measure it — a
+ *  full extra copy of a multi-MB object on a 128 MB isolate. Cloudflare is
+ *  the only ceiling: a request body is capped at 100 MB at the edge, and the
+ *  writes are already chunked (store.ts#upsertCustomers, 20 rows a batch),
+ *  so a bigger extract costs batches, not memory beyond the parse. */
 export async function importMasterData(json: unknown, actor: Actor): Promise<MasterImportResult> {
   if (!json || typeof json !== 'object') throw new MasterDataError('expected a JSON object', 400);
-  const size = JSON.stringify(json).length;
-  if (size > MAX_IMPORT_BYTES) throw new MasterDataError('file too large (max 12 MB)', 413);
   const parsed = parseImportPayload(json);
   if (parsed.customers.length === 0) {
     throw new MasterDataError('no customers found — expected { summary, regions: { R1: [...] } }', 400);

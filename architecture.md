@@ -1254,6 +1254,13 @@ events out to every component via an in-process event bus — no per-dashboard s
   both an overdue and a today line counted twice); the Unscheduled / Scheduled / Dispatched cards
   read `tab*` for the same reason (one SO sits in several tabs, so a lifecycle bucket can never be
   the number beside a list). Next Enquiries history → rest. Guard `list-paging`.
+- **Customer-master import has no size cap (2026-11-27, founder decision)**: `POST /api/master-data/import`
+  takes the Zoho extract at any size — `MAX_IMPORT_BYTES` (12 MB) and its `JSON.stringify(json).length`
+  meter are deleted (that meter re-serialized the entire body on a 128 MB isolate just to measure it).
+  Cloudflare's 100 MB request-body ceiling is the only limit, and the writes were already chunked
+  (`store.ts#upsertCustomers`, 20 rows per `db.batch()`, regions in one batch), so a bigger extract
+  costs batches, not memory beyond the parse. The dialog footer reads "JSON only · any size"; guard
+  `master-data-core-parity` fails if a byte cap or the 12 MB label returns.
 - **A deps change is a DIFFERENT dataset** (2026-11-27): `useLiveQuery` deliberately keeps the
   last payload across a `deps` change — that is what makes a live refetch invisible — and a
   monotonic `seq` guard means only the NEWEST request paints, so a slow earlier response (a tab

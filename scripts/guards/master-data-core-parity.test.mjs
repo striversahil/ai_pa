@@ -79,3 +79,20 @@ describe('customer collapse contract (0136)', () => {
     assert.ok(migration.includes('INSTEAD OF INSERT') && migration.includes('INSTEAD OF UPDATE') && migration.includes('INSTEAD OF DELETE'), 'bridge must forward writes too');
   });
 });
+// Founder decision 2026-11-27: the 12 MB cap on the customer-master import is
+// GONE. The old check also re-serialized the entire body just to measure it.
+describe('master import has no size cap of its own', () => {
+  const FE_IMPORT = join(BACKEND_DIR, '..', 'founder-os_frontend', 'src', 'components', 'master-data', 'ImportModal.tsx');
+
+  it('service.ts does not measure or reject the upload', () => {
+    assert.ok(!/MAX_IMPORT_BYTES/.test(service), 'a byte cap was re-added');
+    assert.ok(!/file too large/i.test(service), 'the 413 must stay deleted (Cloudflare caps the request body)');
+    assert.ok(!/JSON\.stringify\(json\)\.length/.test(service), 'never re-serialize the body just to size it');
+  });
+
+  it('the import dialog does not advertise a 12 MB limit', () => {
+    const modal = readFileSync(FE_IMPORT, 'utf8');
+    assert.ok(!/12\s?MB/i.test(modal), 'the UI still states a 12 MB cap');
+  });
+});
+

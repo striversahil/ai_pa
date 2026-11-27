@@ -124,7 +124,7 @@ export default function ImportModal({
           </div>
         ) : (
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] text-[var(--text-tertiary)]">Max 12 MB · JSON only</span>
+            <span className="text-[11px] text-[var(--text-tertiary)]">JSON only · any size</span>
             <PrimaryButton onClick={submit} disabled={!json || busy}>
               {busy ? "Importing…" : "Import"}
             </PrimaryButton>
