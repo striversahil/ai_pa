@@ -612,6 +612,11 @@ is never a delegable scope.
 Deleting a connection keeps its events by default (`sourceId` blanked, so the
 feed still shows history); `?purge=1` deletes them too.
 
+The view is lazily imported in `app/page.tsx` **and** mounted there
+(`activeView === "integrations"`). 2026-11-27: the import shipped without the
+mount, so `/integrations` rendered an empty `<main>` — a blank page, not an
+error. Guard `view-wiring` now compares `NAV_ITEMS` to the `page.tsx` switch.
+
 ### 15.6 Not yet wired (next commits)
 
 Tally auto-connect + backfill of existing submissions, and per-source domain
