@@ -60,6 +60,7 @@ export function toEnquiry(raw: any): Enquiry {
                 specDiff: q?.specSame === false && q?.specDiff ? String(q.specDiff) : undefined,
                 quotedAt: q?.quotedAt ? String(q.quotedAt) : undefined,
                 selected: q?.selected === true,
+                anonymous: q?.anonymous === true ? true : undefined,
                 references: Array.isArray(q?.references)
                   ? q.references
                       .map((m: any) => ({
@@ -70,7 +71,12 @@ export function toEnquiry(raw: any): Enquiry {
                       .filter((m: any) => m.url.length > 0)
                   : [],
               }))
-              .filter((q: any) => q.vendor.trim() && Number.isFinite(q.rate))
+              // A sales payload has NO vendor name on the rows it forwards
+              // (founder rule) — they carry `anonymous: true` instead. Filtering
+              // on the vendor name alone silently dropped the ORDER BRIEF
+              // ("order this spec" / "note from management") for every
+              // non-root login while root kept the names and saw it.
+              .filter((q: any) => (q.vendor.trim() || q.anonymous === true) && Number.isFinite(q.rate))
           : [],
         selectedVendor: r?.selectedVendor ? String(r.selectedVendor) : undefined,
         selectedRateIdx: Number.isInteger(Number(r?.selectedRateIdx)) && Number(r?.selectedRateIdx) >= 0 ? Number(r.selectedRateIdx) : undefined,

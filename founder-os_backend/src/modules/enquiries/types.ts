@@ -81,6 +81,11 @@ export interface EnquiryItemRate {
   specDiff?: string;
   references?: EnquiryMedia[];
   quotedAt?: string;
+  /** Server-set marker on a sales payload row whose vendor name was stripped
+   *  (`stripMarginFields` with `hideRequests`): the decided quote and the
+   *  management-shared alternates. It is what the client filters on — a
+   *  stripped row has no vendor name left to identify it by. Never stored. */
+  anonymous?: boolean;
 }
 
 export interface EnquiryItem {

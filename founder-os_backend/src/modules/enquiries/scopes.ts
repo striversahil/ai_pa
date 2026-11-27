@@ -73,7 +73,9 @@ export function canSeeProcurementRequests(me: MeResponse): boolean {
  *  Sales never sees vendor information (founder rule): with `hideRequests`,
  *  vendor name + vendor description are stripped from EVERY quoted row —
  *  decided, shared and unshared alike (the decided row keeps `selected`;
- *  shared rows keep their anonymized `salesNote`/`sharedFinalRate`).
+ *  shared rows keep their anonymized `salesNote`/`sharedFinalRate`). The
+ *  decided + shared rows also carry `anonymous: true`, the marker the client
+ *  normalizer keys on (a stripped row has no vendor name to filter by).
  *  Item thread is the common sales↔procurement channel (per-item, always open,
  *  even after sent — negotiation stays separate). Sales sees thread but
  *  quoted entries with vendor names are stripped (internal).
@@ -109,19 +111,25 @@ export function stripMarginFields<T extends Record<string, any>>(enquiry: T, opt
             const { vendor, description, ...anon } = rr as any;
             void vendor;
             void description;
-            if (selectedVendor && r.vendor === selectedVendor) return { ...anon, selected: true };
+            // `anonymous` is the sales payload's OWN marker: with the vendor
+            // name gone the UI has nothing else to identify a forwardable row
+            // by (it used to filter on a vendor name and silently dropped the
+            // whole brief). Only the two rows sales may render get it — the
+            // decided quote (ORDER BRIEF + "Rate Received") and the
+            // management-shared alternates. Unshared alternates stay unmarked
+            // and stay invisible to sales, exactly as before.
+            const decided = !!selectedVendor && r.vendor === selectedVendor;
+            if (decided) return { ...anon, selected: true, anonymous: true };
+            if (r.sharedWithSales === true) return { ...anon, anonymous: true };
             return anon;
           }
           // Procurement/management payloads keep everything (discounts are
           // procurement's own input — stripping them once wiped saved values).
+          // A management-shared alternate is still the quote procurement
+          // entered: anonymizing it here made the row unidentifiable, so the
+          // UI dropped it from the very desk that typed it.
           const shown = r;
           if (selectedVendor && r.vendor === selectedVendor) return { ...shown, selected: true };
-          if ((r as any)?.sharedWithSales === true) {
-            const { vendor, description, ...anon } = shown as any;
-            void vendor;
-            void description;
-            return anon;
-          }
           return shown;
         });
       }

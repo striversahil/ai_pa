@@ -68,7 +68,12 @@ export function normalizeItemWrites(items: any[], ctx: ItemWriteCtx): any[] {
     // Identity matches the vendor|rate keys used below (exact, case-sensitive).
     const rateKey = (r: any) => `${String(r?.vendor ?? '')}|${Number(r?.rate)}`;
     if (Array.isArray(base.rates) || Array.isArray(stored.rates)) {
-      const incomingRows = Array.isArray(base.rates) ? base.rates : [];
+      // An anonymized (sales) echo carries no vendor, so it has no
+      // `vendor|rate` identity: merging it would append phantom quotes next to
+      // the reinstated real ones and trip the rate-change lifecycle below.
+      // Only a writer that may see vendor names can introduce a quote.
+      const incomingRows = (Array.isArray(base.rates) ? base.rates : [])
+        .filter((r: any) => privileged || String(r?.vendor ?? '').trim().length > 0);
       const storedRows = Array.isArray(stored.rates) ? stored.rates : [];
       // Explicit removals, counted per key: one marker deletes one twin, so
       // deleting one of two identical quotes keeps the other.

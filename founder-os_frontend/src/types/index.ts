@@ -66,6 +66,10 @@ export interface EnquiryItemRate {
   selected?: boolean;
   /** ISO instant the quote was logged (older rows lack it). */
   quotedAt?: string;
+  /** Server-set on a sales payload row whose vendor name was stripped (the
+   *  decided quote + management-shared alternates). Mirrors the BE marker —
+   *  it is the only identity such a row has, so never filter on `vendor`. */
+  anonymous?: boolean;
 }
 
 export interface EnquiryItem {

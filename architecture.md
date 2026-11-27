@@ -494,6 +494,14 @@ The sourcing queue is the procurement desk's own worklist, not a mirror of the e
   Management" block (`salesNote`), plus matching header chips. It is deliberately **not** gated on
   `rateStatus`, because the order is placed *after* the estimate is sent. Vendor identity stays
   hidden — only the differing spec text and the note go out.
+- **The brief must survive the client normalizer**: the decided and shared quote rows are served
+  vendor-stripped with `anonymous: true` (`stripMarginFields`), and
+  `frontend/src/enquiry/normalize.ts` keys on that marker. Filtering quote rows on a vendor name
+  (the old rule) dropped the entire `rates` array for every non-root login: the item still showed
+  "Rate Received" (that reads `finalRate`, never stripped) while the ORDER BRIEF and its chips
+  stayed invisible — root kept the vendor name, so root alone saw them. A non-privileged write
+  never merges a vendor-less rate row (`normalizeItemWrites`), so an anonymized echo cannot create
+  a phantom quote. Guard `sales-redaction` pins the server marker + all three client outcomes.
 - Chat composers send on plain **Enter** (`Shift+Enter` = newline) in `ThreadCard` and
   `NewThreadForm`. Guard `enquiry-procurement-ownership` pins all of the above.
 

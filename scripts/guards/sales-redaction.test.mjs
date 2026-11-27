@@ -13,9 +13,15 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { BACKEND_DIR, bundleToFile } from './_bundle.mjs';
+import { BACKEND_DIR, FRONTEND_SRC, bundleToFile } from './_bundle.mjs';
 
 const { stripMarginFields } = await import(bundleToFile(join(BACKEND_DIR, 'src', 'modules', 'enquiries', 'scopes.ts')));
+// The sales payload is USELESS if the client normalizer throws the brief away:
+// it used to keep a quote row only when it carried a vendor name, which a
+// sales payload never does — so the ORDER BRIEF ("order this spec" + "note
+// from management") rendered for root and for nobody else. Pin both halves.
+const { toEnquiry } = await import(bundleToFile(join(FRONTEND_SRC, 'enquiry', 'normalize.ts'), { alias: { '@': FRONTEND_SRC } }));
+const { normalizeItemWrites } = await import(bundleToFile(join(BACKEND_DIR, 'src', 'modules', 'enquiries', 'update-parts', 'pure.ts')));
 
 // Kota Dal Mill shape (2026-11-12 incident): decided item, selected vendor
 // row, one unshared late vendor quote, internal late-quote audit note naming
@@ -27,7 +33,7 @@ const kotaRow = () => ({
     markup: 500,
     finalRate: 5590,
     rates: [
-      { vendor: 'Girnar rubber pvt ltd', rate: 5090, description: 'Raj Engineers', discountPercent: 2, quotedAt: '2026-11-12T07:31:34.537Z', sharedWithSales: true, salesNote: 'best option', sharedFinalRate: 5590 },
+      { vendor: 'Girnar rubber pvt ltd', rate: 5090, description: 'Raj Engineers', discountPercent: 2, quotedAt: '2026-11-12T07:31:34.537Z', sharedWithSales: true, salesNote: 'best option', sharedFinalRate: 5590, specSame: false, specDiff: 'Rubber 150mm (not 4 inch)' },
       { vendor: 'Namrata Rubber Product Pvt. Ltd.', rate: 4900, quotedAt: '2026-11-12T09:29:37.904Z' },
     ],
     loops: [
@@ -76,5 +82,48 @@ describe('sales redaction: no vendor information in sales payloads', () => {
     }
     assert.strictEqual(out.items[0].rates[0].discountPercent, 2);
     assert.ok(out.items[0].loops.some((l) => l?.internal === true), 'manager must keep internal notes');
+  });
+
+  it('procurement keeps the vendor on a management-shared alternate it quoted', () => {
+    const out = stripMarginFields({
+      items: [{ selectedVendor: 'A Corp', rates: [{ vendor: 'A Corp', rate: 100, sharedWithSales: true }, { vendor: 'B Corp', rate: 90, sharedWithSales: true }] }],
+    }, {});
+    assert.strictEqual(out.items[0].rates[1].vendor, 'B Corp', 'shared alternate must stay identifiable for procurement');
+  });
+});
+
+describe('sales order brief: the appended row survives the client normalizer', () => {
+  it('server marks exactly the forwardable rows anonymous (decided + shared)', () => {
+    const out = stripMarginFields(kotaRow(), { hideRequests: true });
+    const [sel, alt] = out.items[0].rates;
+    assert.strictEqual(sel.anonymous, true);
+    assert.strictEqual(sel.selected, true);
+    assert.strictEqual(alt.anonymous, undefined, 'unshared alternate must stay unmarked (invisible to sales)');
+  });
+
+  it('non-root sales keeps the decided quote: salesNote + specDiff + selected', () => {
+    const out = stripMarginFields(kotaRow(), { hideRequests: true });
+    const it = toEnquiry(out).items[0];
+    assert.strictEqual(it.rates.length, 1, 'decided quote must survive normalization for sales');
+    const decided = it.rates[0];
+    assert.strictEqual(decided.salesNote, 'best option');
+    assert.strictEqual(decided.specSame, false);
+    assert.strictEqual(decided.specDiff, 'Rubber 150mm (not 4 inch)');
+    assert.strictEqual(decided.selected, true);
+    assert.strictEqual(decided.vendor, '', 'vendor name must still be gone');
+  });
+
+  it('an anonymized echo never ghosts a quote (union keeps the 2 stored rows)', () => {
+    const storedItems = [{ name: 'x', rates: [{ vendor: 'A Corp', rate: 100 }, { vendor: 'B Corp', rate: 90 }] }];
+    const echo = [{ name: 'x', rates: [{ rate: 100, selected: true, anonymous: true }, { rate: 90 }] }];
+    const out = normalizeItemWrites(echo, { storedItems, privileged: false, restricted: false, actingProcurement: false });
+    assert.strictEqual(out[0].rates.length, 2, 'vendor-less rows must not be merged as new quotes');
+    assert.deepStrictEqual(out[0].rates.map((r) => r.vendor).sort(), ['A Corp', 'B Corp']);
+  });
+
+  it('management can still add a quote by name', () => {
+    const storedItems = [{ name: 'x', rates: [{ vendor: 'A Corp', rate: 100 }] }];
+    const out = normalizeItemWrites([{ name: 'x', rates: [{ vendor: 'C Corp', rate: 80 }] }], { storedItems, privileged: true, restricted: false, actingProcurement: false });
+    assert.deepStrictEqual(out[0].rates.map((r) => r.vendor).sort(), ['A Corp', 'C Corp']);
   });
 });
