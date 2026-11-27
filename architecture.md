@@ -1261,6 +1261,11 @@ events out to every component via an in-process event bus — no per-dashboard s
   (`store.ts#upsertCustomers`, 20 rows per `db.batch()`, regions in one batch), so a bigger extract
   costs batches, not memory beyond the parse. The dialog footer reads "JSON only · any size"; guard
   `master-data-core-parity` fails if a byte cap or the 12 MB label returns.
+  The book itself was **wiped** the same day (mig `0182`, founder request): `core_customer` is empty,
+  every row is preserved verbatim in `_backup_core_customer_20261127` (14,838 rows; also a JSON dump at
+  `~/pa-backups/core_customer_20261127.json`), and the intended way back is a fresh Zoho re-import —
+  the backup is restored with one `INSERT INTO core_customer SELECT * FROM _backup_core_customer_20261127;`
+  if the new extract turns out worse than the old data.
 - **A deps change is a DIFFERENT dataset** (2026-11-27): `useLiveQuery` deliberately keeps the
   last payload across a `deps` change — that is what makes a live refetch invisible — and a
   monotonic `seq` guard means only the NEWEST request paints, so a slow earlier response (a tab
