@@ -18,6 +18,22 @@ import { normTok, ROUTER_SYSTEM, isRateLimited, lookupDeterministic, lookupToken
 const INTAKE_CALL_TIMEOUT_MS = 90_000;
 const INTAKE_TOTAL_TIMEOUT_MS = 95_000;
 
+// A failed run must stay retryable. The only marker a failure writes is an
+// EXPIRED claim, which the 15-min intake-sweep reads as "not owned" and
+// retries; the done marker is written by the success path alone. (Stamping
+// done on failure meant a transient 503 storm finished every row off as
+// "processed, no items" and the sweeper skipped it forever.)
+async function releaseClaim(env: Record<string, unknown>, id: string): Promise<void> {
+  try {
+    const db: any = (env as any)?.DB;
+    if (!db) return;
+    const nowIso = new Date().toISOString();
+    const expired = new Date(Date.now() - 10 * 60 * 1000 - 1000).toISOString();
+    await db.prepare(`INSERT INTO Setting(key, value, updatedAt) VALUES(?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`)
+      .bind('enquiry:intake:claim:' + id, expired, nowIso).run();
+  } catch { /* marker hygiene never fails intake */ }
+}
+
 export async function loadLiveCatalog(): Promise<LiveCatalog> {
   const rows = await getProductIndex().catch(() => []);
   const products: MatchProduct[] = rows.map((p) => ({
@@ -188,22 +204,11 @@ export async function runVisionIntake(
   if (lastErr && !routed) {
     const is429 = isRateLimited(lastErr);
     if (is429) {
-      console.warn(`[vision-intake] ${id}: all providers rate-limited (${chain.map((l) => l.provider).join('→')}) — writing empty intake so UI unsticks; flags stay set so the next edit or the 15-min intake-sweep retries`);
+      console.warn(`[vision-intake] ${id}: all providers rate-limited (${chain.map((l) => l.provider).join('→')}) — writing empty intake so UI unsticks; NO done marker, so the 15-min intake-sweep retries`);
       try {
         await cacheSet(`enquiry:intake:${id}`, { at: new Date().toISOString(), suggestions: [], missing: [], candidates: [] }, 7 * 24 * 60 * 60 * 1000);
-        try {
-          const db: any = (env as any)?.DB;
-          if (db) {
-            const nowIso = new Date().toISOString();
-            const doneAt = String((enquiry as any)?.updatedAt ?? nowIso);
-            const expired = new Date(Date.now() - 10 * 60 * 1000 - 1000).toISOString();
-            await db.batch([
-              db.prepare(`INSERT INTO Setting(key, value, updatedAt) VALUES(?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`).bind('enquiry:intake:done:' + id, doneAt, nowIso),
-              db.prepare(`INSERT INTO Setting(key, value, updatedAt) VALUES(?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`).bind('enquiry:intake:claim:' + id, expired, nowIso),
-            ]);
-          }
-        } catch {}
       } catch {}
+      await releaseClaim(env, id);
     } else {
       console.error(`[vision-intake] ${id}: vision failed on all providers ${chain.join('→')}: ${String(lastErr?.message ?? lastErr).slice(0, 300)}`);
     }
@@ -223,19 +228,13 @@ export async function runVisionIntake(
         try { await store.updateEnquiry(id, { items: cleared }).catch(() => null); } catch {}
       }
     } catch {}
-    try {
-      const db: any = (env as any)?.DB;
-      if (db) {
-        const nowIso = new Date().toISOString();
-        let doneAt = nowIso;
-        try { const cur: any = await store.getEnquiry(id).catch(() => null); doneAt = String((cur as any)?.updatedAt ?? nowIso); } catch {}
-        const expired = new Date(Date.now() - 10 * 60 * 1000 - 1000).toISOString();
-        await db.batch([
-          db.prepare(`INSERT INTO Setting(key, value, updatedAt) VALUES(?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`).bind('enquiry:intake:done:' + id, doneAt, nowIso),
-          db.prepare(`INSERT INTO Setting(key, value, updatedAt) VALUES(?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`).bind('enquiry:intake:claim:' + id, expired, nowIso),
-        ]);
-      }
-    } catch {}
+    // No done marker on a failed run: "done" means "this row has been
+    // processed". Stamping it here is what made a dead pool look finished —
+    // a 503 storm marked every fresh enquiry done with zero items, and the
+    // sweeper (done >= updatedAt ⇒ skip) then ignored it forever. Releasing
+    // the claim instead lets the next tick retry, after the 10-min back-off.
+    await releaseClaim(env, id);
+    console.warn(`[vision-intake] ${id}: all providers failed (${chain.map((l) => l.provider).join('→')}) — left unmarked so the 15-min intake-sweep retries`);
     return null;
   }
   if (!routed || !Array.isArray(routed.lines) || routed.lines.length === 0) {
