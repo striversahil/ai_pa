@@ -15,8 +15,15 @@ import { normTok, ROUTER_SYSTEM, isRateLimited, lookupDeterministic, lookupToken
 // short AbortController here used to cancel the call at 20 s, which looks like
 // a caller abort to the gateway, so it neither rotated keys nor recorded the
 // failure. Let the gateway enforce the deadline instead.
-const INTAKE_CALL_TIMEOUT_MS = 90_000;
-const INTAKE_TOTAL_TIMEOUT_MS = 95_000;
+//
+// Measured 2026-11-27 on the free tier: the streamed leg times out at its 20 s
+// first-token budget, the buffered fallback then answered 200 in 30.8 s for the
+// same split — so the split DOES come back, just past the old 95 s leg budget
+// (a run spent its whole allowance on one leg and returned nothing). The budget
+// is therefore a ceiling for the whole leg, not a target: 300 s covers the
+// streamed tries plus three buffered answers, and 150 s is the per-attempt cap.
+const INTAKE_CALL_TIMEOUT_MS = 150_000;
+const INTAKE_TOTAL_TIMEOUT_MS = 300_000;
 
 // A failed run must stay retryable. The only marker a failure writes is an
 // EXPIRED claim, which the 15-min intake-sweep reads as "not owned" and
