@@ -239,7 +239,7 @@ export async function extractEnquiryFieldsRobust(
     let parsed: any = null;
     for (const leg of chain) {
       try {
-        parsed = await gateway.completeJson<any>({
+        parsed = await gateway.completeJsonStream<any>({
           messages: [
             { role: 'system', content: 'Extract structured sales-enquiry fields as JSON. Never alter client wording.' },
             { role: 'user', content: buildPrompt(input) },

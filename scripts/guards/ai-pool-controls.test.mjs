@@ -232,3 +232,44 @@ describe('health config', () => {
     assert.deepEqual(mod.parseAiHealthConfig('not-json'), mod.DEFAULT_AI_HEALTH);
   });
 });
+// ── Streamed JSON (2026-11-27) ──────────────────────────────────────────────
+// A non-streaming completion makes the provider buffer the whole answer, so
+// the 30 s first-byte deadline fired on every real enquiry (a 20-line split
+// measured 66 s buffered vs 6 s to first token streamed) and the split never
+// landed. Intake + extraction ride the stream path now; this locks it.
+describe('streamed JSON calls', () => {
+  it('assembles streamed deltas into the parsed object', async () => {
+    const fake = {
+      stream: async function* () {
+        yield { contentDelta: '{"lines":[' };
+        yield { contentDelta: '{"name":"Fenner FBC 8B","qty":"1"}' };
+        yield { contentDelta: ']}' };
+      },
+    };
+    const out = await mod.AiGateway.prototype.completeJsonStream.call(fake, { messages: [] });
+    assert.deepEqual(out, { lines: [{ name: 'Fenner FBC 8B', qty: '1' }] });
+  });
+
+  it('falls back to extracting JSON wrapped in prose, and names a real failure', async () => {
+    const wrapped = {
+      stream: async function* () {
+        yield { contentDelta: 'Here you go:\n' };
+        yield { contentDelta: '{"ok":true}\n' };
+      },
+    };
+    assert.deepEqual(await mod.AiGateway.prototype.completeJsonStream.call(wrapped, { messages: [] }), { ok: true });
+    const junk = { stream: async function* () { yield { contentDelta: 'no json here' }; } };
+    await assert.rejects(
+      () => mod.AiGateway.prototype.completeJsonStream.call(junk, { messages: [] }),
+      /Failed to parse JSON from streamed response/,
+    );
+  });
+
+  it('intake + extraction never call the buffered completeJson again', () => {
+    for (const rel of ['src/modules/enquiries/vision-intake-parts/io.ts', 'src/modules/enquiries/extract.ts']) {
+      const src = readFileSync(join(BACKEND_DIR, rel), 'utf8');
+      assert.match(src, /completeJsonStream/, rel + ' must use the streamed JSON call');
+      assert.doesNotMatch(src, /\bcompleteJson\(/, rel + ' must not send a buffered (non-streamed) completion');
+    }
+  });
+});

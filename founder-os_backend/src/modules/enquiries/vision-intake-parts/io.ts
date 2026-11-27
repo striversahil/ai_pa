@@ -136,9 +136,9 @@ export async function runVisionIntake(
   outer: for (const leg of chain) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        routed = await gateway.completeJson<any>({
+        routed = await gateway.completeJsonStream<any>({
           messages: [{ role: 'system', content: ROUTER_SYSTEM }, { role: 'user', content }],
-          temperature: 0, json: true, maxTokens: 24000, provider: leg.provider, ...(leg.model ? { model: leg.model } : {}),
+          temperature: 0, json: true, provider: leg.provider, ...(leg.model ? { model: leg.model } : {}),
           timeoutMs: INTAKE_CALL_TIMEOUT_MS,
           ttftMs: 45_000,
           totalTimeoutMs: INTAKE_TOTAL_TIMEOUT_MS,
@@ -357,12 +357,12 @@ export async function runVisionIntake(
       const idx: number[] = [];
       kypHits.forEach((h, i) => { if (!h) idx.push(i); });
       const input = idx.map((i, k) => `${k}. ${[lines[i].verbatim, lines[i].name, lines[i].dims, lines[i].spec, lines[i].qty].filter(Boolean).join(' | ')}`.slice(0, 600)).join('\n');
-      const out = await gateway.completeJson<any>({
+      const out = await gateway.completeJsonStream<any>({
         messages: [
           { role: 'system', content: `${LOOKUP_FALLBACK_SYSTEM}\nCatalogue (category NUMBER. Category: Item[aliases]; ...):\n${buildLookupList(liveCats, liveProducts)}` },
           { role: 'user', content: `Match each line:\n${input}` },
         ],
-        temperature: 0, json: true, maxTokens: 24000, provider: successLeg.provider, ...(successLeg.model ? { model: successLeg.model } : {}),
+        temperature: 0, json: true, provider: successLeg.provider, ...(successLeg.model ? { model: successLeg.model } : {}),
         timeoutMs: INTAKE_CALL_TIMEOUT_MS,
         ttftMs: 45_000,
         totalTimeoutMs: INTAKE_TOTAL_TIMEOUT_MS,
@@ -459,12 +459,12 @@ export async function runVisionIntake(
       return `Item ${k} spec: "${specText}"\nChecklist:\n${checklist}`;
     }).join('\n\n---\n\n');
     try {
-      const raw = await gateway.completeJson<any>({
+      const raw = await gateway.completeJsonStream<any>({
         messages: [
           { role: 'system', content: SPEC_CHECK_SYSTEM },
           { role: 'user', content: checksInput },
         ],
-        temperature: 0, json: true, maxTokens: 24000, provider: successLeg.provider, ...(successLeg.model ? { model: successLeg.model } : {}),
+        temperature: 0, json: true, provider: successLeg.provider, ...(successLeg.model ? { model: successLeg.model } : {}),
         timeoutMs: INTAKE_CALL_TIMEOUT_MS,
         ttftMs: 45_000,
         totalTimeoutMs: INTAKE_TOTAL_TIMEOUT_MS,

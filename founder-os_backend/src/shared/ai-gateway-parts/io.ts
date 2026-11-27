@@ -507,6 +507,30 @@ export class AiGateway {
     }
   }
 
+  /** Convenience: STREAM the call, assemble the text, parse it as JSON.
+   *
+   *  Non-streaming completions make the provider buffer the whole answer
+   *  before the first byte arrives, so `complete()`'s first-byte deadline
+   *  fires on every real enquiry: a 20-line split takes 60-90 s (measured
+   *  66 s for a 1k-char text on the configured free model — the same call
+   *  streamed yields its first token in 6 s and finishes in 21 s). Split and
+   *  extraction prompts therefore ride the stream path: same body, same
+   *  failover/telemetry, same parsed result, but a real time-to-first-token
+   *  instead of a fake one. */
+  async completeJsonStream<T = unknown>(req: CompletionRequest): Promise<T> {
+    let content = '';
+    for await (const chunk of this.stream({ ...req, json: true })) {
+      if (chunk.contentDelta) content += chunk.contentDelta;
+    }
+    try {
+      return JSON.parse(content) as T;
+    } catch {
+      const extracted = extractJson(content);
+      if (extracted !== null) return extracted as T;
+      throw new AiGatewayError(`Failed to parse JSON from streamed response: ${content.slice(0, 200)}`);
+    }
+  }
+
   private findKey(id: string): AiKey | null {
     return (this.pool as any)['keys']?.find((k: AiKey) => k.id === id) ?? null;
   }

@@ -25,11 +25,12 @@ function bustQueues(c: any): void {
   } catch { /* best-effort */ }
 }
 
-// Write-time AI, INLINE (no waitUntil, no background kicks, no sweeper):
-// enrichment fills client fields + the procurement redaction cache, intake
-// splits items — all awaited before the response returns, so a finished save
-// is always a finished AI pass. Never throws: a failed AI pass must never
-// fail the save (it logs, and the next save retries from scratch).
+// Write-time AI. Handlers either await it (additional-requirements) or hand
+// it to waitUntil (create/PATCH). Intake runs FIRST: the split is the sales
+// user's visible action, and a 20-90 s extraction pass ahead of it is what
+// starved the create path — waitUntil is cancelled seconds after the
+// response, so the split never even started. Never throws: a failed AI pass
+// must never fail the save (it logs, and the next save retries from scratch).
 async function runEnquiryAi(c: any, id: string, withIntake: boolean): Promise<void> {
   const eid = String(id ?? '');
   if (!eid) return;
@@ -44,11 +45,6 @@ async function runEnquiryAi(c: any, id: string, withIntake: boolean): Promise<vo
   };
   try {
     const store = createEnquiryStore(c.env);
-    try {
-      await runEnquiryExtraction(c.env, store, eid);
-    } catch (e: any) {
-      console.error(`[enquiry-ai] ${eid}: extraction failed (${String(e?.message ?? e).slice(0, 160)})`);
-    }
     if (withIntake) {
       try {
         await runVisionIntake(c.env as any, store, eid, onStage);
@@ -56,6 +52,14 @@ async function runEnquiryAi(c: any, id: string, withIntake: boolean): Promise<vo
         console.error(`[enquiry-ai] ${eid}: intake failed (${String(e?.message ?? e).slice(0, 160)})`);
       }
       try { await cacheDel(`enquiry:redacted:${eid}`); } catch {}
+    }
+    // Enrichment (client fields + the procurement redaction cache) is
+    // secondary: it goes after the split, and a slow or failed pass is
+    // logged and retried by the next write.
+    try {
+      await runEnquiryExtraction(c.env, store, eid);
+    } catch (e: any) {
+      console.error(`[enquiry-ai] ${eid}: extraction failed (${String(e?.message ?? e).slice(0, 160)})`);
     }
     // Broadcast so EnquiryDetail auto-populates without refresh.
     try {

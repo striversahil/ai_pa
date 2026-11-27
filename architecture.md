@@ -815,6 +815,7 @@ measures itself instead of only reacting per request:
   and writes to D1 `AiKeyCall` with `waitUntil` (the call never waits on D1);
   the Express path and the JS runner helpers leave the sink unset. 30-day
   retention, pruned by the sweep.
+- **Buffered vs streamed JSON (2026-11-27)**: `completeJson()` is the buffered path — the provider sends nothing until the answer is complete, so its first-byte deadline (30 s) fires long before a real split lands (measured: 66 s buffered vs 6 s to first token for the same 1k-char / 20-line enquiry). `completeJsonStream()` consumes `stream()`, assembles the deltas and parses them (same `extractJson` fallback, same failover/telemetry); enquiry intake (split, KYP lookup, spec check) and field extraction use it. The write path also runs the split BEFORE extraction: the split is the sales user's visible action, and a slow enrichment pass ahead of it starved `waitUntil` on create (guard `ai-pool-controls`).
 - **Score** (`shared/ai-gateway-parts/health.ts`, pure): `100 × (0.5·reliability
   + 0.3·speed + 0.2·throughput)` over the newest ≤50 non-playground calls in
   24 h. Reliability subtracts weighted failures (auth/quota 1.0, timeout/network
