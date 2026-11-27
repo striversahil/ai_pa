@@ -30,6 +30,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import OrderPanel, { type PanelMode } from "@/crm/OrderPanel";
+import { DispatchSkeleton } from "@/crm/DispatchSkeleton";
 import { MemoOrderCard } from "@/crm/OrderCard";
 import { istToday, useCrmOrders, useCrmSummary } from "@/crm/hooks";
 import type { CrmOrder, View } from "@/crm/types";
@@ -197,9 +198,13 @@ export default function CrmDashboard() {
 
           <ChangesBanner count={list.changes} onRefresh={list.refresh} />
 
-          {list.loading && orders.length === 0 && <SkeletonList />}
-
-          {!list.loading && orders.length === 0 && (
+          {/* A tab, search or page change loads a DIFFERENT list, and the hook
+              keeps the previous payload until it lands — so the shimmer owns
+              the slot instead of stale rows from the tab we just left. Live
+              events refetch behind `refreshing` and never blank this list. */}
+          {list.loading ? (
+            <DispatchSkeleton />
+          ) : orders.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-zinc-300 p-10 text-center text-sm text-zinc-500 dark:border-zinc-700">
               {view === "dispatch-floor"
                 ? "Nothing due today — dated orders land here on their day."
@@ -209,16 +214,18 @@ export default function CrmDashboard() {
                     ? "No orders were dropped by Zoho. Nothing to confirm."
                     : "No orders in this view."}
             </div>
-          )}
+          ) : (
+            <>
+              <div className="space-y-2.5">
+                {orders.map((order) => (
+                  <MemoOrderCard key={order.id} order={order} today={today} view={view} canSchedule={canSchedule} onOpen={openPanel} />
+                ))}
+              </div>
 
-          <div className="space-y-2.5">
-            {orders.map((order) => (
-              <MemoOrderCard key={order.id} order={order} today={today} view={view} canSchedule={canSchedule} onOpen={openPanel} />
-            ))}
-          </div>
-
-          {list.total > 0 && (
-            <Pager page={list.page} limit={list.limit} total={list.total} totalPages={list.totalPages} onPage={list.setPage} noun="orders" />
+              {list.total > 0 && (
+                <Pager page={list.page} limit={list.limit} total={list.total} totalPages={list.totalPages} onPage={list.setPage} noun="orders" />
+              )}
+            </>
           )}
 
           {panel && (
@@ -263,12 +270,3 @@ function itemHint(items?: number): string | undefined {
   return `${items} item${items === 1 ? "" : "s"}`;
 }
 
-function SkeletonList() {
-  return (
-    <div className="space-y-2.5">
-      {[0, 1, 2].map((i) => (
-        <div key={i} className="h-[104px] animate-pulse rounded-2xl border border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900/40" />
-      ))}
-    </div>
-  );
-}

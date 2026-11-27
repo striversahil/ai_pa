@@ -25,6 +25,7 @@ import {
   Truck,
 } from "lucide-react";
 import OrderPanel, { type PanelMode } from "@/crm/OrderPanel";
+import { DispatchSkeleton } from "@/crm/DispatchSkeleton";
 import { MemoSalesOrderCard } from "@/crm/SalesOrderCard";
 import { istToday, useCrmOrders, useCrmSummary } from "@/crm/hooks";
 import type { CrmOrder, SalesBucket } from "@/crm/types";
@@ -136,7 +137,13 @@ export default function SalesDispatchPanel() {
         </div>
       </header>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      {/* The counters are per-region, so they dim while the newly selected
+          region loads instead of showing the previous region's numbers as if
+          they were current (live polls refetch behind `refreshing`, no dim). */}
+      <div
+        aria-busy={summary.loading}
+        className={`grid grid-cols-2 gap-3 transition-opacity duration-150 lg:grid-cols-4 ${summary.loading ? "opacity-50" : ""}`}
+      >
         <Kpi label="Incomplete" value={counts?.incomplete ?? 0} icon={Package} accent="text-amber-600 dark:text-amber-400" />
         <Kpi label="Completed" value={counts?.completed ?? 0} icon={CheckCircle2} accent="text-emerald-600 dark:text-emerald-400" />
         <Kpi label="Due today" value={counts?.floorToday ?? 0} icon={Truck} accent="text-indigo-600 dark:text-indigo-400" />
@@ -175,15 +182,13 @@ export default function SalesDispatchPanel() {
 
       <ChangesBanner count={list.changes} onRefresh={list.refresh} />
 
-      {list.loading && orders.length === 0 && (
-        <div className="space-y-2.5">
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="h-[104px] animate-pulse rounded-2xl border border-[var(--border-card)] bg-[var(--surface-sunken)]" />
-          ))}
-        </div>
-      )}
-
-      {!list.loading && orders.length === 0 && (
+      {/* A region/bucket/search/page switch loads a DIFFERENT list while the
+          hook keeps the previous payload on screen — the shimmer owns the slot
+          instead of rows from the region we just left. Live events refetch
+          behind `refreshing`, so this never blanks a live view. */}
+      {list.loading ? (
+        <DispatchSkeleton />
+      ) : orders.length === 0 ? (
         <div className={`${CARD} p-10 text-center`}>
           <p className="text-sm font-semibold text-[var(--text-primary)]">
             {bucket === "completed" ? "Nothing completed yet" : "Nothing pending here"}
@@ -196,24 +201,26 @@ export default function SalesDispatchPanel() {
                 : "No incomplete sales orders for this view."}
           </p>
         </div>
-      )}
+      ) : (
+        <>
+          <div className="space-y-2.5">
+            {orders.map((order) => (
+              <MemoSalesOrderCard
+                key={order.id}
+                order={order}
+                today={today}
+                bucket={bucket}
+                showRegion={isManager && !region}
+                canPromise={canPromise}
+                onOpen={openPanel}
+              />
+            ))}
+          </div>
 
-      <div className="space-y-2.5">
-        {orders.map((order) => (
-          <MemoSalesOrderCard
-            key={order.id}
-            order={order}
-            today={today}
-            bucket={bucket}
-            showRegion={isManager && !region}
-            canPromise={canPromise}
-            onOpen={openPanel}
-          />
-        ))}
-      </div>
-
-      {list.total > 0 && (
-        <Pager page={list.page} limit={list.limit} total={list.total} totalPages={list.totalPages} onPage={list.setPage} noun="orders" />
+          {list.total > 0 && (
+            <Pager page={list.page} limit={list.limit} total={list.total} totalPages={list.totalPages} onPage={list.setPage} noun="orders" />
+          )}
+        </>
       )}
 
       {panel && (

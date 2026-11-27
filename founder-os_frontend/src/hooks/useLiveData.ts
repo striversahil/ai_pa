@@ -153,6 +153,11 @@ export function useLiveQuery<T>(
     });
   }, []);
 
+  /** Monotonic request id: only the NEWEST fetch may paint. Without it a slow
+   *  earlier response (a tab/region the user already left) lands last and
+   *  replaces the current view with the wrong list. */
+  const seq = useRef(0);
+
   /**
    * `force` = a DEP CHANGE: the view is loading a different dataset, so a
    * first-paint spinner is correct. Live events and polls pass false: the
@@ -162,6 +167,7 @@ export function useLiveQuery<T>(
    * an unrelated dashboard write looked like the page reloading.
    */
   const run = useCallback((force: boolean) => {
+    const id = ++seq.current;
     if (force || dataRef.current === null) setLoading(true);
     else setRefreshing(true);
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -171,13 +177,15 @@ export function useLiveQuery<T>(
     // Race the fetch against the timeout: a stalled connection can NEVER hold
     // the spinner forever — it becomes an error with data kept + retry below.
     Promise.race([fetcherRef.current(), timeout])
-      .then((d) => { setData(d); setError(null); })
+      .then((d) => { if (id !== seq.current) return; setData(d); setError(null); })
       .catch((e) => {
+        if (id !== seq.current) return;
         setError(e);
         if (clearOnErrorRef.current) setData(null);
       })
       .finally(() => {
         if (timer) clearTimeout(timer);
+        if (id !== seq.current) return;
         setLoading(false);
         setRefreshing(false);
       });
