@@ -17,6 +17,7 @@
 //   resolveCreatorAgentId — lead inference (login email → roster row).
 import type { MeResponse } from "../auth/types";
 import { strictNum, strictSignedNum } from "./parse";
+import { pickCreatorRow } from "./agent-match";
 
 export function isRestrictedViewer(_me: MeResponse): boolean {
   // Founder decision 2026-09-22: don't gate enquiries — everyone sees everyone
@@ -240,39 +241,41 @@ export function summarizeEnquiry(e: any): EnquiryLiveSummary {
   };
 }
 
-/** Lead inference (telecalling creator-first pattern): login email → roster row. */
+/**
+ * Lead inference (telecalling creator-first pattern): login → employee row.
+ *
+ * Two passes, ONE rule (agent-match.ts#pickCreatorRow):
+ *   1. the sales roster (the Telecaller VIEW over HumanResourcesMember) —
+ *      login email, then name;
+ *   2. the HR register for SALES seats (salesType set), because the view
+ *      exposes email only while a chart seat can sign in with a separate
+ *      loginEmail. The team-lead account is exactly that case (HR email =
+ *      the founder's inbox, login = sales.teamlead1.01@…) and it left every
+ *      enquiry it created unassigned — the stored id was empty.
+ *
+ * Shared inboxes (2026-11-02: sales7bui@gmail.com is on Pooja, Kamal AND
+ * Lata) must never credit the wrong person: an email shared by several rows
+ * only resolves when the login NAME also matches one of them, otherwise the
+ * lead stays unattributed for root to assign. No match = null (the caller
+ * stores ''), never the auth-session id — a different id space.
+ */
 export async function resolveCreatorAgentId(prisma: any, me: MeResponse): Promise<string | null> {
   const email = String((me as any)?.user?.email ?? '').toLowerCase().trim();
   const name = String((me as any)?.user?.name ?? '').toLowerCase().trim();
   if (!email && !name) return null;
-  const local = (e: string): string => e.split('@')[0].trim();
   try {
     const roster = await prisma.telecaller.findMany();
     const rows = ((roster as any[]) ?? []).filter((t) => t && !t?.deleted);
-    if (email) {
-      // Shared inboxes (2026-11-02: sales7bui@gmail.com is on Pooja, Kamal
-      // AND Lata) must never credit the wrong person: an email shared by
-      // several rows only resolves when the login NAME also matches one of
-      // those rows, otherwise the lead stays unattributed for root to assign.
-      const hits = rows.filter((t) => {
-        const e = String(t?.email ?? '').toLowerCase().trim();
-        return e && (e === email || local(e) === local(email));
-      });
-      if (hits.length === 1) return String(hits[0].id);
-      if (hits.length > 1 && name) {
-        const named = hits.find(
-          (t) => String(t?.name ?? '').toLowerCase().trim() === name,
-        );
-        if (named) return String(named.id);
-        return null;
-      }
-      if (hits.length > 1) return null;
-    }
-    if (name) {
-      const hit = rows.find((t) => String(t?.name ?? '').toLowerCase().trim() === name);
-      if (hit) return String(hit.id);
-    }
-    return null;
+    const fromRoster = pickCreatorRow(rows, email, name);
+    if (fromRoster) return fromRoster;
+    // Register fallback: loginEmail lives on the employee row only (the view
+    // exposes email) and a comma list of addresses lives there too. Sales
+    // seats only, so an HR or procurement login can never become the lead.
+    const members = await prisma.humanResourcesMember
+      .findMany({ where: { deleted: false } })
+      .catch(() => []);
+    const seats = ((members as any[]) ?? []).filter((m) => m && m.salesType && !m.deleted);
+    return pickCreatorRow(seats, email, name);
   } catch {
     return null;
   }
