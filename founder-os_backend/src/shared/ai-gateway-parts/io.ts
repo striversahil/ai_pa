@@ -12,10 +12,11 @@ import type { KeyHealth, ProviderConfig, CompletionRequest, CompletionResult, Ai
  *  ready, so a HEALTHY key answers a 2-line split in ~8 s (measured). A
  *  saturated free key instead accepts the socket and never answers at all
  *  (110 s with no byte). 20 s therefore separates the two cheaply: a hung
- *  key is rotated away while the intake still fits in its 90 s budget
- *  (6 tries × 20 s). Streaming stays the primary path, so the old 60-90 s
- *  buffered wait never applies to a normal split. */
-const BUFFERED_JSON_TTFT_MS = 20_000;
+ *  key is rotated away. A HEALTHY buffered answer was also measured at 54 s
+ *  for a real split body, so the budget must stay above that or a good
+ *  answer is thrown away: 60 s covers it, and the caller's own 90 s/95 s
+ *  cap ends the second attempt. Streaming stays the primary path. */
+const BUFFERED_JSON_TTFT_MS = 60_000;
 
 /** First-token budget for the STREAMED leg of a JSON call. A healthy split
  *  streams in ~6 s, a hung one never does; 20 s keeps the buffered fallback
@@ -581,7 +582,7 @@ export class AiGateway {
         json: true,
         ignoreCooldown: true,
         ttftMs: BUFFERED_JSON_TTFT_MS,
-        maxAttempts: Math.max(Number(req.maxAttempts) || 0, 6),
+        maxAttempts: Math.max(Number(req.maxAttempts) || 0, 3),
       });
       return parseGatewayJson<T>(res.content, 'buffered');
     }
