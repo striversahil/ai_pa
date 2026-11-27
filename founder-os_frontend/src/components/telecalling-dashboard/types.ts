@@ -33,6 +33,10 @@ export interface LeaderRow {
   /** Region model: the staff's region ('' = unmapped). */
   region?: string;
   regionName?: string;
+  /** Every region held, in order (first = primary). */
+  regions?: string[];
+  /** The Team Lead person this staff reports to, or null. */
+  teamLeadId?: string | null;
   /** Accepted points: full slab once per accepted deal in this lead region. */
   points?: number;
   /** Closed value credited to this staff (generator + closer). */
@@ -320,9 +324,13 @@ export interface RosterRow {
   neodoveUserName: string | null;
   totalAssigned: number;
   activeAssigned: number;
+  /** Every region held, in order (first = primary). */
+  regions?: string[];
+  /** The Team Lead person this staff reports to. */
+  teamLeadId?: string | null;
   tlLevel?: string;
   region?: string;
-  /** Secondary region for TL1s (two regions at once, 2026-11-05). */
+  /** Legacy second region (pre-0177 rows); `regions` is the truth. */
   region2?: string;
   type?: string;
   closerEligible?: boolean;

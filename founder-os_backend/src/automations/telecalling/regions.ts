@@ -74,28 +74,26 @@ export function regionDef(id: string): RegionDef | null {
 }
 
 /**
- * Regions a roster row works (founder rule 2026-11-05: a TL1 handles TWO
- * regions at once — primary `region` + secondary `region2`, pair decided by
- * the sales-head). TL2s / unset rows return at most one. Anything outside
- * R1–R4 is dropped so a stale value never credits a stranger's sales.
+ * Regions a sales person works. Since mig 0177 the profile stores a JSON array
+ * (`regions`), any length; the legacy `region`/`region2` pair is still read
+ * when no array is present (old payloads, cached rows). Anything outside R1–R4
+ * is dropped so a stale value never credits a stranger's sales.
  */
-export function tlRegions(t: { region?: unknown; region2?: unknown }): RegionId[] {
+export function tlRegions(t: { region?: unknown; region2?: unknown; regions?: unknown }): RegionId[] {
   const out: RegionId[] = [];
-  for (const v of [t?.region, t?.region2]) {
+  const push = (v: unknown) => {
     const s = String(v ?? '').trim();
     if (isValidRegion(s) && !out.includes(s as RegionId)) out.push(s as RegionId);
+  };
+  let list: unknown = t?.regions;
+  if (typeof list === 'string') {
+    try { list = JSON.parse(list); } catch { list = null; }
   }
+  if (Array.isArray(list) && list.length) {
+    for (const v of list) push(v);
+    return out;
+  }
+  for (const v of [t?.region, t?.region2]) push(v);
   return out;
 }
 
-/** Validate a TL's region pair for roster writes. TL1 needs exactly two
- *  DISTINCT valid regions; everyone else needs at most one (region2 must
- *  stay empty). Returns an error string, or null when the pair is fine. */
-export function tlPairError(tlLevel: unknown, region: unknown, region2: unknown): string | null {
-  const tl = String(tlLevel ?? '').trim();
-  const r1 = String(region ?? '').trim();
-  const r2 = String(region2 ?? '').trim();
-  if (r2 && !isValidRegion(r2)) return 'region2 must be R1–R4 (or empty)';
-  if (tl === 'TL1' && r1 && r2 && r1 === r2) return 'TL1 needs two DIFFERENT regions';
-  return null;
-}

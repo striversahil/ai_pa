@@ -15,8 +15,10 @@ import { actorLabel, errorResponse } from "./hr-route-shared";
 import { requireSalesManager } from "./sales-access";
 import { listChartRows } from "../../modules/org/chart/store";
 import { loadAllotment, loadSalesRegions, regionRowJson } from "../../modules/org/regions";
+import { parseRegionList } from "../../modules/org/types";
 import { HrError } from "../../automations/human-resources/errors";
 import { bumpRev } from "../../shared/cache";
+import { employeeDisplayName } from "../../shared/employee-name";
 
 const CODES = ["R1", "R2", "R3", "R4"];
 const TIERS = ["TL1", "TL2"];
@@ -28,16 +30,26 @@ function cleanStates(value: unknown): string[] {
   return [...new Set(list.map((s) => String(s).trim()).filter(Boolean))].slice(0, 60);
 }
 
-async function usageCounts(prisma: any): Promise<Record<string, number>> {
-  const rows = await prisma.telecaller.findMany({ where: { deleted: false } }).catch(() => []);
-  const out: Record<string, number> = {};
-  for (const r of rows ?? []) {
-    for (const code of [r.region, r.region2]) {
-      const c = String(code ?? "").trim();
-      if (c) out[c] = (out[c] ?? 0) + 1;
+interface RegionStaff { teamLeads: Array<{ id: string; name: string }>; members: Array<{ id: string; name: string; type: string }> }
+
+/** Active sales staff per region — counted from the employee profile (0..N
+ *  regions each), so a person shows under EVERY region they hold. */
+async function usageCounts(prisma: any): Promise<{ counts: Record<string, number>; staff: Record<string, RegionStaff> }> {
+  const rows = await prisma.humanResourcesMember.findMany({ where: { deleted: false, active: true } }).catch(() => []);
+  const counts: Record<string, number> = {};
+  const staff: Record<string, RegionStaff> = {};
+  for (const m of (rows as any[])) {
+    const type = String(m.salesType ?? "");
+    if (!type) continue;
+    for (const code of parseRegionList(m.salesRegions)) {
+      counts[code] = (counts[code] ?? 0) + 1;
+      const bucket = (staff[code] ??= { teamLeads: [], members: [] });
+      const rec = { id: String(m.id), name: employeeDisplayName(m) };
+      if (type === "team_lead") bucket.teamLeads.push(rec);
+      else bucket.members.push({ ...rec, type });
     }
   }
-  return out;
+  return { counts, staff };
 }
 
 export function registerSalesRegionRoutes(app: Hono<{ Bindings: Bindings }>): void {
@@ -63,7 +75,7 @@ export function registerSalesRegionRoutes(app: Hono<{ Bindings: Bindings }>): vo
         listChartRows().catch(() => []),
       ]);
       return c.json({
-        regions: regions.map((r) => ({ ...r, seats: usage[r.code] ?? 0 })),
+        regions: regions.map((r) => ({ ...r, seats: usage.counts[r.code] ?? 0, staff: usage.staff[r.code] ?? { teamLeads: [], members: [] } })),
         allotment,
         positions: (chart as any[]).map((p) => ({
           id: String(p.id), title: String(p.title),
@@ -127,12 +139,8 @@ export function registerSalesRegionRoutes(app: Hono<{ Bindings: Bindings }>): vo
         const seated = await prisma.humanResourcesMember.findMany({
           where: { deleted: false, active: true, designation: String(position.title) },
         }).catch(() => []);
-        const emails = new Set((seated as any[]).flatMap((m) => [
-          String(m.loginEmail ?? "").trim().toLowerCase(), String(m.email ?? "").trim().toLowerCase(),
-        ]).filter(Boolean));
-        const roster = await prisma.telecaller.findMany({ where: { deleted: false } }).catch(() => []);
-        const taken = (roster as any[]).filter((t) => emails.has(String(t.email ?? "").trim().toLowerCase())
-          && [t.region, t.region2].some((code) => removed.includes(String(code ?? ""))));
+        const taken = (seated as any[]).filter((m) =>
+          parseRegionList(m.salesRegions).some((code) => removed.includes(code)));
         if (taken.length) {
           throw new HrError(`move ${taken.length} seated employee(s) out of ${removed.join(", ")} first`, 409);
         }

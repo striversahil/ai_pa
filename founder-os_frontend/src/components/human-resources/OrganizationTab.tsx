@@ -155,6 +155,7 @@ export default function OrganizationTab({ department, chartEditable = true }: {
         <OrgPersonDrawer
           person={editing}
           positions={positions}
+          people={people}
           regions={regionCatalog.regions}
           allotment={regionCatalog.allotment}
           onClose={() => setEditing(null)}

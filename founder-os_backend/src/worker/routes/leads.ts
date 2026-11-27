@@ -8,13 +8,14 @@
 // Writes (qualify/drop) go through modules/core/leads.ts ONLY — this file
 // never INSERT/UPDATE/DELETEs core_* directly (core-guard rule 3).
 // Qualification gate: requireLeadQualifier = root | sales-head |
-// team_lead scoped to [region, region2]. Region-less leads are head-only.
+// team_lead scoped to every region they hold (0..N). Region-less leads are head-only.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import { deps, notifyLive, LiveEvent, type Bindings } from '../context';
 import { resolveCaller } from '../../modules/core/permissions';
 import { getViewerMe } from '../viewer';
 import { readBody } from '../http';
+import { tlRegions } from '../../automations/telecalling/regions';
 
 function shapeLead(r: any): any {
   return {
@@ -50,7 +51,7 @@ async function rosterRegions(p: any, email: string): Promise<{ id: string; regio
     const rows: any[] = await p.telecaller.findMany({}).catch(() => []);
     const hit = (rows as any[]).find((t) => String(t.email ?? '').trim().toLowerCase() === em && !t.deleted);
     if (!hit) return null;
-    const regions = [String(hit.region ?? ''), String(hit.region2 ?? '')].filter(Boolean);
+    const regions: string[] = tlRegions(hit);
     const isTl = String(hit.type ?? '') === 'team_lead'
       || String(hit.tlLevel ?? '') === 'TL1' || String(hit.tlLevel ?? '') === 'TL2';
     return { id: String(hit.id ?? ''), regions, isTl };

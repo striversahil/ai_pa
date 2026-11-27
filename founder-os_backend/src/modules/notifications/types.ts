@@ -95,7 +95,10 @@ export interface NotificationSeat {
   email: string;
   position: string;
   department: string;
+  /** Primary region (first of `regions`) — the {REGION} token. */
   region: string;
+  /** Every region the seat holds (0..N; mig 0177). */
+  regions: string[];
   rosterType: string;
   telecallerId: string;
   roles: string[];

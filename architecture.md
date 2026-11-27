@@ -618,25 +618,10 @@ Worker-only and writes broadcast the existing `human-resources` event.
   active seats, role mappings or position standards. `loginPosition` only drives suggestions in
   the employee picker; access remains in Users & Permissions. The frontend selector and graph
   consume the live rows and fall back to the bundled chart when the table is unavailable.
-- **Sales regions + team-lead hierarchy (0175)** — owned by the **Sales Controller** (sales-head/root), not HR: the taxonomies that used to be hard-coded in
-  `automations/telecalling/regions.ts` are HR master data. `HumanResourcesRegion` keeps the code
-  fixed (`R1`–`R4`: `Estimate.region`, `ClientClass.masterRegion`, holidays, targets and the
-  board's region buckets all store it) and makes `name`, `tlLevel`, `states`, `order` and
-  `active` editable; `HumanResourcesPositionRegion` allots regions to a chart seat (unique
-  `positionId+regionCode`, **no rows = every active region**, so adding the table never
-  invalidates existing seats). There is no second roster: `GET /api/org/people` + the one
-  `PUT /api/org/people/:id` save is the only writer, and `modules/org/regions.ts#validateSalesPosting`
-  decides from the seat title: a telecaller/field-staff seat takes exactly one active, allotted
-  region; a team-lead seat takes **exactly two different** ones and may omit `tlLevel` (inferred
-  when both regions share a tier, otherwise the form must ask). Reads: `GET /api/org/regions`
-  (viewer-open, used by the person drawer) and `GET /api/sales/regions` (`requireSalesManager`, adds
-  seat counts + chart positions for the allotment matrix). Writes: `PATCH
-  /api/sales/regions/:code` (sales-head/root; bumps the `est` rev because the board payload caches
-  the taxonomy) and `PUT /api/sales/position-regions/:positionId` (refuses to drop a region an
-  active seated employee still holds → 409). The Sales mount of the chart passes
-  `chartEditable={false}`: seats are edited, positions are not — HR keeps add/edit/delete. The telecalling board
-  overlays the DB rows onto its bundled fallback (`loadSalesRegions`), so a fresh DB and a renamed
-  region behave the same.
+- **Sales staff = the HR employee row (0175 + 0177)** — the region catalog is HR master data owned by the **Sales Controller** (sales-head/root), not HR: `HumanResourcesRegion` keeps the code fixed (`R1`–`R4`: `Estimate.region`, `ClientClass.masterRegion`, holidays, targets and the board's region buckets all store it) and makes `name`, `tlLevel`, `states`, `order` and `active` editable; `HumanResourcesPositionRegion` allots regions to a chart seat (unique `positionId+regionCode`, **no rows = every active region**). `tlLevel` (TL1/TL2) is a TARGET TIER on a region only — never a level on a person.
+- **One master, no roster (0177)**: seating an employee on a Sales chart seat writes their profile on the same `HumanResourcesMember` row — `salesType` (`telecaller|field_staff|team_lead`), `salesRegions` (JSON array, 0..N, first = primary), `salesTeamLeadId` (the person they report to, an active `team_lead`; null for a TL), `salesAssignFollowUps`, WhatsApp/NeoDove. Leaving the chart or deactivating clears those columns but never deletes the employee, so history (`Estimate.createdBy`, `EstimateAssignment`, `core_credit`, `FieldVisit`, `DeviceCall`…) keeps the same employee id. There is no backfill and no auto-creation: only an HR employee can be sales staff.
+- **Write/read**: the one `PUT /api/org/people/:id` save (`modules/org/write.ts`) is the only writer. `modules/org/regions.ts#validateSalesPosting` requires each submitted code to be active and within the seat's allotment (`HumanResourcesPositionRegion`, no rows = all) — any count is legal, 0 is an unposted seat. Picking a Team Lead validates the target is an active `team_lead` member and never self; when a TL leaves the seat, their reports' `salesTeamLeadId` is cleared. Reads: `GET /api/org/regions` (viewer-open, drawer) and `GET /api/sales/regions` (`requireSalesManager`, seats + staff chips for the region cards). Writes: `PATCH /api/sales/regions/:code` (bumps the `est` rev) and `PUT /api/sales/position-regions/:positionId` (409 if an active seated employee still holds a dropped region). The Sales mount passes `chartEditable={false}` — HR owns chart structure.
+- **Compatibility view**: `Telecaller` is now `CREATE VIEW` over `HumanResourcesMember` (`salesType <> ''`, `deleted = 0`) exposing the old column names (`region` = `salesRegions[0]`, `region2` = `[1]`, `tlLevel` = first region's catalog tier, `order` = `salesOrder`). Every leaderboard/drill/risk/dialer/notification/field-visit read works unchanged; no code may write the view. Mig 0178 drops the one-release `TelecallerArchive` seat. Guard `sales-staff-single-master`.
 
 ### 3.3 Trigger dispatch
 `POST /api/trigger/:slug` runs the matching automation (auth required). On the Worker,

@@ -271,10 +271,11 @@ model Classification {
   estimate         Estimate @relation(fields: [estimateId], references: [estimateId], onDelete: Cascade)
 }
 
-// Telecaller / closing-team roster. Estimates are auto-assigned (round-robin)
-// to telecallers flagged `assignEstimateFollowUps` (the conversion specialists);
-// the `order` field sequences the rotation. Everyone non-deleted is still shown
-// in the leaderboard / Lead Gen views.
+// Telecaller / closing-team roster — READ-ONLY COMPATIBILITY VIEW since mig
+// 0177. The rows are HumanResourcesMember rows carrying a sales profile; the
+// table was retired (archived) and this view keeps the historical shape for
+// the leaderboard, drills, risk, dialer, field visits and notification SQL.
+// Never write through this model: create/update/delete fail at the DB.
 model Telecaller {
   id                      String   @id @default(uuid())
   name                    String
@@ -1416,6 +1417,21 @@ model HumanResourcesMember {
   order                 Int      @default(0)
   deleted               Boolean  @default(false)
   createdAt             DateTime @default(now())
+  // ── Sales profile (mig 0177): the employee IS the sales row ────────────
+  // The `Telecaller` model below is now a read-only VIEW over these columns.
+  // salesType: '' | 'telecaller' | 'field_staff' | 'team_lead' (empty = not
+  // on the sales board). salesRegions: JSON array of R1..R4, 0..N regions,
+  // validated against the region catalog + chart-seat allotment.
+  salesType             String   @default("")
+  salesRegions          String   @default("[]")
+  // The person this agent reports to (an active team_lead member).
+  salesTeamLeadId       String?
+  salesAssignFollowUps  Boolean  @default(true)
+  salesOrder            Int      @default(0)
+  salesAbsentSince      DateTime?
+  neodoveUserId         String?
+  neodoveUserName       String?
+  whatsapp              String?
   tasks                 HumanResourcesTask[]
   salaryComponents      HumanResourcesSalaryComponent[]
   attendance            HumanResourcesAttendance[]

@@ -6,7 +6,7 @@ import { USER_ADMIN_SCOPE } from "@/auth/permissions";
 import AdminTable from "./admin/AdminTable";
 import { Drawer, UserDrawer, RoleDrawer, displayNameOf } from "./admin/AdminDrawers";
 import { ORG_POSITIONS } from "@/hr/organization";
-import { fetchOrgChart, fetchOrgPeople, backfillOrgEmployees } from "@/org/api";
+import { fetchOrgChart, fetchOrgPeople } from "@/org/api";
 import { createRole as apiCreateRole, updateRole as apiUpdateRole } from "@/api/auth-roles";
 import type { ScopeRow, RoleRow, UserRow, DashboardRow } from "./admin/AdminDrawers";
 import type { Tab } from "./user-admin/types";
@@ -25,15 +25,13 @@ export default function UserAdmin() {
   const [roleFilter, setRoleFilter] = useState("");
   const [managingId, setManagingId] = useState<string | null>(null);
   const [chartTitles, setChartTitles] = useState<string[]>(() => ORG_POSITIONS.map((p) => p.title));
-  const [orphans, setOrphans] = useState<{ logins: { id: string; email: string; name: string }[]; roster: { id: string; name: string; email: string | null; type: string }[] } | null>(null);
-  const [orphansBusy, setOrphansBusy] = useState(false);
-  const [backfillMsg, setBackfillMsg] = useState<string | null>(null);
+  const [orphans, setOrphans] = useState<{ logins: { id: string; email: string; name: string }[] } | null>(null);
   const [roleDrawer, setRoleDrawer] = useState<{ mode: "create" } | { mode: "edit"; role: RoleRow } | null>(null);
 
   const loadOrphans = useCallback(async () => {
     try {
       const org = await fetchOrgPeople();
-      setOrphans({ logins: org.unlinkedLogins, roster: org.unlinkedRoster });
+      setOrphans({ logins: org.unlinkedLogins });
     } catch { /* viewer may lack org read — tab stays empty */ }
   }, []);
 
@@ -147,20 +145,6 @@ export default function UserAdmin() {
     }
   };
 
-  const runBackfill = async () => {
-    setOrphansBusy(true);
-    setBackfillMsg(null);
-    try {
-      const r = await backfillOrgEmployees();
-      setBackfillMsg(`Created ${r.created} employee record${r.created === 1 ? "" : "s"} · ${r.skipped} already linked`);
-      loadOrphans();
-    } catch (e) {
-      setBackfillMsg(e instanceof Error ? e.message : "Backfill failed");
-    } finally {
-      setOrphansBusy(false);
-    }
-  };
-
   const delRole = async (key: string) => {
     if (!confirm(`Delete role "${key}"? Users with this role lose its dashboard access.`)) return;
     setBusy(true);
@@ -212,7 +196,7 @@ export default function UserAdmin() {
   if (!me || !canManage) return <div className="p-8 text-zinc-500">Admin access required.</div>;
 
   const positionTitles = chartTitles;
-  const orphanCount = (orphans?.logins.length ?? 0) + (orphans?.roster.length ?? 0);
+  const orphanCount = orphans?.logins.length ?? 0;
 
   const tabs: { key: Tab; label: string; count?: number }[] = [
     { key: "users" as Tab, label: "Users", count: users.length },
@@ -477,39 +461,8 @@ export default function UserAdmin() {
         <section className="space-y-3">
           <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
             <p className="text-xs text-zinc-500">
-              Logins and leaderboard rows with no employee record. Link them by matching the employee&apos;s loginEmail in the HR Employees tab, then grant a position-mapped role in Users — access flows through roles only.
+              An employee record is created in HR → Employees — never from a login. A login without one cannot hold a chart seat or a sales position. Link them by matching the employee&apos;s loginEmail in HR, then grant a position-mapped role in Users; access flows through roles only.
             </p>
-          </div>
-          <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
-            <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
-              <h3 className="text-sm font-bold text-amber-700 dark:text-amber-400">
-                Roster rows without an employee record ({orphans?.roster.length ?? 0})
-              </h3>
-              {isRoot ? (
-                <button
-                  onClick={runBackfill}
-                  disabled={orphansBusy}
-                  className="rounded-lg bg-amber-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-amber-500 disabled:opacity-40"
-                >
-                  {orphansBusy ? "Creating…" : "Create employee records"}
-                </button>
-              ) : (
-                <span className="text-[11px] text-zinc-500">Root-only action — ask root to backfill.</span>
-              )}
-            </div>
-            <p className="mb-1.5 text-[11px] text-amber-700/80 dark:text-amber-400/80">
-              These leaderboard rows are invisible to the chart until they have an employee record.
-            </p>
-            {backfillMsg && <p className="mb-1.5 text-[11px] font-semibold text-amber-700 dark:text-amber-300">{backfillMsg}</p>}
-            <div className="flex flex-wrap gap-1.5">
-              {(orphans?.roster ?? []).map((r) => (
-                <span key={r.id} className="rounded-full border border-amber-500/30 bg-white px-2 py-0.5 text-[11px] dark:bg-zinc-950">
-                  <span className="font-semibold text-zinc-700 dark:text-zinc-200">{r.name}</span>
-                  {r.email && <span className="text-zinc-400"> · {r.email}</span>}
-                </span>
-              ))}
-              {(orphans?.roster.length ?? 0) === 0 && <span className="text-[11px] text-zinc-500">None — every roster row is linked.</span>}
-            </div>
           </div>
           <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
             <h3 className="mb-1 text-sm font-bold">Logins without an employee record ({orphans?.logins.length ?? 0})</h3>

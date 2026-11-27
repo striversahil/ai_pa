@@ -2,24 +2,21 @@
 // routes/org.ts — Organization chart people API (Worker-only, no Express mirror).
 //
 // GET  /api/org/people[?department=Sales] — employees + login + last login +
-//      roster row, joined email-exact. Viewer-scoped server-side (HR sees all,
-//      user-admin sees all for the orphan queue, sales-head sees Sales, dept
-//      scopes see their own). Logins carry their roles' chart positions.
-// PUT  /api/org/people/:id — the single person save (position, region(s),
-//      tlLevel, WhatsApp, office phone, NeoDove mapping, active). HR never
+//      sales profile, joined email-exact. Viewer-scoped server-side (HR sees
+//      all, sales-head sees Sales, dept scopes see their own). Logins carry
+//      their roles' chart positions.
+// PUT  /api/org/people/:id — the single person save (position, region list,
+//      team lead, WhatsApp, office phone, NeoDove mapping, active). HR never
 //      touches access — scopes payloads are ignored (Users & Permissions owns
 //      access through roles). Permission: canManagePerson (root/admin, HR,
-//      sales-head→Sales, dept managers→own dept). Reuses updateEmployee +
-//      telecaller writes — never raw SQL.
-// POST /api/org/backfill — root-only, idempotent: create employee rows for
-//      roster rows that lack one. Called from Users & Permissions (Orphans
-//      tab), never from HR.
+//      sales-head→Sales, dept managers→own dept). Writes the employee row only
+//      — there is no second roster (mig 0177).
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
 import { authStore, deps, notifyLive, LiveEvent, type Bindings } from '../context';
 import { getViewerMe } from '../viewer';
 import { readBody } from '../http';
-import { getOrgPeople, assignPerson, backfillEmployees } from '../../modules/org/io';
+import { getOrgPeople, assignPerson } from '../../modules/org/io';
 
 export function registerOrgRoutes(app: Hono<{ Bindings: Bindings }>): void {
   app.get('/api/org/people', async (c) => {
@@ -59,16 +56,6 @@ export function registerOrgRoutes(app: Hono<{ Bindings: Bindings }>): void {
       return c.json({ ok: true });
     } catch (e: any) {
       return c.json({ error: (e as any)?.message ?? 'save failed' }, (e as any)?.status ?? 400);
-    }
-  });
-
-  app.post('/api/org/backfill', async (c) => {
-    const me = await getViewerMe(c);
-    if (!me?.isRoot) return c.json({ error: 'root only' }, 403);
-    try {
-      return c.json(await backfillEmployees({ prisma: deps().prisma }));
-    } catch (e: any) {
-      return c.json({ error: (e as any)?.message ?? 'backfill failed' }, 400);
     }
   });
 }

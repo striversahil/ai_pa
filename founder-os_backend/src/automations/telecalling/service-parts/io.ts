@@ -266,7 +266,8 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
           day: requestedDay,
           agents: telecallers.map((t: any) => ({
             id: String(t.id), name: nameById.get(String(t.id)) ?? String(t.name ?? ''), region: String(t.region ?? ''),
-            region2: String(t.region2 ?? ''), tlLevel: String(t.tlLevel ?? ''), active: !!t.assignEstimateFollowUps,
+            region2: String(t.region2 ?? ''), regions: tlRegions(t), teamLeadId: (t as any).teamLeadId ?? null,
+            tlLevel: String(t.tlLevel ?? ''), active: !!t.assignEstimateFollowUps,
           })),
           generatedAt: new Date().toISOString(),
           computeMs: Date.now() - t0,
@@ -900,6 +901,8 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     region: string;
     /** Secondary region for TL1s (two-region model, 2026-11-05). */
     region2: string;
+    /** Every region this person works (0..N; mig 0177). */
+    regions: string[];
     tlLevel: TlLevel;
     closerEligible: boolean;
     wonGenerator: number;
@@ -1008,6 +1011,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       type: String((t as any).type ?? 'telecaller'),
       region: String((t as any).region ?? ''),
       region2: String((t as any).region2 ?? ''),
+      regions: tlRegions(t),
       tlLevel: ((t as any).tlLevel ?? '') as TlLevel,
       // Field staff generate leads only — never eligible as the 80% closer.
       closerEligible: !!(t as any).assignEstimateFollowUps && String((t as any).type ?? 'telecaller') !== 'field_staff',
@@ -1058,7 +1062,9 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   for (const def of regionDefs) {
     // Team Leads are NOT telecallers (founder 2026-11-05: `type='team_lead'`
     // is its own role) — they hang off the TL strip, never the staff rail.
-    const members = (telecallers as any[]).filter((t) => String((t as any).region ?? '') === def.id && String((t as any).type ?? 'telecaller') !== 'team_lead')
+    // A person appears under EVERY region they hold (0..N since mig 0177), so
+    // a telecaller seeded with R1 + R3 is counted in both region cards.
+    const members = (telecallers as any[]).filter((t) => tlRegions(t).includes(def.id) && String((t as any).type ?? 'telecaller') !== 'team_lead')
       .map((t) => staffRows.get(String(t.id))).filter(Boolean) as StaffRow[];
     // Region wins/points come from the ESTIMATE's lead region (a founder
     // mapping or the creator's roster region — accepted.ts resolves both), so
@@ -1183,7 +1189,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   [...regions]
     .sort((a, b) => (b.periodTarget?.pct ?? 0) - (a.periodTarget?.pct ?? 0) || (b.periodTarget?.accepted ?? 0) - (a.periodTarget?.accepted ?? 0))
     .forEach((r, i) => { r.rank = i + 1; });
-  const unmappedStaff = (telecallers as any[]).filter((t) => !String((t as any).region ?? '') && !String((t as any).region2 ?? ''))
+  const unmappedStaff = (telecallers as any[]).filter((t) => tlRegions(t).length === 0)
     .map((t) => staffRows.get(String(t.id))).filter(Boolean) as StaffRow[];
   for (const t of unmappedStaff) {
     // Highlighted on the board so root notices and maps them.
@@ -1294,7 +1300,8 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   const agentList = telecallers.map((t: any) => ({
     id: String(t.id), name: creatorIndex.nameById.get(String(t.id)) ?? String(t.name ?? ''),
     region: String(t.region ?? ''), region2: String(t.region2 ?? ''),
-    regions: tlRegions(t), tlLevel: String(t.tlLevel ?? ''),
+    regions: tlRegions(t), teamLeadId: (t as any).teamLeadId ?? null,
+    tlLevel: String(t.tlLevel ?? ''),
     active: !!t.assignEstimateFollowUps,
   }));
 
@@ -1351,8 +1358,8 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
 
   // Non-managing staff are scoped to their OWN region(s): the team leaderboard
   // (region cards) stays visible, but at-risk/recent lists carry only their
-  // region's rows. TL1s covering two regions see BOTH (region + region2).
-  const selfRegions = selfStaff ? [selfStaff.region, (selfStaff as StaffRow).region2].filter(Boolean) : [];
+  // region's rows. A person holding any number of regions sees ALL of them.
+  const selfRegions: string[] = selfStaff ? tlRegions(selfStaff) : [];
   const inSelfRegions = (r: string): boolean =>
     selfRegions.length === 0 ? !r : selfRegions.includes(r);
   const scopedRiskItems = canManage

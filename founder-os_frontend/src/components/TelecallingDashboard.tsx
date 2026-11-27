@@ -718,7 +718,7 @@ export default function TelecallingDashboard() {
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <span className="font-bold text-zinc-900 dark:text-white truncate block">{t.name}</span>
-                          <span className="text-[10px] text-zinc-600 dark:text-zinc-500">{t.region || "Unmapped"} · {t.tlLevel || "—"}</span>
+                          <span className="text-[10px] text-zinc-600 dark:text-zinc-500">{(t.regions?.length ? t.regions.join(" + ") : t.region) || "Unmapped"}</span>
                         </div>
                         <span className={`shrink-0 px-2 py-0.5 rounded-full border text-[10px] font-extrabold uppercase tracking-wide ${LIGHT_CHIP[overall]}`}>
                           {OVERALL_LABEL[overall]}

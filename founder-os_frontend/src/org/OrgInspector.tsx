@@ -22,8 +22,8 @@ function SalesLine({ p }: { p: OrgPerson }) {
   if (!r) return null;
   const bits: string[] = [];
   if (r.type) bits.push(r.type === "field_staff" ? "Field Staff" : r.type === "team_lead" ? "Team Lead" : "Telecaller");
-  if (r.region) bits.push(r.region2 ? `${r.region}+${r.region2}` : r.region);
-  if (r.tlLevel) bits.push(r.tlLevel);
+  if (r.regions?.length) bits.push(r.regions.join(" + "));
+  else if (r.region) bits.push(r.region);
   return (
     <div className="mt-1 flex flex-wrap gap-1">
       {bits.map((b) => (

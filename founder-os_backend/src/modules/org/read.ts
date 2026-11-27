@@ -1,12 +1,15 @@
 // modules/org/read.ts — the one org read.
 //
-// Employees + login + last login + roster row, joined email-exact (never
+// Employees + login + last login + sales profile, joined email-exact (never
 // name-guessed). Viewer-scoped server-side: root/admin/HR see all, sales-head
 // sees Sales, dept scopes see their own.
+//
+// Since mig 0177 the sales profile lives ON the employee (salesType /
+// salesRegions / salesTeamLeadId): there is no separate roster row to join.
 import type { AuthStore } from "../auth/store-parts/types";
 import { canManagePerson, positionScopes, chartTitleToPosition } from "./access";
 import { getChartTitleLookup } from "./chart/store";
-import { fail, normEmail, isPrivileged, heldScopes } from "./types";
+import { fail, normEmail, isPrivileged, heldScopes, parseRegionList } from "./types";
 import { employeeDisplayName } from '../../shared/employee-name';
 import type { OrgPerson, OrgPeople } from "./types";
 
@@ -52,10 +55,9 @@ export async function getOrgPeople(opts: {
     fail(403, `No access to ${deptFilter}`);
   }
 
-  const [employees, users, telecallers, lastLogins] = await Promise.all([
+  const [employees, users, lastLogins] = await Promise.all([
     prisma.humanResourcesMember.findMany({ where: { deleted: false } }).catch(() => []),
     store.listUsers().catch(() => []),
-    prisma.telecaller.findMany({ where: { deleted: false } }).catch(() => []),
     loadLastLogins(opts.db),
   ]);
 
@@ -64,7 +66,7 @@ export async function getOrgPeople(opts: {
   const rolePos = new Map<string, string>();
   for (const role of (allRoles as any[])) {
     const pos = String((role as any)?.position ?? "").trim();
-    if (pos) rolePos.set(String((role as any).key), pos);
+    if (pos) rolePos.set(String(role.key), pos);
   }
 
   const loginByEmail = new Map<string, any>();
@@ -72,21 +74,14 @@ export async function getOrgPeople(opts: {
     if ((u as any)?.isRoot) continue;
     loginByEmail.set(normEmail((u as any).email), u);
   }
-  const rosterByEmail = new Map<string, any>();
-  for (const t of (telecallers as any[])) {
-    const e = normEmail((t as any).email);
-    if (e && !rosterByEmail.has(e)) rosterByEmail.set(e, t);
-  }
 
   const people: OrgPerson[] = [];
   const claimedLoginIds = new Set<string>();
-  const claimedRosterIds = new Set<string>();
   for (const emp of (employees as any[])) {
     const dept = (emp as any).department ?? null;
     if (depts !== null && dept && !depts.includes(dept)) continue;
     if (deptFilter && dept !== deptFilter) continue;
-    // loginEmail wins for the login match (alias Gmail logins), either email
-    // matches the roster. A divergence surfaces as emailMismatch downstream.
+    // loginEmail wins for the login match (alias Gmail logins).
     const loginEmail = normEmail((emp as any).loginEmail);
     const empEmail = normEmail((emp as any).email);
     const emails = [loginEmail, empEmail].filter(Boolean);
@@ -95,13 +90,7 @@ export async function getOrgPeople(opts: {
       const hit = loginByEmail.get(e);
       if (hit) { login = hit; break; }
     }
-    let roster: any = null;
-    for (const e of emails) {
-      const hit = rosterByEmail.get(e);
-      if (hit) { roster = hit; break; }
-    }
     if (login) claimedLoginIds.add(String((login as any).id));
-    if (roster) claimedRosterIds.add(String((roster as any).id));
     const title = String((emp as any).designation ?? "");
     const loginKey = (chartLookup ? chartLookup.get(title) : chartTitleToPosition(title)) ?? "";
     const suggested = loginKey ? positionScopes(loginKey) : [];
@@ -120,6 +109,7 @@ export async function getOrgPeople(opts: {
         }
       } catch { /* best-effort */ }
     }
+    const salesType = String((emp as any).salesType ?? "");
     people.push({
       employee: {
         id: String((emp as any).id),
@@ -141,16 +131,17 @@ export async function getOrgPeople(opts: {
         positions: [...new Set(loginRoles.map((k) => rolePos.get(String(k))).filter(Boolean))] as string[],
         lastLoginAt: lastLogins[String((login as any).id)] ?? null,
       } : null,
-      roster: roster ? {
-        id: String((roster as any).id),
-        type: String((roster as any).type ?? "telecaller"),
-        region: String((roster as any).region ?? ""),
-        region2: String((roster as any).region2 ?? ""),
-        tlLevel: String((roster as any).tlLevel ?? ""),
-        whatsapp: (roster as any).whatsapp ?? null,
-        phone: (roster as any).phone ?? null,
-        neodoveUserId: (roster as any).neodoveUserId ?? null,
-        neodoveUserName: (roster as any).neodoveUserName ?? null,
+      roster: salesType ? {
+        id: String((emp as any).id),
+        type: salesType,
+        regions: parseRegionList((emp as any).salesRegions),
+        teamLeadId: (emp as any).salesTeamLeadId ? String((emp as any).salesTeamLeadId) : null,
+        whatsapp: (emp as any).whatsapp ?? null,
+        phone: (emp as any).phone ?? null,
+        neodoveUserId: (emp as any).neodoveUserId ?? null,
+        neodoveUserName: (emp as any).neodoveUserName ?? null,
+        assignEstimateFollowUps: (emp as any).salesAssignFollowUps !== false,
+        absentSince: (emp as any).salesAbsentSince ?? null,
       } : null,
       suggestedScopes: suggested,
       loginPosition: loginKey || null,
@@ -171,12 +162,6 @@ export async function getOrgPeople(opts: {
   const unlinkedLogins = ((users as any[]) as any[])
     .filter((u) => !(u as any)?.isRoot && !claimedLoginIds.has(String((u as any).id)) && !employeeEmails.has(normEmail((u as any).email)))
     .map((u) => ({ id: String((u as any).id), email: String((u as any).email ?? ""), name: String((u as any).name ?? "") }));
-  const unlinkedRoster = ((telecallers as any[]) as any[])
-    .filter((t) => !claimedRosterIds.has(String((t as any).id)))
-    .map((t) => ({
-      id: String((t as any).id), name: String((t as any).name ?? ""),
-      email: (t as any).email ?? null, type: String((t as any).type ?? "telecaller"),
-    }));
 
-  return { people, unlinkedLogins, unlinkedRoster };
+  return { people, unlinkedLogins };
 }

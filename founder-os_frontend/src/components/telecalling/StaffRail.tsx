@@ -75,9 +75,9 @@ export function StaffRail({ staff, regionId, regionName, workingDays = 1, tlName
 
                 <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">
                   <span className="text-[12px] font-semibold leading-4 text-[var(--text-primary)]">{s.name}</span>
-                  {s.tlLevel && (
-                    <span className="rounded-full border border-[var(--border-card)] px-1.5 text-[9px] font-bold text-[var(--text-tertiary)]">
-                      {s.tlLevel}
+                  {(s.regions?.length ?? 0) > 0 && (
+                    <span className="rounded-full border border-[var(--border-card)] px-1.5 text-[9px] font-bold text-[var(--text-tertiary)]" title={`Regions held: ${s.regions!.join(", ")}`}>
+                      {s.regions!.join("+")}
                     </span>
                   )}
                   {isField && (

@@ -34,26 +34,13 @@ export function isSalesRosterTitle(title: string, loginPosition?: string | null)
   return rosterTypeFor(title, loginPosition) !== null;
 }
 
-/** Sales-head anchor rule (pure): the person save must never auto-retire the
- *  roster row of a login holding sales-head power (scope or role). "Sales
- *  Head" maps to no roster type, so an untargeted retire would orphan every
- *  past and future deal instead of dropping someone who left: the whole
- *  attribution chain (enquiries, estimates, leaderboard, NeoDove) keys off
- *  that row, and creator inference + the agents list both skip deleted rows.
- *  A sales-head who genuinely leaves loses the row when their access is
- *  removed, never as a side effect of a card save. */
-export function retireRosterOnSave(opts: { rosterType: "telecaller" | "field_staff" | "team_lead" | null; holdsSalesHeadPower: boolean }): boolean {
-  if (!opts.rosterType && opts.holdsSalesHeadPower) return false;
-  return opts.rosterType === null;
-}
-
-/** Region rules for the editor: which sales fields appear per position. */
-export function regionRulesFor(title: string, loginPosition?: string | null): { region: boolean; region2: boolean; whatsapp: boolean; neodove: boolean } {
+/** Region rules for the editor: which sales fields appear per position.
+ *  Since mig 0177 the region count is free for every sales seat (0..N), so
+ *  there is no per-title `region2`/tier switch anymore. */
+export function regionRulesFor(title: string, loginPosition?: string | null): { regions: boolean; whatsapp: boolean; neodove: boolean } {
   const t = rosterTypeFor(title, loginPosition);
-  if (!t) return { region: false, region2: false, whatsapp: false, neodove: false };
-  // Founder rule: every sales roster row carries region + office-phone
-  // mapping (NeoDove) + WhatsApp. TL1 adds the second region.
-  return { region: true, region2: t === "team_lead", whatsapp: true, neodove: true };
+  if (!t) return { regions: false, whatsapp: false, neodove: false };
+  return { regions: true, whatsapp: true, neodove: true };
 }
 
 /** Default dashboard scopes a position grants (pre-checked in the editor,

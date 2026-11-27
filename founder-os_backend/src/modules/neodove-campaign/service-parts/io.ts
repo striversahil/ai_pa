@@ -5,6 +5,7 @@ import type { CampaignAgent, StateCount, TypeCount, DistrictCount, CampaignPrevi
 import { normalizeTarget, resolveDialerTargets, deliverToDialer } from "./targets";
 import { selectLeads, assignAgents, maskMobile } from "../selection";
 import type { ResolvedAgent, SendOutcome } from "./types";
+import { tlRegions } from "../../../automations/telecalling/regions";
 import { normalizeCampaignUrl, urlFromSecret, CampaignError, hostOf, validateAgentUrl, normalizeRegion, normalizeClientType, liveEnabled, normalizeState, normalizeDistrict, normalizeDistribution, participantsFor, newId, FETCH_TIMEOUT_MS, DEFAULT_CHUNK, MAX_CHUNK, CONCURRENCY } from "./pure";
 
 /**
@@ -50,12 +51,12 @@ export async function teamLeadCoverage(): Promise<Map<string, string[]>> {
     const db = campaignDb();
     if (!db) return out;
     const res = await db
-      .prepare(`SELECT name, region, region2 FROM Telecaller WHERE type = 'team_lead' AND deleted = 0`)
+      .prepare(`SELECT name, region, regions FROM Telecaller WHERE type = 'team_lead' AND deleted = 0`)
       .all();
     for (const r of ((res as any)?.results ?? []) as any[]) {
       const key = String(r?.name ?? '').trim().toLowerCase();
       if (!key) continue;
-      const pair = [String(r?.region ?? '').trim(), String(r?.region2 ?? '').trim()].filter(Boolean);
+      const pair = tlRegions({ region: r?.region, regions: r?.regions });
       if (pair.length > 0) out.set(key, [...new Set(pair)]);
     }
   } catch { /* roster read failed — covers hints stay empty, pushes unaffected */ }

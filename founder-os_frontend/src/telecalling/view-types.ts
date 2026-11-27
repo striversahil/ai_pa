@@ -14,6 +14,10 @@ import type { TrafficLight } from "./tone";
 export interface BoardStaff {
   id: string;
   name: string;
+  /** Every region held (0..N; first = primary). */
+  regions?: string[];
+  /** The Team Lead person this staff reports to, or null. */
+  teamLeadId?: string | null;
   tlLevel?: string;
   /** 'telecaller' | 'field_staff'. */
   type?: string;

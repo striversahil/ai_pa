@@ -3,6 +3,7 @@
 // single history for both targets; the queue itself lives in modules/dialer.
 import type { CampaignAgent } from "../types";
 import { campaignDb } from "./io";
+import { tlRegions } from "../../../automations/telecalling/regions";
 
 type DialerAgent = CampaignAgent & { secretName: string; campaignUrl: string; kind: string };
 
@@ -48,12 +49,12 @@ export async function listDialerTeamLeads(): Promise<Array<DialerAgent & { cover
   const db = campaignDb();
   if (!db) return [];
   const [res, paired] = await Promise.all([
-    db.prepare(`SELECT id, name, region, region2 FROM Telecaller WHERE type = 'team_lead' AND (deleted IS NULL OR deleted = 0) ORDER BY id`).all(),
+    db.prepare(`SELECT id, name, region, regions FROM Telecaller WHERE type = 'team_lead' AND (deleted IS NULL OR deleted = 0) ORDER BY id`).all(),
     pairedAgents(db),
   ]);
   return ((res?.results ?? []) as any[]).map((r) => ({
     ...toAgent(r, 'team_lead', String(r.region ?? ''), paired),
-    covers: [String(r.region ?? '').trim(), String(r.region2 ?? '').trim()].filter(Boolean),
+    covers: tlRegions({ region: r.region, regions: r.regions }),
   }));
 }
 

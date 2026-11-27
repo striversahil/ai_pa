@@ -16,13 +16,18 @@ export interface OrgLogin {
 export interface OrgRoster {
   id: string;
   type: string;
+  /** Every region the person holds, in order (first = primary). */
+  regions: string[];
+  /** Primary region (regions[0]) — kept for older display surfaces. */
   region: string;
-  region2: string;
-  tlLevel: string;
+  /** The Team Lead person this staff reports to, or null. */
+  teamLeadId: string | null;
   whatsapp: string | null;
   phone: string | null;
   neodoveUserId: string | null;
   neodoveUserName: string | null;
+  assignEstimateFollowUps: boolean;
+  absentSince: string | null;
 }
 
 export interface OrgPerson {
@@ -45,7 +50,6 @@ export interface OrgPerson {
 export interface OrgPeopleResponse {
   people: OrgPerson[];
   unlinkedLogins: Array<{ id: string; email: string; name: string }>;
-  unlinkedRoster: Array<{ id: string; name: string; email: string | null; type: string }>;
 }
 
 async function readError(res: Response): Promise<string> {
@@ -131,9 +135,12 @@ export async function deleteChartPosition(id: string): Promise<{ ok: true }> {
 
 export interface AssignPersonInput {
   position?: string;
-  region?: string;
-  region2?: string;
-  tlLevel?: string;
+  /** Full region list (0..N; first = primary). The legacy region/region2 pair
+   *  is still accepted by the server but no longer sent by this client. */
+  regions?: string[];
+  /** Employee id of the Team Lead this person reports to (staff only). */
+  teamLeadId?: string | null;
+  assignEstimateFollowUps?: boolean;
   whatsapp?: string | null;
   officePhone?: string | null;
   neodoveUserId?: string | null;
@@ -176,12 +183,6 @@ export async function fetchOrgRegions(): Promise<OrgRegionsResponse> {
   return res.json();
 }
 
-/** Root-only, idempotent: create employee rows for roster rows lacking one. */
-export async function backfillOrgEmployees(): Promise<{ created: number; skipped: number }> {
-  const res = await fetch("/api/org/backfill", { method: "POST" });
-  if (!res.ok) throw new Error(await readError(res));
-  return res.json();
-}
 
 /** NeoDove users not yet linked to any roster row (for the office-phone
  *  mapping picker). Lazy-loaded by the person drawer — the telecalling

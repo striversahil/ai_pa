@@ -85,6 +85,8 @@ export function adaptLeaderRow(s: any, region: any, targets: any): LeaderRow {
     closedValue: Number(s?.closedValue ?? 0),
     wonGenerator: Number(s?.wonGenerator ?? 0),
     wonCloser: Number(s?.wonCloser ?? 0),
+    regions: Array.isArray(s?.regions) ? s.regions.map(String) : [],
+    teamLeadId: s?.teamLeadId ? String(s.teamLeadId) : null,
     tlLevel: String(s?.tlLevel ?? ""),
     type: String(s?.type ?? "telecaller"),
     closerEligible: !!s?.closerEligible,
@@ -111,6 +113,8 @@ export function adaptBoardStaff(s: any, region: any, riskByStaff: Map<string, nu
   return {
     id: String(s?.id ?? ""),
     name: String(s?.name ?? ""),
+    regions: Array.isArray(s?.regions) ? s.regions.map(String) : [],
+    teamLeadId: s?.teamLeadId ? String(s.teamLeadId) : null,
     tlLevel: String(s?.tlLevel ?? ""),
     type: String(s?.type ?? "telecaller"),
     score: Number(s?.score ?? 0),

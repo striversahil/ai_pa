@@ -86,7 +86,7 @@ export type { CallTag } from './call-tags';
 
 export { linkEnquiryEstimate, sweepEnquiryEstimateLinks, type EnquiryLinkResult } from './enquiry-links';
 
-export { REGIONS, TL_LEVELS, DAILY_TL_RESELLER_TARGET, tlRegions, tlPairError, isValidRegion, isValidTlLevel } from './regions';
+export { REGIONS, TL_LEVELS, DAILY_TL_RESELLER_TARGET, tlRegions, isValidRegion, isValidTlLevel } from './regions';
 
 export type { RegionId, TlLevel, RegionDef } from './regions';
 

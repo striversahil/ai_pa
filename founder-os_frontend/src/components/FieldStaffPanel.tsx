@@ -85,7 +85,7 @@ export default function FieldStaffPanel() {
           </button>
         ))}
         {(data?.staff ?? []).length === 0 && !query.loading && (
-          <span className="text-[11px] text-[var(--text-tertiary)]">No field staff in roster — add them in Controller → Roster (type = Field Staff).</span>
+          <span className="text-[11px] text-[var(--text-tertiary)]">No field staff yet — seat them on the Field Staff chart position in Sales Controller → Sales team.</span>
         )}
       </div>
 

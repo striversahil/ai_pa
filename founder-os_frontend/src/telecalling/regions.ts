@@ -47,14 +47,24 @@ export function regionDef(id: string): RegionDef | null {
 export const DAILY_TL_RESELLER_TARGET = 100_000;
 
 /**
- * Regions a roster row works (mirror of the backend helper): primary `region`
- * + secondary `region2` for TL1s (two regions at once, pair by sales-head).
+ * Regions a sales person works (mirror of the backend helper). The profile
+ * stores a JSON array (`regions`), any length; the legacy `region`/`region2`
+ * pair is still read when no array is present.
  */
-export function tlRegions(t: { region?: unknown; region2?: unknown }): RegionId[] {
+export function tlRegions(t: { region?: unknown; region2?: unknown; regions?: unknown }): RegionId[] {
   const out: RegionId[] = [];
-  for (const v of [t?.region, t?.region2]) {
+  const push = (v: unknown) => {
     const s = String(v ?? "").trim();
     if (isValidRegion(s) && !out.includes(s as RegionId)) out.push(s as RegionId);
+  };
+  let list: unknown = t?.regions;
+  if (typeof list === "string") {
+    try { list = JSON.parse(list); } catch { list = null; }
   }
+  if (Array.isArray(list) && list.length) {
+    for (const v of list) push(v);
+    return out;
+  }
+  for (const v of [t?.region, t?.region2]) push(v);
   return out;
 }

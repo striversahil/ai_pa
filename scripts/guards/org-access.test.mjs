@@ -2,10 +2,13 @@
 //
 // Founder decision 2026-11-14: the Controller roster editor and the login →
 // roster mapping queue are retired. One person save (PUT /api/org/people/:id)
-// owns position, region(s), tlLevel, WhatsApp, office phone, NeoDove mapping,
-// access chips and active state — through the existing services, never raw.
-// The telecalling module keeps the roster READ (leaderboard, Export, the
-// field-staff picker in EnquiryTracker) and no write endpoints.
+// owns position, regions (0..N), the Team Lead they report to, WhatsApp,
+// office phone, NeoDove mapping and active state — through the existing
+// services, never raw. Since mig 0177 the employee row IS the sales row:
+// seating someone on a chart sales seat writes their profile, so there is no
+// roster to create, mirror or backfill. The telecalling module keeps the
+// roster READ (leaderboard, Export, the field-staff picker in EnquiryTracker)
+// and no write endpoints.
 //
 // Run: `node --test "scripts/guards/*.test.mjs"`
 import { describe, it } from 'node:test';
@@ -27,12 +30,12 @@ const ioShim = read(join('modules', 'org', 'io.ts'));
 const tele = read(join('worker', 'routes', 'telecalling.ts'));
 
 describe('org person contract (one save, server-decided)', () => {
-  it('route surface is exactly read + save + backfill (Worker-only)', () => {
+  it('route surface is exactly read + save (Worker-only)', () => {
     assert.ok(ioShim.includes('export * from "./read"') && ioShim.includes('export * from "./write"'), 'io.ts stays a compat re-export (split, never rewritten)');
     assert.ok(route.includes("'/api/org/people'"), 'GET people must be registered');
     assert.ok(route.includes("'/api/org/people/:id'"), 'PUT person must be registered');
-    assert.ok(route.includes("'/api/org/backfill'"), 'POST backfill must be registered');
-    assert.ok(route.includes('getOrgPeople') && route.includes('assignPerson') && route.includes('backfillEmployees'), 'thin handler: logic lives in modules/org');
+    assert.ok(!route.includes("'/api/org/backfill'"), 'roster backfill is retired (employee rows are the only source)');
+    assert.ok(route.includes('getOrgPeople') && route.includes('assignPerson'), 'thin handler: logic lives in modules/org');
     let express = '';
     try {
       express = readFileSync(join(BACKEND_DIR, 'src', 'routes', 'org.ts'), 'utf8');
@@ -67,22 +70,22 @@ describe('org person contract (one save, server-decided)', () => {
     }
   });
 
-  it('save reuses existing services (validation, phone, pair rule, mirror) — never rewritten; access NOT via HR', () => {
-    assert.ok(io.includes('validateSalesPosting') && io.includes('impliedTlLevel'), 'HR region catalog + allotment validation reused');
+  it('save reuses existing services (validation, employee master, cache) — never rewritten; access NOT via HR', () => {
+    assert.ok(io.includes('validateSalesPosting') && io.includes('cleanRegions'), 'region catalog + allotment validation reused');
     assert.ok(read(join('modules', 'org', 'regions.ts')).includes('loadPositionAllotment'), 'chart-seat allotment lives in modules/org/regions.ts');
-    assert.ok(io.includes('normalizeAgentPhone'), 'office-phone normalization reused');
-    assert.ok(io.includes('updateEmployee'), 'employee master write reused');
-    assert.ok(io.includes("mirrorRosterRow"), 'roster rows mirror into core');
+    assert.ok(io.includes('updateEmployee'), 'employee master write reused (office phone included)');
+    assert.ok(!io.includes('mirrorRosterRow') && !io.includes('prisma.telecaller'), 'no shadow roster row: the employee row is the sales row');
     assert.ok(io.includes('invalidateRiskCache'), 'leaderboard cache busted on save');
-    assert.ok(io.includes('Users & Permissions') && !io.includes('setUserScopes'), 'HR save never writes scopes (roles own access)');
+    assert.ok(!io.includes('setUserScopes') && !io.includes('auth_user'), 'HR save never writes scopes (roles own access)');
   });
 
-  it('region rules: one region for staff, exactly two for a Team Lead, second region TL-only', () => {
+  it('region rules: any number 0..N per person, every code active + allotted, no TL1/TL2 on a person', () => {
     const regions = read(join('modules', 'org', 'regions.ts'));
-    assert.ok(regions.includes('region required for sales staff'), 'region must be required');
-    assert.ok(regions.includes('needs exactly two different regions'), 'Team Lead covers exactly two regions');
-    assert.ok(io.includes('Team-Lead-only'), 'region2 must be TL-only');
+    assert.ok(regions.includes('cleanRegions') && regions.includes('validateSalesPosting'), 'pure clean + validate helpers exist');
+    assert.ok(!regions.includes('impliedTlLevel') && !regions.includes('two different regions'), 'no tier inference / pair rule');
     assert.ok(io.includes('chartRow?.id'), 'the seat allotment is validated against the real chart position');
+    assert.ok(io.includes('salesTeamLeadId'), 'the save stores the Team Lead person, not a TL1/TL2 slot');
+    assert.ok(!io.includes('tlLevel'), 'never write a level on a person');
   });
 
   it('the Sales Controller owns the region catalog + position allotment (never HR)', () => {
@@ -94,6 +97,7 @@ describe('org person contract (one save, server-decided)', () => {
     assert.ok(!route.includes('access(c)'), 'HR gate retired from region writes');
     const drawer = readFe(join('org', 'OrgPersonDrawer.tsx'));
     assert.ok(drawer.includes('allotment') && drawer.includes('regionOptions'), 'person form filters regions by seat allotment');
+    assert.ok(drawer.includes('teamLeadId') && drawer.includes('Team Lead'), 'person form picks the reporting Team Lead person');
     const hrTab = readFe(join('components', 'human-resources', 'ControllerTab.tsx'));
     assert.ok(!hrTab.includes('SalesRegionsSection') && !hrTab.includes('fetchRegions'), 'HR Controller no longer edits regions');
     const salesTab = readFe(join('components', 'SalesControllerPanel.tsx'));
@@ -113,7 +117,7 @@ describe('org person contract (one save, server-decided)', () => {
   it('frontend: one chart component mounted twice, fetchers in the org domain api', () => {
     const api = readFe(join('org', 'api.ts'));
     assert.ok(api.includes('/api/org/people'), 'domain api must call the org read');
-    assert.ok(api.includes('/api/org/backfill'), 'domain api must call backfill');
+    assert.ok(!api.includes('/api/org/backfill'), 'domain api must not offer a retired backfill');
     assert.ok(api.includes('worker/routes/org.ts'), 'domain api must name its backend mirror');
     const tab = readFe(join('components', 'human-resources', 'OrganizationTab.tsx'));
     assert.ok(tab.includes('department'), 'tab must accept the department scope (Sales mount)');
@@ -179,10 +183,11 @@ describe('org person contract (one save, server-decided)', () => {
     assert.ok(drawer.includes('POSITION (ONE CHART TITLE)'), 'RoleDrawer must map one chart position');
     const admin = readFe(join('components', 'UserAdmin.tsx'));
     assert.ok(admin.includes('Orphans'), 'orphan queues live in Users & Permissions');
+    assert.ok(!admin.includes('Roster rows without') && !admin.includes('backfillOrgEmployees'), 'roster orphan queue + backfill retired (HR owns employee records)');
     assert.ok(admin.includes('/api/auth/roles/${encodeURIComponent(key)}') || admin.includes('/api/auth/roles/'), 'role edit must hit the update endpoint');
     const orgTab = readFe(join('components', 'human-resources', 'OrganizationTab.tsx'));
     assert.ok(!orgTab.includes('Roster rows without') && !orgTab.includes('Logins without'), 'orphan queues must be gone from HR');
-    assert.ok(!orgTab.includes('backfillOrgEmployees'), 'HR must not backfill (UserAdmin owns it)');
+    assert.ok(!orgTab.includes('backfillOrgEmployees'), 'HR must not backfill (there is nothing to backfill)');
   });
 
   it('access writes invalidate caches + broadcast automation refresh', () => {

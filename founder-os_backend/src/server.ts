@@ -26,7 +26,6 @@ import webhookRouter from './routes/whatsapp-webhook';
 import healthRouter from './routes/health';
 import whatsappMarketingRouter from './routes/whatsapp-marketing';
 import pendingItemsRouter from './routes/pending-items';
-import telecallersRouter from './routes/telecallers';
 import accountsRouter from './routes/accounts';
 import digitalMarketingRouter from './routes/digital-marketing';
 import productLineRouter from './routes/product-line';
@@ -125,9 +124,6 @@ app.use('/api/whatsapp-marketing', whatsappMarketingRouter);
 
 // --- Pending From Me (founder "What I Owe" view) ---
 app.use('/api/pending-items', pendingItemsRouter);
-
-// --- Telecaller roster (estimate auto-assignment) ---
-app.use('/api/telecallers', telecallersRouter);
 
 // --- Accounts roster + templates + taskbar logging ---
 app.use('/api/accounts', accountsRouter);

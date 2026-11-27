@@ -10,7 +10,15 @@ export interface SalesRegion {
   states: string[];
   order: number;
   active: boolean;
+  /** Active people holding this region (0..N regions each). */
   seats: number;
+  /** Who holds it — the Team Leads and the staff they can manage. */
+  staff: RegionStaff;
+}
+
+export interface RegionStaff {
+  teamLeads: Array<{ id: string; name: string }>;
+  members: Array<{ id: string; name: string; type: string }>;
 }
 
 export interface SalesRegionPosition {

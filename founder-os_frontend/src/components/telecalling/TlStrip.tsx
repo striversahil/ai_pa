@@ -1,11 +1,12 @@
 "use client";
 
-// TlStrip — Team-Lead reseller targets (founder 2026-11-05): one row per TL1
-// with a region pair. Each TL owes ₹1L/working-day of RESELLER accepted ₹
-// summed across THEIR TWO regions, same weekly carry-forward ledger as the
-// region end-consumer target. Consumer + unset ₹ never counts here.
+// TlStrip — Team-Lead reseller targets (founder 2026-11-05; flexible regions
+// since mig 0177): one row per Team Lead and the regions they actually cover
+// (0..N). Each TL owes ₹1L/working-day of RESELLER accepted ₹ summed across
+// THEIR regions, same weekly carry-forward ledger as the region end-consumer
+// target. Consumer + unset ₹ never counts here.
 //
-// EVERY reseller sale in the TL's pair counts to the TL total — the split
+// EVERY reseller sale in the TL's regions counts to the TL total — the split
 // below only explains WHO closed it (TL personal vs team telecallers).
 // Every figure is server-computed (`tlTargets`) and rendered as-is.
 
@@ -27,14 +28,14 @@ export function TlStrip({ items, periodLabel }: { items: TlTarget[]; periodLabel
             Team leads · reseller race{periodLabel ? ` · ${periodLabel}` : ""}
           </h2>
           <p className="mt-0.5 max-w-3xl text-[11px] leading-relaxed text-[var(--text-tertiary)]">
-            Each TL1 owes <span className="font-bold text-[var(--text-secondary)]">₹1L per working day</span> of{" "}
-            <span className="font-bold text-[var(--text-secondary)]">reseller</span> accepted value across their two
-            regions — every reseller sale by their telecallers counts into the TL total. Consumer and unclassified ₹
+            Each Team Lead owes <span className="font-bold text-[var(--text-secondary)]">₹1L per working day</span> of{" "}
+            <span className="font-bold text-[var(--text-secondary)]">reseller</span> accepted value across the regions
+            they cover — every reseller sale by their telecallers counts into the TL total. Consumer and unclassified ₹
             never count. Shortfalls carry forward like the region ledger.
           </p>
         </div>
         <span className={`${PILL} border-[var(--border-card)] bg-[var(--surface-sunken)] text-[var(--text-tertiary)]`}>
-          <Crown className="h-3 w-3" /> TL1 · two regions each
+          <Crown className="h-3 w-3" /> Team Lead · regions they cover
         </span>
       </div>
       <div className="space-y-3 p-3 md:p-4">
@@ -64,7 +65,7 @@ function TlRow({ tl }: { tl: TlTarget }) {
           </span>
           <div className="min-w-0">
             <div className="truncate text-[13px] font-bold tracking-tight text-[var(--text-primary)]">{tl.name}</div>
-            <div className="text-[10px] font-semibold text-[var(--text-tertiary)]">TL1 · {pair}</div>
+            <div className="text-[10px] font-semibold text-[var(--text-tertiary)]">Team Lead · {pair}</div>
           </div>
         </div>
         <span className={`${PILL} ${TARGET_STATUS_CHIP[status]}`}>{TARGET_STATUS_LABEL[status]}</span>

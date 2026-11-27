@@ -6,12 +6,13 @@
 //     └ telecallerId = Telecaller.id        ← what the metric SQL returns
 //   position = HR `designation` (exact chart title), department, region/roster
 //
-// The HR register is the identity source (same join the org module uses:
-// employee.email / employee.loginEmail ↔ roster.email, never name-guessed).
+// The HR register is the identity source: sales fields (type, regions) live
+// ON the employee row since mig 0177, so there is no roster join at all.
 // Login roles are attached by email so `roles:["sales-head"]` works too.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { NotificationAudience, NotificationSeat } from "./types";
 import { employeeDisplayName } from "../../shared/employee-name";
+import { parseRegionList } from "../org/types";
 
 export interface SeatIndex {
   seats: NotificationSeat[];
@@ -53,25 +54,26 @@ export async function loadRolesByEmail(db: any): Promise<Map<string, string[]>> 
   return out;
 }
 
-/** Every active employee, joined to its roster row (by email, either side). */
+/** Parse the salesRegions JSON array (0..N codes, first = primary). */
+function seatRegions(raw: unknown): string[] {
+  try {
+    const v = JSON.parse(String(raw ?? "[]"));
+    return Array.isArray(v) ? v.map((r) => String(r ?? "").trim()).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Every active employee; sales fields live on the employee row (mig 0177). */
 export async function loadSeats(db: any, opts?: { includeInactive?: boolean }): Promise<NotificationSeat[]> {
-  const [employees, roster, roles] = await Promise.all([
+  const [employees, roles] = await Promise.all([
     all(
       db,
-      `SELECT "id", "name", "characterName", "useCharacterName", "email", "loginEmail", "designation", "department", "active", "deleted"
+      `SELECT "id", "name", "characterName", "useCharacterName", "email", "loginEmail", "designation", "department", "active", "deleted", "salesType", "salesRegions"
          FROM "HumanResourcesMember"`,
     ),
-    all(db, `SELECT "id", "name", "email", "region", "region2", "type", "deleted" FROM "Telecaller"`),
     loadRolesByEmail(db),
   ]);
-
-  const rosterByEmail = new Map<string, any>();
-  for (const r of roster) {
-    if (Number(r?.deleted ?? 0) === 1) continue;
-    for (const e of [norm(r?.email)]) {
-      if (e && !rosterByEmail.has(e)) rosterByEmail.set(e, r);
-    }
-  }
 
   const out: NotificationSeat[] = [];
   for (const emp of employees) {
@@ -79,18 +81,20 @@ export async function loadSeats(db: any, opts?: { includeInactive?: boolean }): 
     const active = emp?.active === undefined || emp?.active === null ? true : Number(emp.active) !== 0;
     if (!active && !opts?.includeInactive) continue;
     const emails = [norm(emp?.email), norm(emp?.loginEmail)].filter(Boolean);
-    const row = emails.map((e) => rosterByEmail.get(e)).find(Boolean) ?? null;
     const key = String(emp?.id ?? "").trim();
     if (!key) continue;
+    const regions = seatRegions(emp?.salesRegions);
+    const salesType = String(emp?.salesType ?? "").trim();
     out.push({
       employeeKey: key,
-      name: employeeDisplayName(emp) || String(row?.name ?? "").trim() || key,
-      email: String(emp?.email ?? emp?.loginEmail ?? row?.email ?? "").trim(),
+      name: employeeDisplayName(emp) || key,
+      email: String(emp?.email ?? emp?.loginEmail ?? "").trim(),
       position: String(emp?.designation ?? "").trim(),
       department: String(emp?.department ?? "").trim(),
-      region: String(row?.region ?? row?.region2 ?? "").trim(),
-      rosterType: String(row?.type ?? "").trim(),
-      telecallerId: String(row?.id ?? "").trim(),
+      region: regions[0] ?? "",
+      regions,
+      rosterType: salesType,
+      telecallerId: salesType ? key : "",
       roles: emails.map((e) => roles.get(e) ?? []).flat(),
     });
   }
@@ -112,6 +116,10 @@ export function indexSeats(seats: NotificationSeat[]): SeatIndex {
 const anyMatch = (wanted: readonly string[] | undefined, actual: string): boolean =>
   !wanted || wanted.length === 0 ? true : wanted.some((w) => norm(w) === norm(actual));
 
+/** Region audience matches ANY region the seat holds (0..N since mig 0177). */
+const anyRegionMatch = (wanted: readonly string[] | undefined, actual: readonly string[]): boolean =>
+  !wanted || wanted.length === 0 ? true : actual.some((r) => wanted.some((w) => norm(w) === norm(r)));
+
 /** Which of these seats the rule speaks to (AND across selectors). */
 export function matchAudience(seats: NotificationSeat[], audience: NotificationAudience): NotificationSeat[] {
   const a = audience ?? {};
@@ -120,7 +128,12 @@ export function matchAudience(seats: NotificationSeat[], audience: NotificationA
     if (explicit.size > 0 && !explicit.has(s.employeeKey)) return false;
     if (!anyMatch(a.positions, s.position)) return false;
     if (!anyMatch(a.departments, s.department)) return false;
-    if (!anyMatch(a.regions, s.region)) return false;
+    // A person holds 0..N regions (mig 0177); the rule matches when ANY of
+    // their regions is selected, never just the primary one.
+    if (a.regions?.length) {
+      const held = (s.regions?.length ? s.regions : [s.region]).map(norm);
+      if (!a.regions.some((w) => held.includes(norm(w)))) return false;
+    }
     if (!anyMatch(a.rosterTypes, s.rosterType)) return false;
     if (a.roles && a.roles.length > 0 && !a.roles.some((r) => s.roles.map(norm).includes(norm(r)))) return false;
     return true;

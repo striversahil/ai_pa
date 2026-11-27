@@ -36,7 +36,7 @@ export default function RegionModal({ region, onClose, onSaved }: {
   };
 
   return (
-    <Modal title={`Region ${region.code}`} subtitle="Sales owns the label, the team-lead tier and the states served by this region." onClose={onClose}>
+    <Modal title={`Region ${region.code}`} subtitle="Sales owns the label, the target tier and the states served by this region." onClose={onClose}>
       <form onSubmit={submit} className="space-y-3">
         <div>
           <label className={label}>Name</label>
@@ -45,11 +45,12 @@ export default function RegionModal({ region, onClose, onSaved }: {
         </div>
         <div className="grid gap-2 sm:grid-cols-2">
           <div>
-            <label className={label}>Team-lead tier</label>
+            <label className={label}>Target tier</label>
             <select value={tlLevel} onChange={(e) => setTlLevel(e.target.value as SalesRegion["tlLevel"])} className={field}>
               <option value="TL1">TL1</option>
               <option value="TL2">TL2</option>
             </select>
+            <p className="mt-1 text-[10px] text-zinc-500">A label on the region, not a level on a person — people are Team Leads by their chart seat.</p>
           </div>
           <div>
             <label className={label}>Order</label>

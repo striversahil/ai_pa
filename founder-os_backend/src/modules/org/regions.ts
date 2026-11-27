@@ -3,9 +3,15 @@
 //
 // Founder decision 2026-11-27: the sales roster is not a second master. An
 // employee is a telecaller / team lead / field staff by their chart position,
-// and the region(s) they may hold come from HR: the region catalog (name,
+// and the regions they may hold come from HR: the region catalog (name,
 // TL tier, states) plus an optional per-position allotment. Chart seats with no
 // allotment rows may hold any active region, so old positions keep working.
+//
+// Founder decision 2026-11-28 (this file): the count is FREE. A region may have
+// any number of team leads; a team lead / telecaller / field staff may hold any
+// number of regions (0..N) — the Sales Head decides, nothing here caps it and
+// nothing here demands a TL1/TL2 tier on a person. The tier lives on the region
+// catalog only (it drives the reseller target ledger).
 //
 // DB failure (migration not applied yet) falls back to the bundled taxonomy —
 // reads never break, writes still validate against the fallback.
@@ -77,51 +83,35 @@ export async function loadAllotment(prisma: any): Promise<Record<string, string[
   } catch { return {}; }
 }
 
+/** Dedupe + trim a client region list (order kept; first = primary region). */
+export function cleanRegions(list: unknown): string[] {
+  const raw = Array.isArray(list) ? list : [list];
+  const out: string[] = [];
+  for (const v of raw) {
+    const code = String(v ?? "").trim().toUpperCase();
+    if (code && !out.includes(code)) out.push(code);
+  }
+  return out;
+}
+
 export interface PostingInput {
-  rosterType: "telecaller" | "field_staff" | "team_lead";
-  region: string; region2: string; tlLevel: string;
+  /** Any number of region codes, 0..N (order kept; first = primary). */
+  regions: string[];
   positionId: string | null;
 }
 
 /** Validate one employee posting. Returns an operator-facing error or null. */
 export async function validateSalesPosting(prisma: any, input: PostingInput): Promise<string | null> {
+  const picked = cleanRegions(input.regions);
+  if (picked.length === 0) return null; // valid: unmapped staff (the board's Unmapped bucket)
   const [regions, allowed] = await Promise.all([
     loadSalesRegions(prisma),
     loadPositionAllotment(prisma, input.positionId),
   ]);
-  const active = new Map(regions.filter((r) => r.active).map((r) => [r.code, r]));
-  const region = String(input.region ?? "").trim();
-  const region2 = String(input.rosterType === "team_lead" ? (input.region2 ?? "") : "").trim();
-  const level = String(input.tlLevel ?? "").trim();
-  const want = input.rosterType === "team_lead" ? 2 : 1;
-  const picked = [region, region2].filter(Boolean);
-  if (picked.length !== want) {
-    return input.rosterType === "team_lead"
-      ? "a Team Lead needs exactly two different regions"
-      : "region required for sales staff";
-  }
-  if (new Set(picked).size !== picked.length) return "pick two DIFFERENT regions";
+  const active = new Set(regions.filter((r) => r.active).map((r) => r.code));
   for (const code of picked) {
     if (!active.has(code)) return `region ${code} is not active in the HR region list`;
     if (allowed && !allowed.includes(code)) return `this position is not allotted to region ${code}`;
   }
-  if (input.rosterType === "team_lead") {
-    if (level && level !== "TL1" && level !== "TL2") return "tlLevel must be TL1 or TL2";
-    if (!level) {
-      const tiers = new Set(picked.map((c) => active.get(c)?.tlLevel));
-      if (tiers.size !== 1) return "the two regions report to different TL tiers — pick the TL level";
-    }
-  } else if (level) {
-    return "TL level is Team-Lead-only";
-  }
   return null;
-}
-
-/** TL level a team lead inherits from their (single-tier) region pair. */
-export async function impliedTlLevel(prisma: any, region: string, region2: string): Promise<string> {
-  const rows = await loadSalesRegions(prisma);
-  const tiers = new Set([region, region2]
-    .map((code) => rows.find((r) => r.code === code)?.tlLevel)
-    .filter(Boolean));
-  return tiers.size === 1 ? [...tiers][0]! : "";
 }

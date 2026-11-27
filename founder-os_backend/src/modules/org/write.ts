@@ -1,21 +1,22 @@
-// modules/org/write.ts — the single person save + the roster backfill.
+// modules/org/write.ts — the single person save.
 //
-// Writes employee + roster + login access through the existing services
-// (never raw SQL here). All rules live in ./access.ts (pure).
+// The employee row IS the sales row (mig 0177): seating someone on a chart
+// sales seat writes salesType + salesRegions + salesTeamLeadId on their
+// HumanResourcesMember. There is no second roster to create, mirror or
+// backfill — a person without an employee record cannot exist here.
 import type { AuthStore } from "../auth/store-parts/types";
-import { canManagePerson, rosterTypeFor, isChartTitle, retireRosterOnSave } from "./access";
+import { canManagePerson, rosterTypeFor, isChartTitle } from "./access";
 import { getChartTitleLookup, getChartRowByTitle } from "./chart/store";
-import { impliedTlLevel, validateSalesPosting } from "./regions";
-import { fail, normEmail } from "./types";
+import { cleanRegions, validateSalesPosting } from "./regions";
+import { fail, parseRegionList } from "./types";
 import type { AssignInput } from "./types";
-import { normalizeAgentPhone } from "../../automations/telecalling/util";
 
-/** The single person save: position, sales fields, access, active. */
+/** The single person save: position, sales profile, active. */
 export async function assignPerson(opts: {
-  prisma: any; store: AuthStore; me: any;
+  prisma: any; store?: AuthStore; me: any;
   employeeId: string; input: AssignInput;
 }): Promise<{ ok: true }> {
-  const { prisma, store, me, employeeId, input } = opts;
+  const { prisma, me, employeeId, input } = opts;
   if (!me) fail(401, "Authentication required");
   const current: any = await prisma.humanResourcesMember.findUnique({ where: { id: employeeId } }).catch(() => null);
   if (!current || current.deleted) fail(404, "employee not found");
@@ -35,22 +36,9 @@ export async function assignPerson(opts: {
 
   const rosterType = rosterTypeFor(title, chartLookup?.get(title));
   const chartRow = rosterType ? await getChartRowByTitle(title) : null;
-  let region = input.region !== undefined ? String(input.region ?? "") : undefined;
-  let region2 = input.region2 !== undefined ? String(input.region2 ?? "") : undefined;
-  let tlLevel = input.tlLevel !== undefined ? String(input.tlLevel ?? "") : undefined;
-  if (rosterType && rosterType !== "team_lead" && region2) fail(400, "second region is Team-Lead-only");
+  const hadProfile = !!String(current.salesType ?? "");
 
-  // ── Access lives ONLY in Users & Permissions (roles carry one chart
-  //  position each). The HR person save never touches scopes — any scopes
-  //  payload is ignored so old clients can't grant through this path.
-  const users = await store.listUsers().catch(() => [] as any[]);
-  const loginEmailFirst = [normEmail(current.loginEmail), normEmail(current.email)].filter(Boolean);
-  const empEmails = [...new Set(loginEmailFirst)];
-  const login = (users as any[]).find((u) =>
-    !(u as any)?.isRoot && empEmails.includes(normEmail((u as any).email)),
-  ) as any;
-
-  // ── Employee master (office phone lives here) ──
+  // ── Employee master (designation + office phone + active) ──
   const empPatch: Record<string, unknown> = {};
   if (input.position !== undefined) empPatch.designation = title;
   if (input.officePhone !== undefined) empPatch.phone = input.officePhone ? String(input.officePhone) : null;
@@ -60,130 +48,92 @@ export async function assignPerson(opts: {
     await updateEmployee(employeeId, empPatch);
   }
 
-  // ── Sales fields (roster row mirrors the employee by email, loginEmail first) ──
-  const rosterEmail = empEmails[0] || null;
-  const existing = rosterEmail
-    ? await prisma.telecaller.findMany({}).then((rows: any[]) =>
-      (rows as any[]).find((t) => !(t as any).deleted && empEmails.includes(normEmail((t as any).email))),
-    ).catch(() => null)
-    : null;
+  const profile: Record<string, unknown> = {};
   if (rosterType) {
-    if (region === undefined && existing) region = String((existing as any).region ?? "");
-    if (region2 === undefined && existing) region2 = String((existing as any).region2 ?? "");
-    if (tlLevel === undefined && existing) tlLevel = String((existing as any).tlLevel ?? "");
-    if (!region) fail(400, "region required for sales staff (R1–R4)");
-    const phone = input.officePhone !== undefined
-      ? (input.officePhone ? normalizeAgentPhone(input.officePhone) || null : null)
-      : ((existing as any)?.phone ?? null);
-    const data: Record<string, unknown> = {
-      name: String(current.name ?? ""),
-      email: rosterEmail,
-      phone,
-      whatsapp: input.whatsapp !== undefined ? (input.whatsapp ? String(input.whatsapp) : null) : ((existing as any)?.whatsapp ?? null),
-      tlLevel: tlLevel ?? "",
-      region,
-      region2: rosterType === "team_lead" ? (region2 ?? "") : "",
-      type: rosterType,
-      assignEstimateFollowUps: rosterType === "field_staff" ? false : ((existing as any)?.assignEstimateFollowUps ?? true),
-      neodoveUserId: input.neodoveUserId !== undefined ? (input.neodoveUserId || null) : ((existing as any)?.neodoveUserId ?? null),
-      neodoveUserName: input.neodoveUserName !== undefined ? (input.neodoveUserName || null) : ((existing as any)?.neodoveUserName ?? null),
-      deleted: false,
-    };
-    // HR owns the region catalog + seat allotment: validate the FINAL posting
-    // (a partial update still re-checks the whole pair).
-    if (rosterType === "team_lead" && !String(data.tlLevel ?? "")) {
-      data.tlLevel = await impliedTlLevel(prisma, String(data.region ?? ""), String(data.region2 ?? ""));
+    // Regions: a full list wins; the legacy region/region2 pair is merged so
+    // old clients keep working. Any number (0..N) is legal.
+    const existingRegions = parseRegionList(current.salesRegions);
+    let regions = existingRegions;
+    if (input.regions !== undefined) regions = cleanRegions(input.regions);
+    else if (input.region !== undefined || input.region2 !== undefined) {
+      regions = cleanRegions([
+        input.region !== undefined ? input.region : existingRegions[0] ?? "",
+        input.region2 !== undefined ? input.region2 : existingRegions[1] ?? "",
+      ]);
     }
     const postingErr = await validateSalesPosting(prisma, {
-      rosterType, region: String(data.region ?? ""), region2: String(data.region2 ?? ""),
-      tlLevel: String(data.tlLevel ?? ""), positionId: chartRow?.id ? String(chartRow.id) : null,
+      regions,
+      positionId: chartRow?.id ? String(chartRow.id) : null,
     });
     if (postingErr) fail(400, postingErr);
-    let rowId: string;
-    if (existing) {
-      const updated: any = await prisma.telecaller.update({ where: { id: (existing as any).id }, data });
-      rowId = String(updated.id);
-    } else {
-      const created: any = await prisma.telecaller.create({ data });
-      rowId = String(created.id);
+
+    let teamLeadId = input.teamLeadId !== undefined
+      ? (input.teamLeadId ? String(input.teamLeadId) : null)
+      : ((current.salesTeamLeadId as string | null) ?? null);
+    if (rosterType === "team_lead") teamLeadId = null;
+    if (teamLeadId) {
+      if (teamLeadId === employeeId) fail(400, "a person cannot report to themselves");
+      const lead: any = await prisma.humanResourcesMember.findUnique({ where: { id: teamLeadId } }).catch(() => null);
+      if (!lead || lead.deleted) fail(400, "team lead not found");
+      if (String(lead.salesType ?? "") !== "team_lead" || lead.active === false) {
+        fail(400, "pick an active team lead from the sales chart");
+      }
     }
-    try { await bustRosterCaches(); } catch { /* non-fatal */ }
-    try { const { mirrorRosterRow } = await import("../core/sync"); await mirrorRosterRow("telecaller", rowId); } catch { /* non-fatal */ }
-  } else if (existing) {
-    // Left Sales: retire the roster row so the leaderboard drops them —
-    // UNLESS the linked login still holds sales-head power. "Sales Head"
-    // maps to no roster type, so without this guard every save of the head's
-    // own card silently orphaned all their deals (deleted rows are skipped
-    // by creator inference and the agents list alike).
-    let holdsSalesHeadPower = false;
-    if (login) {
-      try {
-        const [scopes, roles] = await Promise.all([
-          store.getUserScopeKeys(login.id).catch(() => [] as string[]),
-          store.getUserRoleKeys(login.id).catch(() => [] as string[]),
-        ]);
-        holdsSalesHeadPower = [...scopes, ...roles].some((s) => String(s).toLowerCase() === 'sales-head');
-      } catch { /* fail-closed: retire as before */ }
+
+    profile.salesType = rosterType;
+    profile.salesRegions = JSON.stringify(regions);
+    profile.salesTeamLeadId = teamLeadId;
+    if (input.whatsapp !== undefined) profile.whatsapp = input.whatsapp ? String(input.whatsapp) : null;
+    if (input.neodoveUserId !== undefined) profile.neodoveUserId = input.neodoveUserId || null;
+    if (input.neodoveUserName !== undefined) profile.neodoveUserName = input.neodoveUserName || null;
+    if (input.assignEstimateFollowUps !== undefined) {
+      profile.salesAssignFollowUps = !!input.assignEstimateFollowUps;
     }
-    if (retireRosterOnSave({ rosterType, holdsSalesHeadPower })) {
-      await retireRosterRow(prisma, (existing as any).id);
-    }
+  } else if (hadProfile) {
+    // Left the sales chart (promotion, transfer, deactivation): drop the
+    // profile so the board no longer counts them. History keeps their employee
+    // id, so estimates/visits/credits stay attributed to the same person.
+    profile.salesType = "";
+    profile.salesRegions = "[]";
+    profile.salesTeamLeadId = null;
+    profile.salesAssignFollowUps = false;
+    profile.salesAbsentSince = null;
   }
-  if (input.active === false && existing) {
-    await retireRosterRow(prisma, (existing as any).id);
+  if (input.active === false && hadProfile) {
+    profile.salesType = "";
+    profile.salesRegions = "[]";
+    profile.salesTeamLeadId = null;
+    profile.salesAssignFollowUps = false;
+  }
+
+  if (Object.keys(profile).length > 0) {
+    await prisma.humanResourcesMember.update({ where: { id: employeeId }, data: profile });
+    // A Team Lead who leaves the seat must not leave staff pointing at them.
+    const wasLead = String(current.salesType ?? "") === "team_lead";
+    if (wasLead && profile.salesType !== "team_lead") {
+      try {
+        await prisma.humanResourcesMember.updateMany({
+          where: { salesTeamLeadId: employeeId },
+          data: { salesTeamLeadId: null },
+        });
+      } catch { /* staff stay linked until the next save; never block the person save */ }
+    }
+    try { await bustSalesCaches(); } catch { /* non-fatal */ }
   }
 
   return { ok: true };
 }
 
-async function retireRosterRow(prisma: any, id: string): Promise<void> {
-  await prisma.telecaller.update({
-    where: { id },
-    data: { deleted: true, assignEstimateFollowUps: false },
-  }).catch(() => null);
-  try { await bustRosterCaches(); } catch { /* non-fatal */ }
-}
-
-async function bustRosterCaches(): Promise<void> {
-  const { invalidateRiskCache } = await import("../../automations/telecalling/service");
+async function bustSalesCaches(): Promise<void> {
+  const { invalidateRiskCache } = await import("../../automations/telecalling/risk");
   await invalidateRiskCache();
   try {
     const { invalidateFieldStaffCache } = await import("../../modules/field-visits/service");
     await invalidateFieldStaffCache();
   } catch { /* non-fatal */ }
+  try {
+    const { bumpRev } = await import("../../shared/cache");
+    await bumpRev("est");
+  } catch { /* non-fatal */ }
 }
 
-/** Root-only one-time migration: roster rows without an employee record get
- *  one (email-exact join key). Idempotent — existing matches are skipped. */
-export async function backfillEmployees(opts: { prisma: any }): Promise<{ created: number; skipped: number }> {
-  const { prisma } = opts;
-  const [employees, telecallers] = await Promise.all([
-    prisma.humanResourcesMember.findMany({ where: { deleted: false } }).catch(() => []),
-    prisma.telecaller.findMany({ where: { deleted: false } }).catch(() => []),
-  ]);
-  const have = new Set<string>();
-  for (const e of (employees as any[])) {
-    for (const x of [normEmail((e as any).email), normEmail((e as any).loginEmail)]) if (x) have.add(x);
-  }
-  const { createEmployee } = await import("../../automations/human-resources/employees");
-  let created = 0, skipped = 0;
-  const titleFor = (t: string): string =>
-    t === "field_staff" ? "Field Staff" : t === "team_lead" ? "Team Lead" : "Telecaller";
-  for (const t of (telecallers as any[])) {
-    const email = normEmail((t as any).email);
-    if (!email || have.has(email)) { skipped++; continue; }
-    try {
-      await createEmployee({
-        name: String((t as any).name ?? email),
-        email,
-        phone: (t as any).phone ?? null,
-        designation: titleFor(String((t as any).type ?? "telecaller")),
-        department: "Sales",
-        active: true,
-      });
-      have.add(email);
-      created++;
-    } catch { skipped++; }
-  }
-  return { created, skipped };
-}

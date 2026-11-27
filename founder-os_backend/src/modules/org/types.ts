@@ -16,6 +16,15 @@ export function fail(status: number, message: string): never {
 
 export const normEmail = (v: unknown): string => String(v ?? "").trim().toLowerCase();
 
+/** HumanResourcesMember.salesRegions (JSON array) → clean code list. */
+export function parseRegionList(raw: unknown): string[] {
+  if (Array.isArray(raw)) return raw.map((v) => String(v ?? "").trim().toUpperCase()).filter(Boolean);
+  try {
+    const v = JSON.parse(String(raw ?? "[]"));
+    return Array.isArray(v) ? v.map((x) => String(x ?? "").trim().toUpperCase()).filter(Boolean) : [];
+  } catch { return []; }
+}
+
 export function isPrivileged(me: any): boolean {
   return me?.isRoot === true || me?.isAdmin === true;
 }
@@ -33,9 +42,19 @@ export interface OrgLogin {
 }
 
 export interface OrgRoster {
-  id: string; type: string; region: string; region2: string; tlLevel: string;
-  whatsapp: string | null; phone: string | null;
-  neodoveUserId: string | null; neodoveUserName: string | null;
+  /** Always the employee id: the employee row IS the sales row. */
+  id: string;
+  type: string;
+  /** All regions this person works (0..N; first = primary). */
+  regions: string[];
+  /** Team lead this person reports to (employee id of an active TL). */
+  teamLeadId: string | null;
+  whatsapp: string | null;
+  phone: string | null;
+  neodoveUserId: string | null;
+  neodoveUserName: string | null;
+  assignEstimateFollowUps: boolean;
+  absentSince: string | null;
 }
 
 export interface OrgPerson {
@@ -59,19 +78,22 @@ export interface OrgPeople {
   people: OrgPerson[];
   /** Non-root logins with no employee row (offer "Create employee record"). */
   unlinkedLogins: Array<{ id: string; email: string; name: string }>;
-  /** Live roster rows with no employee row (consumed by backfill). */
-  unlinkedRoster: Array<{ id: string; name: string; email: string | null; type: string }>;
 }
 
 export interface AssignInput {
   position?: string;
+  /** Full region list (0..N). Wins over the legacy pair below. */
+  regions?: string[];
+  /** Legacy pair, still accepted from older clients. */
   region?: string;
   region2?: string;
-  tlLevel?: string;
+  /** Team lead this person reports to (employee id). */
+  teamLeadId?: string | null;
   whatsapp?: string | null;
   officePhone?: string | null;
   neodoveUserId?: string | null;
   neodoveUserName?: string | null;
+  assignEstimateFollowUps?: boolean;
   /** Deprecated: HR never grants access (Users & Permissions owns it). Ignored. */
   scopes?: string[];
   active?: boolean;
