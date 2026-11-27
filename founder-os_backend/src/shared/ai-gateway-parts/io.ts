@@ -290,6 +290,17 @@ export class AiGateway {
         // probeTimeoutMs; everything after fallback uses timeoutMs.
         const probing = !fellBack && req.model && FALLBACK_MODEL[req.model] && req.probeTimeoutMs;
         if (probing) callReq.timeoutMs = req.probeTimeoutMs;
+        // The leg's total budget is a ceiling on EVERY attempt, not just on
+        // starting one: a 60 s first-byte wait that begins with 5 s left used
+        // to overrun a 95 s intake budget by a minute (measured: a 95 s leg
+        // returned after 162 s). Clamp to what is actually left.
+        const remaining = deadline - Date.now();
+        if (remaining > 0) {
+          const ttftCap = Number(callReq.ttftMs) > 0 ? Number(callReq.ttftMs) : DEFAULT_FIRST_BYTE_MS;
+          callReq.ttftMs = Math.max(500, Math.min(ttftCap, remaining));
+          const attemptCap = Number(callReq.timeoutMs) > 0 ? Number(callReq.timeoutMs) : DEFAULT_ATTEMPT_TIMEOUT_MS;
+          callReq.timeoutMs = Math.max(1_000, Math.min(attemptCap, remaining));
+        }
         const result = await this.callProvider(provider, key, callReq);
         this.pool.reportSuccess(key);
         // Proof-of-use audit: which key fingerprint + model served the call
@@ -439,9 +450,12 @@ export class AiGateway {
       let callerAborted = !!caller?.aborted;
       const onCallerAbort = () => { callerAborted = true; try { ctrl.abort(); } catch { /* ignore */ } };
       if (caller) caller.addEventListener('abort', onCallerAbort, { once: true });
-      const streamCap = Number(req.timeoutMs) > 0 ? Number(req.timeoutMs) : DEFAULT_STREAM_TIMEOUT_MS;
+      // Ceiling = the caller's total budget (same rule as complete()): a leg
+      // must never outlive its deadline just because an attempt started late.
+      const budgetLeft = Math.max(1_000, deadline - attemptStartedAt);
+      const streamCap = Math.min(Number(req.timeoutMs) > 0 ? Number(req.timeoutMs) : DEFAULT_STREAM_TIMEOUT_MS, budgetLeft);
       const capTimer = setTimeout(() => ctrl.abort(this.timeoutError('AI stream timeout')), streamCap);
-      const ttftMs = Number(req.ttftMs) > 0 ? Number(req.ttftMs) : DEFAULT_TTFT_MS;
+      const ttftMs = Math.min(Number(req.ttftMs) > 0 ? Number(req.ttftMs) : DEFAULT_TTFT_MS, budgetLeft);
       let ttftTimer: ReturnType<typeof setTimeout> | undefined = setTimeout(
         () => ctrl.abort(this.timeoutError('AI first-token timeout')), ttftMs,
       );
