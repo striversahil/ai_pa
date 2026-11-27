@@ -34,6 +34,7 @@ const LeaveApplicationView = dynamic(() => import("../components/my-leave/LeaveA
 const EmailDashboard = dynamic(() => import("../components/EmailDashboard"), { ssr: false });
 const SettingsDashboard = dynamic(() => import("../components/SettingsDashboard"), { ssr: false });
 const NotificationsDashboard = dynamic(() => import("../views/notifications/NotificationsDashboard"), { ssr: false });
+const IntegrationsDashboard = dynamic(() => import("../views/integrations/IntegrationsDashboard"), { ssr: false });
 
 export default function Home() {
   return (

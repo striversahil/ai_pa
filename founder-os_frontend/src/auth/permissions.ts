@@ -129,6 +129,10 @@ export function canView(me: AuthUserMe | null, viewOrSlug: string): boolean {
   // ROOT ONLY — same contract as email. The backend /api/settings endpoints
   // enforce the same check independently.
   if (viewOrSlug === "settings") return me.isRoot;
+  // Ingestion hub: ROOT ONLY. It can create/rotate public webhook credentials
+  // and read every portal's data, so it is never a delegable scope. The
+  // backend /api/integrations/* endpoints enforce isRoot independently.
+  if (viewOrSlug === "integrations") return me.isRoot;
   // Notification engine dashboard (rules, deliveries, palette, AI authoring):
   // root/admin only — the backend endpoints enforce the same gate. Everyone else
   // gets their own notifications through the bell, not this console.

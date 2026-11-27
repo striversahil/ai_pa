@@ -248,6 +248,11 @@ export const AUTH_EXEMPT = [
   '/api/ai/',
   '/api/estimates/bulk-upsert',
   '/api/neodove/report',
+  // Integrations: every external portal posts here with NO session. The path
+  // token (only its SHA-256 is in D1) plus an optional per-source HMAC over the
+  // raw body are verified inside routes/ingest.ts, which also records every
+  // delivery. The console (/api/integrations/*) stays behind the root session.
+  '/api/ingest/',
   // Android devices authenticate with a per-device bearer token (requireDevice)
   // instead of the Google session cookie.
   '/api/android/',

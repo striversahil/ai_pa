@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { Sparkles, MessageCircle, Workflow, ShieldCheck, MessagesSquare, Mail, Settings, ListChecks, LayoutGrid, CalendarDays, Bell } from "lucide-react";
+import { Sparkles, MessageCircle, Workflow, ShieldCheck, MessagesSquare, Mail, Settings, ListChecks, LayoutGrid, CalendarDays, Bell, Plug } from "lucide-react";
 
 export type ViewType =
   | "session"
@@ -13,6 +13,7 @@ export type ViewType =
   | "admin"
   | "email"
   | "notifications"
+  | "integrations"
   | "settings";
 
 export interface NavItem {
@@ -35,6 +36,9 @@ export const NAV_ITEMS: NavItem[] = [
   // Notification engine: rules, dispatches, palette and the AI-authoring
   // material. Root/admin only (canView gates it; the API refuses others).
   { view: "notifications", label: "Notifications", icon: Bell, mobile: false },
+  // Ingestion hub: every outside service (Tally forms, IndiaMART, TradeIndia,
+  // Meta, custom webhooks) in one feed. ROOT ONLY — canView gates it.
+  { view: "integrations", label: "Integrations", icon: Plug, mobile: false },
   // Employee delegation board — every approved login, HR or not.
   { view: "delegation", label: "Delegation", icon: ListChecks, mobile: true },
   // Personal leave applications (full day / half day / short) — every approved
@@ -77,6 +81,7 @@ export function navTargetPath(t: NavTarget): string {
     admin: "/admin",
     email: "/email",
     notifications: "/notifications",
+    integrations: "/integrations",
     settings: "/settings",
   };
   return paths[t.view];

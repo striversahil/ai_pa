@@ -533,3 +533,87 @@ Then create a new view in `founder-os_frontend` and rebuild.
 | `MESSAGE_SLA_MINUTES` | No | `15` | SLA deadline in minutes |
 | `SLACK_WEBHOOK_URL` | No | — | Slack webhook for SLA breach alerts |
 | `PORT` | No | `3000` | Express server port |
+
+---
+
+## 15. Integration Hub (one ingestion pipeline, any portal)
+
+Founder ask (2026-11-27): one sidebar service where **any** outside application —
+Tally forms, IndiaMART, TradeIndia, Meta (Facebook/Instagram) lead ads, a
+generic webhook, or a portal nobody has built yet — is connected once and every
+submission lands in ONE activity feed, with **no deploy** to add or remove one.
+
+### 15.1 Two nouns: service (type) vs connection (instance)
+
+- **Service / connector** (`CatalogEntry`, code in `modules/integrations/catalog.ts`
+  or a D1 `IntegrationConnector` row) = HOW a payload becomes events: a mapping
+  preset, an auth kind, optional credential fields. Built-ins: `tally`,
+  `generic`, `indiamart`, `tradeindia`, `meta` (needs-setup), and `whatsapp`
+  which is `native` — it is LINKED, never duplicated (its own pipeline owns it).
+- **Connection / source** (`IntegrationSource`) = one wired-up account: a name,
+  the service it uses, its own webhook token, its own config + mapping override.
+  Adding / pausing / rotating / removing a connection is a panel action.
+
+A service authored in the panel (name + JSON mapping) is a D1 connector with
+`key = c-<hex>`; "a portal we don't support" is therefore configuration, not a
+release. Deleting one is refused while a connection still uses it.
+
+### 15.2 The door
+
+`POST /api/ingest/:sourceId/:token` (and `GET` for a human check + the Meta
+`hub.challenge` handshake) in `worker/routes/ingest.ts`. It is `AUTH_EXEMPT`
+(`context.ts`) because a portal has no session cookie; the path token is the
+credential and D1 stores only its SHA-256 (`tokenHash`). The plaintext is kept
+in `CACHE_KV` (`integration:secret:<id>:token`) purely so the panel can show
+the URL again — same pattern as the Gmail OAuth tokens.
+
+Optional per-source HMAC (`integration:secret:<id>:hmac`) verifies
+`Tally-Signature` / `X-Ingest-Signature` over the RAW body (base64 or hex).
+Every call — accepted, rejected, paused, failed — writes an
+`IntegrationDelivery` row with the first 2 KB of the body, so the panel can
+show exactly what the service sent.
+
+Status codes: `202` stored (a retry is a no-op duplicate), `401` bad
+signature, `404` unknown source/token, `422` nothing to map, `500` internal
+(so Tally's retry schedule can finish the job). `UNIQUE(sourceId, externalId)`
+is the dedupe key and the reason retries are safe.
+
+### 15.3 Mapping is data, never code
+
+`modules/integrations/mapping.ts` is a tiny DSL:
+`{ itemsPath, fields: {target: dotPath}, literals, occurredAtFormat, eventKind }`.
+`applyMapping` walks the payload (cap 200 items), normalizes phone/date/amount,
+generates a stable fallback id (FNV-1a) when the portal has none, and returns
+`{events, warnings}` — used identically by ingest, the panel's dry run and
+Replay. A source's own `mapping` (empty = inherit the service preset) is the
+override; `POST /api/integrations/preview` runs the same function with no write.
+
+Replay re-normalizes an event's stored raw body with the CURRENT mapping, which
+is how a fixed mapping repairs history without asking the portal to re-send.
+
+### 15.4 Storage (migration 0180)
+
+`IntegrationConnector` · `IntegrationSource` · `IntegrationEvent` ·
+`IntegrationDelivery` — raw SQL (no Prisma model, no shim accessor), like the
+product-line batch and debtors-import tables. Normalized columns (company,
+contact, phone, email, city, amount, kind, occurredAt) are what the feed filters
+on; the full payload stays in `payload`/`raw` (capped 20 KB).
+
+### 15.5 Panel (root only)
+
+`/integrations` (`components/integrations/`): **Activity** (paged feed, search
+across name/company/phone/email, detail drawer + Replay) · **Connections** (copy
+URL, pause, rotate, remap, delivery audit, remove with optional purge) ·
+**Services** (catalogue + author a custom service). Gated in
+`auth/permissions.ts#canView` and enforced again by
+`worker/routes/integrations.ts#rootGate` — it can mint public credentials, so it
+is never a delegable scope.
+
+Deleting a connection keeps its events by default (`sourceId` blanked, so the
+feed still shows history); `?purge=1` deletes them too.
+
+### 15.6 Not yet wired (next commits)
+
+Tally auto-connect + backfill of existing submissions, and per-source domain
+writes (Tally visit/expense → `FieldVisit`/`FieldExpense` via
+`config.staffId`). v1 is deliberately feed-first.

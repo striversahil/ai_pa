@@ -56,6 +56,10 @@ export const LiveEvent = {
    * saved something, and no other dashboard renders settings.
    */
   Settings: "settings",
+  /** Integration hub: a source was added/removed/rotated (panel refetch). */
+  Integrations: "integrations",
+  /** A new normalized activity event landed (feed moves live). */
+  Ingest: "ingest",
   /**
    * Customer master writes (record edits, duplicate-group review, JSON
    * re-import, editor appointments). Dashboards listening on this type refetch;

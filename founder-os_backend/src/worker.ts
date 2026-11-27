@@ -60,6 +60,8 @@ import { registerAndroidRoutes } from './worker/routes/android';
 import { registerCallLogRoutes } from './worker/routes/call-log';
 import { registerDialerRoutes } from './worker/routes/dialer';
 import { registerFieldStaffRoutes } from './worker/routes/field-staff';
+import { registerIngestRoutes } from './worker/routes/ingest';
+import { registerIntegrationRoutes } from './worker/routes/integrations';
 import { registerSalesObjectionsRoutes } from './worker/routes/sales-objections';
 import { registerNotificationRoutes } from './worker/routes/notifications';
 import { registerWorkRoutes } from './worker/routes/work';
@@ -122,6 +124,9 @@ registerAndroidRoutes(app);
 registerCallLogRoutes(app);
 registerDialerRoutes(app);
 registerFieldStaffRoutes(app);
+// Integration hub: the public webhook door first, then the root-only console.
+registerIngestRoutes(app);
+registerIntegrationRoutes(app);
 registerSalesObjectionsRoutes(app);
 // Registered BEFORE work.ts so the richer notification API owns
 // /api/notifications (work.ts keeps the legacy Phase-6a handlers).
