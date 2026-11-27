@@ -286,6 +286,24 @@ describe('streamed JSON calls', () => {
     assert.equal(buffered, 1, 'exactly one buffered attempt');
   });
 
+  it('retries buffered when the stream hangs before its first token, on a 20 s budget', async () => {
+    // The free endpoint sometimes accepts the socket and never answers; the
+    // caller's 45 s would leave nothing for the buffered leg.
+    let buffered = 0;
+    let streamReq = null;
+    const fake = {
+      stream: async function* (req) {
+        streamReq = req;
+        throw new mod.AiGatewayError('AI first-token timeout', undefined, 1);
+      },
+      complete: async (req) => { buffered++; return { provider: 'fake', content: '{"ok":true}', ttftMs: req.ttftMs }; },
+    };
+    const out = await mod.AiGateway.prototype.completeJsonStream.call(fake, { messages: [], ttftMs: 45_000 });
+    assert.deepEqual(out, { ok: true });
+    assert.equal(buffered, 1, 'a hung stream retries buffered once');
+    assert.equal(streamReq.ttftMs, 20_000, 'the streamed leg gets 20 s, not the caller 45 s');
+  });
+
   it('never retries buffered after a delta was delivered, and never for a 429', async () => {
     let buffered = 0;
     const calls = () => { buffered++; return { provider: 'fake', content: '{"ok":true}' }; };

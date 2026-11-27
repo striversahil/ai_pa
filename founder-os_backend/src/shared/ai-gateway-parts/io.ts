@@ -17,6 +17,11 @@ import type { KeyHealth, ProviderConfig, CompletionRequest, CompletionResult, Ai
  *  buffered wait never applies to a normal split. */
 const BUFFERED_JSON_TTFT_MS = 20_000;
 
+/** First-token budget for the STREAMED leg of a JSON call. A healthy split
+ *  streams in ~6 s, a hung one never does; 20 s keeps the buffered fallback
+ *  inside the caller's budget. */
+const STREAM_JSON_TTFT_MS = 20_000;
+
 /** Parse a JSON answer, tolerating prose around it. Shared by the buffered and
  *  the streamed paths so both fail with the same message shape. */
 function parseGatewayJson<T>(content: string, mode: 'buffered' | 'streamed'): T {
@@ -37,7 +42,11 @@ function streamsRefused(e: unknown): boolean {
   for (let hop = 0; cur && hop < 3; hop++) {
     const status = Number(cur.status) || 0;
     if (status >= 500 || status === 404) return true;
-    if (!status && /fetch failed|network|terminated|no body|ECONNRESET/i.test(String(cur.message ?? ''))) return true;
+    const msg = String(cur.message ?? '');
+    if (!status && /fetch failed|network|terminated|no body|ECONNRESET/i.test(msg)) return true;
+    // A stream that hangs before its first token is a refusal in practice:
+    // the buffered leg is a different endpoint path and often answers.
+    if (!status && /first-token timeout|first-byte timeout/i.test(msg)) return true;
     cur = cur.cause ?? cur.lastErr ?? null;
   }
   return false;
@@ -552,7 +561,11 @@ export class AiGateway {
     let content = '';
     let delivered = false;
     try {
-      for await (const chunk of this.stream({ ...req, json: true })) {
+      // A healthy split streams its first token in ~6 s, so a stream still
+      // silent at 20 s is hung; giving it the caller's 45 s would eat the
+      // intake's whole 90 s budget before the buffered leg ever ran.
+      const ttftMs = Math.min(Number(req.ttftMs) || STREAM_JSON_TTFT_MS, STREAM_JSON_TTFT_MS);
+      for await (const chunk of this.stream({ ...req, json: true, ttftMs })) {
         if (chunk.contentDelta) { content += chunk.contentDelta; delivered = true; }
       }
     } catch (e) {
