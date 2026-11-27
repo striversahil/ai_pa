@@ -6,10 +6,16 @@ import { gatewayUsageKey, GATEWAY_USAGE_TTL_MS, GATEWAY_USAGE_PREFIX, MODEL_DOWN
 import { emitGatewayMetric, classifyGatewayError, metricSource } from "./metrics";
 import type { KeyHealth, ProviderConfig, CompletionRequest, CompletionResult, AiKey, ToolCall } from "./types";
 
-/** First-byte budget for the buffered retry of a refused stream. The buffered
- *  form only emits its first byte when the whole answer is ready, so a big
- *  split legitimately takes 60-90 s there. */
-const BUFFERED_JSON_TTFT_MS = 90_000;
+/** Per-key first-byte budget for the buffered retry of a refused stream.
+ *
+ *  The buffered form only emits its first byte when the whole answer is
+ *  ready, so a HEALTHY key answers a 2-line split in ~8 s (measured). A
+ *  saturated free key instead accepts the socket and never answers at all
+ *  (110 s with no byte). 20 s therefore separates the two cheaply: a hung
+ *  key is rotated away while the intake still fits in its 90 s budget
+ *  (6 tries × 20 s). Streaming stays the primary path, so the old 60-90 s
+ *  buffered wait never applies to a normal split. */
+const BUFFERED_JSON_TTFT_MS = 20_000;
 
 /** Parse a JSON answer, tolerating prose around it. Shared by the buffered and
  *  the streamed paths so both fail with the same message shape. */
@@ -561,7 +567,8 @@ export class AiGateway {
         ...req,
         json: true,
         ignoreCooldown: true,
-        ttftMs: Math.max(Number(req.ttftMs) || 0, BUFFERED_JSON_TTFT_MS),
+        ttftMs: BUFFERED_JSON_TTFT_MS,
+        maxAttempts: Math.max(Number(req.maxAttempts) || 0, 6),
       });
       return parseGatewayJson<T>(res.content, 'buffered');
     }
