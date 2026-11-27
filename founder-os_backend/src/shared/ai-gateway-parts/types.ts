@@ -89,6 +89,10 @@ export interface CompletionRequest {
    * Generic — works for every current and future provider in PROVIDERS.
    */
   sessionKey?: string;
+  /** Retry even while a key is cooling down. Only the buffered retry after a
+   *  refused stream sets this: the cooldown was earned by the STREAM endpoint,
+   *  and the buffered endpoint is a different leg that may still answer. */
+  ignoreCooldown?: boolean;
   /** Per-attempt wall-clock cap (ms). Defaults to 60s (non-stream) / 120s
    *  (stream). A hung attempt aborts and the request rotates immediately. */
   timeoutMs?: number;

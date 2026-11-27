@@ -169,9 +169,9 @@ export class KeyPool {
    *    tier: statistical load-spreading with zero cross-isolate coordination
    *    (per-isolate LRU alone would hammer key #0 on every cold start).
    */
-  select(provider?: string, sessionKey?: string): AiKey | null {
+  select(provider?: string, sessionKey?: string, ignoreCooldown = false): AiKey | null {
     const now = Date.now();
-    let pool = this.keys.filter((k) => k.enabled && k.allowed && k.cooldownUntil <= now && this.providerEnabled(k.provider));
+    let pool = this.keys.filter((k) => k.enabled && k.allowed && (ignoreCooldown || k.cooldownUntil <= now) && this.providerEnabled(k.provider));
     if (provider) {
       const filtered = pool.filter((k) => k.provider === provider);
       if (filtered.length > 0) pool = filtered;

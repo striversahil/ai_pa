@@ -77,6 +77,14 @@ describe('key/provider switches', () => {
     assert.equal(p.health().find((k) => k.id.endsWith('0001')).allowed, true);
   });
 
+  it('can retry a cooling key when the caller asks (buffered retry after a refused stream)', () => {
+    const p = pool([{ key: A }]);
+    const k = p['keys'][0];
+    p.reportFailure(k, Object.assign(new Error('HTTP 503: busy'), { status: 503 }));
+    assert.equal(p.select(), null, 'a cooling key is invisible to normal traffic');
+    assert.equal(p.select(undefined, undefined, true)?.key, A, 'ignoreCooldown lets the buffered leg try it');
+  });
+
   it('does not reset runtime health when the same key is re-registered', () => {
     const p = pool([{ key: A }]);
     p.reportSuccess(p.select());

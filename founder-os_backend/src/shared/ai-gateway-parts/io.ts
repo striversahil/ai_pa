@@ -248,8 +248,8 @@ export class AiGateway {
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       if (Date.now() >= deadline) break;
       const key = req.keyId
-        ? this.findKey(req.keyId) ?? this.pool.select(req.provider, req.sessionKey)
-        : this.pool.select(req.provider, req.sessionKey);
+        ? this.findKey(req.keyId) ?? this.pool.select(req.provider, req.sessionKey, req.ignoreCooldown === true)
+        : this.pool.select(req.provider, req.sessionKey, req.ignoreCooldown === true);
       if (!key) {
         const waitMs = this.pool.earliestCooldownMs();
         const retryAfter = waitMs > 0 ? Math.min(waitMs, 60_000) : 60_000;
@@ -560,6 +560,7 @@ export class AiGateway {
       const res = await this.complete({
         ...req,
         json: true,
+        ignoreCooldown: true,
         ttftMs: Math.max(Number(req.ttftMs) || 0, BUFFERED_JSON_TTFT_MS),
       });
       return parseGatewayJson<T>(res.content, 'buffered');
