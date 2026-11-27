@@ -200,6 +200,7 @@ function AppInner() {
           {activeView === "email" && <EmailDashboard />}
           {activeView === "settings" && <SettingsDashboard />}
           {activeView === "notifications" && <NotificationsDashboard />}
+          {activeView === "integrations" && <IntegrationsDashboard />}
           {activeView === "session" && (
             <WorkspaceHostProvider basePath="/session" navigate={navigate}>
               <SessionView slug={sub} />
