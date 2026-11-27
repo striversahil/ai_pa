@@ -265,6 +265,35 @@ describe('streamed JSON calls', () => {
     );
   });
 
+  it('retries buffered when the streamed form is refused before any content', async () => {
+    // 2026-11-27: the free endpoint answered 503 to every streamed call while
+    // the same prompt buffered was served. That must not lose the split.
+    let buffered = 0;
+    const fake = {
+      stream: async function* () { throw new mod.AiGatewayError('All AI keys exhausted', { status: 503, message: 'HTTP 503: busy' }); },
+      complete: async () => { buffered++; return { provider: 'fake', content: '{"lines":[{"name":"Fenner"}]}' }; },
+    };
+    const out = await mod.AiGateway.prototype.completeJsonStream.call(fake, { messages: [] });
+    assert.deepEqual(out, { lines: [{ name: 'Fenner' }] });
+    assert.equal(buffered, 1, 'exactly one buffered attempt');
+  });
+
+  it('never retries buffered after a delta was delivered, and never for a 429', async () => {
+    let buffered = 0;
+    const calls = () => { buffered++; return { provider: 'fake', content: '{"ok":true}' }; };
+    const partial = {
+      stream: async function* () { yield { contentDelta: '{"ok"' }; throw new Error('socket died'); },
+      complete: calls,
+    };
+    await assert.rejects(() => mod.AiGateway.prototype.completeJsonStream.call(partial, { messages: [] }), /socket died/);
+    const throttled = {
+      stream: async function* () { throw new mod.AiGatewayError('All AI keys exhausted', { status: 429, message: 'HTTP 429: slow down' }); },
+      complete: calls,
+    };
+    await assert.rejects(() => mod.AiGateway.prototype.completeJsonStream.call(throttled, { messages: [] }), /All AI keys exhausted/);
+    assert.equal(buffered, 0, 'buffered retry must not fire on delivered or throttled streams');
+  });
+
   it('intake + extraction never call the buffered completeJson again', () => {
     for (const rel of ['src/modules/enquiries/vision-intake-parts/io.ts', 'src/modules/enquiries/extract.ts']) {
       const src = readFileSync(join(BACKEND_DIR, rel), 'utf8');

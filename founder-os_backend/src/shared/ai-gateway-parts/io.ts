@@ -6,6 +6,37 @@ import { gatewayUsageKey, GATEWAY_USAGE_TTL_MS, GATEWAY_USAGE_PREFIX, MODEL_DOWN
 import { emitGatewayMetric, classifyGatewayError, metricSource } from "./metrics";
 import type { KeyHealth, ProviderConfig, CompletionRequest, CompletionResult, AiKey, ToolCall } from "./types";
 
+/** First-byte budget for the buffered retry of a refused stream. The buffered
+ *  form only emits its first byte when the whole answer is ready, so a big
+ *  split legitimately takes 60-90 s there. */
+const BUFFERED_JSON_TTFT_MS = 90_000;
+
+/** Parse a JSON answer, tolerating prose around it. Shared by the buffered and
+ *  the streamed paths so both fail with the same message shape. */
+function parseGatewayJson<T>(content: string, mode: 'buffered' | 'streamed'): T {
+  try {
+    return JSON.parse(content) as T;
+  } catch {
+    const extracted = extractJson(content);
+    if (extracted !== null) return extracted as T;
+    throw new AiGatewayError(`Failed to parse JSON from ${mode} response: ${content.slice(0, 200)}`);
+  }
+}
+
+/** True when the stream failed for a reason the BUFFERED call may survive:
+ *  a provider-side refusal (5xx/404) or a transport death, never a plain
+ *  429/401 (the pool is throttled or the key is dead either way). */
+function streamsRefused(e: unknown): boolean {
+  let cur: any = e;
+  for (let hop = 0; cur && hop < 3; hop++) {
+    const status = Number(cur.status) || 0;
+    if (status >= 500 || status === 404) return true;
+    if (!status && /fetch failed|network|terminated|no body|ECONNRESET/i.test(String(cur.message ?? ''))) return true;
+    cur = cur.cause ?? cur.lastErr ?? null;
+  }
+  return false;
+}
+
 export async function logGatewayUsage(usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }): Promise<void> {
   try {
     const key = gatewayUsageKey();
@@ -498,13 +529,7 @@ export class AiGateway {
    *  structured-output support need this). */
   async completeJson<T = unknown>(req: CompletionRequest): Promise<T> {
     const res = await this.complete({ ...req, json: true });
-    try {
-      return JSON.parse(res.content) as T;
-    } catch {
-      const extracted = extractJson(res.content);
-      if (extracted !== null) return extracted as T;
-      throw new AiGatewayError(`Failed to parse JSON from ${res.provider} response: ${res.content.slice(0, 200)}`);
-    }
+    return parseGatewayJson<T>(res.content, 'buffered');
   }
 
   /** Convenience: STREAM the call, assemble the text, parse it as JSON.
@@ -519,16 +544,27 @@ export class AiGateway {
    *  instead of a fake one. */
   async completeJsonStream<T = unknown>(req: CompletionRequest): Promise<T> {
     let content = '';
-    for await (const chunk of this.stream({ ...req, json: true })) {
-      if (chunk.contentDelta) content += chunk.contentDelta;
-    }
+    let delivered = false;
     try {
-      return JSON.parse(content) as T;
-    } catch {
-      const extracted = extractJson(content);
-      if (extracted !== null) return extracted as T;
-      throw new AiGatewayError(`Failed to parse JSON from streamed response: ${content.slice(0, 200)}`);
+      for await (const chunk of this.stream({ ...req, json: true })) {
+        if (chunk.contentDelta) { content += chunk.contentDelta; delivered = true; }
+      }
+    } catch (e) {
+      // A provider can refuse the STREAMED form while its buffered form
+      // answers: on 2026-11-27 every streamed call to the configured free
+      // endpoint came back 503 "service is busy" in ~5 s while 5 of 6
+      // identical buffered calls were served. Nothing was delivered, so one
+      // buffered attempt is a different leg, not a retry of a dead stream.
+      if (delivered || !streamsRefused(e)) throw e;
+      console.warn('[AiGateway] stream refused before content — retrying buffered: ' + String((e as any)?.message ?? e).slice(0, 180));
+      const res = await this.complete({
+        ...req,
+        json: true,
+        ttftMs: Math.max(Number(req.ttftMs) || 0, BUFFERED_JSON_TTFT_MS),
+      });
+      return parseGatewayJson<T>(res.content, 'buffered');
     }
+    return parseGatewayJson<T>(content, 'streamed');
   }
 
   private findKey(id: string): AiKey | null {
