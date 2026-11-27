@@ -26,7 +26,7 @@ export default function OrganizationTab({ department, chartEditable = true }: {
     const [org, chart, regionCatalog] = await Promise.all([
       fetchOrgPeople(department ?? null),
       fetchOrgChart(),
-      fetchOrgRegions().catch(() => ({ regions: [], allotment: {} })),
+      fetchOrgRegions().catch(() => ({ regions: [] })),
     ]);
     return { ...org, chart, regionCatalog };
   }, { events: ["human-resources", "telecalling"], deps: [department ?? ""], pollMs: 60000 });
@@ -38,7 +38,7 @@ export default function OrganizationTab({ department, chartEditable = true }: {
 
   const people: OrgPerson[] = dash.data?.people ?? [];
   const positions: OrgChartPosition[] = dash.data?.chart.positions ?? [];
-  const regionCatalog = dash.data?.regionCatalog ?? { regions: [], allotment: {} };
+  const regionCatalog = dash.data?.regionCatalog ?? { regions: [] };
   const canManageChart = chartEditable && !!dash.data?.chart.canManage;
 
   const peopleByTitle = useMemo(() => {
@@ -157,7 +157,6 @@ export default function OrganizationTab({ department, chartEditable = true }: {
           positions={positions}
           people={people}
           regions={regionCatalog.regions}
-          allotment={regionCatalog.allotment}
           onClose={() => setEditing(null)}
           onSaved={() => dash.refresh()}
         />

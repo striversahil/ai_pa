@@ -12,7 +12,7 @@
 // Live SQLite foreign keys ("fk") and the curated no-FK application joins
 // ("app") are merged at runtime in ./schema.ts.
 //
-// source-hash: 7ce2f10a61e6
+// source-hash: 91e129305a6e
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type RelationKind = 'orm' | 'declared';
@@ -29,7 +29,7 @@ export interface TableRelation {
   kind: RelationKind;
 }
 
-export const RELATIONS_SOURCE_HASH = "7ce2f10a61e6";
+export const RELATIONS_SOURCE_HASH = "91e129305a6e";
 
 export const TABLE_RELATIONS: readonly TableRelation[] = [
   { from: "AccountsTaskAttachment", field: "logId", model: "AccountsTaskLog", ref: "id", kind: "orm" },

@@ -21,18 +21,8 @@ export interface RegionStaff {
   members: Array<{ id: string; name: string; type: string }>;
 }
 
-export interface SalesRegionPosition {
-  id: string;
-  title: string;
-  department: string | null;
-  active: boolean;
-}
-
 export interface SalesRegionsData {
   regions: SalesRegion[];
-  /** Chart position id → allotted region codes (absent = every active region). */
-  allotment: Record<string, string[]>;
-  positions: SalesRegionPosition[];
 }
 
 export const REGION_CODES = ["R1", "R2", "R3", "R4"] as const;
@@ -43,8 +33,4 @@ export function fetchSalesRegions(): Promise<SalesRegionsData> {
 
 export function updateSalesRegion(code: string, body: Record<string, unknown>): Promise<SalesRegion> {
   return api.patch<SalesRegion>(`/api/sales/regions/${encodeURIComponent(code)}`, body);
-}
-
-export function savePositionRegions(positionId: string, regions: string[]): Promise<{ ok: boolean; regions: string[] }> {
-  return api.put(`/api/sales/position-regions/${encodeURIComponent(positionId)}`, { regions });
 }

@@ -1,11 +1,14 @@
-// modules/org/regions.ts — the sales posting rule (region catalog + chart-seat
-// allotment) behind the single person save.
+// modules/org/regions.ts — the sales posting rule (region catalog) behind the
+// single person save.
 //
 // Founder decision 2026-11-27: the sales roster is not a second master. An
 // employee is a telecaller / team lead / field staff by their chart position,
-// and the regions they may hold come from HR: the region catalog (name,
-// TL tier, states) plus an optional per-position allotment. Chart seats with no
-// allotment rows may hold any active region, so old positions keep working.
+// and the regions they may hold are picked on that person from the region
+// catalog (name, TL tier, states).
+//
+// Founder decision 2026-11-28: the per-position allotment table is GONE — the
+// chart is the one place a seat's regions are assigned (on the person), so any
+// active region may be picked for any seat. Mig 0179 drops the table.
 //
 // Founder decision 2026-11-28 (this file): the count is FREE. A region may have
 // any number of team leads; a team lead / telecaller / field staff may hold any
@@ -61,28 +64,6 @@ export function regionDefs(rows: SalesRegionRow[]): RegionDef[] {
   }));
 }
 
-/** Allotment codes for one chart position; null = no restriction. */
-export async function loadPositionAllotment(prisma: any, positionId: string | null): Promise<string[] | null> {
-  if (!positionId) return null;
-  try {
-    const rows = await prisma.humanResourcesPositionRegion.findMany({ where: { orgPositionId: String(positionId) } });
-    return rows?.length ? rows.map((r: any) => String(r.regionCode)) : null;
-  } catch { return null; }
-}
-
-/** All allotment rows grouped by chart position (the HR Controller matrix). */
-export async function loadAllotment(prisma: any): Promise<Record<string, string[]>> {
-  try {
-    const rows = await prisma.humanResourcesPositionRegion.findMany({});
-    const out: Record<string, string[]> = {};
-    for (const r of rows ?? []) {
-      const key = String(r.orgPositionId);
-      (out[key] ??= []).push(String(r.regionCode));
-    }
-    return out;
-  } catch { return {}; }
-}
-
 /** Dedupe + trim a client region list (order kept; first = primary region). */
 export function cleanRegions(list: unknown): string[] {
   const raw = Array.isArray(list) ? list : [list];
@@ -97,21 +78,16 @@ export function cleanRegions(list: unknown): string[] {
 export interface PostingInput {
   /** Any number of region codes, 0..N (order kept; first = primary). */
   regions: string[];
-  positionId: string | null;
 }
 
 /** Validate one employee posting. Returns an operator-facing error or null. */
 export async function validateSalesPosting(prisma: any, input: PostingInput): Promise<string | null> {
   const picked = cleanRegions(input.regions);
   if (picked.length === 0) return null; // valid: unmapped staff (the board's Unmapped bucket)
-  const [regions, allowed] = await Promise.all([
-    loadSalesRegions(prisma),
-    loadPositionAllotment(prisma, input.positionId),
-  ]);
+  const regions = await loadSalesRegions(prisma);
   const active = new Set(regions.filter((r) => r.active).map((r) => r.code));
   for (const code of picked) {
     if (!active.has(code)) return `region ${code} is not active in the HR region list`;
-    if (allowed && !allowed.includes(code)) return `this position is not allotted to region ${code}`;
   }
   return null;
 }

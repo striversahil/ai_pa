@@ -64,7 +64,6 @@ const BOOL_FIELDS: Record<string, string[]> = {
   HumanResourcesAsset: ['deleted'],
   HumanResourcesPositionAsset: ['required'],
   HumanResourcesRegion: ['active'],
-  HumanResourcesPositionRegion: [],
   OrgChartPosition: ['isTop', 'isHead', 'active'],
   HumanResourcesTask: ['deleted'],
   HumanResourcesExpense: ['deleted'],
@@ -165,7 +164,6 @@ const DATE_FIELDS: Record<string, string[]> = {
   HumanResourcesAsset: ['createdAt', 'updatedAt'],
   HumanResourcesPositionAsset: ['createdAt', 'updatedAt'],
   HumanResourcesRegion: ['createdAt', 'updatedAt'],
-  HumanResourcesPositionRegion: ['createdAt', 'updatedAt'],
   OrgChartPosition: ['createdAt', 'updatedAt'],
   HumanResourcesTask: ['createdAt', 'updatedAt'],
   HumanResourcesExpense: ['createdAt', 'updatedAt'],
@@ -349,7 +347,6 @@ const ID_FIELDS: Record<string, string> = {
   HumanResourcesAsset: 'id',
   HumanResourcesPositionAsset: 'id',
   HumanResourcesRegion: 'id',
-  HumanResourcesPositionRegion: 'id',
   OrgChartPosition: 'id',
   HumanResourcesTaskLog: 'id',
   ProductItem: 'id',
@@ -452,7 +449,6 @@ const UNIQUE_FIELDS: Record<string, string[]> = {
   HumanResourcesAssetType: ['nameKey'],
   HumanResourcesPositionAsset: ['orgPositionId', 'assetTypeId'],
   HumanResourcesRegion: ['code'],
-  HumanResourcesPositionRegion: ['orgPositionId', 'regionCode'],
   OrgChartPosition: ['titleKey'],
   ProductItem: ['name'],
   Vendor: ['name'],
@@ -1284,7 +1280,6 @@ export class D1PrismaClient {
   get humanResourcesAsset() { return this.model('HumanResourcesAsset'); }
   get humanResourcesPositionAsset() { return this.model('HumanResourcesPositionAsset'); }
   get humanResourcesRegion() { return this.model('HumanResourcesRegion'); }
-  get humanResourcesPositionRegion() { return this.model('HumanResourcesPositionRegion'); }
   get orgChartPosition() { return this.model('OrgChartPosition'); }
   get humanResourcesTaskLog() { return this.model('HumanResourcesTaskLog'); }
   // Product Line master (migration 0046).

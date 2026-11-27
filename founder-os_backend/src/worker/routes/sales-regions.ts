@@ -1,20 +1,19 @@
-// routes/sales-regions.ts — the Sales Controller owns the region catalog and the
-// position-wise allotment. Codes stay R1–R4 (historical rows store them); the
-// sales head edits the label, the team-lead tier, the states list and which
-// chart seats may hold each region. The employee save enforces the result.
+// routes/sales-regions.ts — the Sales Controller owns the region catalog.
+// Codes stay R1–R4 (historical rows store them); the sales head edits the label,
+// the team-lead tier, the states list and active. Which regions a PERSON holds is
+// picked on that person from the Sales team chart (mig 0177/0179 — the old
+// position-wise allotment table is gone). The employee save enforces the result.
 //
-// GET   /api/org/regions                      — catalog + allotment (any login)
-// GET   /api/sales/regions                    — catalog + usage + chart (sales head)
+// GET   /api/org/regions                      — catalog (any login)
+// GET   /api/sales/regions                    — catalog + usage (sales head)
 // PATCH /api/sales/regions/:code              — name/tlLevel/states/order/active
-// PUT   /api/sales/position-regions/:positionId — { regions: string[] }
 import type { Hono } from "hono";
 import { deps, notifyLive, LiveEvent, type Bindings } from "../context";
 import { getViewerMe } from "../viewer";
 import { readBody } from "../http";
 import { actorLabel, errorResponse } from "./hr-route-shared";
 import { requireSalesManager } from "./sales-access";
-import { listChartRows } from "../../modules/org/chart/store";
-import { loadAllotment, loadSalesRegions, regionRowJson } from "../../modules/org/regions";
+import { loadSalesRegions, regionRowJson } from "../../modules/org/regions";
 import { parseRegionList } from "../../modules/org/types";
 import { HrError } from "../../automations/human-resources/errors";
 import { bumpRev } from "../../shared/cache";
@@ -57,31 +56,19 @@ export function registerSalesRegionRoutes(app: Hono<{ Bindings: Bindings }>): vo
     const me = await getViewerMe(c).catch(() => null);
     if (!me) return c.json({ error: "Authentication required" }, 401);
     const prisma = deps().prisma;
-    const [regions, allotment] = await Promise.all([
-      loadSalesRegions(prisma),
-      loadAllotment(prisma),
-    ]);
-    return c.json({ regions, allotment });
+    return c.json({ regions: await loadSalesRegions(prisma) });
   });
 
   app.get("/api/sales/regions", async (c) => {
     if (!(await requireSalesManager(c))) return c.json({ error: "sales-head or root only" }, 403);
     const prisma = deps().prisma;
     try {
-      const [regions, allotment, usage, chart] = await Promise.all([
+      const [regions, usage] = await Promise.all([
         loadSalesRegions(prisma),
-        loadAllotment(prisma),
         usageCounts(prisma),
-        listChartRows().catch(() => []),
       ]);
       return c.json({
         regions: regions.map((r) => ({ ...r, seats: usage.counts[r.code] ?? 0, staff: usage.staff[r.code] ?? { teamLeads: [], members: [] } })),
-        allotment,
-        positions: (chart as any[]).map((p) => ({
-          id: String(p.id), title: String(p.title),
-          department: p.department ? String(p.department) : null,
-          active: p.active !== false,
-        })),
       });
     } catch (e) { return errorResponse(c, e); }
   });
@@ -118,41 +105,6 @@ export function registerSalesRegionRoutes(app: Hono<{ Bindings: Bindings }>): vo
       notifyLive(c, { type: LiveEvent.HumanResources });
       notifyLive(c, { type: LiveEvent.Telecalling });
       return c.json(regionRowJson(row));
-    } catch (e) { return errorResponse(c, e); }
-  });
-
-  app.put("/api/sales/position-regions/:positionId", async (c) => {
-    if (!(await requireSalesManager(c))) return c.json({ error: "sales-head or root only" }, 403);
-    const positionId = String(c.req.param("positionId") ?? "");
-    const body: any = (await readBody(c)) ?? {};
-    const wanted = [...new Set(cleanStates(body.regions).map((s) => s.toUpperCase()))];
-    const bad = wanted.filter((code) => !CODES.includes(code));
-    if (bad.length) return c.json({ error: `unknown region ${bad[0]}` }, 400);
-    const prisma = deps().prisma;
-    try {
-      const position: any = await prisma.orgChartPosition.findUnique({ where: { id: positionId } });
-      if (!position) throw new HrError("chart position not found", 404);
-      const before = await loadAllotment(prisma);
-      const previous = before[positionId] ?? [];
-      const removed = previous.filter((code) => !wanted.includes(code));
-      if (removed.length) {
-        const seated = await prisma.humanResourcesMember.findMany({
-          where: { deleted: false, active: true, designation: String(position.title) },
-        }).catch(() => []);
-        const taken = (seated as any[]).filter((m) =>
-          parseRegionList(m.salesRegions).some((code) => removed.includes(code)));
-        if (taken.length) {
-          throw new HrError(`move ${taken.length} seated employee(s) out of ${removed.join(", ")} first`, 409);
-        }
-      }
-      await prisma.humanResourcesPositionRegion.deleteMany({ where: { orgPositionId: positionId } });
-      if (wanted.length) {
-        await prisma.humanResourcesPositionRegion.createMany({
-          data: wanted.map((code) => ({ orgPositionId: positionId, regionCode: code })),
-        });
-      }
-      notifyLive(c, { type: LiveEvent.HumanResources });
-      return c.json({ ok: true, regions: wanted });
     } catch (e) { return errorResponse(c, e); }
   });
 }

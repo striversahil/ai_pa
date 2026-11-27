@@ -61,10 +61,7 @@ export async function assignPerson(opts: {
         input.region2 !== undefined ? input.region2 : existingRegions[1] ?? "",
       ]);
     }
-    const postingErr = await validateSalesPosting(prisma, {
-      regions,
-      positionId: chartRow?.id ? String(chartRow.id) : null,
-    });
+    const postingErr = await validateSalesPosting(prisma, { regions });
     if (postingErr) fail(400, postingErr);
 
     let teamLeadId = input.teamLeadId !== undefined

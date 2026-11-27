@@ -51,7 +51,7 @@ export default function SalesControllerPanel() {
     { events: TELECALLING_EVENTS },
   );
 
-  // Region catalog + chart-seat allotment: the sales head owns these here.
+  // Region catalog (labels/tiers/states): the sales head owns this here.
   const regions = useLiveQuery(fetchSalesRegions, { events: TELECALLING_EVENTS, pollMs: 60000 });
 
   const refreshAll = useCallback(() => {
@@ -73,8 +73,8 @@ export default function SalesControllerPanel() {
       <section className="rounded-xl border border-zinc-200 bg-zinc-50 p-5 dark:border-zinc-800 dark:bg-zinc-900">
         <h3 className="mb-1 text-lg font-bold">🎛️ Controller</h3>
         <p className="mb-0 text-xs text-zinc-500 dark:text-zinc-400">
-          Root/sales-head control of the region model — unmapped estimate
-          linking, history reset and the sales team.
+          Root/sales-head control — seat people on the Sales chart and assign
+          their regions, link unmapped estimates, reset history.
         </p>
       </section>
       {!!tele.error && !tele.loading && (
@@ -83,6 +83,20 @@ export default function SalesControllerPanel() {
           <button type="button" onClick={() => tele.refresh()} className="underline">retry</button>
         </p>
       )}
+      {/* Sales team & access — the Organization chart scoped to Sales, first
+          because it is the one place people are seated: a person save owns the
+          seat, their regions and their Team Lead. The chart structure is
+          HR-owned (read-only here — no add/edit/delete position). */}
+      <section className="space-y-3">
+        <h3 className="text-lg font-bold">Sales team &amp; access</h3>
+        <p className="text-xs text-zinc-500">
+          Click a person to seat them, pick the regions they cover and choose the Team Lead they report to. The region catalog below sets the labels and target tiers; the chart structure stays with HR.
+        </p>
+        {rosterError && (
+          <p className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs font-semibold text-rose-600 dark:text-rose-300">{rosterError}</p>
+        )}
+        <OrganizationTab department="Sales" chartEditable={false} />
+      </section>
       <UnmappedSection
         unmapped={unmapped}
         unmappedAccepted={unmappedAccepted}
@@ -115,19 +129,6 @@ export default function SalesControllerPanel() {
         </p>
       )}
       {regions.data && <SalesRegionsSection data={regions.data} onChanged={() => regions.refresh()} />}
-      {/* Sales team & access — the Organization chart scoped to Sales. There is
-          no separate roster: a person save owns the seat, and the chart itself
-          is HR-owned (read-only here — no add/edit/delete position). */}
-      <section className="space-y-3">
-        <h3 className="text-lg font-bold">Sales team &amp; access</h3>
-        <p className="text-xs text-zinc-500">
-          The region catalog above drives the form. Edit a person here to seat them; their employee record is the roster, and the chart structure stays with HR.
-        </p>
-        {rosterError && (
-          <p className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs font-semibold text-rose-600 dark:text-rose-300">{rosterError}</p>
-        )}
-        <OrganizationTab department="Sales" chartEditable={false} />
-      </section>
     </div>
   );
 }

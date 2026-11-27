@@ -172,11 +172,9 @@ export interface OrgRegion {
 
 export interface OrgRegionsResponse {
   regions: OrgRegion[];
-  /** Chart position id → allowed region codes; absent = every active region. */
-  allotment: Record<string, string[]>;
 }
 
-/** HR-owned region catalog + per-position allotment (drives the person form). */
+/** HR-owned region catalog (drives the person form's region chips). */
 export async function fetchOrgRegions(): Promise<OrgRegionsResponse> {
   const res = await fetch("/api/org/regions", { cache: "no-store" });
   if (!res.ok) throw new Error(await readError(res));

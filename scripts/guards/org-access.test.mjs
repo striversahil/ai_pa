@@ -71,37 +71,38 @@ describe('org person contract (one save, server-decided)', () => {
   });
 
   it('save reuses existing services (validation, employee master, cache) — never rewritten; access NOT via HR', () => {
-    assert.ok(io.includes('validateSalesPosting') && io.includes('cleanRegions'), 'region catalog + allotment validation reused');
-    assert.ok(read(join('modules', 'org', 'regions.ts')).includes('loadPositionAllotment'), 'chart-seat allotment lives in modules/org/regions.ts');
+    assert.ok(io.includes('validateSalesPosting') && io.includes('cleanRegions'), 'region catalog validation reused');
+    assert.ok(!read(join('modules', 'org', 'regions.ts')).includes('loadPositionAllotment'), 'position-wise allotment retired (mig 0179)');
     assert.ok(io.includes('updateEmployee'), 'employee master write reused (office phone included)');
     assert.ok(!io.includes('mirrorRosterRow') && !io.includes('prisma.telecaller'), 'no shadow roster row: the employee row is the sales row');
     assert.ok(io.includes('invalidateRiskCache'), 'leaderboard cache busted on save');
     assert.ok(!io.includes('setUserScopes') && !io.includes('auth_user'), 'HR save never writes scopes (roles own access)');
   });
 
-  it('region rules: any number 0..N per person, every code active + allotted, no TL1/TL2 on a person', () => {
+  it('region rules: any number 0..N per person, every code active, no seat whitelist, no TL1/TL2 on a person', () => {
     const regions = read(join('modules', 'org', 'regions.ts'));
     assert.ok(regions.includes('cleanRegions') && regions.includes('validateSalesPosting'), 'pure clean + validate helpers exist');
     assert.ok(!regions.includes('impliedTlLevel') && !regions.includes('two different regions'), 'no tier inference / pair rule');
-    assert.ok(io.includes('chartRow?.id'), 'the seat allotment is validated against the real chart position');
+    assert.ok(!io.includes('positionId'), 'no chart-seat allotment on the save (any active region is legal)');
     assert.ok(io.includes('salesTeamLeadId'), 'the save stores the Team Lead person, not a TL1/TL2 slot');
     assert.ok(!io.includes('tlLevel'), 'never write a level on a person');
   });
 
-  it('the Sales Controller owns the region catalog + position allotment (never HR)', () => {
+  it('the Sales Controller owns the region catalog (allotment retired; the chart assigns people)', () => {
     const route = read(join('worker', 'routes', 'sales-regions.ts'));
     assert.ok(route.includes('/api/sales/regions'), 'region read endpoint');
     assert.ok(route.includes('/api/sales/regions/:code'), 'region edit endpoint');
-    assert.ok(route.includes('/api/sales/position-regions/:positionId'), 'allotment endpoint');
+    assert.ok(!route.includes('position-regions'), 'position-wise allotment endpoint retired (mig 0179)');
     assert.ok(route.includes('requireSalesManager'), 'sales-head/root only');
     assert.ok(!route.includes('access(c)'), 'HR gate retired from region writes');
     const drawer = readFe(join('org', 'OrgPersonDrawer.tsx'));
-    assert.ok(drawer.includes('allotment') && drawer.includes('regionOptions'), 'person form filters regions by seat allotment');
+    assert.ok(!drawer.includes('allotment') && drawer.includes('regionOptions'), 'person form offers every active region (no seat whitelist)');
     assert.ok(drawer.includes('teamLeadId') && drawer.includes('Team Lead'), 'person form picks the reporting Team Lead person');
     const hrTab = readFe(join('components', 'human-resources', 'ControllerTab.tsx'));
     assert.ok(!hrTab.includes('SalesRegionsSection') && !hrTab.includes('fetchRegions'), 'HR Controller no longer edits regions');
     const salesTab = readFe(join('components', 'SalesControllerPanel.tsx'));
-    assert.ok(salesTab.includes('SalesRegionsSection') && salesTab.includes('fetchSalesRegions'), 'Sales Controller mounts the region table + allotment matrix');
+    assert.ok(salesTab.includes('SalesRegionsSection') && salesTab.includes('fetchSalesRegions'), 'Sales Controller mounts the region catalog');
+    assert.ok(salesTab.indexOf('OrganizationTab') < salesTab.indexOf('SalesRegionsSection'), 'the sales team chart sits above the region catalog');
     assert.ok(salesTab.includes('chartEditable={false}'), 'Sales Controller chart is read-only');
     const orgTab = readFe(join('components', 'human-resources', 'OrganizationTab.tsx'));
     assert.ok(orgTab.includes('chartEditable') && orgTab.includes('canManageChart = chartEditable'), 'chart add/edit/delete is gated by the mount');

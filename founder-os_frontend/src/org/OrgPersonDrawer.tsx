@@ -17,15 +17,13 @@ import { REGIONS } from "@/telecalling/regions";
 const field = "w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-3 py-2 text-sm outline-none focus:border-indigo-500";
 const label = "block text-[11px] font-bold uppercase tracking-wide text-zinc-500 mb-1";
 
-export default function OrgPersonDrawer({ person, positions, people = [], regions = [], allotment = {}, onClose, onSaved }: {
+export default function OrgPersonDrawer({ person, positions, people = [], regions = [], onClose, onSaved }: {
   person: OrgPerson;
   positions: OrgChartPosition[];
   /** Everyone the viewer can see — the team-lead picker lists the active ones. */
   people?: OrgPerson[];
   /** HR region catalog; the bundled taxonomy is the fallback. */
   regions?: OrgRegion[];
-  /** Chart position id → allowed region codes (empty = no restriction). */
-  allotment?: Record<string, string[]>;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -58,17 +56,17 @@ export default function OrgPersonDrawer({ person, positions, people = [], region
     [people, person.employee.id],
   );
 
-  // Region options come from HR (name + active) and, when the chart seat has an
-  // allotment, only the regions that seat may hold. No rows = every region.
-  const allowed = chartPosition ? (allotment[chartPosition.id] ?? []) : [];
-  const regionOptions = (regions.length
-    ? regions.filter((r) => r.active !== false)
-    : REGIONS.map((r) => ({ id: r.id, code: r.id, name: r.name, tlLevel: r.tl, states: r.states, order: 0, active: true })))
-    .filter((r) => !allowed.length || allowed.includes(r.code));
-
-  // A region the position is no longer allotted to stays visible so the
-  // operator can take it away instead of saving an invisible stale value.
-  const stalePicked = picked.filter((code) => !regionOptions.some((r) => r.code === code));
+  // Region options come from the HR catalog (name + active). Any active region
+  // may be picked on any seat — the chart is the one place regions are assigned.
+  const catalog = regions.length
+    ? regions
+    : REGIONS.map((r) => ({ id: r.id, code: r.id, name: r.name, tlLevel: r.tl, states: r.states, order: 0, active: true }));
+  // A region somebody still covers after the catalog retired it stays visible,
+  // so the operator can take it away instead of saving an invisible value.
+  const regionOptions = [
+    ...catalog.filter((r) => r.active !== false),
+    ...catalog.filter((r) => r.active === false && picked.includes(r.code)),
+  ];
 
   useEffect(() => {
     if (!showSales) return;
@@ -146,12 +144,6 @@ export default function OrgPersonDrawer({ person, positions, people = [], region
                     </button>
                   );
                 })}
-                {stalePicked.map((code) => (
-                  <button key={code} type="button" onClick={() => toggleRegion(code)} title="No longer allotted to this position — click to remove"
-                    className="rounded-full border border-amber-500 bg-amber-500/10 px-2.5 py-1 text-xs font-semibold text-amber-600">
-                    {code} · not allotted ✕
-                  </button>
-                ))}
               </div>
               <p className="mt-1 text-[11px] text-zinc-500">
                 Pick as many as they actually cover — the first (★) is the primary region. No region = Unmapped on the leaderboard.

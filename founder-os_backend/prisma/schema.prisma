@@ -1928,18 +1928,6 @@ model HumanResourcesRegion {
   updatedAt DateTime @updatedAt
 }
 
-model HumanResourcesPositionRegion {
-  id            String   @id @default(uuid())
-  orgPositionId String
-  regionCode    String
-  seatCap       Int?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  @@unique([orgPositionId, regionCode])
-  @@index([orgPositionId])
-}
-
 model LinkedinPost {
   id            String   @id @default(uuid())
   batchDate     String
