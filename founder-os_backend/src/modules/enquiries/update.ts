@@ -5,6 +5,6 @@
 
 // Pieces split into ./update-parts/ (importable on their own); re-exported for compat.
 export type { ItemWriteCtx, RateWriteCtx } from "./update-parts/types";
-export { normalizeItemWrites, applyIntakeBulkResult, applyLateQuoteReopen, applySentRevision, applyRateLifecycles, assertFinalizeGate, retitleOnSourceChange } from "./update-parts/pure";
+export { normalizeItemWrites, applyIntakeBulkResult, applyLateQuoteReopen, applySentRevision, applyImplicitSentRevision, applyRateLifecycles, assertFinalizeGate, retitleOnSourceChange } from "./update-parts/pure";
 
 

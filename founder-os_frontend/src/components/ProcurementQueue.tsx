@@ -581,7 +581,7 @@ export default function ProcurementQueue() {
             if (submitted && freshCount > 0) {
               return (
                 <p className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] font-bold text-amber-600 dark:text-amber-400">
-                  {freshCount} item{freshCount === 1 ? "" : "s"} still need{freshCount === 1 ? "s" : ""} quotes — nothing is locked here: you can add or replace a vendor quote on any line until you conclude.
+                  {freshCount} item{freshCount === 1 ? "" : "s"} still need{freshCount === 1 ? "s" : ""} quotes — these lines arrived after you concluded, so quote them here; the enquiry reopens and returns to Management for a decision.
                 </p>
               );
             }

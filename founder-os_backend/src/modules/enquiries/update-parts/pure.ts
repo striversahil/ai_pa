@@ -649,12 +649,55 @@ export function applySentRevision(
   void ctx.privileged;
   const storedSent = String(ctx.storedRateStatus ?? '') === 'sent';
   const zohoSent = !!String(ctx.storedZohoStatus ?? '').trim() && String(ctx.storedZohoStatus ?? '').trim().toLowerCase() !== 'draft';
-  if (!storedSent && !zohoSent) return 'Only sent enquiries can be revised';
-  const nowIso = new Date().toISOString();
+  // A Zoho-sent row may still store finalized: the DB promotion runs in a
+  // fire-and-forget waitUntil and can be dropped, while the UI correctly
+  // offers Reopen off the derived Zoho status. Rejecting those rows was the
+  // "Only sent enquiries can be revised" dead end on an apparently sent row.
+  const storedFinalized = String(ctx.storedRateStatus ?? '') === 'finalized';
+  if (!storedSent && !zohoSent && !storedFinalized) return 'Only sent enquiries can be revised';
+  reopenSentRevision(updates);
+  return null;
+}
+
+/** Reopen a sent enquiry for revision — shared by the explicit verb above and
+ *  the implicit append detection below (same three writes, one definition). */
+export function reopenSentRevision(updates: any): void {
   (updates as any).rateStatus = 'finalized';
   (updates as any).procurementSubmittedAt = '';
-  (updates as any).sentRevisionAt = nowIso;
-  return null;
+  (updates as any).sentRevisionAt = new Date().toISOString();
+}
+
+/**
+ * Implicit sent revision: appending a line to an already-sent enquiry reopens
+ * the loop instead of stranding the line.
+ *
+ * Sales add items from the tracker without pressing "Reopen for revision"
+ * first. The new line has no quote and no decision, so leaving rateStatus at
+ * sent (with the procurement stamp in place) made it invisible to both desks:
+ * procurement were past their handoff, and management treat sent as terminal.
+ * The line then waited for a rate no queue could produce — the "added an item
+ * but no rate ever appears" complaint.
+ *
+ * Called from enquiryUpdate AFTER the non-privileged rateStatus scrub and
+ * BEFORE the auto-advance block, so the reopen is never mistaken for a
+ * finalize commitment (assertFinalizeGate does not run on it). Nothing
+ * already decided is cleared. The procurement surface never triggers it: they
+ * add quotes to existing lines, not new lines.
+ */
+export function applyImplicitSentRevision(updates: any, ctx: { stored: any; surface?: string }): boolean {
+  if (String(ctx?.surface ?? '') === 'procurement') return false;
+  if ((updates as any).rateStatus !== undefined) return false;
+  const stored = ctx?.stored;
+  if (!stored) return false;
+  // Only a SENT row needs revision — draft/rate_pending/rates_received/
+  // finalized rows already loop through both queues.
+  if (String((stored as any)?.rateStatus ?? '') !== 'sent') return false;
+  const storedItems = Array.isArray((stored as any)?.items) ? (stored as any).items : [];
+  const incoming = (updates as any)?.items;
+  // Strictly MORE lines = an append. Reorders, edits and deletes keep the count.
+  if (!Array.isArray(incoming) || incoming.length <= storedItems.length) return false;
+  reopenSentRevision(updates);
+  return true;
 }
 
 /**
@@ -751,6 +794,29 @@ export function applyRateLifecycles(updates: any, ctx: RateWriteCtx): void {
         // Loop now has undecided actionable items (e.g. available→unavailable
         // toggle) — revert so management must decide again and `sent` disables.
         (updates as any).rateStatus = 'rates_received';
+      }
+    }
+  }
+  // A quote that lifts a previously-UNQUOTED line on a concluded or already
+  // sent enquiry is NEW work, not a late alternative: reopen so management can
+  // decide it. applyLateQuoteReopen keeps decisions on already-quoted lines
+  // (a late quote is note-only) — an unquoted line has no decision to keep.
+  if (!privileged && Array.isArray((updates as any).items) && storedForItems
+    && Array.isArray(storedItems) && (updates as any).rateStatus === undefined) {
+    const storedStatus = String((storedForItems as any)?.rateStatus ?? '');
+    const concluded = !!String((storedForItems as any)?.procurementSubmittedAt ?? '').trim();
+    if (concluded || storedStatus === 'sent') {
+      const freshQuote = ((updates as any).items as any[]).some((it, idx) => {
+        const s = storedItems[idx] ?? {};
+        return ((s.rates ?? []).length === 0)
+          && ((it?.rates ?? []).length > 0)
+          && (s.finalRate === undefined || s.finalRate === null);
+      });
+      if (freshQuote) {
+        if (concluded) (updates as any).procurementSubmittedAt = '';
+        if (storedStatus === 'sent' && !String((storedForItems as any)?.sentRevisionAt ?? '').trim()) {
+          (updates as any).sentRevisionAt = new Date().toISOString();
+        }
       }
     }
   }

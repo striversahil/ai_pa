@@ -162,8 +162,11 @@ export function isProcurementPendingEnquiry(e: EnquiryShape): boolean {
   if (isZohoClosedStatus((e as any).zohoStatus)) return false;
   // A live procurement-held ask reopens a row they already concluded.
   if (hasPendingProcurementLoop(e as any)) return true;
-  // Concluded by procurement = the ONLY way out of the working queue.
-  if (isSubmitted(e)) return false;
+  // Concluded by procurement = the way out of the working queue, but only for
+  // the item set they concluded. A line added afterwards (sales append, AI
+  // split) is fresh work the stamp never covered: without this the new line
+  // was invisible to every desk and could never get a rate.
+  if (isSubmitted(e)) return hasFreshUnquotedWork(e as any);
   return true;
 }
 
@@ -174,7 +177,9 @@ export function isProcurementHistoryEnquiry(e: EnquiryShape): boolean {
   if (items.length === 0) return false;
   if (isZohoClosedStatus((e as any).zohoStatus)) return true;
   if (hasPendingProcurementLoop(e as any)) return false;
-  return isSubmitted(e);
+  // Same fresh-work exception as Active: History is the exact complement.
+  if (isSubmitted(e)) return !hasFreshUnquotedWork(e as any);
+  return false;
 }
 
 export function isManagementPendingEnquiry(e: EnquiryShape): boolean {
@@ -208,6 +213,11 @@ export function procurementSubmittable(e: Pick<Enquiry, "items">): { ok: boolean
   const items = ((e as any).items ?? []) as any[];
   const flagged = items.filter((it: any) => isOpenSpecFlag(it) && !(it as any)?.notAvailable && openItemLoops(it, 'not_available').length === 0).length;
   if (flagged > 0) return { ok: false, reason: `${flagged} item${flagged === 1 ? "" : "s"} awaiting sales spec fix` };
+  // A procurement-held ask (management rate request, forwarded sales query)
+  // must be answered before concluding — otherwise the stamp says "concluded"
+  // while the live ask keeps the row in Active, and both chips contradict.
+  const openAsks = items.filter((it: any) => hasPendingProcurementLoop({ items: [it] } as any)).length;
+  if (openAsks > 0) return { ok: false, reason: `${openAsks} open ask${openAsks === 1 ? "" : "s"} — answer before concluding` };
   const loop = items.filter((it: any) => !isOpenSpecFlag(it) && !it?.rateAvailable && !(it as any)?.notAvailable && openItemLoops(it, 'not_available').length === 0 && !it?.internalRates);
   if (loop.length === 0) {
     const hasBypass = items.some((it: any) => it?.rateAvailable || (it as any)?.notAvailable || openItemLoops(it, 'not_available').length > 0 || it?.internalRates);
