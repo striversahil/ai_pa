@@ -5,13 +5,60 @@ import {
   parseCollectionsTsv, parseDebtorsTsv, type DebtorRow, type CollectionRow,
 } from "@/debtors-tracker/parse";
 import { formatINR } from "@/debtors-tracker/types";
+import { importChunk, type ImportKind as ApiImportKind, type ImportReport } from "@/debtors-tracker/api";
 
 /**
  * Paste-import modal for the Debtors Tracker (Excel copy → TSV → preview →
  * confirm). Preview runs the FRONTEND parser (mirror of the backend parser)
  * so what you see is exactly what the import will upsert.
  */
-export type ImportKind = "debtors" | "collections";
+export type ImportKind = ApiImportKind;
+
+/**
+ * Apply the paste in BOUNDED slices (server cap ~1,500 rows per call) and add
+ * every slice's counters up. Without this a 1,000-row paste was one ~2,000-query
+ * Worker invocation: the edge killed it with a bare 503 and left half the sheet
+ * applied. Each slice is idempotent, so a failed run can simply be repeated.
+ */
+async function runImport(
+  kind: ImportKind,
+  text: string,
+  onProgress: (done: number, total: number) => void,
+): Promise<ImportReport> {
+  let acc: ImportReport = { parsed: 0, created: 0, updated: 0 };
+  let cursor = 0;
+  for (;;) {
+    const slice = await importChunk(kind, text, cursor);
+    acc = mergeReports(acc, slice);
+    const total = slice.total ?? cursor + (slice.parsed ?? 0);
+    cursor += slice.parsed ?? 0;
+    onProgress(Math.min(cursor, total), total);
+    if (slice.done !== false || !slice.parsed) return { ...acc, done: true, cursor, total };
+  }
+}
+
+function mergeReports(a: ImportReport, b: ImportReport): ImportReport {
+  return {
+    parsed: (a.parsed ?? 0) + (b.parsed ?? 0),
+    created: (a.created ?? 0) + (b.created ?? 0),
+    updated: (a.updated ?? 0) + (b.updated ?? 0),
+    rebooked: (a.rebooked ?? 0) + (b.rebooked ?? 0),
+    restored: (a.restored ?? 0) + (b.restored ?? 0),
+    pdfsRelinked: (a.pdfsRelinked ?? 0) + (b.pdfsRelinked ?? 0),
+    duplicated: (a.duplicated ?? 0) + (b.duplicated ?? 0),
+    merged: (a.merged ?? 0) + (b.merged ?? 0),
+    matchedByInvoice: (a.matchedByInvoice ?? 0) + (b.matchedByInvoice ?? 0),
+    matchedByCustomer: (a.matchedByCustomer ?? 0) + (b.matchedByCustomer ?? 0),
+    advances: (a.advances ?? 0) + (b.advances ?? 0),
+    unmatched: (a.unmatched ?? 0) + (b.unmatched ?? 0),
+    skippedLines: (a.skippedLines ?? 0) + (b.skippedLines ?? 0),
+    skipped: [...(a.skipped ?? []), ...(b.skipped ?? [])],
+    conflicts: [...(a.conflicts ?? []), ...(b.conflicts ?? [])],
+    cursor: b.cursor,
+    total: b.total,
+    done: b.done,
+  };
+}
 
 interface Props {
   kind: ImportKind | null;
@@ -33,6 +80,7 @@ export default function ImportModal({ kind, onClose, onDone }: Props) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
   const preview = useMemo(() => {
     if (!kind) return null;
@@ -51,15 +99,13 @@ export default function ImportModal({ kind, onClose, onDone }: Props) {
   const submit = async () => {
     setBusy(true);
     setErr(null);
+    setProgress({ done: 0, total: rows.length });
+    let saved = 0;
     try {
-      const res = await fetch(`/api/debtors-tracker/import/${kind}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
+      const r = await runImport(kind, text, (done) => {
+        saved = done;
+        setProgress({ done, total: rows.length });
       });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body?.error || `Import failed (${res.status})`);
-      const r = body?.report ?? {};
       const restored = r.restored ? `, ${r.restored} restored` : "";
       const merged = r.merged ? `, ${r.merged} advance duplicate${r.merged === 1 ? "" : "s"} merged` : "";
       const conflicts = r.conflicts?.length ? `, ${r.conflicts.length} invoice-no conflicts flagged (not merged)` : "";
@@ -68,9 +114,11 @@ export default function ImportModal({ kind, onClose, onDone }: Props) {
         : `Collections imported — ${r.created ?? 0} new, ${r.duplicated ?? 0} duplicates skipped${merged}${restored}, ${r.matchedByInvoice ?? 0} by invoice no, ${r.matchedByCustomer ?? 0} by customer fallback, ${r.advances ?? 0} customer advances, ${r.unmatched ?? 0} unmatched${conflicts}.`;
       onDone(msg);
     } catch (e: any) {
-      setErr(e?.message ?? "Import failed");
+      const partial = saved > 0 ? `${saved} of ${rows.length} rows are saved — ` : "";
+      setErr(`${partial}${e?.message ?? "Import failed"}. Press Import again; saved rows just update.`);
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   };
 
@@ -107,9 +155,17 @@ export default function ImportModal({ kind, onClose, onDone }: Props) {
             disabled={!canSubmit}
             className={`rounded-lg px-4 py-2 text-sm font-medium text-white ${canSubmit ? "bg-emerald-600 hover:bg-emerald-500" : "bg-zinc-400 dark:bg-zinc-700 cursor-not-allowed"}`}
           >
-            {busy ? "Importing…" : `Import ${rows.length} row${rows.length === 1 ? "" : "s"}`}
+            {busy
+              ? (progress && progress.total > 0 ? `Importing ${progress.done}/${progress.total}…` : "Importing…")
+              : `Import ${rows.length} row${rows.length === 1 ? "" : "s"}`}
           </button>
         </div>
+
+        {busy && progress && progress.total > 0 && (
+          <div className="h-1 w-full overflow-hidden rounded bg-zinc-200 dark:bg-zinc-800">
+            <div className="h-full bg-emerald-600 transition-all" style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }} />
+          </div>
+        )}
 
         {err && <div className="rounded-lg border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">{err}</div>}
         {preview && preview.skipped.length > 0 && (

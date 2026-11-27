@@ -19,6 +19,7 @@ import {
   addInvoiceAttachment, deleteInvoiceAttachment, listInvoiceAttachments, planZipMatches,
 } from '../../automations/debtors-tracker/service';
 import { parseCollectionsTsv, parseDebtorsTsv } from '../../automations/debtors-tracker/parse';
+import { IMPORT_ROWS_PER_CALL } from '../../automations/debtors-tracker/imports-parts/types';
 import { requireViewer } from '../viewer';
 import { readBody, writeError } from '../http';
 
@@ -29,6 +30,26 @@ function heldScopes(me: any): Set<string> {
 }
 
 
+
+/**
+ * Phase 5a dual-write: refresh the core receivable rows after a paste.
+ * Runs ONCE per paste (the last slice) and behind `waitUntil` — the mirror costs
+ * two queries per OPEN invoice, so awaiting it is what turned a big paste into a
+ * bare 503 (the handler never got to answer). Batched mirror = core change
+ * request; until then it must never sit in the request path.
+ */
+async function scheduleReceivableMirror(c: any, report: { done?: boolean; parsed?: number }): Promise<void> {
+  // Only the LAST slice mirrors, and only when the paste actually had rows.
+  if (report.done === false || !report.parsed) return;
+  const run = (async () => {
+    try {
+      const { mirrorReceivables } = await import('../../modules/core/finance');
+      await mirrorReceivables();
+    } catch { /* non-fatal */ }
+  })();
+  if (c.executionCtx?.waitUntil) c.executionCtx.waitUntil(run);
+  else await run;
+}
 
 /** Any tracker viewer: sales (`debtors-tracker`) or accounts. */
 async function requireTrackerRead(c: any) {
@@ -129,13 +150,12 @@ function registerDebtorsTrackerPrefix(app: Hono<{ Bindings: Bindings }>, prefix:
     const text = String((body as any)?.text ?? '');
     if (text.trim().length < 8) return c.json({ error: 'Nothing pasted' }, 400);
     const importedBy = await actorName(c);
+    const cursor = Number((body as any)?.cursor) || 0;
     try {
-      const report = await importDebtors(text, importedBy);
-      // Phase 5a dual-write: refresh receivable rows.
-      try {
-        const { mirrorReceivables } = await import('../../modules/core/finance');
-        await mirrorReceivables();
-      } catch { /* non-fatal */ }
+      // Bounded slice: the client re-POSTs the same text with `cursor` until
+      // report.done, so work per invocation stays flat at any sheet size.
+      const report = await importDebtors(text, importedBy, { cursor, limit: IMPORT_ROWS_PER_CALL });
+      await scheduleReceivableMirror(c, report);
       notifyLive(c, { type: LiveEvent.Debtors });
       return c.json({ ok: true, report });
     } catch (e) { return errorResponse(c, e); }
@@ -150,13 +170,10 @@ function registerDebtorsTrackerPrefix(app: Hono<{ Bindings: Bindings }>, prefix:
     const text = String((body as any)?.text ?? '');
     if (text.trim().length < 8) return c.json({ error: 'Nothing pasted' }, 400);
     const importedBy = await actorName(c);
+    const cursor = Number((body as any)?.cursor) || 0;
     try {
-      const report = await importCollections(text, importedBy);
-      // Phase 5a dual-write: collections change balances — refresh.
-      try {
-        const { mirrorReceivables } = await import('../../modules/core/finance');
-        await mirrorReceivables();
-      } catch { /* non-fatal */ }
+      const report = await importCollections(text, importedBy, { cursor, limit: IMPORT_ROWS_PER_CALL });
+      await scheduleReceivableMirror(c, report);
       notifyLive(c, { type: LiveEvent.Debtors });
       return c.json({ ok: true, report });
     } catch (e) { return errorResponse(c, e); }

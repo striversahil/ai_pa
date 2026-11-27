@@ -75,6 +75,15 @@ export interface DebtorImportReport {
   pdfsRelinked?: number;
   skippedLines: number;
   skipped: string[];
+  /**
+   * Chunked apply (a 1,000-row paste used to be one ~2,000-query invocation and
+   * was killed with a bare 503). The client re-POSTs the same text with
+   * `cursor` until `done`; every write is an idempotent upsert, so a retry of
+   * the same cursor is safe. Omitted by in-process callers = whole paste.
+   */
+  cursor?: number;
+  total?: number;
+  done?: boolean;
 }
 
 export interface CollectionImportReport extends DebtorImportReport {

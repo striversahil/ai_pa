@@ -41,6 +41,52 @@ async function request(url: string, init: RequestInit): Promise<void> {
   }
 }
 
+export type ImportKind = "debtors" | "collections";
+
+/**
+ * Import report (worker `DebtorImportReport` / `CollectionImportReport`).
+ * Mirrors founder-os_backend/src/automations/debtors-tracker/types-parts/types.ts.
+ */
+export interface ImportReport {
+  parsed: number;
+  created: number;
+  updated: number;
+  rebooked?: number;
+  restored?: number;
+  conflicts?: { invoiceNo: string; customerName: string; existingCustomerName: string; reason: string }[];
+  pdfsRelinked?: number;
+  skippedLines?: number;
+  skipped?: string[];
+  duplicated?: number;
+  merged?: number;
+  matchedByInvoice?: number;
+  matchedByCustomer?: number;
+  advances?: number;
+  unmatched?: number;
+  /** Slice state: the client resumes at `cursor` until `done`. */
+  cursor?: number;
+  total?: number;
+  done?: boolean;
+}
+
+/**
+ * One BOUNDED slice of a paste. The worker applies at most ~1,500 rows per
+ * call and answers `{done, cursor}`; re-POSTing the same text with the returned
+ * cursor finishes the rest. Every write is an idempotent upsert, so retrying a
+ * slice is always safe (a 1,000-row paste used to be one ~2,000-query request
+ * that the edge killed with a bare 503 and a half-applied sheet).
+ */
+export async function importChunk(kind: ImportKind, text: string, cursor: number): Promise<ImportReport> {
+  const res = await fetch(`/api/debtors-tracker/import/${kind}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, cursor }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body?.error || `Import failed (${res.status})`);
+  return (body?.report ?? {}) as ImportReport;
+}
+
 /** Full live dashboard payload (same endpoint the screen uses).
  *  `asOf`/`from` request a point-in-time snapshot (read-only historical view). */
 export async function getDebtorsTrackerData(opts: {

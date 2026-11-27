@@ -10,8 +10,17 @@ import { ensureCustomers, isValidRegionInput, normalizeRegion } from "../custome
 import { invalidateDebtorsCache } from "../cache";
 import { relinkOrphanAttachments } from "../attachments";
 import { realInvoiceMatches, findAdvancePlaceholder, advanceDuplicateIds } from "../dedupe";
-import { recordReceivedDelta } from "../received-events";
-import type { UnmatchedIndex } from "./types";
+import { runStatements } from "../batch-write";
+import type { SqlStatement } from "../batch-write";
+import {
+  debtorInvoiceInsert,
+  debtorInvoiceUpdate,
+  paymentCollectionInsert,
+  paymentCollectionUpdate,
+  receivedEventStatement,
+} from "./plan";
+import { IMPORT_ROWS_PER_CALL } from "./types";
+import type { ImportOptions, UnmatchedIndex } from "./types";
 import { pickUnmatched, invKeyOf, compositeKey, custKeyOf, resolveBaseReceived, collectionDedupKey, pickInvoiceForCollection, INVOICE_EDITABLE_FIELDS } from "./pure";
 
 export async function bookUnmatched(
@@ -36,15 +45,28 @@ export async function bookUnmatched(
 // Debtor import
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function importDebtors(text: string, importedBy: string): Promise<DebtorImportReport> {
-  const { rows, headerRowFound, skipped } = parseDebtorsTsv(text);
-  if (rows.length === 0) {
+export async function importDebtors(
+  text: string,
+  importedBy: string,
+  opts: ImportOptions = {},
+): Promise<DebtorImportReport> {
+  const { rows: allRows, headerRowFound, skipped: allSkipped } = parseDebtorsTsv(text);
+  if (allRows.length === 0) {
     throw new DebtorsTrackerError(
       headerRowFound
         ? 'No valid invoice rows in the pasted data (each row needs an invoice no + customer)'
         : 'Could not find the header row (needs "Customer Name" + "Invoice No." columns) — copy the sheet in Excel from the header row down',
     );
   }
+
+  const total = allRows.length;
+  const cursor = Math.max(0, Math.min(Math.trunc(Number(opts.cursor) || 0), total));
+  const limit = Math.max(1, Math.min(Math.trunc(Number(opts.limit) || IMPORT_ROWS_PER_CALL), IMPORT_ROWS_PER_CALL));
+  const rows = allRows.slice(cursor, cursor + limit);
+  const done = cursor + rows.length >= total;
+  // Header/skipped lines are reported once (first slice) so a chunked client
+  // can simply add the counters up.
+  const skipped = cursor === 0 ? allSkipped : [];
 
   const now = todayIST();
 
@@ -81,6 +103,13 @@ export async function importDebtors(text: string, importedBy: string): Promise<D
   const conflicts: ImportConflict[] = [];
   const ledgerTotalsWork = new Map(ledgerTotals);
 
+  // One prepared statement per mutated row, flushed below through db.batch():
+  // the shim's create/update would cost a write + a read-back PER ROW.
+  const writes: SqlStatement[] = [];
+  // Dated received history is derived and best-effort (never fails an import).
+  const history: SqlStatement[] = [];
+  const liveNow: { id: string; invoiceNo: string }[] = [];
+
   for (const row of rows) {
     const customerName = normalizeCustomerName(row.customerName);
     const invoiceNo = normalizeInvoiceNo(row.invoiceNo);
@@ -108,52 +137,53 @@ export async function importDebtors(text: string, importedBy: string): Promise<D
       const matches = pickUnmatched(unmatchedByInvoiceNo, invoiceNo, customerName);
       for (const c of matches) {
         ledgerAtImport += Number(c.amount) || 0;
-        await prisma.paymentCollection.update({
-          where: { id: String(c.id) },
-          data: { matchStatus: 'invoice', resolvedInvoiceId: newId },
-        });
+        writes.push(paymentCollectionUpdate(String(c.id), { matchStatus: 'invoice', resolvedInvoiceId: newId }));
         rebooked++;
       }
       if (matches.length) unmatchedByInvoiceNo.delete(invKeyOf(invoiceNo));
       const snapshot = ledgerAtImport > 0 ? Math.min(resolveBaseReceived(row, null), ledgerAtImport) : 0;
       const baseReceived = resolveBaseReceived(row, null);
 
-      await prisma.debtorInvoice.create({
-        data: {
-          id: newId,
-          customerName,
-          invoiceNo,
-          invoiceDate: row.invoiceDate ?? null,
-          creditPeriodDays: row.creditPeriodDays ?? null,
-          dueDate: row.dueDate ?? null,
-          invoiceAmount: row.invoiceAmount,
-          baseReceived,
-          collectedAtImport: round2(snapshot),
-          contactName: row.contactName || '',
-          contactPhone: row.contactPhone || '',
-          contactMail: row.contactMail || '',
-          lastCallDate: row.lastCallDate ?? null,
-          callStatus: pickText('', row.callStatus),
-          paymentStatus: pickText('', row.paymentStatus),
-          remarks: pickText('', row.remarks),
-          accountStatus: pickText('', row.accountStatus),
-          mis: pickText('', row.mis),
-          accountsRemarks: pickText('', row.accountsRemarks),
-          employee: pickText('', row.employee),
-          state: pickText('', row.state),
-          region: pickText('', row.region),
-          ledgerLink: pickText('', row.ledgerLink),
-          importedBy: importedBy || '',
-          lastImportAt: now,
-        },
-      });
+      const createdAt = new Date().toISOString();
+      writes.push(debtorInvoiceInsert({
+        id: newId,
+        customerName,
+        invoiceNo,
+        invoiceDate: row.invoiceDate ?? null,
+        creditPeriodDays: row.creditPeriodDays ?? null,
+        dueDate: row.dueDate ?? null,
+        invoiceAmount: row.invoiceAmount,
+        baseReceived,
+        collectedAtImport: round2(snapshot),
+        contactName: row.contactName || '',
+        contactPhone: row.contactPhone || '',
+        contactMail: row.contactMail || '',
+        lastCallDate: row.lastCallDate ?? null,
+        callStatus: pickText('', row.callStatus),
+        paymentStatus: pickText('', row.paymentStatus),
+        remarks: pickText('', row.remarks),
+        accountStatus: pickText('', row.accountStatus),
+        mis: pickText('', row.mis),
+        accountsRemarks: pickText('', row.accountsRemarks),
+        employee: pickText('', row.employee),
+        state: pickText('', row.state),
+        region: pickText('', row.region),
+        ledgerLink: pickText('', row.ledgerLink),
+        importedBy: importedBy || '',
+        lastImportAt: now,
+        deleted: 0,
+        createdAt,
+        updatedAt: createdAt,
+      }));
       const createdRow = { id: newId, invoiceNo, customerName, deleted: false };
       // History: the sheet figure became known today (as-of views sum these).
-      await recordReceivedDelta({ invoiceId: newId, day: now, amountDelta: baseReceived, importedBy });
+      const event = receivedEventStatement({ invoiceId: newId, day: now, amountDelta: baseReceived, importedBy });
+      if (event) history.push(event);
       byComposite.set(key, createdRow);
       if (!byInvoiceNo.has(invKeyOf(invoiceNo))) byInvoiceNo.set(invKeyOf(invoiceNo), []);
       byInvoiceNo.get(invKeyOf(invoiceNo))!.push(createdRow);
       ledgerTotalsWork.set(newId, snapshot);
+      liveNow.push({ id: newId, invoiceNo });
       created++;
       continue;
     }
@@ -165,10 +195,7 @@ export async function importDebtors(text: string, importedBy: string): Promise<D
     const matches = pickUnmatched(unmatchedByInvoiceNo, invoiceNo, customerName);
     for (const c of matches) {
       ledgerAtImport += Number(c.amount) || 0;
-      await prisma.paymentCollection.update({
-        where: { id: String(c.id) },
-        data: { matchStatus: 'invoice', resolvedInvoiceId: invoiceId },
-      });
+      writes.push(paymentCollectionUpdate(String(c.id), { matchStatus: 'invoice', resolvedInvoiceId: invoiceId }));
       rebooked++;
     }
     if (matches.length) unmatchedByInvoiceNo.delete(invKeyOf(invoiceNo));
@@ -176,13 +203,12 @@ export async function importDebtors(text: string, importedBy: string): Promise<D
     const baseReceived = resolveBaseReceived(row, existing);
     // Stamp ONLY the movement, so the as-of ledger can sum what the sheet
     // knew on any given day (a re-paste that changes nothing writes nothing).
-    await recordReceivedDelta({ invoiceId, day: now, amountDelta: round2(baseReceived - previousBase), importedBy });
+    const event = receivedEventStatement({ invoiceId, day: now, amountDelta: round2(baseReceived - previousBase), importedBy });
+    if (event) history.push(event);
     const snapshot = ledgerAtImport > 0 ? Math.min(baseReceived, ledgerAtImport) : 0;
     const wasDeleted = !!existing.deleted;
 
-    await prisma.debtorInvoice.update({
-      where: { id: invoiceId },
-      data: {
+    writes.push(debtorInvoiceUpdate(invoiceId, {
         customerName,
         invoiceNo,
         invoiceDate: row.invoiceDate ?? existing.invoiceDate ?? null,
@@ -209,8 +235,8 @@ export async function importDebtors(text: string, importedBy: string): Promise<D
         lastImportAt: now,
         deleted: false,
         updatedAt: new Date(),
-      },
-    });
+    }));
+    liveNow.push({ id: invoiceId, invoiceNo });
     if (wasDeleted) {
       existing.deleted = false;
       restored++;
@@ -218,6 +244,11 @@ export async function importDebtors(text: string, importedBy: string): Promise<D
       updated++;
     }
   }
+
+  // Flush the paste: invoices + re-booked receipts first (money), then the
+  // dated received history (derived — never fails an import).
+  await runStatements(writes);
+  await runStatements(history, { bestEffort: true });
 
   await ensureCustomers(rows.map((r) => ({
     customerName: r.customerName,
@@ -228,11 +259,6 @@ export async function importDebtors(text: string, importedBy: string): Promise<D
   // A wipe + re-paste gives every invoice a new id — re-link the PDFs that
   // survived the reset (founder decision 2026-11-13: reset never deletes
   // invoice PDFs) instead of leaving them orphaned and invisible.
-  const liveNow: { id: string; invoiceNo: string }[] = [];
-  for (const row of rows) {
-    const inv = byComposite.get(compositeKey(normalizeInvoiceNo(row.invoiceNo), normalizeCustomerName(row.customerName)));
-    if (inv && !inv.deleted) liveNow.push({ id: String(inv.id), invoiceNo: String(inv.invoiceNo) });
-  }
   const pdfsRelinked = await relinkOrphanAttachments(liveNow).catch(() => 0);
   await invalidateDebtorsCache();
 
@@ -242,18 +268,30 @@ export async function importDebtors(text: string, importedBy: string): Promise<D
     skippedLines: skipped.length,
     skipped,
     pdfsRelinked,
+    cursor, total, done,
   };
 }
 
-export async function importCollections(text: string, importedBy: string): Promise<CollectionImportReport> {
-  const { rows, headerRowFound, skipped } = parseCollectionsTsv(text);
-  if (rows.length === 0) {
+export async function importCollections(
+  text: string,
+  importedBy: string,
+  opts: ImportOptions = {},
+): Promise<CollectionImportReport> {
+  const { rows: allRows, headerRowFound, skipped: allSkipped } = parseCollectionsTsv(text);
+  if (allRows.length === 0) {
     throw new DebtorsTrackerError(
       headerRowFound
         ? 'No valid collection rows in the pasted data (each row needs a customer + amount)'
         : 'Could not find the header row (needs "Customer Name" + "Amount Received" columns) — copy the collections sheet in Excel from the header row down',
     );
   }
+
+  const total = allRows.length;
+  const cursor = Math.max(0, Math.min(Math.trunc(Number(opts.cursor) || 0), total));
+  const limit = Math.max(1, Math.min(Math.trunc(Number(opts.limit) || IMPORT_ROWS_PER_CALL), IMPORT_ROWS_PER_CALL));
+  const rows = allRows.slice(cursor, cursor + limit);
+  const done = cursor + rows.length >= total;
+  const skipped = cursor === 0 ? allSkipped : [];
 
   const invoices: any[] = await prisma.debtorInvoice.findMany({ where: { deleted: false } }) as any[];
   const byInvoiceNo = new Map<string, any[]>();
@@ -311,6 +349,8 @@ export async function importCollections(text: string, importedBy: string): Promi
   let unmatched = 0;
   const seen = new Set<string>();
   const conflicts: ImportConflict[] = [];
+  // One prepared statement per mutated row — see importDebtors.
+  const writes: SqlStatement[] = [];
 
   for (const row of rows) {
     const key = collectionDedupKey(row);
@@ -377,9 +417,7 @@ export async function importCollections(text: string, importedBy: string): Promi
       // Same receipt key (or adopted advance placeholder): update in place.
       const wasDeleted = !!existing.deleted;
       const oldKey = String(existing.dedupKey || '');
-      await prisma.paymentCollection.update({
-        where: { id: String(existing.id) },
-        data: {
+      writes.push(paymentCollectionUpdate(String(existing.id), {
           customerName,
           invoiceNo,
           receiptNo,
@@ -393,8 +431,7 @@ export async function importCollections(text: string, importedBy: string): Promi
           importedBy: importedBy || existing.importedBy || '',
           dedupKey: key,
           deleted: false,
-        },
-      });
+      }));
       Object.assign(existing, {
         customerName, invoiceNo, receiptNo, collectionDate, amount, mode,
         remarks: row.remarks || '', weekStart: row.weekStart || '',
@@ -407,8 +444,8 @@ export async function importCollections(text: string, importedBy: string): Promi
       else duplicated++;
     } else {
       const id = crypto.randomUUID();
-      await prisma.paymentCollection.create({
-        data: {
+      const createdAt = new Date().toISOString();
+      writes.push(paymentCollectionInsert({
           id,
           customerName,
           invoiceNo,
@@ -422,14 +459,15 @@ export async function importCollections(text: string, importedBy: string): Promi
           resolvedInvoiceId,
           dedupKey: key,
           importedBy: importedBy || '',
-        },
-      });
+          deleted: 0,
+          createdAt,
+      }));
       const createdRow = {
         id, customerName, invoiceNo, receiptNo, collectionDate, amount, mode,
         remarks: row.remarks || '', weekStart: row.weekStart || '',
         matchStatus, resolvedInvoiceId, dedupKey: key,
         importedBy: importedBy || '', deleted: false,
-        createdAt: new Date().toISOString(),
+        createdAt,
       };
       existingRows.push(createdRow);
       existingByKey.set(key, createdRow);
@@ -442,14 +480,17 @@ export async function importCollections(text: string, importedBy: string): Promi
     else unmatched++;
   }
 
+  await runStatements(writes);
+
   // One pass over the final ledger: remove any leftover advance placeholders
-  // that now duplicate exactly one real-invoice receipt.
-  const activeAfter: any[] = await prisma.paymentCollection.findMany({ where: { deleted: false } }) as any[];
-  const duplicateIds = advanceDuplicateIds(activeAfter);
-  for (const id of duplicateIds) {
-    await prisma.paymentCollection.update({ where: { id }, data: { deleted: true } });
+  // that now duplicate exactly one real-invoice receipt. Runs on the LAST slice
+  // only — an earlier slice cannot see the receipts a later one brings.
+  if (done) {
+    const activeAfter: any[] = await prisma.paymentCollection.findMany({ where: { deleted: false } }) as any[];
+    const duplicateIds = advanceDuplicateIds(activeAfter);
+    await runStatements(duplicateIds.map((id) => paymentCollectionUpdate(id, { deleted: true })));
+    merged += duplicateIds.length;
   }
-  merged += duplicateIds.length;
 
   await ensureCustomers(rows.map((r) => ({ customerName: r.customerName })), importedBy);
   await invalidateDebtorsCache();
@@ -461,6 +502,7 @@ export async function importCollections(text: string, importedBy: string): Promi
     skipped,
     duplicated,
     matchedByInvoice, matchedByCustomer, advances, unmatched, merged,
+    cursor, total, done,
   };
 }
 

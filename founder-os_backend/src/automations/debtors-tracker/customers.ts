@@ -15,6 +15,9 @@ import {
 } from './promise';
 import { isIsoDate, todayIST } from './shared';
 import { isValidRegion } from '../telecalling/regions';
+import { runStatements } from './batch-write';
+import type { SqlStatement } from './batch-write';
+import { paymentCustomerInsert, paymentCustomerUpdate } from './imports-parts/plan';
 
 export type CustomerContact = {
   id: string;
@@ -118,6 +121,10 @@ export async function ensureCustomers(seeds: CustomerSeed[], updatedBy = ''): Pr
   const byKey = new Map<string, any>();
   for (const row of rows) byKey.set(String(row.customerKey), row);
 
+  // Batched: a paste seeds one contact per distinct customer, and the shim's
+  // create/update would cost 2 round trips each (see batch-write.ts).
+  const writes: SqlStatement[] = [];
+
   for (const seed of seeds) {
     const name = normalizeCustomerName(seed.customerName);
     if (!name) continue;
@@ -128,16 +135,18 @@ export async function ensureCustomers(seeds: CustomerSeed[], updatedBy = ''): Pr
     const existing = byKey.get(key);
 
     if (!existing) {
-      const created = await prisma.paymentCustomer.create({
-        data: {
-          customerKey: key,
-          customerName: name,
-          phone: isValidPhone(phone) ? phone : '',
-          email: isValidEmail(email) ? email : '',
-          region,
-          updatedBy,
-        },
-      }) as any;
+      const createdAt = new Date().toISOString();
+      const created = {
+        customerKey: key,
+        customerName: name,
+        phone: isValidPhone(phone) ? phone : '',
+        email: isValidEmail(email) ? email : '',
+        region,
+        updatedBy,
+        createdAt,
+        updatedAt: createdAt,
+      };
+      writes.push(paymentCustomerInsert(created));
       byKey.set(key, created);
       continue;
     }
@@ -149,10 +158,12 @@ export async function ensureCustomers(seeds: CustomerSeed[], updatedBy = ''): Pr
     if (!existing.customerName && name) patch.customerName = name;
     if (Object.keys(patch).length) {
       patch.updatedAt = new Date();
-      await prisma.paymentCustomer.update({ where: { customerKey: key }, data: patch });
+      writes.push(paymentCustomerUpdate(key, patch));
       Object.assign(existing, patch);
     }
   }
+
+  await runStatements(writes);
 }
 
 export async function updateCustomerContact(

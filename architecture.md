@@ -585,6 +585,23 @@ today, and that path is byte-identical to the pre-feature computation (guard-ass
   replacing a pristine default, so "Date ↓ › Invoice No. ↑" is one gesture; `Reset` restores it.
   The historical view's empty state names the date (`asOf`), never "nothing was ever imported".
   Guard: `scripts/guards/debtors-invoice-sort.test.mjs`.
+- **Bulk, resumable imports** (2026-11-27): a paste is applied as ONE prepared statement per
+  mutated row, flushed 50 at a time through `db.batch()` (`debtors-tracker/batch-write.ts` +
+  `imports-parts/plan.ts`) — the d1-prisma shim's `create`/`update` costs a write PLUS a
+  `SELECT *` read-back the importer never reads, so every row used to be two round trips. Inserts
+  upsert on the existing unique keys (`("invoiceNo","customerName")`, `"dedupKey"`,
+  `"customerKey"`) and updates are plain `UPDATE … WHERE "id" = ?`, so a re-paste is still
+  idempotent without a read-back; a failed batch chunk is retried statement-by-statement, and the
+  dated `DebtorInvoiceReceivedEvent` rows ride a separate best-effort flush (history can never fail
+  a money write). Budget: 1,000 rows ≈ 20 D1 calls instead of ~2,000.
+  The route applies at most `IMPORT_ROWS_PER_CALL` (1,500) rows per request and answers
+  `report.{cursor,total,done}`; `ImportModal` re-POSTs the same text with `cursor` until `done`
+  and shows "Importing 500/1000…". A failed slice is safe to repeat (every write is an upsert).
+  The core receivable mirror is unchanged in cost (2 queries per OPEN invoice, core-locked) but now
+  runs ONCE per paste, on the last slice, behind `waitUntil` — awaiting it in the request path is
+  what turned a 582-row re-paste into a bare 503 with a half-applied sheet. Batched mirror =
+  `docs/core-change-requests/2026-11-27-batched-receivable-mirror.md`. Guard:
+  `scripts/guards/debtors-import-batch.test.mjs`.
 
 ### 3.2g HR documents, controller lists, assets and the editable org chart (migrations 0171–0173)
 
@@ -1236,6 +1253,15 @@ events out to every component via an in-process event bus — no per-dashboard s
   both an overdue and a today line counted twice); the Unscheduled / Scheduled / Dispatched cards
   read `tab*` for the same reason (one SO sits in several tabs, so a lifecycle bucket can never be
   the number beside a list). Next Enquiries history → rest. Guard `list-paging`.
+- **A deps change is a DIFFERENT dataset** (2026-11-27): `useLiveQuery` deliberately keeps the
+  last payload across a `deps` change — that is what makes a live refetch invisible — and a
+  monotonic `seq` guard means only the NEWEST request paints, so a slow earlier response (a tab
+  or region the user already left) can never overwrite the current view. Consequence for every
+  list surface: gate the rows on `loading`, never on `rows.length === 0` (that combination
+  painted the previous tab's orders under an in-flight request and made the shimmer
+  unreachable). `refreshing` (live event / poll) must never blank a list, and counters scoped
+  to a filter (Sales → Dispatch region KPIs) dim while their own summary loads. Reference:
+  `src/crm/DispatchSkeleton.tsx`, used by the CRM floor and Sales → Dispatch.
 - Backend `src/live.ts` defines `LiveEvent` (canonical type names) and `broadcastLive(c, type,
   extra?)`, which `notifyLive` now delegates to. **Every data-write path calls `broadcastLive`**:
   runner writes (`/api/runner/digests`, `tasks`, `pending-items`, `messages/mark-processed`,
