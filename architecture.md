@@ -640,52 +640,53 @@ const ai   = await call('openai');                           // thin adapter ove
 ```
 
 - **Address** = `(provider, instanceKey)`; `hlp_integration_instance` is UNIQUE on that pair and holds `isDefault`, `enabled`, `deliveryMode`, `baseUrl`, `configJson` and `encryptedSecrets` (AES-256-GCM, `VAULT_KEY`, falls back to `SHARED_SECRET` with one warning). Secret values are never returned by any route — the console sees only `secretKeys`.
-- **Providers** are declared once in `modules/integrations/gateway/manifest.ts` (`zoho`, `whatsapp`, `tally`, `tradeindia`, `justdial`, `alibaba`, `custom`, `openai`). An adapter is registered in `gateway/index.ts`; `openai` is a facade over the AI gateway and stores no key (`instanceRequired: false`).
+- **Providers are data**: `modules/integrations/manifest.json` (v2.0.0) is the ONLY provider list — 19 providers with `category`, `direction`, `configFields`/`secretFields` (`type`, `required`, `requiredWhen`, `options`, `defaultValue`), `outbound.operations` and `inbound` (`methods`, `challengeGet`, `verification`, `idempotencyKey`, `fieldMap`, `poll`, `liveEvent`, `quietHoursIst`). `manifest.ts` imports the JSON and hydrates it (flat legacy `fields`, `supportsWebhook`, `webhookPath`, `defaultDeliveryMode`); adding a provider = JSON entry + adapter registration, never an edit to a list. `openai` is a facade over §4.1 (`instanceRequired: false`, falls back to the global pool).
 - **Resolution** = manifest → cached row (`int:inst:<provider>:<key>:<rev>`, 300 s, `cacheRevs(['integrations'])`) → decrypt → `adapter.connect(instance)`. Missing/disabled instance throws `IntegrationError` (409); unknown provider 400.
-- **OAuth**: the Zoho adapter caches the access token in `Token` (`source = zoho:<instanceKey>`, `metadata.expiresAt`) and refreshes on expiry or 401. Runners never see client secrets — `GET /api/runner/integrations/resolve?provider=zoho` returns a fresh token.
-- **Webhook URL** per instance is `${origin}${manifest.webhookPath}[/<instanceKey>]`; the console prints it.
+- **Auth per provider**: Zoho OAuth2 (cached `Token` `source = zoho:<instanceKey>`, refresh on expiry/401) OR `authMode: raw_headers_bridge` (parses `secrets.rawCurlHeaders` — JSON, `-H 'k: v'` lines or `k: v` — and sends them verbatim); Gmail OAuth2 cached `gmail:<instanceKey>`; WhatsApp wraps the WABA client with `config.phoneNumberId`/`secrets.accessToken`; OpenAI rotates `secrets.apiKeys` (comma/newline separated) against `config.baseUrl`/`config.model` with `embed()`; Google Maps uses `X-Goog-Api-Key` + per-call `X-Goog-FieldMask` (`places:searchText`, Routes `directions/v2:computeRoutes`); Google Search uses `key`+`cx` with optional `config.baseUrlOverride`; `custom` + portals support `bearer|custom_header|basic|query_param|none`. Runners never see client secrets — `GET /api/runner/integrations/resolve?provider=zoho` returns a fresh token.
+- **Webhook URL** comes from `resolveWebhookUrl(origin, provider, instanceKey)` (manifest path + default key); the console prints it.
 
 ### 9.2 Inbound: one door, one staging table
 
 | Provider | Path |
 | --- | --- |
-| Zoho Books / WhatsApp / Tally / TradeIndia / Justdial / Alibaba / custom | `POST /api/webhooks/<source>[/<instanceKey>]` |
-| Meta subscription handshake | `GET /api/webhooks/whatsapp?hub.mode=subscribe…` (echoes `hub.challenge`) |
+| any `inbound.supported` provider (Zoho, WhatsApp, Tally, Gmail, portals, Meta/LinkedIn/Telegram, Google Forms, NeoDove, custom) | `POST /api/webhooks/<source>[/<instanceKey>]` |
+| providers with `inbound.challengeGet` (Meta handshake) | `GET /api/webhooks/<source>?hub.mode=subscribe…` (echoes `hub.challenge` when `hub.verify_token` matches `config.verifyToken`/`secrets.webhookVerifyToken`) |
+| GET-only portals with `normalizeQueryToBodyOnGet` | the query string is normalized to a JSON body before verification |
 
-Order is fixed and guarded: resolve instance (404 if absent) → secret must exist (503 if not) → **HMAC over the RAW body** verified against `webhookSecret`/`appSecret` (401 on mismatch; `x-hub-signature-256`, `tally-signature`, `x-ingest-signature`, bare hex/base64 and sha1 all accepted) → `INSERT OR IGNORE` into `hlp_ingested_data` → 202.
+Order is fixed and guarded: manifest lookup (404 when the provider is not an inbound provider) → resolve instance (409/404 if absent) → `verifyInbound(provider, …)` over the **RAW body** (401; `hmac` = `x-hub-signature-256`/`tally-signature`/`x-ingest-signature`, bare hex/base64/sha1 accepted; `field_match` = e.g. Justdial `parentid`; `optional_header_token` = Zoho/Gmail push tokens; `none`) → `INSERT OR IGNORE` into `hlp_ingested_data` → 202.
 
 - `deliveryMode` is the **instance's** choice. `realtime` processes in `executionCtx.waitUntil` and broadcasts `enquiries` + `integrations`; `batch` leaves the row `pending` for the 5-minute runner. Both answer `202` in milliseconds, so a slow mapper can never make a provider retry a row already stored.
-- Dedupe is the partial UNIQUE `(source, externalEventId) WHERE externalEventId IS NOT NULL`; `externalEventId` is derived per provider (WhatsApp `messages[0].id`, Zoho `estimate_id:last_modified_time`, Tally `responseId`, else a case-insensitive id key). A duplicate answers `duplicate: true` and is **not** reprocessed.
+- Dedupe is the partial UNIQUE `(source, externalEventId) WHERE externalEventId IS NOT NULL`; `extractIdempotencyKey` reads the manifest (`path` e.g. WhatsApp `messages.0.id`, `composite` e.g. Zoho `estimate_id`+`last_modified_time`, `config_path`, with optional prefixes). A duplicate answers `duplicate: true` and is **not** reprocessed. `eventType`/`liveEvent` also come from the manifest.
 - `status` lifecycle: `pending → processing → processed | pending(retry) → dead_letter` after 3 attempts. A `processing` row older than 15 minutes is reclaimable (a Worker that died mid-flight). `replay` on the console resets a row and re-runs it immediately.
 - Raw body is capped at 256 KB (413), stored verbatim in `rawPayload`; `Authorization`/`Cookie` headers are stripped from `headersJson`.
 
 ### 9.3 Processing (the only writer)
 
-`modules/ingestion/processor.ts` maps + routes a staged row; `mappers/` is pure and one file per provider family (`b2b-portals`, `tally`, `zoho-estimate`, `whatsapp`, `custom` fallback).
+`modules/ingestion/processor.ts` maps + routes a staged row; `mappers/` is pure. `mapperFor(source)` picks the specialized mapper (`whatsapp`, `zoho-estimate`, `tally`, `gmail`) and otherwise falls back to `genericMapper(provider)` — a manifest-driven lead/message mapper (flat / `data.*` / `fields[{label,value}]` / Meta `entry[].changes[]` shapes, `fieldMap` first then fuzzy aliases). Every `inbound.supported` provider therefore has a mapper by construction.
 
 | Canonical | Destination | Rule |
 | --- | --- | --- |
-| `lead` (TradeIndia/Justdial/Alibaba/Tally/custom) | `Enquiry` via `enquiryCreate` | Server-side intake, never a core write. Dedupes by `contactPhone` (normalized `+91…` or bare 10 digits) → links the existing enquiry instead of duplicating. `source='B2B'`, `sourceLead='<provider>[:key]'`. |
-| `message` (WhatsApp) | `Message` | `wahaMessageId = 'wa:<wamid>'` is UNIQUE, so a provider retry is a duplicate success, not a dead letter. |
+| `lead` (portals, forms, Gmail, social lead ads, Tally, custom) | `Enquiry` via `enquiryCreate` | Server-side intake, never a core write. Dedupes by `contactPhone` (normalized `+91…` or bare 10 digits) → links the existing enquiry instead of duplicating. `source='B2B'`, `sourceLead='<provider>[:key]'`. |
+| `message` (WhatsApp, Messenger/Instagram DM, Telegram) | `Message` | `wahaMessageId = 'wa:<wamid>'` (or the channel's event id) is UNIQUE, so a provider retry is a duplicate success, not a dead letter. |
 | `estimate` (Zoho/Tally) | link only | Normalized into `normalizedJson`, `coreRefId = estimateNumber || externalId`. The `Estimate` row itself stays owned by `scripts/zoho-sync/persist.js` — one writer for org/status rules (core lock intact). |
 | status callbacks / pings | none | `processed` with no `coreRefId`; never routed to a domain table. |
 
 ### 9.4 Runners & schedules
 
 - `scripts/ingestion-batch-runner.js` (job `ingestion-batch`, 5-min workflow, serial group): `POST /api/runner/ingestion/claim {mode:'batch'}` → rows, then `POST /api/runner/ingestion/ack {results:[{id}]}`. The **ack** runs `processIngestedRow` server-side, so the mapper never leaves the Worker. A runner that dies leaves `processing` rows that the 15-minute stale rule reclaims.
-- `scripts/portal-poller-runner.js` (job `portal-poller`, 15-min workflow): for portals with `config.pullUrl` it fetches the feed and replays each item through the HMAC-signed webhook door (`X-Ingest-Signature`), so dedupe/mapping stay in one place. Push-only portals are skipped.
+- `scripts/portal-poller-runner.js` (job `portal-poller`, 15-min workflow): the provider list is `manifest.providers` where `inbound.poll.supported`; an instance with `config.pollUrl`/`config.pullUrl` is fetched and each item replayed through the HMAC-signed webhook door (`X-Ingest-Signature`), so dedupe/mapping stay in one place. Push-only providers are skipped. `claimBatch` skips providers whose `inbound.quietHoursIst` window (IST) is active.
 - `scripts/zoho-sync/credentials.js` resolves the Zoho session from the gateway (`/api/runner/integrations/resolve`); `fetch.js` uses it for headers/orgs/API base and only falls back to `zoho_sent/sent_estimates.txt` when the Worker has no Zoho instance or is unreachable. The file is now the emergency path, not the source of truth.
 
 ### 9.5 Console (root-only)
 
-`Settings → Third-party providers` (`components/settings/integrations/`): provider cards with add/edit (Drawer), Test (`POST /instances/:id/test`), Delete, webhook URL, delivery mode, default flag, plus the ingested log (search/status/mode filters, pager, Replay).
+`Settings → Third-party providers` (`components/settings/integrations/`): providers grouped by manifest `category`, dynamic field inputs (`text|textarea|number|boolean|select|json`, `requiredWhen` visibility, `defaultValue`), Test/Delete, webhook path, delivery mode, default flag, plus the ingested log (filters, pager, Replay) with an **inspector Drawer** showing raw vs normalized JSON + headers. The FE mirrors `manifest.ts#validateInstancePayload` client-side; the server re-validates `required`+`requiredWhen` on every save.
 
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /api/integrations/manifest` | provider manifests (fields, secret names, webhook path) |
 | `GET/POST /api/integrations/instances` · `PATCH/DELETE /api/integrations/instances/:id` | list/upsert/delete (secrets merged; `''` clears a stored key) |
 | `POST /api/integrations/instances/:id/test` | adapter health probe |
-| `GET /api/integrations/ingested[/stats]` | paged staging log + counts |
+| `GET /api/integrations/ingested[/stats]` · `GET /api/integrations/ingested/:id` | paged staging log + counts + one raw/normalized row |
 | `POST /api/integrations/ingested/:id/replay` | re-stage + reprocess |
 | `GET /api/runner/integrations/resolve` · `POST /api/runner/ingestion/claim` · `POST /api/runner/ingestion/ack` | runner surface (`requireSecret`) |
 
@@ -693,7 +694,9 @@ All console paths are root-gated (`adminGuard`); `/api/webhooks/` is in `AUTH_EX
 
 **Ops.** Apply before deploying: `wrangler d1 execute waba-worker --remote --file migrations/0183_integrations_and_ingestion.sql`. Rotating `VAULT_KEY` makes existing ciphertext undecryptable — re-enter the instance secrets afterwards.
 
-Guard: `scripts/guards/integrations-ingestion.test.mjs` (tables/indexes, shim registration, manifest↔adapter parity, verify-before-stage, processor never writes `core_*`, runner/workflow wiring, console mount).
+Guard: `scripts/guards/integrations-ingestion.test.mjs` (tables/indexes, shim registration, manifest v2 schema + adapter/mapper parity, verify-before-stage, processor never writes `core_*`, quiet hours, runner/workflow wiring, console mount).
+
+**Manifest provenance.** The replacement implementation's original v2.0.0 payload was not in version control (the file was deleted before the first commit and `prompt.md` carried a paste placeholder). The checked-in `manifest.json` is a reconstruction from the written spec; the loader validates generically, so swapping in the founder's canonical JSON needs no code change — run the guard afterwards.
 
 ---
 

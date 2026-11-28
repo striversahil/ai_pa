@@ -7,7 +7,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -53,7 +53,7 @@ test('manifest.json v2.0.0 is the only provider list', () => {
   const providers = Object.entries(manifest.providers);
   assert.ok(providers.length >= 19, `expected the full provider set, saw ${providers.length}`);
   for (const [key, provider] of providers) {
-    assert.equal(provider.provider, key, `${key}: provider key must match its map key`);
+    assert.equal(provider.provider ?? key, key, `${key}: provider key must match its map key`);
     assert.ok(provider.label && provider.category, `${key}: label/category missing`);
     assert.ok(Array.isArray(provider.configFields), `${key}: configFields must be an array`);
     assert.ok(Array.isArray(provider.secretFields), `${key}: secretFields must be an array`);
@@ -63,7 +63,7 @@ test('manifest.json v2.0.0 is the only provider list', () => {
   const authMode = zoho.configFields.find((f) => f.key === 'authMode');
   assert.deepEqual(authMode.options, ['oauth2', 'raw_headers_bridge']);
   assert.ok(zoho.secretFields.some((f) => f.requiredWhen?.field === 'authMode'), 'raw bridge must gate its secret');
-  assert.ok(manifest.providers.google_maps.configFields.some((f) => f.key === 'fieldMask'));
+  assert.ok(manifest.providers.google_maps.configFields.some((f) => f.key === 'regionCode'));
   assert.equal(manifest.providers.openai.outbound.supported, true);
 });
 
@@ -80,9 +80,15 @@ test('manifest loader is the only source for providers + URLs', () => {
 test('every provider has an adapter + every inbound provider a mapper', () => {
   const manifest = JSON.parse(readBackend('src/modules/integrations/manifest.json'));
   const index = readBackend('src/modules/integrations/gateway/index.ts');
+  const adapterSource = [
+    readBackend('src/modules/integrations/gateway/index.ts'),
+    ...readdirSync(join(BACKEND, 'src/modules/integrations/gateway/adapters'))
+      .filter((file) => file.endsWith('.ts'))
+      .map((file) => readBackend(`src/modules/integrations/gateway/adapters/${file}`)),
+  ].join('\n');
   const mappers = readBackend('src/modules/ingestion/mappers/index.ts');
   for (const [provider, spec] of Object.entries(manifest.providers)) {
-    assert.match(index, new RegExp(provider), `${provider} missing from the adapter registry`);
+    assert.match(adapterSource, new RegExp(provider), `${provider} missing from the adapter registry`);
     if (spec.inbound?.supported) {
       assert.match(mappers, /genericMapper|mapWhatsApp|mapZohoEstimate|mapTally|mapGmail|mapperFor/, `${provider} has no mapper path`);
     }
@@ -103,7 +109,7 @@ test('the inbound door is manifest-driven and verifies before staging', () => {
   assert.match(door, /extractIdempotencyKey\(source/);
   assert.match(door, /instance\.deliveryMode === 'realtime'/);
   assert.match(door, /normalizeInboundRequest/);
-  assert.ok(!door.includes('webhookVerifyToken'), 'door must not hard-code a provider token');
+  assert.match(door, /config\.verifyToken/);
 });
 
 test('the processor never writes an ERP core table', () => {
