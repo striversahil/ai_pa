@@ -4,6 +4,9 @@ import { employeeDisplayName } from '../../shared/employee-name';
 import { clampRange, monthRange, workingDatesInRange } from './calendar';
 import { cleanPayrollLinesPatch } from './payroll-parse';
 import { holidaySet } from './holidays';
+import { getPolicy } from './policy';
+import { evaluateMonth, leaveDayPaid } from './policy-eval';
+import type { HrPolicy } from './policy-parse';
 import { normalizeMonth } from './parse';
 import { resolveSalary, round2 } from './salary';
 import { invalidateHumanResourcesCache } from './cache';
@@ -20,6 +23,10 @@ interface Stats {
   holidayDays: number;
   unmarkedDays: number;
   payableDays: number;
+  lateCount: number;
+  policyHalfDays: number;
+  shortLeaveCount: number;
+  excessShortLeaves: number;
 }
 
 function emptyStats(): Stats {
@@ -27,6 +34,7 @@ function emptyStats(): Stats {
     workingDays: 0, eligibleDays: 0, presentDays: 0, halfDays: 0,
     absentDays: 0, paidLeaveDays: 0, unpaidLeaveDays: 0, holidayDays: 0,
     unmarkedDays: 0, payableDays: 0,
+    lateCount: 0, policyHalfDays: 0, shortLeaveCount: 0, excessShortLeaves: 0,
   };
 }
 
@@ -46,6 +54,7 @@ function computeStats(
   attendance: any[],
   leaves: any[],
   holidayDates: Set<string>,
+  policy: HrPolicy,
 ): Stats {
   const { start, end } = monthRange(month);
   const monthWorking = workingDatesInRange(start, end, holidayDates);
@@ -58,6 +67,7 @@ function computeStats(
   const eligible = workingDatesInRange(range.start, range.end, holidayDates);
   stats.eligibleDays = eligible.length;
   const attendanceBy = new Map(attendance.map((r) => [String(r.date), r]));
+  Object.assign(stats, evaluateMonth(policy, member.employmentType ?? null, attendance));
   // Approved leave per date (the caller only passes approved rows). Duration
   // decides the weight: full day = 1, half day = 0.5, short leave = present
   // (the employee was at work, just away for a couple of hours).
@@ -83,7 +93,7 @@ function computeStats(
       const duration = String(leave.durationType ?? 'full_day');
       if (duration === 'short') add(stats, 'present');
       else if (duration === 'half_day') add(stats, 'half');
-      else add(stats, leave?.paid === false ? 'unpaidLeave' : 'paidLeave');
+      else add(stats, leaveDayPaid(leave, date) ? 'paidLeave' : 'unpaidLeave');
       continue;
     }
     add(stats, 'unmarked');
@@ -142,6 +152,7 @@ export function slipJson(row: any, member?: any) {
     earnings: Array.isArray(snapshot.earnings) ? snapshot.earnings : [],
     deductions: Array.isArray(snapshot.deductions) ? snapshot.deductions : [],
     fullMonthlyGross: Number(snapshot.fullMonthlyGross) || Number(row.monthlyGross) || 0,
+    policy: snapshot.policy ?? null,
     notes: row.notes ?? null,
     finalizedAt: row.finalizedAt ?? null,
     paidAt: row.paidAt ?? null,
@@ -155,6 +166,7 @@ function buildSlip(
   month: string,
   stats: Stats,
   holidayDates: Set<string>,
+  policy: HrPolicy,
 ) {
   const components = member.salaryComponents ?? [];
   const resolved = resolveSalary(components, {
@@ -166,7 +178,8 @@ function buildSlip(
   const perDay = round2(resolved.gross / stats.workingDays);
   const ratio = stats.eligibleDays / stats.workingDays;
   const proratedGross = round2(resolved.gross * ratio);
-  const unpaidEquivalent = stats.absentDays + stats.unpaidLeaveDays + stats.halfDays * 0.5 + stats.unmarkedDays;
+  const unpaidEquivalent = stats.absentDays + stats.unpaidLeaveDays + stats.halfDays * 0.5
+    + stats.unmarkedDays + stats.policyHalfDays + stats.excessShortLeaves * 0.5;
   const absenceDeduction = round2(perDay * unpaidEquivalent);
   const earnedGross = round2(proratedGross - absenceDeduction);
   const componentDeductions = round2(resolved.deductions.reduce((sum, line) => sum + line.amount, 0));
@@ -195,6 +208,15 @@ function buildSlip(
     salaryInputAmount: resolved.inputAmount,
     salaryTemplateId: member.salaryTemplateId ? String(member.salaryTemplateId) : null,
     leaveHolidays: [...holidayDates].filter((d) => d >= monthRange(month).start && d <= monthRange(month).end),
+    policy: {
+      lateCount: stats.lateCount,
+      policyHalfDays: stats.policyHalfDays,
+      shortLeaveCount: stats.shortLeaveCount,
+      excessShortLeaves: stats.excessShortLeaves,
+      lateRule: policy.lateRule,
+      shortLeave: policy.shortLeave,
+      leaveAllowances: policy.leaveAllowances,
+    },
   };
   return {
     ...stats,
@@ -262,7 +284,7 @@ export async function listPayroll(monthInput: unknown) {
 export async function generatePayroll(monthInput: unknown, actor: string | null) {
   const month = normalizeMonth(monthInput);
   const { start, end } = monthRange(month);
-  const [members, allComponents, attendance, leaves, holidays, existingSlips] = await Promise.all([
+  const [members, allComponents, attendance, leaves, holidays, existingSlips, policy] = await Promise.all([
     prisma.humanResourcesMember.findMany({ where: { deleted: false }, orderBy: { order: 'asc' } }) as Promise<any[]>,
     prisma.humanResourcesSalaryComponent.findMany({ where: { deleted: false } }) as Promise<any[]>,
     prisma.humanResourcesAttendance.findMany({
@@ -271,6 +293,7 @@ export async function generatePayroll(monthInput: unknown, actor: string | null)
     prisma.humanResourcesLeave.findMany({ where: { deleted: false, status: 'approved' } }) as Promise<any[]>,
     holidaySet(start, end),
     prisma.humanResourcesSalarySlip.findMany({ where: { month } }) as Promise<any[]>,
+    getPolicy(),
   ]);
   const holidayDates = holidays;
   const componentsBy = new Map<string, any[]>();
@@ -296,9 +319,9 @@ export async function generatePayroll(monthInput: unknown, actor: string | null)
       continue;
     }
     try {
-      const stats = computeStats(month, member, memberAttendance, memberLeaves, holidayDates);
+      const stats = computeStats(month, member, memberAttendance, memberLeaves, holidayDates, policy);
       if (stats.eligibleDays <= 0) continue;
-      const built = buildSlip({ ...member, salaryComponents: componentsBy.get(String(member.id)) ?? [] }, month, stats, holidayDates);
+      const built = buildSlip({ ...member, salaryComponents: componentsBy.get(String(member.id)) ?? [] }, month, stats, holidayDates, policy);
       const data = {
         memberId: String(member.id), month, status: 'draft',
         employeeName: member.name, employeeCode: member.employeeCode ?? null,

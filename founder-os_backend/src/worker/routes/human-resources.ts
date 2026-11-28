@@ -23,6 +23,7 @@ import {
   decideLeaveRequest, listLeaveRequests,
 } from '../../automations/human-resources/leave-requests';
 import { createHoliday, deleteHoliday, listHolidays, updateHoliday } from '../../automations/human-resources/holidays';
+import { policyPayload, savePolicy } from '../../automations/human-resources/policy';
 import { generatePayroll, listPayroll, setSlipStatus, updateSlipLines } from '../../automations/human-resources/payroll';
 import {
   createInventoryItem, deleteInventoryItem, deleteInventoryTransaction,
@@ -366,6 +367,27 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
       await deleteHoliday(c.req.param('id') ?? '');
       notifyLive(c, { type: LiveEvent.HumanResources });
       return c.json({ ok: true });
+    } catch (e) { return errorResponse(c, e); }
+  });
+
+  // ── Leave & attendance policy (migration 0188) ──────────────────────────
+  app.get('/api/human-resources/policy', async (c) => {
+    const a = await access(c);
+    if (a.error) return a.error;
+    try {
+      return c.json(await policyPayload());
+    } catch (e) { return errorResponse(c, e); }
+  });
+
+  app.put('/api/human-resources/policy', async (c) => {
+    const a = await access(c);
+    if (a.error) return a.error;
+    if (!a.canManage) return c.json({ error: 'only HR can change the policy' }, 403);
+    const body = await readBody(c);
+    try {
+      const payload = await savePolicy(body?.policy ?? body ?? {}, actorLabel(a.me));
+      notifyLive(c, { type: LiveEvent.HumanResources });
+      return c.json(payload);
     } catch (e) { return errorResponse(c, e); }
   });
 

@@ -5,6 +5,7 @@ import { leaveWorkingDays, monthRange } from './calendar';
 import { holidaySet } from './holidays';
 import { invalidateHumanResourcesCache } from './cache';
 import { dateRangesOverlap, leaveDaysFor } from './leave-requests-parse';
+import { allocatePaidDays } from './policy';
 import { displayNameForLabel, employeeDisplayName, type DisplayNameIndex } from '../../shared/employee-name';
 import { loadDisplayNameIndex } from '../../shared/employee-name-store';
 
@@ -19,6 +20,7 @@ export function leaveJson(row: any, holidays?: Set<string>, names?: DisplayNameI
     memberName: row.member ? employeeDisplayName(row.member) : null,
     leaveType: row.leaveType ?? 'other',
     paid: row.paid !== false,
+    paidDays: row.paidDays === null || row.paidDays === undefined ? null : Number(row.paidDays),
     startDate: row.startDate ?? null,
     endDate: row.endDate ?? null,
     days,
@@ -94,10 +96,15 @@ export async function validateLeave(
 export async function createLeave(input: Record<string, any>, actor: string | null) {
   const data = cleanLeave(input);
   const days = await validateLeave(data);
+  const member: any = await prisma.humanResourcesMember.findUnique({ where: { id: data.memberId } });
+  const paidDays = await allocatePaidDays({
+    ...data, days, employmentType: member?.employmentType ?? null,
+  });
   const row: any = await prisma.humanResourcesLeave.create({
     data: {
       ...data,
       days,
+      paidDays,
       status: 'approved',
       decidedBy: actor,
       decidedAt: new Date(),
@@ -114,8 +121,12 @@ export async function updateLeave(id: string, input: Record<string, any>, actor:
   if (!current || current.deleted) throw new HrError('leave not found', 404);
   const data = cleanLeave(input);
   const days = await validateLeave(data, id);
+  const member: any = await prisma.humanResourcesMember.findUnique({ where: { id: data.memberId } });
+  const paidDays = await allocatePaidDays({
+    ...data, days, employmentType: member?.employmentType ?? null, exceptId: id,
+  });
   const row: any = await prisma.humanResourcesLeave.update({
-    where: { id }, data: { ...data, days, updatedBy: actor },
+    where: { id }, data: { ...data, days, paidDays, updatedBy: actor },
   });
   await invalidateHumanResourcesCache();
   return leaveJson(row);

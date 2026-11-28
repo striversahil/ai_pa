@@ -1,6 +1,6 @@
 "use client";
 
-// Leaves & holidays — HR side.
+// Leaves & Policy — HR side.
 //
 //   Requests   employee applications waiting for a decision (tab badge = count,
 //              the same rose count pill the Accounts payment-reminder tabs use)
@@ -15,6 +15,7 @@ import React, { useMemo, useState } from "react";
 import ConfirmDialog from "../ui/ConfirmDialog";
 import LeaveFormModal from "./LeaveFormModal";
 import LeaveDecisionModal from "./LeaveDecisionModal";
+import PolicyTab from "./PolicyTab";
 import { TabBar, type TabBarItem } from "../ui/TabBar";
 import { useLiveDashboard } from "@/hooks/useLiveData";
 import {
@@ -26,7 +27,7 @@ import { currentMonthIST, monthLabel, shiftMonth, shortDate, timeLabel } from "@
 
 const field = "rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2.5 py-1.5 text-xs outline-none focus:border-indigo-500";
 
-type LeaveTab = "requests" | "approved" | "rejected" | "calendar";
+type LeaveTab = "requests" | "approved" | "rejected" | "calendar" | "policy";
 
 // mirror: founder-os_backend/src/automations/human-resources/holidays-parse.ts
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -138,8 +139,8 @@ export default function LeavesTab() {
   const requests = dash.data?.requests ?? [];
   const holidays = useMemo(() => (dash.data?.holidays ?? []).slice().sort((a, b) => a.startDate.localeCompare(b.startDate)), [dash.data?.holidays]);
   const year = month.slice(0, 4);
-  const paidDays = leaves.filter((l) => l.paid).reduce((s, l) => s + l.days, 0);
-  const unpaidDays = leaves.filter((l) => !l.paid).reduce((s, l) => s + l.days, 0);
+  const paidDays = leaves.reduce((s, l) => s + (l.paidDays ?? (l.paid ? l.days : 0)), 0);
+  const unpaidDays = leaves.reduce((s, l) => s + Math.max(0, l.days - (l.paidDays ?? (l.paid ? l.days : 0))), 0);
 
   const pending = requests.filter((r) => (r.status ?? "approved") === "pending");
   const decided = requests.filter((r) => (r.status ?? "approved") !== "pending");
@@ -151,6 +152,7 @@ export default function LeavesTab() {
     { key: "approved", label: "Approved", count: approvedRequests.length },
     { key: "rejected", label: "Rejected", count: rejectedRequests.length },
     { key: "calendar", label: "Calendar & holidays", count: leaves.length },
+    { key: "policy", label: "Policy" },
   ];
 
   const removeLeave = async () => {
@@ -355,6 +357,8 @@ export default function LeavesTab() {
           </div>
         </>
       )}
+
+      {tab === "policy" && <PolicyTab />}
 
       {leaveForm.open && <LeaveFormModal leave={leaveForm.leave} employees={dash.data?.employees ?? []} onClose={() => setLeaveForm({ open: false, leave: null })} onSaved={() => dash.refresh()} />}
       {decision && (

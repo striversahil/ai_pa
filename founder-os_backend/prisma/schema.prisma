@@ -1571,6 +1571,9 @@ model HumanResourcesLeave {
   decidedAt    DateTime?
   /** Mandatory reason when a request is rejected. */
   decisionNote String?
+  /// Paid portion of `days` computed from the policy allowance at decision
+  /// time (migration 0188). NULL = legacy row, the `paid` flag decides.
+  paidDays Float?
   createdBy String?
   updatedBy String?
   deleted   Boolean              @default(false)
@@ -1598,6 +1601,16 @@ model HumanResourcesHoliday {
   updatedAt DateTime @updatedAt
 
   @@index([startDate, endDate])
+}
+
+/// The company leave/late policy (migration 0188). One singleton row; the
+/// config JSON is validated by policy-parse.ts on every read and write.
+model HumanResourcesPolicy {
+  id        String   @id
+  config    String
+  updatedBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // National holidays excluded from the sales deficit (Sales Leaderboard).

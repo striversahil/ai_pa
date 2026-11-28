@@ -178,6 +178,7 @@ const DATE_FIELDS: Record<string, string[]> = {
   HumanResourcesAttendance: ['createdAt', 'updatedAt'],
   HumanResourcesLeave: ['createdAt', 'updatedAt', 'decidedAt'],
   HumanResourcesHoliday: ['createdAt', 'updatedAt'],
+  HumanResourcesPolicy: ['createdAt', 'updatedAt'],
   SalesHoliday: ['createdAt'],
   HumanResourcesSalarySlip: ['finalizedAt', 'paidAt', 'createdAt', 'updatedAt'],
   HumanResourcesInventoryItem: ['createdAt', 'updatedAt'],
@@ -341,6 +342,7 @@ const ID_FIELDS: Record<string, string> = {
   HumanResourcesAttendance: 'id',
   HumanResourcesLeave: 'id',
   HumanResourcesHoliday: 'id',
+  HumanResourcesPolicy: 'id',
   SalesHoliday: 'day',
   HumanResourcesSalarySlip: 'id',
   HumanResourcesInventoryItem: 'id',
@@ -1282,6 +1284,7 @@ export class D1PrismaClient {
   get humanResourcesAttendance() { return this.model('HumanResourcesAttendance'); }
   get humanResourcesLeave() { return this.model('HumanResourcesLeave'); }
   get humanResourcesHoliday() { return this.model('HumanResourcesHoliday'); }
+  get humanResourcesPolicy() { return this.model('HumanResourcesPolicy'); }
   get humanResourcesSalarySlip() { return this.model('HumanResourcesSalarySlip'); }
   get humanResourcesInventoryItem() { return this.model('HumanResourcesInventoryItem'); }
   get humanResourcesInventoryTxn() { return this.model('HumanResourcesInventoryTxn'); }

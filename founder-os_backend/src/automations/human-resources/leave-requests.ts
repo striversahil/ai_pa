@@ -8,6 +8,7 @@ import { HrError } from './errors';
 import { istDateStr, text } from './parse';
 import { invalidateHumanResourcesCache } from './cache';
 import { leaveJson, validateLeave } from './leaves';
+import { allocatePaidDays } from './policy';
 import {
   cleanLeaveRequest, decisionNoteError, MIN_NOTE_CHARS,
 } from './leave-requests-parse';
@@ -160,11 +161,28 @@ export async function decideLeaveRequest(opts: {
   const noteError = decisionNoteError(action, note);
   if (noteError) throw new HrError(noteError);
   if (note && note.length < MIN_NOTE_CHARS) throw new HrError('decision note is too short');
-
+  let paidDays: number | null = null;
+  if (action === 'approve') {
+    const member: any = await prisma.humanResourcesMember.findUnique({
+      where: { id: String(row.memberId) },
+    });
+    paidDays = await allocatePaidDays({
+      memberId: String(row.memberId),
+      leaveType: String(row.leaveType ?? 'other'),
+      startDate: String(row.startDate),
+      endDate: String(row.endDate),
+      days: Number(row.days) || 0,
+      durationType: String(row.durationType ?? 'full_day'),
+      paid: row.paid !== false,
+      employmentType: member?.employmentType ?? null,
+      exceptId: String(row.id),
+    });
+  }
   const updated: any = await prisma.humanResourcesLeave.update({
     where: { id: String(row.id) },
     data: {
       status: action === 'approve' ? 'approved' : 'rejected',
+      paidDays,
       decidedBy: opts.actor,
       decidedAt: new Date(),
       decisionNote: note || null,

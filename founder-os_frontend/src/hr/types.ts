@@ -277,6 +277,8 @@ export interface HrLeave {
   memberName: string | null;
   leaveType: LeaveType;
   paid: boolean;
+  /** Paid portion of `days` from the policy allowance (null = legacy `paid`). */
+  paidDays?: number | null;
   startDate: string;
   endDate: string;
   days: number;
@@ -559,6 +561,51 @@ export interface HrHiringPosition {
   createdAt: string | null;
   updatedAt: string | null;
   docs: Record<HiringDocKind, HrPositionDoc[]>;
+}
+
+// ── Leave & attendance policy (migration 0188) ──────────────────────────────
+// Mirror: founder-os_backend/src/automations/human-resources/policy-parse.ts.
+export const POLICY_LATE_ACTIONS = ["half_day", "full_day", "warn"] as const;
+export const POLICY_APPLY_TO = ["once", "each"] as const;
+export const POLICY_LEAVE_EXCESS = ["unpaid", "block"] as const;
+export const POLICY_SHORT_EXCESS = ["unpaid_half_day", "warn"] as const;
+export type PolicyLateAction = (typeof POLICY_LATE_ACTIONS)[number];
+export type PolicyApplyTo = (typeof POLICY_APPLY_TO)[number];
+export type PolicyLeaveExcess = (typeof POLICY_LEAVE_EXCESS)[number];
+export type PolicyShortExcess = (typeof POLICY_SHORT_EXCESS)[number];
+
+export interface HrPolicyLateRule {
+  allowedLates: number;
+  action: PolicyLateAction;
+  applyTo: PolicyApplyTo;
+  employmentType: EmploymentType | null;
+}
+
+export interface HrPolicyLeaveAllowance {
+  leaveType: LeaveType;
+  paidDaysPerMonth: number;
+  /** 0 = no total cap. */
+  maxDaysPerMonth: number;
+  excess: PolicyLeaveExcess;
+  employmentType: EmploymentType | null;
+}
+
+export interface HrPolicyShortLeave {
+  maxPerMonth: number;
+  excess: PolicyShortExcess;
+  employmentType: EmploymentType | null;
+}
+
+export interface HrPolicy {
+  lateRule: HrPolicyLateRule;
+  leaveAllowances: HrPolicyLeaveAllowance[];
+  shortLeave: HrPolicyShortLeave;
+}
+
+export interface HrPolicyPayload {
+  policy: HrPolicy;
+  updatedAt: string | null;
+  updatedBy: string | null;
 }
 
 export interface HrDashboardData {

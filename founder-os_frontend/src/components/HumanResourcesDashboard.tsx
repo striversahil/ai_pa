@@ -33,7 +33,7 @@ const GROUPS: { label: string; tabs: HrTab[] }[] = [
       { key: "employees", label: "Employees", icon: "◉" },
       { key: "hiring-kit", label: "Hiring kit", icon: "▣" },
       { key: "attendance", label: "Attendance", icon: "◷" },
-      { key: "leaves", label: "Leaves & holidays", icon: "◒" },
+      { key: "leaves", label: "Leaves & Policy", icon: "◒" },
       { key: "payroll", label: "Payroll", icon: "₹" },
       { key: "delegation", label: "Delegation", icon: "☑" },
       { key: "controller", label: "Controller", icon: "⚙" },

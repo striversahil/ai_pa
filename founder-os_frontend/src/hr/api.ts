@@ -4,6 +4,7 @@ import type {
 } from "./types";
 import type { HrAsset, HrAssetsData, HrAssetType, HrPositionAsset } from "./assets";
 import type { HrControllerData, HrLookup, LookupKind } from "./lookups";
+import type { HrPolicy, HrPolicyPayload } from "./types";
 import type { MemberDocumentsPayload } from "./member-documents";
 
 export async function readError(res: Response): Promise<string> {
@@ -21,6 +22,18 @@ export async function jsonRequest(url: string, method: string, body?: unknown): 
     body: body === undefined ? undefined : JSON.stringify(body),
     cache: "no-store",
   });
+}
+
+export async function getHrPolicy(): Promise<HrPolicyPayload> {
+  const res = await fetch("/api/human-resources/policy", { cache: "no-store" });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
+export async function saveHrPolicy(policy: HrPolicy): Promise<HrPolicyPayload> {
+  const res = await jsonRequest("/api/human-resources/policy", "PUT", { policy });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
 }
 
 export async function listSalaryTemplates(): Promise<HrSalaryTemplate[]> {
