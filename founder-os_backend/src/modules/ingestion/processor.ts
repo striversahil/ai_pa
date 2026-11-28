@@ -9,10 +9,11 @@
 import { prisma } from '../../shared/prisma-d1';
 import { createEnquiryStore } from '../enquiries/store';
 import { enquiryCreate } from '../enquiries/routes';
+import { getProviderManifest } from '../integrations/gateway/manifest';
 import { mapInbound } from './mappers';
 import { normalizeIndianPhone } from './pure';
 import { getRow, markFailed, markProcessed } from './store';
-import type { CanonicalEstimate, CanonicalLead, CanonicalMessage, IngestRow, SqlDb } from './types';
+import type { CanonicalEmail, CanonicalEstimate, CanonicalLead, CanonicalMessage, IngestRow, SqlDb } from './types';
 
 export interface ProcessorContext {
   db: SqlDb;
@@ -63,6 +64,9 @@ async function routeLead(ctx: ProcessorContext, lead: CanonicalLead): Promise<{ 
     description: lead.rawNotes,
     sourceLead: `${lead.source}${lead.instanceKey && lead.instanceKey !== 'default' ? `:${lead.instanceKey}` : ''}`,
     priority: lead.priority,
+    // External captures enter the core ledger unqualified (founder decision):
+    // the core mirror derives status=unqualified from this enquiry.
+    qualified: false,
   });
   if (created.status !== 201) {
     throw new Error(`enquiry intake rejected the lead: ${(created.body as any)?.error ?? created.status}`);
@@ -100,6 +104,24 @@ function routeEstimate(estimate: CanonicalEstimate): { ref: string; linked: bool
   return { ref, linked: false };
 }
 
+async function routeEmail(email: CanonicalEmail): Promise<{ ref: string; linked: boolean }> {
+  if (!email.externalId && !email.subject) throw new Error('email has no message id or subject');
+  const existing = await prisma.email.findFirst({
+    where: { sender: email.from || email.fromName, subject: email.subject, body: email.body },
+  }).catch(() => null);
+  if (existing) return { ref: String((existing as any).id ?? ''), linked: true };
+  const created = await prisma.email.create({
+    data: {
+      id: crypto.randomUUID(),
+      subject: email.subject.slice(0, 500),
+      sender: (email.from || email.fromName || 'unknown').slice(0, 300),
+      body: email.body,
+      processed: false,
+    },
+  });
+  return { ref: String((created as any)?.id ?? ''), linked: false };
+}
+
 export async function processIngestedRow(ctx: ProcessorContext, id: string): Promise<ProcessOutcome> {
   const row: IngestRow | null = await getRow(ctx.db, id);
   if (!row) return { ok: false, error: 'ingested row not found' };
@@ -116,20 +138,24 @@ export async function processIngestedRow(ctx: ProcessorContext, id: string): Pro
     instanceKey: row.instanceKey,
     receivedAt: row.receivedAt,
   });
-  const normalized = JSON.stringify({
-    canonical: mapped.lead ?? mapped.estimate ?? mapped.message ?? null,
-    warnings: mapped.warnings,
-  });
+  const canonical = mapped.lead ?? mapped.estimate ?? mapped.message ?? mapped.email ?? null;
+  const normalized = JSON.stringify({ canonical, warnings: mapped.warnings });
 
   try {
-    const canonical = mapped.lead ?? mapped.estimate ?? mapped.message;
     if (!canonical) {
       // Delivery-status callbacks and provider pings: staged + acknowledged.
       await markProcessed(ctx.db, id, normalized, '');
       return { ok: true };
     }
+    const base = String(row.source).split(':')[0];
+    const sink = getProviderManifest(base)?.inbound.targetSink;
+    if (sink === 'raw_store_only') {
+      await markProcessed(ctx.db, id, normalized, '');
+      return { ok: true };
+    }
     const routed =
-      canonical.kind === 'lead' ? await routeLead(ctx, canonical)
+      canonical.kind === 'email' ? await routeEmail(canonical)
+      : canonical.kind === 'lead' ? await routeLead(ctx, canonical)
       : canonical.kind === 'message' ? await routeMessage(canonical)
       : routeEstimate(canonical);
     await markProcessed(ctx.db, id, normalized, routed.ref);

@@ -35,39 +35,65 @@ export interface VerificationSpec {
   kind: VerificationKind;
   header?: string;
   algorithm?: 'sha256' | 'sha1';
+  encoding?: 'hex' | 'base64';
+  prefix?: string;
   secretField?: string;
   configField?: string;
   field?: string;
+  optionalIfSecretUnset?: boolean;
+  optionalIfConfigUnset?: boolean;
+  /** Header name is read from this config field (custom providers). */
+  headerNameFromConfig?: string;
+}
+
+export interface ChallengeSpec {
+  modeParam: string;
+  expectedMode: string;
+  tokenParam: string;
+  challengeParam: string;
 }
 
 export interface IdempotencySpec {
   mode: 'path' | 'composite' | 'config_path';
   path?: string;
+  paths?: string[];
+  fallbacks?: string[];
   parts?: string[];
   prefixes?: string[];
   configField?: string;
 }
 
-export interface PollSpec { supported: boolean; configPath?: string; cursorField?: string }
+export interface PollSpec {
+  supported: boolean;
+  intervalMinutes?: number;
+  cursorField?: string;
+}
 
 export interface InboundSpec {
   supported: boolean;
+  transport?: string;
   methods?: string[];
   defaultDeliveryMode?: DeliveryMode;
+  allowedDeliveryModes?: DeliveryMode[];
   quietHoursIst?: [number, number];
   liveEvent?: string;
-  challengeGet?: boolean;
+  challengeGet?: ChallengeSpec;
   normalizeQueryToBodyOnGet?: boolean;
   verification?: VerificationSpec;
   idempotencyKey?: IdempotencySpec;
   fieldMap?: Record<string, string>;
   labelAliases?: Record<string, string>;
+  mapper?: string;
+  canonicalType?: string;
+  targetSink?: string;
   poll?: PollSpec;
 }
 
 export interface OutboundSpec {
   supported: boolean;
+  adapter?: string;
   defaultDeliveryMode?: DeliveryMode;
+  capabilities?: string[];
   operations?: string[];
 }
 

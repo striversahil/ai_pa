@@ -74,9 +74,10 @@ export async function claimBatch(
   const conds = ['(("status" = \'pending\') OR ("status" = \'processing\' AND "receivedAt" < ?))'];
   const binds: unknown[] = [staleBefore];
   const quiet = quietSourcesNow();
-  if (quiet.length) {
-    conds.push(`"source" NOT IN (${quiet.map(() => '?').join(',')})`);
-    binds.push(...quiet);
+  for (const provider of quiet) {
+    // Instance rows are staged as provider:key; quiet hours apply to both.
+    conds.push('("source" != ? AND "source" NOT LIKE ?)');
+    binds.push(provider, `${provider}:%`);
   }
   if (opts.source) { conds.push('"source" = ?'); binds.push(opts.source); }
   if (opts.mode) { conds.push('"deliveryMode" = ?'); binds.push(opts.mode); }

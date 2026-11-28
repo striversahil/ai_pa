@@ -17,11 +17,12 @@ export function headerValue(headers: Record<string, string> | undefined, name: s
   return '';
 }
 
-/** `messages.0.id` / `entry.0.changes.0.value` — arrays and objects alike. */
+/** `messages.0.id` and `entry[0].changes[0].value` — arrays and objects alike. */
 export function getPath(root: unknown, path: string): unknown {
   if (!path) return undefined;
   let cur: any = root;
-  for (const part of path.split('.')) {
+  const parts = path.replace(/\[(\d+)\]/g, '.$1').split('.').filter(Boolean);
+  for (const part of parts) {
     if (cur === null || cur === undefined) return undefined;
     cur = Array.isArray(cur) && /^\d+$/.test(part) ? cur[Number(part)] : cur[part];
   }
@@ -233,19 +234,33 @@ export async function verifyInbound(
   const secrets = input.secrets || {};
 
   if (spec.kind === 'hmac') {
-    const secret = String(secrets[spec.secretField || 'webhookSecret'] || secrets.webhookSecret || '');
-    if (!secret) return { ok: false, reason: 'webhook secret is not configured' };
-    const header = headerValue(headers, spec.header || 'x-ingest-signature');
-    if (!header) return { ok: false, reason: `missing ${spec.header || 'signature'} header` };
-    const ok = await verifyWebhookSignature(input.raw, [header], secret);
+    const secret = String(
+      (spec.secretField ? secrets[spec.secretField] : '') ||
+        (spec.configField ? cfg[spec.configField] : '') ||
+        secrets.webhookSecret || '',
+    );
+    if (!secret) {
+      return spec.optionalIfSecretUnset ? { ok: true } : { ok: false, reason: 'webhook secret is not configured' };
+    }
+    const headerName = spec.headerNameFromConfig
+      ? String(cfg[spec.headerNameFromConfig] || '')
+      : (spec.header || 'x-ingest-signature');
+    const header = headerValue(headers, headerName);
+    if (!header) {
+      return spec.optionalIfSecretUnset ? { ok: true } : { ok: false, reason: `missing ${headerName} header` };
+    }
+    const candidate = spec.prefix && header.startsWith(spec.prefix) ? header.slice(spec.prefix.length) : header;
+    const ok = await verifyWebhookSignature(input.raw, [candidate], secret);
     return ok ? { ok: true } : { ok: false, reason: 'signature mismatch' };
   }
 
   if (spec.kind === 'field_match') {
     const field = spec.field || 'id';
     const expected = String(cfg[spec.configField || ''] ?? '');
+    if (!expected && spec.optionalIfConfigUnset) return { ok: true };
     const got = String(getPath(input.payload, field) ?? input.payload[field] ?? '');
     if (expected && got && got !== expected) return { ok: false, reason: `field ${field} does not match the instance` };
+    if (expected && !got) return { ok: false, reason: `missing field ${field}` };
     return { ok: true };
   }
 
@@ -269,30 +284,41 @@ export function extractIdempotencyKey(
 ): string | null {
   const spec = idempotencyFor(provider);
   if (!spec) return extractExternalEventId(provider, payload);
-  if (spec.mode === 'path' && spec.path) {
-    const value = getPath(payload, spec.path);
-    if (value !== undefined && value !== null && String(value).trim()) return String(value).trim();
+
+  const read = (path?: string): string => {
+    if (!path) return '';
+    const value = getPath(payload, path);
+    return value !== undefined && value !== null && String(value).trim() ? String(value).trim() : '';
+  };
+  const candidatePaths = [...(spec.paths || []), spec.path].filter((p): p is string => !!p);
+  if (spec.mode !== 'composite') {
+    for (const path of candidatePaths) {
+      const value = read(path);
+      if (value) return value;
+    }
   }
   if (spec.mode === 'config_path') {
     const field = String(config[spec.configField || 'idempotencyField'] || '');
-    if (field) {
-      const value = getPath(payload, field);
-      if (value !== undefined && value !== null && String(value).trim()) return String(value).trim();
-    }
+    const value = read(field);
+    if (value) return value;
   }
-  const parts = spec.parts || [];
+  const parts = spec.mode === 'composite' ? (spec.parts || spec.paths || []) : (spec.parts || []);
   const values = parts
     .map((part) => {
-      const direct = getPath(payload, part);
-      if (direct !== undefined && direct !== null && String(direct).trim()) return String(direct).trim();
+      const direct = read(part);
+      if (direct) return direct;
       for (const prefix of spec.prefixes || []) {
-        const nested = getPath(payload, `${prefix}${part}`);
-        if (nested !== undefined && nested !== null && String(nested).trim()) return String(nested).trim();
+        const nested = read(`${prefix}${part}`);
+        if (nested) return nested;
       }
       return '';
     })
     .filter(Boolean);
   if (values.length) return values.join(':');
+  for (const path of spec.fallbacks || []) {
+    const value = read(path);
+    if (value) return value;
+  }
   return extractExternalEventId(provider, payload);
 }
 

@@ -1,74 +1,85 @@
 {
   "$schema": "https://json-schema.org/draft-07/schema#",
   "version": "2.0.0",
-  "description": "Founder OS integration manifest: outbound adapters, inbound webhook/poller rules, dual-mode routing and Settings UI.",
+  "description": "Master manifest for Founder OS outbound call(provider, opts) adapters, inbound hlp_ingested_data ingestion rules, dual-mode (realtime/batch) routing, and dynamic Settings UI.",
   "defaults": {
     "webhookRoutePattern": "/api/webhooks/{provider}/{instanceKey}",
     "defaultInstanceKey": "default",
     "maxRetriesBeforeDeadLetter": 3,
-    "batchClaimSize": 50,
-    "quietHoursIst": [
-      21,
-      9
-    ]
-  },
-  "categories": {
-    "ai": "AI",
-    "accounting": "Accounting",
-    "b2b_portal": "B2B portals",
-    "social": "Social & messaging",
-    "forms": "Forms",
-    "email": "Email",
-    "geo_enrichment": "Geo enrichment",
-    "search_enrichment": "Search enrichment",
-    "telecalling": "Telecalling",
-    "custom": "Custom"
+    "batchClaimSize": 50
   },
   "providers": {
     "openai": {
-      "label": "OpenAI-compatible AI",
+      "label": "OpenAI-Compatible AI Provider",
       "category": "ai",
       "direction": "outbound",
       "multiInstance": true,
-      "instanceRequired": false,
-      "description": "Multi-instance, multi-vendor key rotation with fallback to the global Setting ai:providers pool.",
-      "configFields": [
-        {
-          "key": "baseUrl",
-          "label": "Base URL",
-          "type": "text",
-          "placeholder": "https://api.openai.com/v1"
-        },
-        {
-          "key": "model",
-          "label": "Model",
-          "type": "text",
-          "placeholder": "gpt-4o-mini"
-        },
-        {
-          "key": "fallbackToGlobalPool",
-          "label": "Fall back to global pool",
-          "type": "boolean",
-          "defaultValue": true
-        }
-      ],
-      "secretFields": [
-        {
-          "key": "apiKeys",
-          "label": "API keys (comma separated)",
-          "type": "textarea",
-          "hint": "Rotated in order."
-        }
-      ],
+      "description": "Configure multiple OpenAI-compatible providers (OpenAI, Groq, OpenRouter, DeepSeek, Together, Fireworks, Ollama) with separate base URLs, API keys, and models.",
+      "auth": {
+        "strategy": "openai_compatible_multi_instance",
+        "fallbackPoolSetting": "ai:providers",
+        "defaultBaseUrl": "https://api.openai.com/v1",
+        "configFields": [
+          {
+            "key": "providerVendor",
+            "label": "Vendor Preset",
+            "type": "select",
+            "options": [
+              "openai",
+              "groq",
+              "openrouter",
+              "deepseek",
+              "together",
+              "fireworks",
+              "ollama",
+              "custom_openai"
+            ],
+            "default": "openai",
+            "required": true
+          },
+          {
+            "key": "baseUrl",
+            "label": "OpenAI-Compatible Base URL",
+            "type": "text",
+            "placeholder": "https://api.groq.com/openai/v1",
+            "required": true
+          },
+          {
+            "key": "model",
+            "label": "Default Model ID",
+            "type": "text",
+            "placeholder": "gpt-4o-mini / llama-3.3-70b-versatile / deepseek-chat",
+            "required": true
+          },
+          {
+            "key": "fallbackToGlobalPool",
+            "label": "Failover to Global ai:providers Pool on Error",
+            "type": "boolean",
+            "default": true,
+            "required": false
+          }
+        ],
+        "secretFields": [
+          {
+            "key": "apiKeys",
+            "label": "API Key(s) (comma-separated for automatic rotation)",
+            "required": true
+          }
+        ]
+      },
       "outbound": {
         "supported": true,
-        "defaultDeliveryMode": "realtime",
-        "operations": [
-          "complete",
-          "completeJson",
-          "completeJsonStream",
-          "embed"
-        ]
+        "adapter": "openai",
+        "capabilities": [
+          "chat.complete",
+          "chat.completeJson",
+          "chat.completeJsonStream",
+          "embeddings.create"
+        ],
+        "headersInjected": {
+          "Authorization": "Bearer {{activeApiKey}}",
+          "Content-Type": "application/json"
+        }
       },
       "inbound": {
         "supported": false
@@ -77,363 +88,1150 @@
     "zoho": {
       "label": "Zoho Books",
       "category": "accounting",
-      "direction": "both",
+      "direction": "bidirectional",
       "multiInstance": true,
-      "instanceRequired": true,
-      "description": "OAuth2 refresh (cached as zoho:<instanceKey>) or a raw curl-headers bridge for the legacy sent_estimates token.",
-      "configFields": [
-        {
-          "key": "authMode",
-          "label": "Auth mode",
-          "type": "select",
-          "options": [
-            "oauth2",
-            "raw_headers_bridge"
-          ],
-          "required": true,
-          "defaultValue": "oauth2"
-        },
-        {
-          "key": "organizationId",
-          "label": "Organization ID",
-          "type": "text",
-          "requiredWhen": {
-            "field": "authMode",
-            "equals": "oauth2"
-          }
-        },
-        {
-          "key": "accountsUrl",
-          "label": "Accounts URL",
-          "type": "text",
-          "placeholder": "https://accounts.zoho.in"
-        },
-        {
-          "key": "apiDomain",
-          "label": "API domain",
-          "type": "text",
-          "placeholder": "https://www.zohoapis.in"
-        }
-      ],
-      "secretFields": [
-        {
-          "key": "clientId",
-          "label": "Client ID",
-          "type": "text",
-          "requiredWhen": {
-            "field": "authMode",
-            "equals": "oauth2"
-          }
-        },
-        {
-          "key": "clientSecret",
-          "label": "Client secret",
-          "type": "text",
-          "requiredWhen": {
-            "field": "authMode",
-            "equals": "oauth2"
-          }
-        },
-        {
-          "key": "refreshToken",
-          "label": "Refresh token",
-          "type": "text",
-          "requiredWhen": {
-            "field": "authMode",
-            "equals": "oauth2"
-          }
-        },
-        {
-          "key": "rawCurlHeaders",
-          "label": "Raw curl headers",
-          "type": "textarea",
-          "requiredWhen": {
-            "field": "authMode",
-            "equals": "raw_headers_bridge"
+      "description": "Syncs sent estimates, sales orders, customer statements, and comments.",
+      "auth": {
+        "strategy": "oauth2_or_raw_headers",
+        "tokenCachePrefix": "zoho",
+        "defaultBaseUrl": "https://www.zohoapis.in/books/v3",
+        "accountsUrl": "https://accounts.zoho.in/oauth/v2/token",
+        "configFields": [
+          {
+            "key": "authMode",
+            "label": "Auth Mode",
+            "type": "select",
+            "options": [
+              "oauth2",
+              "raw_headers_bridge"
+            ],
+            "default": "oauth2",
+            "required": true
           },
-          "hint": "Paste the -H lines from sent_estimates.txt."
-        },
-        {
-          "key": "webhookSecret",
-          "label": "Webhook token",
-          "type": "text"
-        }
-      ],
+          {
+            "key": "organizationId",
+            "label": "Organization ID",
+            "type": "text",
+            "required": true
+          },
+          {
+            "key": "apiDomain",
+            "label": "API Domain",
+            "type": "text",
+            "default": "https://www.zohoapis.in/books/v3",
+            "required": false
+          }
+        ],
+        "secretFields": [
+          {
+            "key": "clientId",
+            "label": "OAuth Client ID",
+            "requiredWhen": {
+              "authMode": "oauth2"
+            }
+          },
+          {
+            "key": "clientSecret",
+            "label": "OAuth Client Secret",
+            "requiredWhen": {
+              "authMode": "oauth2"
+            }
+          },
+          {
+            "key": "refreshToken",
+            "label": "OAuth Refresh Token",
+            "requiredWhen": {
+              "authMode": "oauth2"
+            }
+          },
+          {
+            "key": "rawCurlHeaders",
+            "label": "Legacy cURL Headers JSON (Bridge)",
+            "requiredWhen": {
+              "authMode": "raw_headers_bridge"
+            }
+          }
+        ]
+      },
       "outbound": {
         "supported": true,
-        "operations": [
-          "request",
-          "getSentEstimates",
-          "getEstimate",
-          "getComments",
-          "ping"
+        "adapter": "zoho",
+        "capabilities": [
+          "estimates.list",
+          "estimates.get",
+          "estimates.comments",
+          "salesorders.list",
+          "salesorders.get",
+          "contacts.statement"
+        ],
+        "headersInjected": {
+          "Authorization": "Zoho-oauthtoken {{accessToken}}",
+          "X-com-zoho-books-organizationid": "{{config.organizationId}}"
+        },
+        "retryPolicy": {
+          "retryOnStatus": [
+            401,
+            429,
+            500,
+            502,
+            503
+          ],
+          "refreshTokenOn401": true
+        }
+      },
+      "inbound": {
+        "supported": true,
+        "transport": "webhook_post",
+        "defaultDeliveryMode": "batch",
+        "allowedDeliveryModes": [
+          "realtime",
+          "batch"
+        ],
+        "verification": {
+          "type": "optional_header_token",
+          "headerName": "X-Zoho-Webhook-Token",
+          "secretKey": "webhookToken"
+        },
+        "idempotencyKey": {
+          "strategy": "composite",
+          "paths": [
+            "estimate.estimate_id",
+            "estimate.last_modified_time"
+          ],
+          "fallbackPaths": [
+            "salesorder.salesorder_id",
+            "salesorder.last_modified_time"
+          ]
+        },
+        "mapper": "zoho-estimate",
+        "canonicalType": "CanonicalEstimate",
+        "targetSink": "estimates",
+        "liveEvent": "estimates",
+        "quietHoursIst": {
+          "enabled": true,
+          "pauseStart": "21:00",
+          "pauseEnd": "09:00"
+        }
+      }
+    },
+    "indiamart": {
+      "label": "IndiaMART Lead Manager",
+      "category": "b2b_portal",
+      "direction": "inbound",
+      "multiInstance": true,
+      "description": "Ingests buyer enquiries via IndiaMART CRM Push Webhook or Pull API v2.",
+      "auth": {
+        "strategy": "api_key",
+        "defaultBaseUrl": "https://mapi.indiamart.com/wservce/crm/crmListing/v2/",
+        "configFields": [],
+        "secretFields": []
+      },
+      "outbound": {
+        "supported": false
+      },
+      "inbound": {
+        "supported": true,
+        "transport": "webhook_post",
+        "defaultDeliveryMode": "realtime",
+        "allowedDeliveryModes": [
+          "realtime",
+          "batch"
+        ],
+        "idempotencyKey": {
+          "strategy": "path",
+          "paths": [
+            "RESPONSE.UNIQUE_QUERY_ID",
+            "UNIQUE_QUERY_ID"
+          ]
+        },
+        "mapper": "b2b-portals",
+        "canonicalType": "CanonicalLead",
+        "fieldMap": {
+          "externalId": "RESPONSE.UNIQUE_QUERY_ID",
+          "contactName": "RESPONSE.SENDER_NAME",
+          "companyName": "RESPONSE.SENDER_COMPANY",
+          "phone": "RESPONSE.SENDER_MOBILE",
+          "email": "RESPONSE.SENDER_EMAIL",
+          "city": "RESPONSE.SENDER_CITY",
+          "productInterest": "RESPONSE.QUERY_PRODUCT_NAME",
+          "rawNotes": "RESPONSE.QUERY_MESSAGE",
+          "receivedAt": "RESPONSE.QUERY_TIME"
+        },
+        "targetSink": "core_lead",
+        "liveEvent": "enquiries"
+      }
+    },
+    "tradeindia": {
+      "label": "TradeIndia B2B Portal",
+      "category": "b2b_portal",
+      "direction": "inbound",
+      "multiInstance": true,
+      "description": "Receives TradeIndia buyer RFQs through the signed inbound webhook and stages them in hlp_ingested_data.",
+      "auth": {
+        "strategy": "query_credentials",
+        "defaultBaseUrl": "https://www.tradeindia.com/utils/my_inquiry.html",
+        "configFields": [
+          {
+            "key": "userId",
+            "label": "TradeIndia User ID",
+            "type": "text",
+            "required": true
+          },
+          {
+            "key": "profileId",
+            "label": "TradeIndia Profile ID",
+            "type": "text",
+            "required": true
+          }
+        ],
+        "secretFields": [
+          {
+            "key": "apiKey",
+            "label": "TradeIndia API Key",
+            "required": true
+          }
+        ]
+      },
+      "outbound": {
+        "supported": true,
+        "adapter": "custom-http"
+      },
+      "inbound": {
+        "supported": true,
+        "transport": "webhook_post",
+        "defaultDeliveryMode": "batch",
+        "allowedDeliveryModes": [
+          "realtime",
+          "batch"
+        ],
+        "idempotencyKey": {
+          "strategy": "path",
+          "paths": [
+            "rfi_id",
+            "inquiry_id"
+          ]
+        },
+        "mapper": "b2b-portals",
+        "canonicalType": "CanonicalLead",
+        "fieldMap": {
+          "externalId": "rfi_id",
+          "contactName": "sender_name",
+          "companyName": "sender_co",
+          "phone": "sender_mobile",
+          "email": "sender_email",
+          "city": "sender_city",
+          "productInterest": "product_name",
+          "quantity": "quantity",
+          "rawNotes": "message",
+          "receivedAt": "generated_date"
+        },
+        "targetSink": "core_lead",
+        "liveEvent": "enquiries",
+        "quietHoursIst": {
+          "enabled": true,
+          "pauseStart": "21:00",
+          "pauseEnd": "09:00"
+        }
+      }
+    },
+    "justdial": {
+      "label": "Justdial B2B Leads",
+      "category": "b2b_portal",
+      "direction": "inbound",
+      "multiInstance": true,
+      "description": "Captures real-time Justdial leads pushed via HTTP GET query parameters or POST.",
+      "auth": {
+        "strategy": "payload_guard",
+        "configFields": [
+          {
+            "key": "expectedParentId",
+            "label": "Justdial Parent ID (Spoof Guard)",
+            "type": "text",
+            "required": false
+          }
+        ],
+        "secretFields": []
+      },
+      "outbound": {
+        "supported": false
+      },
+      "inbound": {
+        "supported": true,
+        "transport": "webhook_get_or_post",
+        "normalizeQueryToBodyOnGet": true,
+        "defaultDeliveryMode": "realtime",
+        "allowedDeliveryModes": [
+          "realtime",
+          "batch"
+        ],
+        "verification": {
+          "type": "field_match",
+          "payloadPath": "parentid",
+          "configKey": "expectedParentId",
+          "optionalIfConfigUnset": true
+        },
+        "idempotencyKey": {
+          "strategy": "path",
+          "paths": [
+            "leadid"
+          ]
+        },
+        "mapper": "b2b-portals",
+        "canonicalType": "CanonicalLead",
+        "fieldMap": {
+          "externalId": "leadid",
+          "contactName": "name",
+          "companyName": "company",
+          "phone": "mobile",
+          "email": "email",
+          "city": "city",
+          "productInterest": "category",
+          "rawNotes": "remarks",
+          "receivedAt": "date"
+        },
+        "targetSink": "core_lead",
+        "liveEvent": "enquiries"
+      }
+    },
+    "exportersindia": {
+      "label": "ExportersIndia B2B Portal",
+      "category": "b2b_portal",
+      "direction": "inbound",
+      "multiInstance": true,
+      "description": "Pulls or receives pushed buyer enquiries from ExportersIndia Inquiry API.",
+      "auth": {
+        "strategy": "api_key",
+        "defaultBaseUrl": "https://www.exportersindia.com/api/inquiry.php",
+        "configFields": [
+          {
+            "key": "registeredEmail",
+            "label": "Registered Member Email",
+            "type": "text",
+            "required": true
+          }
+        ],
+        "secretFields": [
+          {
+            "key": "apiKey",
+            "label": "ExportersIndia Inquiry API Key",
+            "required": true
+          }
+        ]
+      },
+      "outbound": {
+        "supported": true,
+        "adapter": "custom-http"
+      },
+      "inbound": {
+        "supported": true,
+        "transport": "webhook_post",
+        "defaultDeliveryMode": "batch",
+        "allowedDeliveryModes": [
+          "realtime",
+          "batch"
+        ],
+        "idempotencyKey": {
+          "strategy": "path",
+          "paths": [
+            "inquiry_id",
+            "id"
+          ]
+        },
+        "mapper": "b2b-portals",
+        "canonicalType": "CanonicalLead",
+        "fieldMap": {
+          "externalId": "inquiry_id",
+          "contactName": "name",
+          "companyName": "company",
+          "phone": "mobile",
+          "email": "email",
+          "city": "city",
+          "productInterest": "subject",
+          "rawNotes": "message"
+        },
+        "targetSink": "core_lead",
+        "liveEvent": "enquiries"
+      }
+    },
+    "alibaba": {
+      "label": "Alibaba.com Seller / RFQ",
+      "category": "b2b_portal",
+      "direction": "inbound",
+      "multiInstance": true,
+      "description": "Ingests export buyer RFQs and TradeManager messages from Alibaba.com.",
+      "auth": {
+        "strategy": "oauth2",
+        "tokenCachePrefix": "alibaba",
+        "defaultBaseUrl": "https://openapi.alibaba.com/api",
+        "configFields": [
+          {
+            "key": "sellerMemberId",
+            "label": "Alibaba Member ID",
+            "type": "text",
+            "required": true
+          }
+        ],
+        "secretFields": [
+          {
+            "key": "appKey",
+            "label": "App Key",
+            "required": true
+          },
+          {
+            "key": "appSecret",
+            "label": "App Secret",
+            "required": true
+          },
+          {
+            "key": "accessToken",
+            "label": "Access Token",
+            "required": true
+          }
+        ]
+      },
+      "outbound": {
+        "supported": true,
+        "adapter": "custom-http",
+        "capabilities": [
+          "rfq.list",
+          "inquiries.list"
         ]
       },
       "inbound": {
         "supported": true,
-        "methods": [
-          "POST"
-        ],
+        "transport": "webhook_post",
         "defaultDeliveryMode": "batch",
-        "liveEvent": "enquiries",
-        "verification": {
-          "kind": "optional_header_token",
-          "header": "X-Zoho-Webhook-Token",
-          "secretField": "webhookSecret"
-        },
+        "allowedDeliveryModes": [
+          "realtime",
+          "batch"
+        ],
         "idempotencyKey": {
-          "mode": "composite",
-          "parts": [
-            "estimate_id",
-            "last_modified_time"
-          ],
-          "prefixes": [
-            "estimate.",
-            "payload."
+          "strategy": "path",
+          "paths": [
+            "inquiry_id",
+            "rfq_id",
+            "message_id"
           ]
         },
+        "mapper": "b2b-portals",
+        "canonicalType": "CanonicalLead",
         "fieldMap": {
-          "externalId": "estimate_id",
-          "estimateNumber": "estimate_number",
-          "customerName": "customer_name",
-          "phone": "billing_address.phone",
-          "email": "billing_address.email",
-          "amount": "total"
-        }
+          "externalId": "inquiry_id",
+          "contactName": "buyer_name",
+          "companyName": "buyer_company",
+          "phone": "buyer_phone",
+          "email": "buyer_email",
+          "city": "buyer_country",
+          "productInterest": "product_title",
+          "quantity": "quantity",
+          "rawNotes": "content"
+        },
+        "targetSink": "core_lead",
+        "liveEvent": "enquiries"
       }
     },
     "whatsapp": {
-      "label": "WhatsApp Cloud",
+      "label": "Meta WhatsApp Cloud API",
       "category": "social",
-      "direction": "both",
+      "direction": "bidirectional",
       "multiInstance": true,
-      "instanceRequired": true,
-      "description": "Meta Cloud API messages + statuses. Verification handshake and X-Hub-Signature-256.",
-      "configFields": [
-        {
-          "key": "phoneNumberId",
-          "label": "Phone number ID",
-          "type": "text",
-          "required": true
-        },
-        {
-          "key": "apiVersion",
-          "label": "Graph version",
-          "type": "text",
-          "defaultValue": "v21.0"
-        },
-        {
-          "key": "businessId",
-          "label": "Business account ID",
-          "type": "text"
-        },
-        {
-          "key": "verifyToken",
-          "label": "Webhook verify token",
-          "type": "text",
-          "required": true
-        }
-      ],
-      "secretFields": [
-        {
-          "key": "accessToken",
-          "label": "Access token",
-          "type": "text",
-          "required": true
-        },
-        {
-          "key": "appSecret",
-          "label": "App secret",
-          "type": "text",
-          "required": true
-        }
-      ],
+      "description": "Real-time WhatsApp customer chats, template dispatches, and lead capture via Graph API v27.0.",
+      "auth": {
+        "strategy": "bearer_token",
+        "defaultBaseUrl": "https://graph.facebook.com/v27.0",
+        "configFields": [
+          {
+            "key": "phoneNumberId",
+            "label": "Phone Number ID",
+            "type": "text",
+            "required": true
+          },
+          {
+            "key": "wabaId",
+            "label": "WhatsApp Business Account ID",
+            "type": "text",
+            "required": true
+          },
+          {
+            "key": "verifyToken",
+            "label": "Webhook Verify Token",
+            "type": "text",
+            "required": true
+          }
+        ],
+        "secretFields": [
+          {
+            "key": "accessToken",
+            "label": "Permanent System User Access Token",
+            "required": true
+          },
+          {
+            "key": "appSecret",
+            "label": "Meta App Secret",
+            "required": true
+          }
+        ]
+      },
       "outbound": {
         "supported": true,
-        "operations": [
-          "sendText",
-          "sendTemplate",
-          "ping"
+        "adapter": "whatsapp",
+        "capabilities": [
+          "messages.sendText",
+          "messages.sendTemplate",
+          "messages.sendMedia"
+        ],
+        "headersInjected": {
+          "Authorization": "Bearer {{secrets.accessToken}}",
+          "Content-Type": "application/json"
+        }
+      },
+      "inbound": {
+        "supported": true,
+        "transport": "webhook_get_and_post",
+        "defaultDeliveryMode": "realtime",
+        "allowedDeliveryModes": [
+          "realtime",
+          "batch"
+        ],
+        "verification": {
+          "challengeGet": {
+            "modeParam": "hub.mode",
+            "expectedMode": "subscribe",
+            "tokenParam": "hub.verify_token",
+            "challengeParam": "hub.challenge"
+          },
+          "signaturePost": {
+            "algorithm": "hmac-sha256",
+            "headerName": "X-Hub-Signature-256",
+            "prefix": "sha256=",
+            "encoding": "hex",
+            "secretKey": "appSecret"
+          }
+        },
+        "idempotencyKey": {
+          "strategy": "path",
+          "paths": [
+            "entry[0].changes[0].value.messages[0].id",
+            "entry[0].changes[0].value.statuses[0].id"
+          ]
+        },
+        "mapper": "social-meta",
+        "canonicalType": "CanonicalMessage",
+        "targetSink": "whatsapp_messages",
+        "liveEvent": "messages"
+      }
+    },
+    "facebook": {
+      "label": "Facebook Pages & Lead Ads",
+      "category": "social",
+      "direction": "bidirectional",
+      "multiInstance": true,
+      "description": "Ingests Facebook Lead Ads (leadgen) and Page Messenger enquiries in real time.",
+      "auth": {
+        "strategy": "bearer_token",
+        "defaultBaseUrl": "https://graph.facebook.com/v27.0",
+        "configFields": [
+          {
+            "key": "pageId",
+            "label": "Facebook Page ID",
+            "type": "text",
+            "required": true
+          },
+          {
+            "key": "verifyToken",
+            "label": "Webhook Verify Token",
+            "type": "text",
+            "required": true
+          }
+        ],
+        "secretFields": [
+          {
+            "key": "pageAccessToken",
+            "label": "Page Access Token",
+            "required": true
+          },
+          {
+            "key": "appSecret",
+            "label": "Meta App Secret",
+            "required": true
+          }
+        ]
+      },
+      "outbound": {
+        "supported": true,
+        "adapter": "custom-http",
+        "capabilities": [
+          "messenger.sendText",
+          "leadgen.fetchDetails"
+        ],
+        "headersInjected": {
+          "Authorization": "Bearer {{secrets.pageAccessToken}}"
+        }
+      },
+      "inbound": {
+        "supported": true,
+        "transport": "webhook_get_and_post",
+        "defaultDeliveryMode": "realtime",
+        "allowedDeliveryModes": [
+          "realtime",
+          "batch"
+        ],
+        "verification": {
+          "challengeGet": {
+            "modeParam": "hub.mode",
+            "expectedMode": "subscribe",
+            "tokenParam": "hub.verify_token",
+            "challengeParam": "hub.challenge"
+          },
+          "signaturePost": {
+            "algorithm": "hmac-sha256",
+            "headerName": "X-Hub-Signature-256",
+            "prefix": "sha256=",
+            "encoding": "hex",
+            "secretKey": "appSecret"
+          }
+        },
+        "idempotencyKey": {
+          "strategy": "path",
+          "paths": [
+            "entry[0].changes[0].value.leadgen_id",
+            "entry[0].messaging[0].message.mid"
+          ]
+        },
+        "mapper": "social-meta",
+        "canonicalType": "CanonicalLead",
+        "targetSink": "core_lead",
+        "liveEvent": "enquiries"
+      }
+    },
+    "instagram": {
+      "label": "Instagram Business Messaging",
+      "category": "social",
+      "direction": "bidirectional",
+      "multiInstance": true,
+      "description": "Captures Instagram DMs, Story replies, and comment enquiries into CRM leads.",
+      "auth": {
+        "strategy": "bearer_token",
+        "defaultBaseUrl": "https://graph.facebook.com/v27.0",
+        "configFields": [
+          {
+            "key": "igBusinessAccountId",
+            "label": "Instagram Business Account ID",
+            "type": "text",
+            "required": true
+          },
+          {
+            "key": "verifyToken",
+            "label": "Webhook Verify Token",
+            "type": "text",
+            "required": true
+          }
+        ],
+        "secretFields": [
+          {
+            "key": "accessToken",
+            "label": "Instagram Graph Access Token",
+            "required": true
+          },
+          {
+            "key": "appSecret",
+            "label": "Meta App Secret",
+            "required": true
+          }
+        ]
+      },
+      "outbound": {
+        "supported": true,
+        "adapter": "custom-http",
+        "capabilities": [
+          "dm.sendText",
+          "comments.reply"
+        ],
+        "headersInjected": {
+          "Authorization": "Bearer {{secrets.accessToken}}"
+        }
+      },
+      "inbound": {
+        "supported": true,
+        "transport": "webhook_get_and_post",
+        "defaultDeliveryMode": "realtime",
+        "allowedDeliveryModes": [
+          "realtime",
+          "batch"
+        ],
+        "verification": {
+          "challengeGet": {
+            "modeParam": "hub.mode",
+            "expectedMode": "subscribe",
+            "tokenParam": "hub.verify_token",
+            "challengeParam": "hub.challenge"
+          },
+          "signaturePost": {
+            "algorithm": "hmac-sha256",
+            "headerName": "X-Hub-Signature-256",
+            "prefix": "sha256=",
+            "encoding": "hex",
+            "secretKey": "appSecret"
+          }
+        },
+        "idempotencyKey": {
+          "strategy": "path",
+          "paths": [
+            "entry[0].messaging[0].message.mid",
+            "entry[0].changes[0].value.id"
+          ]
+        },
+        "mapper": "social-meta",
+        "canonicalType": "CanonicalLead",
+        "targetSink": "core_lead",
+        "liveEvent": "enquiries"
+      }
+    },
+    "linkedin": {
+      "label": "LinkedIn Pages & Lead Gen Forms",
+      "category": "social",
+      "direction": "bidirectional",
+      "multiInstance": true,
+      "description": "Publishes company updates and captures LinkedIn B2B Lead Gen form submissions.",
+      "auth": {
+        "strategy": "oauth2",
+        "tokenCachePrefix": "linkedin",
+        "defaultBaseUrl": "https://api.linkedin.com/rest",
+        "configFields": [
+          {
+            "key": "organizationUrn",
+            "label": "Organization URN (urn:li:organization:...)",
+            "type": "text",
+            "required": true
+          }
+        ],
+        "secretFields": [
+          {
+            "key": "clientId",
+            "label": "LinkedIn Client ID",
+            "required": true
+          },
+          {
+            "key": "clientSecret",
+            "label": "LinkedIn Client Secret",
+            "required": true
+          },
+          {
+            "key": "accessToken",
+            "label": "Access Token",
+            "required": true
+          },
+          {
+            "key": "refreshToken",
+            "label": "Refresh Token",
+            "required": false
+          }
+        ]
+      },
+      "outbound": {
+        "supported": true,
+        "adapter": "custom-http",
+        "capabilities": [
+          "posts.create",
+          "leads.fetch"
+        ],
+        "headersInjected": {
+          "Authorization": "Bearer {{secrets.accessToken}}",
+          "LinkedIn-Version": "202605"
+        }
+      },
+      "inbound": {
+        "supported": true,
+        "transport": "webhook_post",
+        "defaultDeliveryMode": "batch",
+        "allowedDeliveryModes": [
+          "realtime",
+          "batch"
+        ],
+        "idempotencyKey": {
+          "strategy": "path",
+          "paths": [
+            "leadGenFormResponse",
+            "id"
+          ]
+        },
+        "mapper": "social-linkedin",
+        "canonicalType": "CanonicalLead",
+        "targetSink": "core_lead",
+        "liveEvent": "enquiries"
+      }
+    },
+    "telegram": {
+      "label": "Telegram Bot API",
+      "category": "social",
+      "direction": "bidirectional",
+      "multiInstance": true,
+      "description": "Instant internal dispatch alerts, approvals, and buyer enquiries via Telegram Bot.",
+      "auth": {
+        "strategy": "bot_token_path",
+        "defaultBaseUrl": "https://api.telegram.org",
+        "configFields": [
+          {
+            "key": "defaultChatId",
+            "label": "Default Group / Channel Chat ID",
+            "type": "text",
+            "required": false
+          }
+        ],
+        "secretFields": [
+          {
+            "key": "botToken",
+            "label": "Telegram Bot Token",
+            "required": true
+          },
+          {
+            "key": "webhookSecretToken",
+            "label": "X-Telegram-Bot-Api-Secret-Token",
+            "required": false
+          }
+        ]
+      },
+      "outbound": {
+        "supported": true,
+        "adapter": "custom-http",
+        "capabilities": [
+          "messages.send",
+          "documents.send"
         ]
       },
       "inbound": {
         "supported": true,
-        "methods": [
-          "GET",
-          "POST"
-        ],
+        "transport": "webhook_post",
         "defaultDeliveryMode": "realtime",
-        "liveEvent": "enquiries",
-        "challengeGet": true,
+        "allowedDeliveryModes": [
+          "realtime",
+          "batch"
+        ],
         "verification": {
-          "kind": "hmac",
-          "header": "x-hub-signature-256",
-          "algorithm": "sha256",
-          "secretField": "appSecret"
+          "type": "optional_header_token",
+          "headerName": "X-Telegram-Bot-Api-Secret-Token",
+          "secretKey": "webhookSecretToken"
         },
         "idempotencyKey": {
-          "mode": "path",
-          "path": "messages.0.id"
+          "strategy": "path",
+          "paths": [
+            "update_id"
+          ]
         },
-        "fieldMap": {
-          "phone": "contacts.0.wa_id",
-          "text": "messages.0.text.body",
-          "messageId": "messages.0.id",
-          "mediaId": "messages.0.image.id"
-        }
+        "mapper": "social-telegram",
+        "canonicalType": "CanonicalMessage",
+        "targetSink": "core_lead",
+        "liveEvent": "data-changed"
+      }
+    },
+    "tally": {
+      "label": "Tally.so Forms",
+      "category": "forms",
+      "direction": "inbound",
+      "multiInstance": true,
+      "description": "Real-time RFQ, dealer onboarding, and enquiry capture from Tally.so webhooks.",
+      "auth": {
+        "strategy": "webhook_secret",
+        "configFields": [
+          {
+            "key": "targetEntity",
+            "label": "Route Submissions To",
+            "type": "select",
+            "options": [
+              "core_lead",
+              "estimates"
+            ],
+            "default": "core_lead",
+            "required": true
+          }
+        ],
+        "secretFields": [
+          {
+            "key": "signingSecret",
+            "label": "Tally Signing Secret (Optional)",
+            "required": false
+          }
+        ]
+      },
+      "outbound": {
+        "supported": false
+      },
+      "inbound": {
+        "supported": true,
+        "transport": "webhook_post",
+        "defaultDeliveryMode": "realtime",
+        "allowedDeliveryModes": [
+          "realtime",
+          "batch"
+        ],
+        "verification": {
+          "signaturePost": {
+            "algorithm": "hmac-sha256",
+            "headerName": "Tally-Signature",
+            "encoding": "base64",
+            "secretKey": "signingSecret",
+            "optionalIfSecretUnset": true
+          }
+        },
+        "idempotencyKey": {
+          "strategy": "path",
+          "paths": [
+            "data.responseId",
+            "eventId"
+          ]
+        },
+        "mapper": "forms",
+        "canonicalType": "CanonicalLead",
+        "targetSink": "core_lead",
+        "liveEvent": "enquiries"
+      }
+    },
+    "google_forms": {
+      "label": "Google Forms",
+      "category": "forms",
+      "direction": "inbound",
+      "multiInstance": true,
+      "description": "Captures Google Form responses in real time via the Apps Script onFormSubmit webhook.",
+      "auth": {
+        "strategy": "oauth2_or_webhook_secret",
+        "defaultBaseUrl": "https://forms.googleapis.com/v1",
+        "configFields": [
+          {
+            "key": "formId",
+            "label": "Google Form ID (optional reference)",
+            "type": "text",
+            "required": false
+          }
+        ],
+        "secretFields": [
+          {
+            "key": "webhookSecret",
+            "label": "Apps Script X-Webhook-Token",
+            "required": false
+          }
+        ]
+      },
+      "outbound": {
+        "supported": true,
+        "adapter": "custom-http",
+        "capabilities": [
+          "forms.get",
+          "responses.list"
+        ]
+      },
+      "inbound": {
+        "supported": true,
+        "transport": "webhook_post",
+        "defaultDeliveryMode": "realtime",
+        "allowedDeliveryModes": [
+          "realtime",
+          "batch"
+        ],
+        "verification": {
+          "type": "optional_header_token",
+          "headerName": "X-Webhook-Token",
+          "secretKey": "webhookSecret"
+        },
+        "idempotencyKey": {
+          "strategy": "path",
+          "paths": [
+            "responseId",
+            "response_id"
+          ]
+        },
+        "mapper": "forms",
+        "canonicalType": "CanonicalLead",
+        "targetSink": "core_lead",
+        "liveEvent": "enquiries"
       }
     },
     "gmail": {
-      "label": "Gmail",
+      "label": "Gmail / Google Workspace Mail",
       "category": "email",
-      "direction": "both",
+      "direction": "bidirectional",
       "multiInstance": true,
-      "instanceRequired": true,
-      "description": "Google OAuth2 mailbox reader/sender. Tokens cached as gmail:<instanceKey>.",
-      "configFields": [
-        {
-          "key": "userId",
-          "label": "Mailbox",
-          "type": "text",
-          "defaultValue": "me"
-        },
-        {
-          "key": "pollQuery",
-          "label": "Poll query",
-          "type": "text",
-          "defaultValue": "is:unread newer_than:1d"
-        },
-        {
-          "key": "verifyToken",
-          "label": "Push verification token",
-          "type": "text"
-        }
-      ],
-      "secretFields": [
-        {
-          "key": "clientId",
-          "label": "Client ID",
-          "type": "text",
-          "required": true
-        },
-        {
-          "key": "clientSecret",
-          "label": "Client secret",
-          "type": "text",
-          "required": true
-        },
-        {
-          "key": "refreshToken",
-          "label": "Refresh token",
-          "type": "text",
-          "required": true
-        }
-      ],
+      "description": "Reads buyer RFQ emails for Brain indexing/lead extraction and sends quote follow-ups via Gmail API v1.",
+      "auth": {
+        "strategy": "oauth2",
+        "tokenCachePrefix": "gmail",
+        "defaultBaseUrl": "https://gmail.googleapis.com/gmail/v1",
+        "accountsUrl": "https://oauth2.googleapis.com/token",
+        "configFields": [
+          {
+            "key": "mailboxEmail",
+            "label": "Connected Mailbox Email",
+            "type": "text",
+            "required": true
+          },
+          {
+            "key": "labelFilter",
+            "label": "Sync Label / Query (e.g. is:unread)",
+            "type": "text",
+            "default": "in:inbox",
+            "required": false
+          }
+        ],
+        "secretFields": [
+          {
+            "key": "clientId",
+            "label": "Google OAuth Client ID",
+            "required": true
+          },
+          {
+            "key": "clientSecret",
+            "label": "Google OAuth Client Secret",
+            "required": true
+          },
+          {
+            "key": "refreshToken",
+            "label": "Google OAuth Refresh Token",
+            "required": true
+          }
+        ]
+      },
       "outbound": {
         "supported": true,
-        "operations": [
-          "listMessages",
-          "getMessage",
-          "sendMessage",
-          "createDraft"
-        ]
+        "adapter": "gmail",
+        "capabilities": [
+          "messages.list",
+          "messages.get",
+          "messages.send",
+          "drafts.create"
+        ],
+        "retryPolicy": {
+          "retryOnStatus": [
+            401,
+            429,
+            500,
+            503
+          ],
+          "refreshTokenOn401": true
+        }
       },
       "inbound": {
         "supported": true,
-        "methods": [
-          "POST"
-        ],
+        "transport": "poller_cron",
         "defaultDeliveryMode": "batch",
-        "liveEvent": "enquiries",
-        "verification": {
-          "kind": "optional_header_token",
-          "header": "X-Goog-Channel-Token",
-          "configField": "verifyToken"
-        },
+        "allowedDeliveryModes": [
+          "realtime",
+          "batch"
+        ],
         "idempotencyKey": {
-          "mode": "composite",
-          "parts": [
-            "messageId",
+          "strategy": "path",
+          "paths": [
+            "id",
+            "message.id",
             "historyId"
           ]
         },
-        "poll": {
-          "supported": true,
-          "configPath": "pollQuery"
+        "mapper": "email",
+        "canonicalType": "CanonicalEmail",
+        "targetSink": "brain_and_leads",
+        "liveEvent": "data-changed",
+        "poller": {
+          "intervalMinutes": 5,
+          "cursorField": "lastPollAt"
         }
       }
     },
     "google_maps": {
-      "label": "Google Maps",
+      "label": "Google Maps Platform (Places & Routes)",
       "category": "geo_enrichment",
       "direction": "outbound",
       "multiInstance": true,
-      "instanceRequired": true,
-      "configFields": [
-        {
-          "key": "regionCode",
-          "label": "Region code",
-          "type": "text",
-          "defaultValue": "IN"
-        },
-        {
-          "key": "languageCode",
-          "label": "Language",
-          "type": "text",
-          "defaultValue": "en"
-        }
-      ],
-      "secretFields": [
-        {
-          "key": "apiKey",
-          "label": "API key",
-          "type": "text",
-          "required": true
-        }
-      ],
+      "description": "Verifies buyer/factory addresses, coordinates, GST pin codes, and freight distances via Places API (New) & Routes API.",
+      "auth": {
+        "strategy": "api_key_header",
+        "defaultBaseUrl": "https://places.googleapis.com/v1",
+        "configFields": [
+          {
+            "key": "regionCode",
+            "label": "Default Country Bias",
+            "type": "text",
+            "default": "IN",
+            "required": true
+          },
+          {
+            "key": "defaultFieldMask",
+            "label": "Default Places FieldMask",
+            "type": "text",
+            "default": "places.id,places.displayName,places.formattedAddress,places.location,places.nationalPhoneNumber",
+            "required": true
+          }
+        ],
+        "secretFields": [
+          {
+            "key": "apiKey",
+            "label": "Google Maps Platform API Key",
+            "required": true
+          }
+        ]
+      },
       "outbound": {
         "supported": true,
-        "operations": [
-          "searchPlaces",
-          "computeRoutes"
-        ]
+        "adapter": "google-maps",
+        "capabilities": [
+          "places.searchText",
+          "places.autocomplete",
+          "places.getDetails",
+          "geocode.address",
+          "routes.computeDistance"
+        ],
+        "headersInjected": {
+          "X-Goog-Api-Key": "{{secrets.apiKey}}",
+          "X-Goog-FieldMask": "{{config.defaultFieldMask}}",
+          "Content-Type": "application/json"
+        }
       },
       "inbound": {
         "supported": false
       }
     },
     "google_search": {
-      "label": "Google Custom Search",
+      "label": "Google Search (Custom Search / SERP)",
       "category": "search_enrichment",
       "direction": "outbound",
       "multiInstance": true,
-      "instanceRequired": true,
-      "configFields": [
-        {
-          "key": "cx",
-          "label": "Search engine ID (cx)",
-          "type": "text",
-          "required": true
-        },
-        {
-          "key": "baseUrlOverride",
-          "label": "Base URL override",
-          "type": "text",
-          "placeholder": "https://www.googleapis.com/customsearch/v1"
-        }
-      ],
-      "secretFields": [
-        {
-          "key": "apiKey",
-          "label": "API key",
-          "type": "text",
-          "required": true
-        }
-      ],
+      "description": "Enriches buyer company domains, GST/CIN filings, and industrial product specs via Google Custom Search JSON API or compatible SERP endpoint.",
+      "auth": {
+        "strategy": "query_api_key",
+        "defaultBaseUrl": "https://www.googleapis.com/customsearch/v1",
+        "configFields": [
+          {
+            "key": "cx",
+            "label": "Programmable Search Engine ID (cx)",
+            "type": "text",
+            "required": true
+          },
+          {
+            "key": "baseUrlOverride",
+            "label": "Optional Custom SERP Base URL",
+            "type": "text",
+            "required": false
+          },
+          {
+            "key": "gl",
+            "label": "Country Geolocation",
+            "type": "text",
+            "default": "in",
+            "required": false
+          }
+        ],
+        "secretFields": [
+          {
+            "key": "apiKey",
+            "label": "Google Search API Key",
+            "required": true
+          }
+        ]
+      },
       "outbound": {
         "supported": true,
-        "operations": [
-          "search"
+        "adapter": "google-search",
+        "capabilities": [
+          "search.web",
+          "search.company",
+          "search.image"
         ]
       },
       "inbound": {
@@ -441,930 +1239,126 @@
       }
     },
     "custom": {
-      "label": "Custom HTTP",
+      "label": "Custom Webhook / REST API",
       "category": "custom",
-      "direction": "both",
+      "direction": "bidirectional",
       "multiInstance": true,
-      "instanceRequired": true,
-      "description": "Any REST endpoint. bearer | custom_header | basic | query_param | none auth.",
-      "configFields": [
-        {
-          "key": "baseUrl",
-          "label": "Base URL",
-          "type": "text",
-          "required": true,
-          "placeholder": "https://erp.example.com"
-        },
-        {
-          "key": "authScheme",
-          "label": "Auth scheme",
-          "type": "select",
-          "options": [
-            "bearer",
-            "custom_header",
-            "basic",
-            "query_param",
-            "none"
-          ],
-          "defaultValue": "bearer"
-        },
-        {
-          "key": "authHeaderName",
-          "label": "Auth header name",
-          "type": "text",
-          "placeholder": "Authorization"
-        },
-        {
-          "key": "authQueryParam",
-          "label": "Auth query param",
-          "type": "text",
-          "placeholder": "api_key"
-        },
-        {
-          "key": "fieldMapJson",
-          "label": "Field map (JSON)",
-          "type": "json"
-        },
-        {
-          "key": "idempotencyField",
-          "label": "Idempotency field",
-          "type": "text"
-        }
-      ],
-      "secretFields": [
-        {
-          "key": "authToken",
-          "label": "Auth token",
-          "type": "text"
-        },
-        {
-          "key": "webhookSecret",
-          "label": "Webhook secret",
-          "type": "text"
-        }
-      ],
-      "outbound": {
-        "supported": true,
-        "operations": [
-          "request",
-          "get",
-          "post",
-          "ping"
-        ]
-      },
-      "inbound": {
-        "supported": true,
-        "methods": [
-          "GET",
-          "POST"
-        ],
-        "defaultDeliveryMode": "batch",
-        "liveEvent": "enquiries",
-        "normalizeQueryToBodyOnGet": true,
-        "verification": {
-          "kind": "hmac",
-          "header": "x-ingest-signature",
-          "algorithm": "sha256",
-          "secretField": "webhookSecret"
-        },
-        "idempotencyKey": {
-          "mode": "config_path",
-          "configField": "idempotencyField"
-        },
-        "fieldMap": {}
-      }
-    },
-    "indiamart": {
-      "label": "IndiaMART",
-      "category": "b2b_portal",
-      "direction": "both",
-      "multiInstance": true,
-      "instanceRequired": true,
-      "configFields": [
-        {
-          "key": "captureMode",
-          "label": "Capture mode",
-          "type": "select",
-          "options": [
-            "webhook",
-            "crm_pull_api"
-          ],
-          "defaultValue": "webhook"
-        },
-        {
-          "key": "pollUrl",
-          "label": "CRM pull URL",
-          "type": "text",
-          "requiredWhen": {
-            "field": "captureMode",
-            "equals": "crm_pull_api"
+      "description": "Universal connector for any webhook or REST API in the world without code changes.",
+      "auth": {
+        "strategy": "custom_http",
+        "configFields": [
+          {
+            "key": "baseUrl",
+            "label": "Outbound Base URL",
+            "type": "text",
+            "required": false
+          },
+          {
+            "key": "authScheme",
+            "label": "Outbound Auth Scheme",
+            "type": "select",
+            "options": [
+              "none",
+              "bearer",
+              "custom_header",
+              "basic",
+              "query_param"
+            ],
+            "default": "bearer",
+            "required": true
+          },
+          {
+            "key": "authHeaderName",
+            "label": "Auth Header / Query Key Name",
+            "type": "text",
+            "default": "Authorization",
+            "required": false
+          },
+          {
+            "key": "signatureHeaderName",
+            "label": "Inbound HMAC Header Name",
+            "type": "text",
+            "required": false
+          },
+          {
+            "key": "idempotencyPath",
+            "label": "Inbound Dedupe JSON Path",
+            "type": "text",
+            "default": "event_id",
+            "required": false
+          },
+          {
+            "key": "targetSink",
+            "label": "Inbound CRM Target",
+            "type": "select",
+            "options": [
+              "core_lead",
+              "estimates",
+              "raw_store_only"
+            ],
+            "default": "raw_store_only",
+            "required": true
+          },
+          {
+            "key": "fieldMapJson",
+            "label": "JSON Field Mapping Override",
+            "type": "json",
+            "default": "{\"externalId\":\"id\",\"contactName\":\"name\",\"phone\":\"phone\",\"rawNotes\":\"notes\"}",
+            "required": false
           }
-        }
-      ],
-      "secretFields": [
-        {
-          "key": "webhookSecret",
-          "label": "Webhook secret",
-          "type": "text"
-        },
-        {
-          "key": "apiKey",
-          "label": "API key",
-          "type": "text"
-        }
-      ],
+        ],
+        "secretFields": [
+          {
+            "key": "authToken",
+            "label": "Outbound API Key / Bearer Token",
+            "required": false
+          },
+          {
+            "key": "webhookSecret",
+            "label": "Inbound HMAC Signing Secret",
+            "required": false
+          }
+        ]
+      },
       "outbound": {
         "supported": true,
-        "operations": [
-          "request",
-          "ping"
+        "adapter": "custom-http",
+        "capabilities": [
+          "http.request",
+          "http.get",
+          "http.post"
         ]
       },
       "inbound": {
         "supported": true,
-        "methods": [
-          "POST"
-        ],
-        "defaultDeliveryMode": "batch",
-        "liveEvent": "enquiries",
-        "verification": {
-          "kind": "hmac",
-          "header": "x-ingest-signature",
-          "algorithm": "sha256",
-          "secretField": "webhookSecret"
-        },
-        "idempotencyKey": {
-          "mode": "path",
-          "path": "UNIQUE_QUERY_ID"
-        },
-        "fieldMap": {
-          "name": "SENDER_NAME",
-          "phone": "SENDER_MOBILE",
-          "email": "SENDER_EMAIL",
-          "company": "SENDER_COMPANY",
-          "city": "SENDER_CITY",
-          "subject": "SUBJECT",
-          "message": "QUERY_MESSAGE",
-          "product": "QUERY_PRODUCT_NAME"
-        },
-        "poll": {
-          "supported": true,
-          "configPath": "pollUrl"
-        }
-      }
-    },
-    "tradeindia": {
-      "label": "TradeIndia",
-      "category": "b2b_portal",
-      "direction": "both",
-      "multiInstance": true,
-      "instanceRequired": true,
-      "configFields": [
-        {
-          "key": "sellerId",
-          "label": "Seller ID",
-          "type": "text"
-        },
-        {
-          "key": "captureMode",
-          "label": "Capture mode",
-          "type": "select",
-          "options": [
-            "webhook",
-            "poll_api"
-          ],
-          "defaultValue": "webhook"
-        },
-        {
-          "key": "pollUrl",
-          "label": "Enquiry pull URL",
-          "type": "text"
-        }
-      ],
-      "secretFields": [
-        {
-          "key": "webhookSecret",
-          "label": "Webhook secret",
-          "type": "text"
-        },
-        {
-          "key": "apiKey",
-          "label": "API key",
-          "type": "text"
-        }
-      ],
-      "outbound": {
-        "supported": true,
-        "operations": [
-          "request",
-          "ping"
-        ]
-      },
-      "inbound": {
-        "supported": true,
-        "methods": [
-          "POST"
-        ],
-        "defaultDeliveryMode": "batch",
-        "liveEvent": "enquiries",
-        "verification": {
-          "kind": "hmac",
-          "header": "x-ingest-signature",
-          "algorithm": "sha256",
-          "secretField": "webhookSecret"
-        },
-        "idempotencyKey": {
-          "mode": "composite",
-          "parts": [
-            "enquiryId",
-            "receivedAt"
-          ]
-        },
-        "fieldMap": {
-          "name": "senderName",
-          "phone": "senderMobile",
-          "email": "senderEmail",
-          "company": "senderCompany",
-          "city": "senderCity",
-          "subject": "subject",
-          "message": "message",
-          "product": "productName"
-        },
-        "poll": {
-          "supported": true,
-          "configPath": "pollUrl"
-        }
-      }
-    },
-    "justdial": {
-      "label": "Justdial",
-      "category": "b2b_portal",
-      "direction": "both",
-      "multiInstance": true,
-      "instanceRequired": true,
-      "configFields": [
-        {
-          "key": "partnerId",
-          "label": "Partner ID",
-          "type": "text",
-          "required": true
-        },
-        {
-          "key": "pollUrl",
-          "label": "Lead pull URL",
-          "type": "text"
-        }
-      ],
-      "secretFields": [
-        {
-          "key": "webhookSecret",
-          "label": "Webhook secret",
-          "type": "text"
-        }
-      ],
-      "outbound": {
-        "supported": true,
-        "operations": [
-          "request",
-          "ping"
-        ]
-      },
-      "inbound": {
-        "supported": true,
-        "methods": [
-          "GET",
-          "POST"
-        ],
-        "defaultDeliveryMode": "realtime",
-        "liveEvent": "enquiries",
+        "transport": "webhook_get_or_post",
         "normalizeQueryToBodyOnGet": true,
-        "verification": {
-          "kind": "field_match",
-          "field": "parentid",
-          "configField": "partnerId"
-        },
-        "idempotencyKey": {
-          "mode": "composite",
-          "parts": [
-            "leadid",
-            "parentid"
-          ]
-        },
-        "fieldMap": {
-          "name": "name",
-          "phone": "mobile",
-          "email": "email",
-          "city": "city",
-          "subject": "category",
-          "message": "query"
-        },
-        "poll": {
-          "supported": true,
-          "configPath": "pollUrl"
-        }
-      }
-    },
-    "exportersindia": {
-      "label": "ExportersIndia",
-      "category": "b2b_portal",
-      "direction": "both",
-      "multiInstance": true,
-      "instanceRequired": true,
-      "configFields": [
-        {
-          "key": "sellerId",
-          "label": "Seller ID",
-          "type": "text"
-        },
-        {
-          "key": "pollUrl",
-          "label": "Enquiry pull URL",
-          "type": "text"
-        }
-      ],
-      "secretFields": [
-        {
-          "key": "webhookSecret",
-          "label": "Webhook secret",
-          "type": "text"
-        },
-        {
-          "key": "apiKey",
-          "label": "API key",
-          "type": "text"
-        }
-      ],
-      "outbound": {
-        "supported": true,
-        "operations": [
-          "request",
-          "ping"
-        ]
-      },
-      "inbound": {
-        "supported": true,
-        "methods": [
-          "POST"
-        ],
         "defaultDeliveryMode": "batch",
-        "liveEvent": "enquiries",
+        "allowedDeliveryModes": [
+          "realtime",
+          "batch"
+        ],
         "verification": {
-          "kind": "hmac",
-          "header": "x-ingest-signature",
-          "algorithm": "sha256",
-          "secretField": "webhookSecret"
+          "signaturePost": {
+            "algorithm": "hmac-sha256",
+            "headerNameFromConfig": "signatureHeaderName",
+            "secretKey": "webhookSecret",
+            "optionalIfSecretUnset": true
+          }
         },
         "idempotencyKey": {
-          "mode": "composite",
-          "parts": [
-            "enquiryId",
-            "receivedAt"
+          "strategy": "config_path",
+          "configKey": "idempotencyPath",
+          "fallbackPaths": [
+            "event_id",
+            "id",
+            "uuid"
           ]
         },
-        "fieldMap": {
-          "name": "senderName",
-          "phone": "senderMobile",
-          "email": "senderEmail",
-          "company": "senderCompany",
-          "city": "senderCity",
-          "subject": "subject",
-          "message": "message"
-        },
-        "poll": {
-          "supported": true,
-          "configPath": "pollUrl"
-        }
-      }
-    },
-    "alibaba": {
-      "label": "Alibaba.com",
-      "category": "b2b_portal",
-      "direction": "both",
-      "multiInstance": true,
-      "instanceRequired": true,
-      "configFields": [
-        {
-          "key": "sellerId",
-          "label": "Seller ID",
-          "type": "text"
-        },
-        {
-          "key": "pollUrl",
-          "label": "Inquiry pull URL",
-          "type": "text"
-        }
-      ],
-      "secretFields": [
-        {
-          "key": "webhookSecret",
-          "label": "Webhook secret",
-          "type": "text"
-        },
-        {
-          "key": "appKey",
-          "label": "App key",
-          "type": "text"
-        },
-        {
-          "key": "appSecret",
-          "label": "App secret",
-          "type": "text"
-        }
-      ],
-      "outbound": {
-        "supported": true,
-        "operations": [
-          "request",
-          "ping"
-        ]
-      },
-      "inbound": {
-        "supported": true,
-        "methods": [
-          "POST"
-        ],
-        "defaultDeliveryMode": "batch",
-        "liveEvent": "enquiries",
-        "verification": {
-          "kind": "hmac",
-          "header": "x-ingest-signature",
-          "algorithm": "sha256",
-          "secretField": "webhookSecret"
-        },
-        "idempotencyKey": {
-          "mode": "composite",
-          "parts": [
-            "inquiryId",
-            "createdAt"
-          ]
-        },
-        "fieldMap": {
-          "name": "senderName",
-          "phone": "senderPhone",
-          "email": "senderEmail",
-          "company": "senderCompany",
-          "city": "senderCity",
-          "subject": "subject",
-          "message": "content",
-          "product": "productName"
-        },
-        "poll": {
-          "supported": true,
-          "configPath": "pollUrl"
-        }
-      }
-    },
-    "facebook": {
-      "label": "Facebook Lead Ads & Messenger",
-      "category": "social",
-      "direction": "both",
-      "multiInstance": true,
-      "instanceRequired": true,
-      "configFields": [
-        {
-          "key": "pageId",
-          "label": "Page ID",
-          "type": "text",
-          "required": true
-        },
-        {
-          "key": "verifyToken",
-          "label": "Verify token",
-          "type": "text",
-          "required": true
-        }
-      ],
-      "secretFields": [
-        {
-          "key": "appSecret",
-          "label": "App secret",
-          "type": "text",
-          "required": true
-        },
-        {
-          "key": "pageAccessToken",
-          "label": "Page access token",
-          "type": "text",
-          "required": true
-        }
-      ],
-      "outbound": {
-        "supported": true,
-        "operations": [
-          "sendMessage",
-          "ping"
-        ]
-      },
-      "inbound": {
-        "supported": true,
-        "methods": [
-          "GET",
-          "POST"
-        ],
-        "defaultDeliveryMode": "realtime",
-        "liveEvent": "enquiries",
-        "challengeGet": true,
-        "verification": {
-          "kind": "hmac",
-          "header": "x-hub-signature-256",
-          "algorithm": "sha256",
-          "secretField": "appSecret"
-        },
-        "idempotencyKey": {
-          "mode": "path",
-          "path": "entry.0.changes.0.value.leadgen_id"
-        },
-        "fieldMap": {
-          "name": "entry.0.changes.0.value.field_data.0.values.0",
-          "phone": "entry.0.changes.0.value.field_data.1.values.0"
-        }
-      }
-    },
-    "instagram": {
-      "label": "Instagram",
-      "category": "social",
-      "direction": "both",
-      "multiInstance": true,
-      "instanceRequired": true,
-      "configFields": [
-        {
-          "key": "igUserId",
-          "label": "Instagram user ID",
-          "type": "text",
-          "required": true
-        },
-        {
-          "key": "verifyToken",
-          "label": "Verify token",
-          "type": "text",
-          "required": true
-        }
-      ],
-      "secretFields": [
-        {
-          "key": "appSecret",
-          "label": "App secret",
-          "type": "text",
-          "required": true
-        },
-        {
-          "key": "accessToken",
-          "label": "Access token",
-          "type": "text",
-          "required": true
-        }
-      ],
-      "outbound": {
-        "supported": true,
-        "operations": [
-          "sendMessage",
-          "ping"
-        ]
-      },
-      "inbound": {
-        "supported": true,
-        "methods": [
-          "GET",
-          "POST"
-        ],
-        "defaultDeliveryMode": "realtime",
-        "liveEvent": "enquiries",
-        "challengeGet": true,
-        "verification": {
-          "kind": "hmac",
-          "header": "x-hub-signature-256",
-          "algorithm": "sha256",
-          "secretField": "appSecret"
-        },
-        "idempotencyKey": {
-          "mode": "path",
-          "path": "entry.0.messaging.0.message.mid"
-        },
-        "fieldMap": {
-          "phone": "entry.0.messaging.0.sender.id",
-          "text": "entry.0.messaging.0.message.text"
-        }
-      }
-    },
-    "linkedin": {
-      "label": "LinkedIn Lead Gen",
-      "category": "social",
-      "direction": "both",
-      "multiInstance": true,
-      "instanceRequired": true,
-      "configFields": [
-        {
-          "key": "organizationId",
-          "label": "Organization ID",
-          "type": "text",
-          "required": true
-        },
-        {
-          "key": "formId",
-          "label": "Lead form ID",
-          "type": "text"
-        }
-      ],
-      "secretFields": [
-        {
-          "key": "accessToken",
-          "label": "Access token",
-          "type": "text",
-          "required": true
-        },
-        {
-          "key": "webhookSecret",
-          "label": "Webhook secret",
-          "type": "text"
-        }
-      ],
-      "outbound": {
-        "supported": true,
-        "operations": [
-          "request",
-          "ping"
-        ]
-      },
-      "inbound": {
-        "supported": true,
-        "methods": [
-          "POST"
-        ],
-        "defaultDeliveryMode": "batch",
-        "liveEvent": "enquiries",
-        "verification": {
-          "kind": "optional_header_token",
-          "header": "X-LinkedIn-Signature",
-          "secretField": "webhookSecret"
-        },
-        "idempotencyKey": {
-          "mode": "composite",
-          "parts": [
-            "leadId",
-            "submittedAt"
-          ]
-        },
-        "fieldMap": {
-          "name": "firstName",
-          "phone": "phoneNumber",
-          "email": "emailAddress",
-          "company": "companyName",
-          "subject": "formName",
-          "message": "message"
-        }
-      }
-    },
-    "telegram": {
-      "label": "Telegram Bot",
-      "category": "social",
-      "direction": "both",
-      "multiInstance": true,
-      "instanceRequired": true,
-      "configFields": [
-        {
-          "key": "botUsername",
-          "label": "Bot username",
-          "type": "text"
-        }
-      ],
-      "secretFields": [
-        {
-          "key": "botToken",
-          "label": "Bot token",
-          "type": "text",
-          "required": true
-        },
-        {
-          "key": "webhookSecret",
-          "label": "Webhook secret",
-          "type": "text",
-          "required": true
-        }
-      ],
-      "outbound": {
-        "supported": true,
-        "operations": [
-          "sendMessage",
-          "ping"
-        ]
-      },
-      "inbound": {
-        "supported": true,
-        "methods": [
-          "POST"
-        ],
-        "defaultDeliveryMode": "realtime",
-        "liveEvent": "enquiries",
-        "verification": {
-          "kind": "optional_header_token",
-          "header": "X-Telegram-Bot-Api-Secret-Token",
-          "secretField": "webhookSecret"
-        },
-        "idempotencyKey": {
-          "mode": "path",
-          "path": "update_id"
-        },
-        "fieldMap": {
-          "name": "message.from.first_name",
-          "phone": "message.contact.phone_number",
-          "text": "message.text"
-        }
-      }
-    },
-    "google_forms": {
-      "label": "Google Forms",
-      "category": "forms",
-      "direction": "both",
-      "multiInstance": true,
-      "instanceRequired": true,
-      "configFields": [
-        {
-          "key": "formId",
-          "label": "Form ID",
-          "type": "text",
-          "required": true
-        },
-        {
-          "key": "captureMode",
-          "label": "Capture mode",
-          "type": "select",
-          "options": [
-            "apps_script_webhook",
-            "forms_api_poller"
-          ],
-          "defaultValue": "apps_script_webhook"
-        }
-      ],
-      "secretFields": [
-        {
-          "key": "webhookSecret",
-          "label": "Webhook secret",
-          "type": "text"
-        },
-        {
-          "key": "apiKey",
-          "label": "API key / service token",
-          "type": "text"
-        }
-      ],
-      "outbound": {
-        "supported": true,
-        "operations": [
-          "request",
-          "ping"
-        ]
-      },
-      "inbound": {
-        "supported": true,
-        "methods": [
-          "POST"
-        ],
-        "defaultDeliveryMode": "batch",
-        "liveEvent": "enquiries",
-        "verification": {
-          "kind": "hmac",
-          "header": "x-ingest-signature",
-          "algorithm": "sha256",
-          "secretField": "webhookSecret"
-        },
-        "idempotencyKey": {
-          "mode": "composite",
-          "parts": [
-            "responseId",
-            "formId"
-          ]
-        },
-        "fieldMap": {
-          "name": "respondentName",
-          "phone": "phone",
-          "email": "email",
-          "message": "message"
-        },
-        "poll": {
-          "supported": true,
-          "configPath": "formId"
-        }
-      }
-    },
-    "tally": {
-      "label": "Tally Forms",
-      "category": "forms",
-      "direction": "inbound",
-      "multiInstance": true,
-      "instanceRequired": true,
-      "configFields": [
-        {
-          "key": "formName",
-          "label": "Form name",
-          "type": "text"
-        },
-        {
-          "key": "labelAliases",
-          "label": "Label aliases (JSON)",
-          "type": "json",
-          "hint": "Map Tally labels to canonical fields."
-        }
-      ],
-      "secretFields": [
-        {
-          "key": "webhookSecret",
-          "label": "Webhook secret",
-          "type": "text",
-          "required": true
-        }
-      ],
-      "outbound": {
-        "supported": false
-      },
-      "inbound": {
-        "supported": true,
-        "methods": [
-          "POST"
-        ],
-        "defaultDeliveryMode": "realtime",
-        "liveEvent": "enquiries",
-        "verification": {
-          "kind": "hmac",
-          "header": "Tally-Signature",
-          "algorithm": "sha256",
-          "secretField": "webhookSecret"
-        },
-        "idempotencyKey": {
-          "mode": "composite",
-          "parts": [
-            "responseId",
-            "formId"
-          ]
-        },
-        "fieldMap": {
-          "name": "name",
-          "phone": "phone",
-          "email": "email",
-          "message": "message"
-        }
-      }
-    },
-    "neodove": {
-      "label": "NeoDove",
-      "category": "telecalling",
-      "direction": "both",
-      "multiInstance": true,
-      "instanceRequired": true,
-      "configFields": [
-        {
-          "key": "baseUrl",
-          "label": "Base URL",
-          "type": "text",
-          "placeholder": "https://api.neodove.com"
-        },
-        {
-          "key": "campaignLive",
-          "label": "Campaign live",
-          "type": "boolean",
-          "defaultValue": false
-        }
-      ],
-      "secretFields": [
-        {
-          "key": "apiKey",
-          "label": "API key",
-          "type": "text"
-        },
-        {
-          "key": "webhookSecret",
-          "label": "Webhook secret",
-          "type": "text"
-        }
-      ],
-      "outbound": {
-        "supported": true,
-        "operations": [
-          "request",
-          "ping"
-        ]
-      },
-      "inbound": {
-        "supported": true,
-        "methods": [
-          "POST"
-        ],
-        "defaultDeliveryMode": "realtime",
-        "liveEvent": "enquiries",
-        "verification": {
-          "kind": "optional_header_token",
-          "header": "X-Webhook-Token",
-          "secretField": "webhookSecret"
-        },
-        "idempotencyKey": {
-          "mode": "path",
-          "path": "leadId"
-        },
-        "fieldMap": {
-          "name": "name",
-          "phone": "phone",
-          "email": "email",
-          "message": "notes"
-        }
+        "mapper": "custom",
+        "canonicalType": "CanonicalDynamic",
+        "targetSinkFromConfig": "targetSink",
+        "liveEvent": "data-changed"
       }
     }
   }

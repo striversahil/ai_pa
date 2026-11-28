@@ -5,8 +5,9 @@
 // data, and processor.ts is the only writer into queries/estimates/messages.
 
 export type IngestSource =
-  | 'whatsapp' | 'tally' | 'tradeindia' | 'justdial'
-  | 'alibaba' | 'zoho' | 'custom';
+  | 'zoho' | 'indiamart' | 'tradeindia' | 'justdial' | 'exportersindia'
+  | 'alibaba' | 'whatsapp' | 'facebook' | 'instagram' | 'linkedin'
+  | 'telegram' | 'tally' | 'google_forms' | 'gmail' | 'custom';
 
 export type IngestStatus = 'pending' | 'processing' | 'processed' | 'dead_letter';
 
@@ -65,12 +66,27 @@ export interface CanonicalMessage {
   timestamp: string;
 }
 
-export type Canonical = CanonicalLead | CanonicalEstimate | CanonicalMessage;
+export interface CanonicalEmail {
+  kind: 'email';
+  source: string;
+  instanceKey: string;
+  externalId: string;
+  receivedAt: string;
+  from: string;
+  fromName: string;
+  to: string;
+  subject: string;
+  body: string;
+  timestamp: string;
+}
+
+export type Canonical = CanonicalLead | CanonicalEstimate | CanonicalMessage | CanonicalEmail;
 
 export interface MapperResult {
   lead?: CanonicalLead;
   estimate?: CanonicalEstimate;
   message?: CanonicalMessage;
+  email?: CanonicalEmail;
   warnings: string[];
 }
 

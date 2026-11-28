@@ -123,12 +123,13 @@ export async function resolveInstance(
 export async function call<T = unknown>(provider: string, opts: CallOptions = {}): Promise<T> {
   const raw = String(provider ?? '').trim().toLowerCase();
   const [base, slug] = raw.split(':');
-  const adapter = adapters.get(base);
-  if (!adapter) {
-    const manifest = manifestFor(base);
-    if (!manifest) throw new IntegrationError(base, `unknown provider "${base}"`, 400);
-    throw new IntegrationError(base, `no adapter registered for "${base}"`, 501);
+  const manifest = manifestFor(base);
+  if (!manifest) throw new IntegrationError(base, `unknown provider "${base}"`, 400);
+  if (!manifest.outbound.supported) {
+    throw new IntegrationError(base, `${manifest.label} is inbound-only — no outbound call is available`, 400);
   }
+  const adapter = adapters.get(base);
+  if (!adapter) throw new IntegrationError(base, `no adapter registered for "${base}"`, 501);
   const instance = await resolveInstance(base, { instanceKey: opts.instanceKey || slug || undefined });
   return adapter.connect(instance) as Promise<T>;
 }

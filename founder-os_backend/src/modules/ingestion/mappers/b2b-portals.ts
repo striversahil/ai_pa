@@ -3,6 +3,7 @@
 
 import { normalizeIndianPhone } from '../pure';
 import { amount, isoOrNow, pick, pickDeep, text, type Mapper, type MapperContext } from './types';
+import { genericMapper } from './generic';
 import type { CanonicalLead, MapperResult } from '../types';
 
 function lead(ctx: MapperContext, values: Partial<CanonicalLead>, notes: string): MapperResult {
@@ -56,6 +57,14 @@ export const mapJustdial: Mapper = (payload, ctx) => {
     productInterest: pickDeep(payload, ['category', 'service', 'query', 'product']),
     priority: pickDeep(payload, ['lead_type', 'priority']) === 'high' ? 'high' : 'medium',
   }, pickDeep(payload, ['query', 'message', 'description', 'remark']));
+};
+
+export const mapB2bPortals: Mapper = (payload, ctx) => {
+  const base = String(ctx.source).split(':')[0];
+  if (base === 'indiamart' || base === 'exportersindia') return genericMapper(base)(payload, ctx);
+  if (base === 'justdial') return mapJustdial(payload, ctx);
+  if (base === 'alibaba') return mapAlibaba(payload, ctx);
+  return mapTradeindia(payload, ctx);
 };
 
 export const mapAlibaba: Mapper = (payload, ctx) => {

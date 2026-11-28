@@ -67,12 +67,15 @@ export function registerWebhookRoutes(app: Hono<{ Bindings: any }>): void {
     for (const [k, v] of Object.entries(c.req.query() ?? {})) query[k] = String(v);
 
     // Meta-family subscription handshake: echo the challenge, never stage it.
-    if (c.req.method === 'GET' && manifest.inbound.challengeGet && query['hub.mode'] === 'subscribe') {
-      const expected = String(instance.secrets.webhookVerifyToken || instance.config.verifyToken || '');
-      if (!expected || query['hub.verify_token'] !== expected) {
+    const challenge = manifest.inbound.challengeGet;
+    if (c.req.method === 'GET' && challenge && query[challenge.modeParam] === challenge.expectedMode) {
+      const expected = String(
+        instance.config.verifyToken || instance.secrets.verifyToken || instance.secrets.webhookVerifyToken || '',
+      );
+      if (!expected || query[challenge.tokenParam] !== expected) {
         return c.json({ error: 'verify token mismatch' }, 403);
       }
-      return c.text(String(query['hub.challenge'] ?? ''));
+      return c.text(String(query[challenge.challengeParam] ?? ''));
     }
 
     let body: unknown = undefined;
@@ -112,9 +115,13 @@ export function registerWebhookRoutes(app: Hono<{ Bindings: any }>): void {
     if (instance.deliveryMode === 'realtime' && staged.inserted) {
       const job = processIngestedRow({ db: c.env.DB, env: c.env }, staged.id).then((outcome) => {
         if (outcome.ok) {
-          const live = manifest.inbound.liveEvent === 'integrations' ? 'integrations' : LiveEvent.Enquiries;
+          const wanted = manifest.inbound.liveEvent || 'integrations';
+          const known = Object.values(LiveEvent) as string[];
+          const live = known.includes(wanted) ? wanted : LiveEvent.Integrations;
           notifyLive(c, { type: live as any, action: 'ingested', id: staged.id });
-          notifyLive(c, { type: 'integrations', action: 'processed', id: staged.id });
+          if (live !== LiveEvent.Integrations) {
+            notifyLive(c, { type: LiveEvent.Integrations, action: 'processed', id: staged.id });
+          }
         }
         return outcome;
       });

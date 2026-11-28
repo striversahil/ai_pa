@@ -36,7 +36,6 @@ const HOSTS: Record<string, HostDefaults> = {
   linkedin: { baseUrl: 'https://api.linkedin.com/v2', scheme: 'bearer' },
   telegram: { baseUrl: 'https://api.telegram.org', scheme: 'none' },
   google_forms: { baseUrl: 'https://forms.googleapis.com/v1', scheme: 'bearer' },
-  neodove: { baseUrl: 'https://api.neodove.com', scheme: 'custom_header', header: 'X-Api-Key' },
   tally: { scheme: 'none' },
 };
 
@@ -134,5 +133,5 @@ export const customHttpAdapter = httpAdapterFor('custom', HOSTS.custom);
 /** Every provider whose outbound story is just HTTP + a host convention. */
 export const portalAdapters: IntegrationAdapter<CustomHttpClient>[] = [
   'indiamart', 'tradeindia', 'justdial', 'exportersindia', 'alibaba',
-  'facebook', 'instagram', 'linkedin', 'telegram', 'google_forms', 'neodove', 'tally',
+  'facebook', 'instagram', 'linkedin', 'telegram', 'google_forms', 'tally',
 ].map((provider) => httpAdapterFor(provider, HOSTS[provider]));

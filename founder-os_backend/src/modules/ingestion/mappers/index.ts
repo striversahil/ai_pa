@@ -1,26 +1,38 @@
-// mappers/index.ts — source → mapper. Every manifest provider with inbound
-// support resolves: a specialized mapper when the shape needs one, otherwise
-// the manifest-driven generic mapper.
+// mappers/index.ts — source → mapper, chosen by manifest.inbound.mapper.
+// Every inbound provider has a mapper name in the manifest; no provider list
+// is hard-coded here beyond the mapper registry itself.
 
 import { getProviderManifest, listProviderManifests } from '../../integrations/gateway/manifest';
 import { parseSourceKey } from '../pure';
 import type { MapperResult } from '../types';
-import { mapTally } from './tally';
-import { mapWhatsApp } from './whatsapp';
-import { mapZohoEstimate } from './zoho-estimate';
+import { mapB2bPortals } from './b2b-portals';
+import { mapCustom } from './custom';
 import { mapGmail } from './email';
+import { mapForms } from './forms';
+import { mapSocialLinkedIn } from './social-linkedin';
+import { mapSocialMeta } from './social-meta';
+import { mapSocialTelegram } from './social-telegram';
+import { mapZohoEstimate } from './zoho-estimate';
 import { genericMapper } from './generic';
 import type { Mapper, MapperContext } from './types';
+
+const MAPPERS: Record<string, Mapper> = {
+  'b2b-portals': mapB2bPortals,
+  'social-meta': mapSocialMeta,
+  'social-linkedin': mapSocialLinkedIn,
+  'social-telegram': mapSocialTelegram,
+  forms: mapForms,
+  email: mapGmail,
+  'zoho-estimate': mapZohoEstimate,
+  custom: mapCustom,
+};
 
 export function mapperFor(source: string): Mapper | null {
   const { base } = parseSourceKey(source);
   const manifest = getProviderManifest(base);
   if (!manifest?.inbound.supported) return null;
-  if (base === 'whatsapp') return mapWhatsApp;
-  if (base === 'zoho') return mapZohoEstimate;
-  if (base === 'tally') return mapTally;
-  if (base === 'gmail') return mapGmail;
-  return genericMapper(base);
+  const name = manifest.inbound.mapper || 'generic';
+  return MAPPERS[name] || genericMapper(base);
 }
 
 export function mapperSources(): string[] {

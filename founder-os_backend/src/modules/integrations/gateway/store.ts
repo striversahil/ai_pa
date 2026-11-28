@@ -113,6 +113,19 @@ export async function clearDefault(db: SqlDb, provider: string, keepId = ''): Pr
   await bumpRev('integrations').catch(() => undefined);
 }
 
+/** Merge one provider-owned cursor into an instance's config (no secret change). */
+export async function updateInstanceConfig(
+  db: SqlDb,
+  id: string,
+  config: Record<string, unknown>,
+): Promise<void> {
+  await db
+    .prepare('UPDATE hlp_integration_instance SET "configJson" = ?, "updatedAt" = ? WHERE "id" = ?')
+    .bind(JSON.stringify(config), nowIso(), id)
+    .run();
+  await bumpRev('integrations').catch(() => undefined);
+}
+
 export async function deleteInstance(db: SqlDb, id: string): Promise<void> {
   await db.prepare('DELETE FROM hlp_integration_instance WHERE "id" = ?').bind(id).run();
   await bumpRev('integrations').catch(() => undefined);

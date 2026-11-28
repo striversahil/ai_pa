@@ -84,7 +84,6 @@ export function registerIntegrationsGatewayRoutes(app: Hono<{ Bindings: any }>):
     const provider = String(body?.provider ?? '').toLowerCase();
     const manifest = manifestFor(provider);
     if (!manifest) return c.json({ error: `unknown provider "${provider}"` }, 400);
-    if (!manifest.instanceRequired) return c.json({ error: `${provider} has no credentials to store` }, 400);
     const instanceKey = normalizeKey(body?.instanceKey) || 'default';
     const existing = await getByKey(c.env.DB, provider, instanceKey);
     const key = vaultKey(c.env);
