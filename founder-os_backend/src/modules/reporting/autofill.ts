@@ -30,18 +30,25 @@ async function salesAutofill(
   if (!range) return empty;
 
   if (section === 'telecaller') {
-    const { getNeodoveRangeMap } = await import('../../automations/neodove-telecaller-report/index');
-    const map = await getNeodoveRangeMap(range.from, range.to);
-    const rows: TelecallerRow[] = Object.values(map)
-      .filter((a: any) => (num(a.callsConnected) + num(a.leadsGenerated)) > 0)
-      .map((a: any) => ({
-        name: String(a.userName ?? a.userId ?? 'Unknown').slice(0, 80),
-        connected: num(a.callsConnected),
-        leads: num(a.leadsGenerated),
-      }))
-      .sort((x, y) => y.connected - x.connected);
+    let rows: TelecallerRow[] = [];
+    const sources: string[] = [];
+    try {
+      const { computeTelecallingDaily } = await import('../../automations/telecalling/service');
+      const daily = await computeTelecallingDaily(range.from, range.to);
+      const byName = new Map<string, TelecallerRow>();
+      for (const r of ('rows' in daily ? daily.rows : [])) {
+        const name = String(r.telecallerName ?? 'Unknown').slice(0, 80);
+        const cur = byName.get(name) ?? { name, connected: 0, leads: 0 };
+        cur.connected += num(r.callsConnected);
+        cur.leads += num(r.leadsGenerated);
+        byName.set(name, cur);
+      }
+      rows = [...byName.values()]
+        .filter((r) => r.connected + r.leads > 0)
+        .sort((x, y) => y.connected - x.connected);
+      sources.push('auto dialer / manual call log');
+    } catch { /* call source unavailable — rows stay empty */ }
     let regionOrders: RegionOrderRow[] = [];
-    const sources = ['NeoDove agent report'];
     try {
       const { loadAcceptedSnapshot } = await import('../../automations/telecalling/accepted');
       const snap = await loadAcceptedSnapshot(range.from, range.to);
@@ -57,21 +64,9 @@ async function salesAutofill(
   }
 
   if (section === 'data') {
-    const { getNeodoveRangeMap } = await import('../../automations/neodove-telecaller-report/index');
-    const map = await getNeodoveRangeMap(range.from, range.to);
-    const sum = (pick: (a: any) => unknown) => Object.values(map).reduce((t: number, a: any) => t + num(pick(a)), 0);
-    return {
-      ...empty,
-      payload: {
-        statusConverted: sum((a) => a.leadsConverted),
-        statusInProgress: sum((a) => a.leadsInProgress),
-        statusLost: sum((a) => a.leadsLost),
-        followupLeads: sum((a) => a.followupLeads),
-        pendingScheduled: sum((a) => a.pendingScheduledLeads),
-      },
-      autoKeys: ['statusConverted', 'statusInProgress', 'statusLost', 'followupLeads', 'pendingScheduled'],
-      sources: ['NeoDove lead pipeline'],
-    };
+    // Lead-pipeline status autofill came from the retired call portal. The section stays
+    // manual; the enquiry dashboard owns live pipeline numbers now.
+    return empty;
   }
 
   return empty;

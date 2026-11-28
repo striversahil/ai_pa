@@ -1,49 +1,14 @@
-// ── Manual connected-call log (TEMPORARY, founder 2026-11-04) ───────────────
-// Backfill while NeoDove is unreliable: hand-counted connected calls per agent
-// per IST day + screenshot proof. The leaderboard reads these rows INSTEAD of
-// NeoDove while Setting `manual_calls_mode` = 'manual' (see service.ts).
-// Delete this module + routes + tab when NeoDove is trusted again.
+// ── Manual connected-call log ───────────────────────────────────────────────
+// Hand-counted connected calls per agent per IST day + screenshot proof. The
+// leaderboard reads these rows when Setting `call_source` = 'manual'; the
+// default source is the auto dialer's DeviceCall rows.
 import { prisma } from '../../shared/prisma';
 import { cached, cacheDelPrefix } from '../../shared/cache';
-
-export const MANUAL_CALLS_MODE_KEY = 'manual_calls_mode';
-export type ManualCallsMode = 'manual' | 'neodove';
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export function isValidDay(day: unknown): day is string {
   return typeof day === 'string' && DAY_RE.test(day);
-}
-
-export async function getManualCallsMode(): Promise<ManualCallsMode> {
-  try {
-    const row: any = await prisma.setting.findUnique({ where: { key: MANUAL_CALLS_MODE_KEY } });
-    return String(row?.value ?? '').trim() === 'manual' ? 'manual' : 'neodove';
-  } catch {
-    return 'neodove';
-  }
-}
-
-export async function setManualCallsMode(mode: unknown): Promise<ManualCallsMode> {
-  const next: ManualCallsMode = mode === 'manual' ? 'manual' : 'neodove';
-  const now = new Date().toISOString();
-  try {
-    await prisma.setting.upsert({
-      where: { key: MANUAL_CALLS_MODE_KEY },
-      update: { value: next, updatedAt: new Date(now) as any },
-      create: { key: MANUAL_CALLS_MODE_KEY, value: next, updatedAt: new Date(now) as any } as any,
-    });
-  } catch {
-    // D1 shim upsert may not support this shape — fall back to raw write.
-    const db: any = (prisma as any).db ?? null;
-    if (db?.prepare) {
-      await db.prepare(
-        `INSERT INTO Setting(key, value, updatedAt) VALUES(?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`,
-      ).bind(MANUAL_CALLS_MODE_KEY, next, now).run();
-    }
-  }
-  await invalidateManualCallsCache();
-  return next;
 }
 
 export async function invalidateManualCallsCache(): Promise<void> {

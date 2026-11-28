@@ -37,10 +37,10 @@ export function isSalesRosterTitle(title: string, loginPosition?: string | null)
 /** Region rules for the editor: which sales fields appear per position.
  *  Since mig 0177 the region count is free for every sales seat (0..N), so
  *  there is no per-title `region2`/tier switch anymore. */
-export function regionRulesFor(title: string, loginPosition?: string | null): { regions: boolean; whatsapp: boolean; neodove: boolean } {
+export function regionRulesFor(title: string, loginPosition?: string | null): { regions: boolean; whatsapp: boolean } {
   const t = rosterTypeFor(title, loginPosition);
-  if (!t) return { regions: false, whatsapp: false, neodove: false };
-  return { regions: true, whatsapp: true, neodove: true };
+  if (!t) return { regions: false, whatsapp: false };
+  return { regions: true, whatsapp: true };
 }
 
 /** Default dashboard scopes a position grants (pre-checked in the editor,
@@ -134,7 +134,7 @@ export function isHomeDepartment(viewerScope: string, personDept: string | null)
 }
 
 /**
- * May this viewer edit this person (position, region, WhatsApp, NeoDove,
+ * May this viewer edit this person (position, region, WhatsApp,
  * access, active)? One home for the whole org surface — HR graph and the
  * Sales Team & Access mount share it.
  *

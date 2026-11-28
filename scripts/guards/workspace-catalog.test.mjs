@@ -18,7 +18,7 @@ const cat = await import(bundleToFile(join(BACKEND_DIR, 'src', 'modules', 'works
 // now the Analyzer tab inside Sales; see catalog.ts navAliases).
 const LEGACY_DASHBOARD_SLUGS = [
   'dpp-prices-dashboard', 'wa-engine-monitor', 'whatsapp-marketing',
-  'neodove-telecaller-report', 'sales', 'accounts', 'digital-marketing', 'human-resources',
+  'sales', 'accounts', 'digital-marketing', 'human-resources',
   'debtors-tracker', 'payment-tracker', 'whatsapp-autopilot', 'enquiry-procurement',
   'enquiry-management', 'reporting-sheet', 'crm', 'product-line', 'stock',
   'samarth-overview', 'sahil-overview', 'linkedin', 'ai-usage', 'telecalling-agent-analysis',
@@ -29,9 +29,8 @@ describe('workspace catalog', () => {
     assert.deepEqual([...cat.dashboardSlugSet()].sort(), [...LEGACY_DASHBOARD_SLUGS].sort());
   });
 
-  it('only the two founder-approved workspaces are public', () => {
+  it('only the founder-approved workspace is public', () => {
     assert.deepEqual(cat.publicDataPaths('/api/automations').sort(), [
-      '/api/automations/neodove-telecaller-report/data',
       '/api/automations/telecalling/data',
     ]);
   });

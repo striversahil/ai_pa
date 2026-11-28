@@ -28,7 +28,7 @@ export const RISK_LIST_CAP = 25;
 
 // ── Enquiry-sourced lead generation ──────────────────────────────────────────
 // "Leads generated" = enquiries created per agent per IST day (Sales Enquiries
-// dashboard: Enquiry.createdAt × assignedAgentId). NeoDove still feeds calls,
+// dashboard: Enquiry.createdAt × assignedAgentId). The dialer still feeds calls,
 // talk-time and call outcomes — only the leads-generated numerator is
 // enquiry-sourced.
 

@@ -14,14 +14,6 @@ on:
         description: "Daily slot HH:MM (02:30, 13:30, 15:30, 19:30, 21:30). 'all' runs every job."
         required: false
         default: "all"
-      neodove_backfill_days:
-        description: "Neodove: backfill N past days (1 = yesterday only)"
-        required: false
-        default: ""
-      run_neodove:
-        description: "Run NeoDove-backed jobs (neodove-report). Worker sets false 9PM-9AM IST."
-        type: boolean
-        default: true
       topic:
         description: "LinkedIn: single topic slug (fills a failed slot; empty = auto-pick 5)"
         required: false
@@ -88,30 +80,6 @@ jobs:
           SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
         run: node scripts/eod-summary-runner.js
 
-  neodove-report:
-    # 13:30 UTC = 19:00 IST — the only daily slot inside ops hours, so the
-    # run_neodove quiet-hours gate passes. Yesterday's report + N-day backfill.
-    if: (github.event.inputs.slot == 'all' || github.event.inputs.slot == '13:30') && github.event.inputs.run_neodove != 'false'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: neodove-report (yesterday's telecaller call report, or N-day backfill)
-        env:
-          WORKER_URL: ${{ secrets.WORKER_URL }}
-          SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
-          NEODOVE_USER_IDS: ${{ secrets.NEODOVE_USER_IDS }}
-          BACKFILL_DAYS: ${{ github.event.inputs.neodove_backfill_days }}
-        run: |
-          if [ -n "$BACKFILL_DAYS" ]; then
-            echo "backfilling last $BACKFILL_DAYS days"
-            for i in $(seq 1 "$BACKFILL_DAYS"); do
-              d=$(date -d "-$i days" +%F)
-              echo "--- $d ---"
-              node scripts/neodove-report-runner.js "$d" || echo "::warning::backfill failed for $d"
-            done
-          else
-            node scripts/neodove-report-runner.js
-          fi
   linkedin-daily:
     # 21:30 UTC = 03:00 IST — 5 idea-driven founder drafts (prompt.txt +
     # post_ideas.json) + explainer visuals for dashboard review (founder

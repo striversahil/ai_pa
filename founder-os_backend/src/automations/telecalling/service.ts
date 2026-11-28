@@ -30,7 +30,6 @@ import {
   getConvertersMap, SNATCH_PENALTY, REMARK_PENALTY,
 } from './scoring';
 import { getFollowUpSpecialists, recordAssignment } from './rotation';
-import { syncTelecallersFromNeodove } from './roster';
 import {
   CALL_TAGS, CALLBACK_MAX_DAYS, setEstimateCallTag,
   NEXT_STEP_MAX_DAYS, setEstimateNextStep, overlayNextSteps, overlayCallTags,
@@ -75,7 +74,6 @@ export {
 
 export { getFollowUpSpecialists, recordAssignment } from './rotation';
 
-export { syncTelecallersFromNeodove } from './roster';
 
 export {
   CALL_TAGS, CALLBACK_MAX_DAYS, setEstimateCallTag,

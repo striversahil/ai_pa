@@ -5,12 +5,9 @@
 //      drills are served by service-parts/drill.ts from their own cache.
 //   2. Invalidation is a REVISION BUMP (one small put), never a prefix delete
 //      over every cached variant — that prefix delete ran on every estimate
-//      write AND every 5-minute NeoDove refresh, which is why the board cache
-//      never survived a working day.
+//      write, which is why the board cache never survived a working day.
 //   3. The roster sync (a write) never runs inside the payload compute.
-//   4. The NeoDove refresh does not invalidate anything when its rows are
-//      unchanged.
-//   5. The frontend makes ONE dashboard request that already carries every
+//   4. The frontend makes ONE dashboard request that already carries every
 //      region's pipeline (`follow_ups=1`); no per-region prefetch fan-out.
 //
 // Source-text assertions on purpose: these modules import prisma at load time,
@@ -29,8 +26,6 @@ const IO = join(BACKEND_DIR, 'src', 'automations', 'telecalling', 'service-parts
 const DRILL = join(BACKEND_DIR, 'src', 'automations', 'telecalling', 'service-parts', 'drill.ts');
 const CACHE = join(BACKEND_DIR, 'src', 'shared', 'cache.ts');
 const EST_CACHE = join(BACKEND_DIR, 'src', 'shared', 'estimates-cache.ts');
-const NEO = join(BACKEND_DIR, 'src', 'automations', 'neodove-telecaller-report', 'index-parts', 'io.ts');
-const NEO_REFRESH = join(BACKEND_DIR, 'src', 'automations', 'neodove-refresh-parts', 'io.ts');
 const DASHBOARD = join(FRONTEND_SRC, 'components', 'TelecallingDashboard.tsx');
 const MIGRATION = join(BACKEND_DIR, 'migrations', '0159_sales_board_indexes.sql');
 
@@ -93,35 +88,23 @@ describe('sales board — invalidation is one revision bump', () => {
     assert.ok(!src.includes("cacheDelPrefix('telecalling:dashboard')"), 'the prefix delete must be gone (it wiped every variant)');
   });
 
-  it('the NeoDove refresh bumps a revision instead of prefix-deleting the board', () => {
-    const src = read(NEO);
-    assert.ok(src.includes("bumpRev('neo')"));
-    assert.ok(!src.includes("cacheDelPrefix('telecalling:dashboard')"));
-  });
-
   it('the board cache key folds in the revisions', () => {
     const src = read(IO);
-    assert.match(src, /const revs = await cacheRevs\(\['est', 'neo'\]\)/);
+    assert.match(src, /const revs = await cacheRevs\(\['est'\]\)/);
     assert.match(src, /const cacheKey = `telecalling:dashboard:\$\{revs\}:/);
   });
 });
 
 describe('sales board — writes stay out of the read path', () => {
   it('the aggregation never syncs the roster', () => {
-    assert.ok(!computeBody().includes('syncTelecallersFromNeodove'), 'a GET must not upsert the roster per compute');
-    const src = read(IO);
-    assert.match(src, /cached\('telecalling:roster_sync', 10 \* 60 \* 1000/, 'the sync must be bounded to once per 10 minutes');
+    assert.ok(!computeBody().includes('syncTelecallers'), 'a GET must not upsert the roster per compute');
+    assert.ok(!read(IO).includes('roster_sync'), 'the old roster sync hook must be gone');
   });
 
   it('the log-only core shadow compare is bounded too', () => {
     assert.match(read(IO), /cached\('telecalling:sales_shadow', 30 \* 60 \* 1000/);
   });
 
-  it('an idle NeoDove refresh writes nothing and invalidates nothing', () => {
-    const src = read(NEO_REFRESH);
-    assert.ok(src.includes('rowsUnchanged'), 'the refresh must compare the stored rows');
-    assert.match(src, /if \(rowsUnchanged\) \{[\s\S]{0,1500}?unchanged: true/, 'unchanged rows must short-circuit before the write + invalidate');
-  });
 });
 
 describe('sales board — the board query is one request', () => {

@@ -71,7 +71,6 @@ const PREFIXES = [
   'auth_',
   'core_',
   'hlp_',
-  'Neodove',
   'Sales',
 ];
 
@@ -79,7 +78,7 @@ const SKIP = [/^sqlite_/i, /^_cf_/i, /^d1_/i, /^__/];
 
 const NOTES: Record<string, string> = {
   DeviceCall: 'Auto-dialer + phone call log: one row per attempt (attemptAt ISO UTC, status CONNECTED/…, telecallerId).',
-  Telecaller: 'Sales roster: region, type (telecaller/team_lead), neodoveUserId. Join to people by email.',
+  Telecaller: 'Sales roster: region, type (telecaller/team_lead). Join to people by email.',
   HumanResourcesMember: 'Employees: name, designation (= chart position), department, active. This is the notification target.',
   SalesOrder: 'Sales order header (region, lifecycle, due dates).',
   Estimate: 'Zoho estimate header: region, rateStatus, dates, amount.',

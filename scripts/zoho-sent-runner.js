@@ -147,7 +147,7 @@ async function main() {
     }
   }
 
-  console.log('zoho-sent-runner: fetching NeoDove sales agent roster');
+  console.log('zoho-sent-runner: fetching sales agent roster');
   const agentRoster = await fetch.fetchAgentRoster();
   console.log(`zoho-sent-runner: roster (${agentRoster.length}): ${agentRoster.join(', ') || '(empty)'}`);
 

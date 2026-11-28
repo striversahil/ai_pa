@@ -76,8 +76,6 @@ r = await call('/api/session/workspaces/stock/data');
 check('non-public workspace data needs a session (401)', r.status === 401);
 r = await call('/api/session/workspaces/telecalling/data');
 check('telecalling data stays public (founder decision)', r.status === 200);
-r = await call('/api/session/workspaces/neodove-telecaller-report/data');
-check('NeoDove report data stays public (founder decision)', r.status === 200 || r.status === 404, String(r.status));
 
 r = await call('/api/estimates/movement');
 check('movement needs a session (401)', r.status === 401);
@@ -87,10 +85,6 @@ r = await call('/api/estimates/segments');
 check('segments needs a session (401)', r.status === 401);
 r = await call('/api/estimates/segments', 'nobody');
 check('segments signed-in → 200 + map', r.status === 200 && r.body && typeof r.body === 'object', String(r.status));
-r = await call('/api/neodove/campaign/districts');
-check('districts needs a session (401)', r.status === 401);
-r = await call('/api/neodove/campaign/districts?region=R1&state=Uttar+Pradesh', 'root');
-check('districts signed-in → 200 + list', r.status === 200 && Array.isArray(r.body?.districts), String(r.status));
 // District round-trip: book row → paged list filters on it + summary lists it.
 await db.prepare("INSERT INTO core_customer (id, zohoCustomerId, displayName, region, state, district, status) VALUES (?, ?, ?, ?, ?, ?, ?)")
   .bind('e2e-1', 'e2e-1', 'E2E Traders', 'R1', 'Uttar Pradesh', 'Lucknow', 'Active').run();

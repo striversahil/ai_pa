@@ -101,13 +101,11 @@ export async function invalidateEstimatesCache(): Promise<void> {
  * one small put — instead of `cacheDelPrefix`, which walked the whole prefix
  * (a KV list + one delete per variant) on every estimate write. Readers fold
  * the revision into their key, so every stale variant is abandoned at once and
- * expires by TTL. (2026-11-21: the prefix delete ran on every runner sync and
- * every NeoDove refresh, i.e. continuously during business hours, which kept
- * the leaderboard permanently cold.)
+ * expires by TTL. (2026-11-21: the prefix delete ran on every runner sync, i.e.
+ * continuously during business hours, which kept the leaderboard cold.)
  */
 export async function invalidateDerivedEstimateCaches(): Promise<void> {
   await Promise.all([
-    cacheDelPrefix('neodove:kra'),
     cacheDelPrefix('telecalling:risk'),
     bumpRev('est'),
     cacheDelPrefix('telecalling:converters'),

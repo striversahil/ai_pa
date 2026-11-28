@@ -2,7 +2,7 @@
 //
 // Founder decision 2026-11-27 (mig 0177): a sales person is an HR employee
 // whose chart seat decides telecaller / team lead / field staff. The profile
-// (regions 0..N, reporting Team Lead, WhatsApp, NeoDove, follow-ups) lives ON
+// (regions 0..N, reporting Team Lead, WhatsApp, follow-ups) lives ON
 // HumanResourcesMember; the old table is retired and the old name is a
 // read-only VIEW so leaderboards/drills keep reading the same shape.
 //
@@ -27,7 +27,7 @@ const feRegions = await import(bundleToFile(join(FRONTEND_SRC, 'telecalling', 'r
 
 describe('sales staff live on the HR employee row', () => {
   it('0177 adds the profile columns + the flexible region array', () => {
-    for (const col of ['salesType', 'salesRegions', 'salesTeamLeadId', 'salesAssignFollowUps', 'salesAbsentSince', 'neodoveUserId', 'whatsapp']) {
+    for (const col of ['salesType', 'salesRegions', 'salesTeamLeadId', 'salesAssignFollowUps', 'salesAbsentSince', 'whatsapp']) {
       assert.ok(migration.includes(`ADD COLUMN "${col}"`), `missing employee column ${col}`);
     }
     assert.ok(migration.includes("salesRegions\" TEXT NOT NULL DEFAULT '[]'"), 'regions are a JSON array, any length');

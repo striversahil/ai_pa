@@ -21,7 +21,6 @@ import { createEnquiryStore } from '../modules/enquiries/store';
 import * as EnquiryRoutes from '../modules/enquiries/routes';
 import { cacheDel } from '../shared/cache';
 import { DASHBOARD_SLUGS } from '../modules/automation/dashboardSlugs';
-import { refreshNeodoveReport, istDateStr as neodoveTodayIst } from '../automations/neodove-refresh';
 import { isSystemGeneratedComment } from '../shared/systemComment';
 import { getEstimatesPayload } from '../shared/estimates-cache';
 import { getViewerMe } from './viewer';
@@ -247,7 +246,6 @@ export const AUTH_EXEMPT = [
   // session gate would otherwise 401 every runner call (no cookie on GH).
   '/api/ai/',
   '/api/estimates/bulk-upsert',
-  '/api/neodove/report',
   // Integrations: every external portal posts here with NO session. The path
   // token (only its SHA-256 is in D1) plus an optional per-source HMAC over the
   // raw body are verified inside routes/ingest.ts, which also records every
@@ -425,9 +423,8 @@ export function createApp(): Hono<{ Bindings: Bindings }> {
   });
   // Tight CORS: reflect only known frontend origins; never `*` on an
   // authenticated API. Same-origin (Pages proxy) needs no CORS headers.
-  // Direct browser → Worker calls (e.g. a token extractor running on a
-  // NeoDove page, or any external integration) DO trigger a preflight:
-  // hono/cors answers OPTIONS with 204 + ACAO headers automatically.
+  // Direct browser → Worker calls (an external integration page) DO trigger a
+  // preflight: hono/cors answers OPTIONS with 204 + ACAO headers automatically.
   // Extra origins via ALLOWED_ORIGINS env/secret (comma-separated).
   app.use('*', cors({
     origin: (origin, c: any) => {
@@ -442,15 +439,11 @@ export function createApp(): Hono<{ Bindings: Bindings }> {
       const extra = extraRaw.split(',').map((s) => s.trim()).filter(Boolean);
       const allow = [
         'https://founder-os-frontend.pages.dev',
-        'https://connect.neodove.com',
         ...extra,
       ];
       try {
         const u = new URL(origin);
         if (u.hostname.endsWith('.pages.dev')) return origin;
-        // NeoDove app + custom-integration pages call the Worker straight
-        // from the browser (token extractor) — reflect any NeoDove origin.
-        if (u.hostname === 'neodove.com' || u.hostname.endsWith('.neodove.com')) return origin;
         if (u.hostname === 'localhost' || u.hostname === '127.0.0.1') return origin;
       } catch { /* fall through to allowlist */ }
       return (allow as string[]).includes(origin) ? origin : null as any;
@@ -491,7 +484,6 @@ export function createApp(): Hono<{ Bindings: Bindings }> {
     '/api/chat/channels',
     '/api/estimates',
     '/api/brain/stats',
-    '/api/neodove/report',
   ];
   app.use('*', async (c, next) => {
     await next();
@@ -586,10 +578,6 @@ export function createApp(): Hono<{ Bindings: Bindings }> {
     // every open dashboard refetch the (cached) payload.
     '/api/debtors-tracker/exports',
     '/api/payment-tracker/exports',
-    // Campaign push chunks are a progress loop (one call per ~20 leads). The
-    // batch create/finish paths broadcast a typed event instead, so a large
-    // push doesn't fan out into a dashboard refetch per chunk.
-    '/api/neodove/campaign/',
     // Runner endpoints are secret-gated GH Actions calls, not user actions.
     // Every runner path that actually changes dashboard data already broadcasts
     // its own typed event (Digests / Tasks / Messages / Email / Brain /
@@ -653,4 +641,4 @@ export function createApp(): Hono<{ Bindings: Bindings }> {
 }
 
 // Re-exported for route modules that need these modules directly.
-export { AuthRoutes, ChatRoutes, EnquiryRoutes, createChatStore, createEnquiryStore, resolveLinkedSender, refreshNeodoveReport, neodoveTodayIst, DASHBOARD_SLUGS, authEnabled, getMe, isApproved, requireScope, isSystemGeneratedComment, getEstimatesPayload, readSessionCookie };
+export { AuthRoutes, ChatRoutes, EnquiryRoutes, createChatStore, createEnquiryStore, resolveLinkedSender, DASHBOARD_SLUGS, authEnabled, getMe, isApproved, requireScope, isSystemGeneratedComment, getEstimatesPayload, readSessionCookie };

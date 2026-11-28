@@ -1,6 +1,6 @@
 {
   "name": "Sales Leaderboard",
-  "description": "Region-based sales leaderboard: R1-R4 ownership, NeoDove call KPIs, 20/80 close-credit split (generator automatic / 80% closer pick), conversion target and risk model.",
+  "description": "Region-based sales leaderboard: R1-R4 ownership, auto-dialer call KPIs, 20/80 close-credit split (generator automatic / 80% closer pick), conversion target and risk model.",
   "type": "handler",
   "trigger": {
     "type": "schedule",

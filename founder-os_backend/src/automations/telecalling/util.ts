@@ -15,10 +15,10 @@ export const IN_BATCH = 90;
 export const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
- * Canonical agent phone (founder 2026-11-05: phone-keyed NeoDove mapping).
+ * Canonical agent phone (phone-keyed roster mapping).
  * Digits-only with inferred country code — `98888 12345`, `+919888812345`
  * and `09888812345` all collapse to `919888812345`, so roster `phone` and
- * NeoDove-side directory numbers join deterministically. Mirrors the
+ * Dialer-side directory numbers join deterministically. Mirrors the
  * debtors-tracker `normalizePhone` (kept local: util.ts takes no imports).
  */
 export function normalizeAgentPhone(raw: unknown): string {

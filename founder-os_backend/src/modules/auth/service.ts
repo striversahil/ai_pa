@@ -18,7 +18,6 @@ export const DEFAULT_SCOPES: AuthScope[] = [
   { key: "whatsapp", label: "WhatsApp", description: "WhatsApp inbox and digests" },
   { key: "automations", label: "Automations", description: "Automation registry" },
   { key: "zoho", label: "Zoho Estimates", description: "Zoho estimate queue" },
-  { key: "neodove", label: "NeoDove", description: "Telecaller reports" },
   { key: "dpp", label: "DPP Prices", description: "DPP price dashboard" },
   { key: "wa-engine", label: "WA Engine", description: "WhatsApp engine monitor" },
   { key: "whatsapp-marketing", label: "WhatsApp Marketing", description: "Marketing campaigns" },

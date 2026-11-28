@@ -171,27 +171,18 @@ async function fetchVanishedStatus(dbEstimateId) {
   }
 }
 
-// ── NeoDove sales-agent roster (for LLM attribution) ───────────────────────
-// Order: today's live report → latest snapshot → NEODOVE_AGENT_NAMES env.
-// Env names are ADDITIVE: call data misses Zoho-only agents (e.g. Muskan).
+// ── Sales-agent roster (for LLM attribution) ───────────────────────────────
+// The HR register is the only roster now; no call-portal report is involved.
 async function fetchAgentRoster() {
-  const envNames = (process.env.NEODOVE_AGENT_NAMES || '')
-    .split(',').map((s) => s.trim()).filter(Boolean);
-  const fromReport = (rows) => [...new Set((rows || [])
-    .map((r) => (r && typeof r.userName === 'string' ? r.userName.trim() : ''))
-    .filter(Boolean))];
-  const dynamicNames = [];
   try {
-    const data = await workerRequest(API.neodoveReportLive);
-    dynamicNames.push(...fromReport(data?.agents ?? data?.data));
-  } catch (err) { console.warn(`zoho-sync/fetch: neodove roster fetch failed: ${err.message}`); }
-  if (!dynamicNames.length) {
-    try {
-      const data = await workerRequest(API.neodoveReportLatest);
-      dynamicNames.push(...fromReport(data?.rows));
-    } catch (err) { console.warn(`zoho-sync/fetch: neodove roster fetch (latest) failed: ${err.message}`); }
+    const data = await workerRequest(API.agentRoster);
+    return [...new Set((data?.names || [])
+      .map((name) => (typeof name === 'string' ? name.trim() : ''))
+      .filter(Boolean))];
+  } catch (err) {
+    console.warn(`zoho-sync/fetch: roster fetch failed: ${err.message}`);
+    return [];
   }
-  return [...new Set([...dynamicNames, ...envNames])];
 }
 
 // ── Sales orders snapshot (dashboard "Sales Orders Today" tile) ────────────

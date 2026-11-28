@@ -90,7 +90,7 @@ app.use((req, res, next) => {
 });
 
 // ── Google auth login gate (Express = local/alt runtime) ────────────────────
-const AUTH_EXEMPT = ['/api/auth/', '/api/runner/', '/api/trigger/', '/api/health', '/health', '/api/status', '/webhook', '/dashboard', '/api/token/', '/api/estimates/bulk-upsert', '/api/neodove/report'];
+const AUTH_EXEMPT = ['/api/auth/', '/api/runner/', '/api/trigger/', '/api/health', '/health', '/api/status', '/webhook', '/dashboard', '/api/token/', '/api/estimates/bulk-upsert'];
 // NOTE: getMe is async — the gate MUST await it, else the Promise object is
 // always truthy and every request passes as authenticated.
 app.use(async (req, res, next) => {

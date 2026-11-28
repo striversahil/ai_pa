@@ -107,5 +107,5 @@ removed; do not re-add it here.
   `summary='Deterministic classification.'`, `intent_score` 4 (meaningful)
   or 2 (not). No LLM call.
 - **LLM fallback (runner only)**: Groq `groqJson` with agent roster
-  (today's live NeoDove report → yesterday's snapshot → 
+  (today's live HR roster → 
 ...[truncated 4471 chars]

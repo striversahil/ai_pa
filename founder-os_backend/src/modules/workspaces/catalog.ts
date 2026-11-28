@@ -36,7 +36,6 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
   { slug: 'whatsapp-marketing' },
   // Team-performance view; public since the login cookie is host-scoped and
   // preview subdomains would otherwise 401 (founder decision, kept 2026-11-12).
-  { slug: 'neodove-telecaller-report', publicData: true },
   // Unified Sales workspace absorbed these dashboards (migration 0100/0101).
   // zoho-sent-analyzer retired as a standalone dashboard 2026-11-14 — its
   // component now renders as the Analyzer tab inside Sales.

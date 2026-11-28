@@ -4,7 +4,7 @@
 // the dashboard refreshes on the typed `master-data` live event after every
 // write. The automation exists so the table is a first-class dashboard (sidebar,
 // Automations registry, "View data") and so a future Zoho customer sync has a
-// slot to live in — same shape as neodove-refresh.
+// slot to live in — same shape as zoho-sync.
 import type { AutomationContext } from '../../modules/automation/types';
 import { getMasterDataPayload } from '../../modules/master-data/service';
 

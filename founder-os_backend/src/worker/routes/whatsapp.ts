@@ -21,11 +21,11 @@ export function registerWhatsappRoutes(app: Hono<{ Bindings: Bindings }>): void 
   });
 
   // ── Token webhook / store ───────────────────────────────────────────────────
-  // Session-free by design (AUTH_EXEMPT covers /api/token/): the NeoDove
+  // Session-free by design (AUTH_EXEMPT covers /api/token/): the WhatsApp
   // token extractor runs in a plain browser context with no login cookie.
   // Auth: Bearer SHARED_SECRET (any source, runners + scripts) OR the
-  // limited TOKEN_WEBHOOK_KEY secret (neodove source only, browser-safe to
-  // embed — it can only overwrite the neodove token, never read anything).
+  // limited TOKEN_WEBHOOK_KEY secret (whatsapp source only, browser-safe to
+  // embed — it can only overwrite the whatsapp token, never read anything).
   // The key travels as `Authorization: Bearer <key>`, `X-Webhook-Key: <key>`,
   // `?key=<key>`, or `body.key`. Never hardcoded — set via
   // `printf '%s' "$VAL" | wrangler secret put TOKEN_WEBHOOK_KEY`.
@@ -55,8 +55,8 @@ export function registerWhatsappRoutes(app: Hono<{ Bindings: Bindings }>): void 
     const token = body?.token;
     const metadata = body?.metadata ? JSON.stringify(body.metadata) : null;
     if (!source || token === undefined || token === null) return c.json({ error: 'source and token required' }, 400);
-    // Limited key can only write the neodove token — nothing else.
-    if (viaKey && !full && source !== 'neodove') return c.json({ error: 'forbidden for this source' }, 403);
+    // Limited key can only write the whatsapp token — nothing else.
+    if (viaKey && !full && source !== 'whatsapp') return c.json({ error: 'forbidden for this source' }, 403);
     const updatedAt = await saveToken(prisma, { source, token, metadata });
     return c.json({ ok: true, source, updatedAt });
   });

@@ -119,7 +119,7 @@ export async function cacheDel(key: string): Promise<void> {
   }
 }
 
-/** Invalidate every key under a prefix (e.g. `neodove:user_report:`) in one pass. */
+/** Invalidate every key under a prefix (e.g. `telecalling:dashboard:`) in one pass. */
 export async function cacheDelPrefix(prefix: string): Promise<number> {
   const fullPrefix = `${NS}:${prefix}`;
   // Same contract as cacheDel: always clear matching in-memory copies, even

@@ -138,8 +138,6 @@ export async function getOrgPeople(opts: {
         teamLeadId: (emp as any).salesTeamLeadId ? String((emp as any).salesTeamLeadId) : null,
         whatsapp: (emp as any).whatsapp ?? null,
         phone: (emp as any).phone ?? null,
-        neodoveUserId: (emp as any).neodoveUserId ?? null,
-        neodoveUserName: (emp as any).neodoveUserName ?? null,
         assignEstimateFollowUps: (emp as any).salesAssignFollowUps !== false,
         absentSince: (emp as any).salesAbsentSince ?? null,
       } : null,

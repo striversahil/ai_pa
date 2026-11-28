@@ -51,8 +51,6 @@ export interface OrgRoster {
   teamLeadId: string | null;
   whatsapp: string | null;
   phone: string | null;
-  neodoveUserId: string | null;
-  neodoveUserName: string | null;
   assignEstimateFollowUps: boolean;
   absentSince: string | null;
 }
@@ -91,8 +89,6 @@ export interface AssignInput {
   teamLeadId?: string | null;
   whatsapp?: string | null;
   officePhone?: string | null;
-  neodoveUserId?: string | null;
-  neodoveUserName?: string | null;
   assignEstimateFollowUps?: boolean;
   /** Deprecated: HR never grants access (Users & Permissions owns it). Ignored. */
   scopes?: string[];

@@ -595,7 +595,7 @@ CREATE INDEX IF NOT EXISTS idx_estassign_estimate ON EstimateAssignment(estimate
 CREATE INDEX IF NOT EXISTS idx_estassign_telecaller ON EstimateAssignment(telecallerId);
 CREATE INDEX IF NOT EXISTS idx_estassign_day ON EstimateAssignment(day);
 
--- ── Token storage (external auth tokens for NeoDove, Zoho, etc.) ──────────
+-- ── Token storage (external auth tokens for Zoho, WhatsApp, etc.) ─────────
 CREATE TABLE IF NOT EXISTS Token (
   id TEXT PRIMARY KEY,
   source TEXT NOT NULL UNIQUE,

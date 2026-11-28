@@ -6,12 +6,12 @@ region pipeline. ONE leaderboard, ranked by region, with the telecallers of
 each region as always-open child rows. Wins/₹/points come from **accepted
 estimates**, and every region team owes **₹1,00,000 of accepted value per
 working day** with a weekly carry-forward shortfall. Call KPIs come live from
-NeoDove.
+the auto dialer (DeviceCall) or the manual call log — never a portal snapshot.
 
 Files in this folder:
 
-- `index.ts` — `handler()` runs `runLeadConversion()` (region sweep + NeoDove
-  attribution); `data` re-exports `getTelecallingDashboardData`
+- `index.ts` — `handler()` runs `runLeadConversion()` (region sweep only);
+  `data` re-exports `getTelecallingDashboardData`
   (`GET /api/automations/telecalling/data`).
 - `regions.ts` — pure region taxonomy: R1–R4, region name, TL level, state
   list (mirrored at `founder-os_frontend/src/telecalling/regions.ts`).
@@ -29,7 +29,6 @@ Files in this folder:
 - `risk.ts` — informational risk model (red / zombie / next-step), KV-cached.
 - `enquiry-links.ts` — enquiries stamp `Estimate.createdBy` + `region` from
   the creating agent's roster region; not owner-assignment.
-- `roster.ts` — NeoDove → Telecaller sync (keepAlive = recent NeoDove activity).
 - `call-tags.ts`, `util.ts` — call tag values/labels, helpers.
 - `rule.json` — handler, `schedule: */30 * * * *`, scope `telecalling`.
 
@@ -48,7 +47,7 @@ bars, and the separate "individual leaderboard" ranking.
   estimates with a blank creator/region are healed from the mapping enquiry +
   creator roster region on every sweep. Founder-supplied `EST-*` → region
   mappings are authoritative and never overridden by inference.
-- **Staff**: `Telecaller.tlLevel` (TL1/TL2) and `Telecaller.region`;
+- **Staff**: the HR-register sales view (`Telecaller.tlLevel`, `.region`);
   `assignEstimateFollowUps` = follow-up specialist (used by the follow-up
   rotation).
 - **Won on day** = `Estimate.acceptedAt`, stamped by

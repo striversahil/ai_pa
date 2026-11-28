@@ -15,7 +15,7 @@ const [mode, a, b] = process.argv.slice(2);
 
 const SLUGS = [
   'dpp-prices-dashboard', 'wa-engine-monitor', 'whatsapp-marketing',
-  'neodove-telecaller-report', 'sales', 'accounts', 'digital-marketing', 'human-resources',
+  'sales', 'accounts', 'digital-marketing', 'human-resources',
   'debtors-tracker', 'payment-tracker', 'whatsapp-autopilot', 'enquiry-procurement',
   'enquiry-management', 'reporting-sheet', 'crm', 'product-line', 'stock', 'samarth-overview',
   'sahil-overview', 'linkedin', 'ai-usage', 'telecalling-agent-analysis',

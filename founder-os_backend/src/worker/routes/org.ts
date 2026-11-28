@@ -6,7 +6,7 @@
 //      all, sales-head sees Sales, dept scopes see their own). Logins carry
 //      their roles' chart positions.
 // PUT  /api/org/people/:id — the single person save (position, region list,
-//      team lead, WhatsApp, office phone, NeoDove mapping, active). HR never
+//      team lead, WhatsApp, office phone, active). HR never
 //      touches access — scopes payloads are ignored (Users & Permissions owns
 //      access through roles). Permission: canManagePerson (root/admin, HR,
 //      sales-head→Sales, dept managers→own dept). Writes the employee row only

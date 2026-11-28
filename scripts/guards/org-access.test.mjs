@@ -3,7 +3,7 @@
 // Founder decision 2026-11-14: the Controller roster editor and the login →
 // roster mapping queue are retired. One person save (PUT /api/org/people/:id)
 // owns position, regions (0..N), the Team Lead they report to, WhatsApp,
-// office phone, NeoDove mapping and active state — through the existing
+// office phone and active state — through the existing
 // services, never raw. Since mig 0177 the employee row IS the sales row:
 // seating someone on a chart sales seat writes their profile, so there is no
 // roster to create, mirror or backfill. The telecalling module keeps the

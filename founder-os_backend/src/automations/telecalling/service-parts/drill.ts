@@ -43,7 +43,7 @@ export interface DrillQuery {
  * always used:
  *  • a SCOPED staff member (?selfAgentId, server-injected) may only ever drill
  *    into their OWN region — any client-supplied ?region=/?agent= is coerced;
- *  • ?agent= accepts a roster id, a roster name or a NeoDove user name;
+ *  • ?agent= accepts a roster id or a roster name;
  *  • ?region= takes R1..R4 or "unmapped".
  * Returns null when this is a plain leaderboard request (no drill asked for).
  */
@@ -69,8 +69,7 @@ export function resolveDrillScope(
   if (agentFilter) {
     const tc = (telecallers ?? []).find(
       (t: any) => String(t.id) === agentFilter
-        || String(t.name ?? '') === agentFilter
-        || (t.neodoveUserName ?? '') === agentFilter,
+        || String(t.name ?? '') === agentFilter,
     ) as any;
     if (!tc) return { scope: null, error: 'agent not found' };
     return { scope: { regionId: String(tc.region ?? ''), staff: tc } };

@@ -12,7 +12,6 @@ import { AutomationEngine } from './engine';
 import * as dataRetention from '../../automations/data-retention';
 import * as dppPricesDashboard from '../../automations/dpp-prices-dashboard';
 import * as morningQueueDrain from '../../automations/morning-queue-drain';
-import * as neodoveTelecallerReport from '../../automations/neodove-telecaller-report';
 import * as notificationBatcher from '../../automations/notification-batcher';
 import * as orphanedMessageRecovery from '../../automations/orphaned-message-recovery';
 import * as outboundIntentRecovery from '../../automations/outbound-intent-recovery';
@@ -40,7 +39,6 @@ const MODULES: Record<string, AutomationModule> = {
   'data-retention': dataRetention as AutomationModule,
   'dpp-prices-dashboard': dppPricesDashboard as AutomationModule,
   'morning-queue-drain': morningQueueDrain as AutomationModule,
-  'neodove-telecaller-report': neodoveTelecallerReport as AutomationModule,
   'notification-batcher': notificationBatcher as AutomationModule,
   'orphaned-message-recovery': orphanedMessageRecovery as AutomationModule,
   'outbound-intent-recovery': outboundIntentRecovery as AutomationModule,
@@ -87,9 +85,6 @@ const RULES: Record<string, Partial<AutomationDefinition>> = {
   'morning-queue-drain': {
     id: 'morning-queue-drain', name: 'Morning Queue Drain', description: 'Every minute, send due deferred WhatsApp messages (drain-locked, 60/cycle cap).', type: 'handler', trigger: { type: 'schedule', cron: '* * * * *' }, enabled: true,
   },
-  'neodove-telecaller-report': {
-    id: 'neodove-telecaller-report', name: 'Telecaller Performance (NeoDove Live)', description: 'Per-agent daily call performance from NeoDove. Native in-worker refresh writes TODAY every 5 min (GH runner kept as fallback); final snapshot for yesterday at 00:30 IST.', type: 'handler', trigger: { type: 'schedule', cron: '*/5 * * * *' }, scope: 'neodove', enabled: true,
-  },
   'notification-batcher': {
     id: 'notification-batcher', name: 'Notification Batcher', description: 'Every 15 minutes, flush grouped alerts to WhatsApp.', type: 'handler', trigger: { type: 'schedule', cron: '*/15 * * * *' }, enabled: true,
   },
@@ -121,7 +116,7 @@ const RULES: Record<string, Partial<AutomationDefinition>> = {
     id: 'whatsapp-marketing', name: 'WhatsApp Marketing', description: 'Multi-campaign WhatsApp marketing.', type: 'handler', trigger: { type: 'schedule', cron: '* * * * *' }, scope: 'whatsapp-marketing', enabled: true,
   },
   'telecalling': {
-    id: 'telecalling', name: 'Sales Leaderboard', description: 'Region-based sales leaderboard: R1-R4 ownership, NeoDove call KPIs, 20/80 close-credit split (generator automatic / 80% closer pick), conversion target and risk model.', type: 'handler', trigger: { type: 'schedule', cron: '*/30 * * * *' }, scope: 'telecalling', enabled: true,
+    id: 'telecalling', name: 'Sales Leaderboard', description: 'Region-based sales leaderboard: R1-R4 ownership, auto-dialer call KPIs, 20/80 close-credit split (generator automatic / 80% closer pick), conversion target and risk model.', type: 'handler', trigger: { type: 'schedule', cron: '*/30 * * * *' }, scope: 'telecalling', enabled: true,
   },
   'sales': {
     // Unified sales workspace: mounts the leaderboard / enquiries / customer
@@ -148,10 +143,10 @@ const RULES: Record<string, Partial<AutomationDefinition>> = {
     id: 'product-line', name: 'Product Line', description: 'Product master (KYP sheet as data): products, guide questions, vendors and quote facts. Root-editable.', type: 'handler', trigger: { type: 'manual' }, scope: 'product-line', enabled: true,
   },
   'samarth-overview': {
-    id: 'samarth-overview', name: 'Samarth Overview', description: 'One-page concise highlight across all dashboards (Zoho, CRM, telecalling, enquiries, accounts, digital marketing, NeoDove, enterprise ops). Read-only aggregator, KV-cached 60s.', type: 'handler', trigger: { type: 'manual' }, scope: 'samarth', enabled: true,
+    id: 'samarth-overview', name: 'Samarth Overview', description: 'One-page concise highlight across all dashboards (Zoho, CRM, telecalling, enquiries, accounts, digital marketing, enterprise ops). Read-only aggregator, KV-cached 60s.', type: 'handler', trigger: { type: 'manual' }, scope: 'samarth', enabled: true,
   },
   'sahil-overview': {
-    id: 'sahil-overview', name: 'Sahil Overview', description: 'One-page concise highlight across all dashboards (Zoho, CRM, telecalling, enquiries, accounts, digital marketing, NeoDove, enterprise ops). Read-only aggregator, KV-cached 60s.', type: 'handler', trigger: { type: 'manual' }, scope: 'sahil', enabled: true,
+    id: 'sahil-overview', name: 'Sahil Overview', description: 'One-page concise highlight across all dashboards (Zoho, CRM, telecalling, enquiries, accounts, digital marketing, enterprise ops). Read-only aggregator, KV-cached 60s.', type: 'handler', trigger: { type: 'manual' }, scope: 'sahil', enabled: true,
   },
   'linkedin': {
     id: 'linkedin', name: 'LinkedIn — Daily Founder Content', description: 'Daily BUI founder LinkedIn pipeline: 5 web-researched drafts/day, founder picks 1 on the dashboard, posting stays manual. Generated by the GH runner.', type: 'handler', trigger: { type: 'schedule', cron: '30 0 * * *' }, scope: 'linkedin', enabled: true,

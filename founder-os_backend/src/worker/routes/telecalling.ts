@@ -113,11 +113,6 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     return c.json({ telecallers: withCounts });
   });
 
-  // ── NeoDove phone directory (sales-head) ────────────────────────────
-  // Manual userId‖userName → phone map (founder 2026-11-06): NeoDove exposes
-  // no agent phone, so the sales-head maps each dialling NeoDove user once.
-  // The dashboard joins phone-first; unmapped agents stay on the name
-  // fallback and are flagged until mapped.
   // ── Estimate region search (sales-head): find ANY active/past deal ───
   // The Controller uses this to re-home an estimate by number/customer across
   // sent, accepted (incl. confirmed) and declined — the region is authoritative
@@ -326,35 +321,9 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     }
   });
 
-  // ── Manual connected-call log (TEMPORARY, founder 2026-11-04) ──────────
-  // Backfill while NeoDove is unreliable: hand-counted connected calls per
-  // agent per day + screenshot proof. The leaderboard reads these rows instead
-  // of NeoDove while Setting `manual_calls_mode` = 'manual' (toggle below).
-  // Delete this block + manual-calls.ts + the Call Log tab when NeoDove is
-  // trusted again.
-  app.get('/api/telecalling/manual-calls/mode', async (c) => {
-    const me: any = await requireViewer(c).catch(() => null);
-    if (!me) return c.json({ error: 'authentication required' }, 401);
-    try {
-      const { getCallSource } = await import('../../automations/telecalling/call-source');
-      return c.json({ mode: await getCallSource() });
-    } catch (e: any) {
-      return c.json({ mode: 'neodove', error: e?.message ?? null });
-    }
-  });
-
-  app.put('/api/telecalling/manual-calls/mode', async (c) => {
-    if (!(await requireSalesManager(c))) return c.json({ error: 'sales-head or root only' }, 403);
-    const body = await readBody(c);
-    try {
-      const { setCallSource } = await import('../../automations/telecalling/call-source');
-      const mode = await setCallSource(body?.mode);
-      notifyLive(c, { type: LiveEvent.Telecalling });
-      return c.json({ ok: true, mode });
-    } catch (e: any) {
-      return c.json({ error: e?.message || 'failed to save mode' }, 400);
-    }
-  });
+  // ── Manual connected-call log ─────────────────────────────────────────
+  // Hand-counted connected calls per agent per day + screenshot proof. Used
+  // when Setting `call_source` = 'manual'; historic rows are never deleted.
 
   app.get('/api/telecalling/manual-calls', async (c) => {
     const me: any = await requireViewer(c).catch(() => null);
@@ -368,11 +337,10 @@ export function registerTelecallingRoutes(app: Hono<{ Bindings: Bindings }>): vo
     const from = DAY_RE.test(fromQ) ? fromQ : day;
     const to = DAY_RE.test(toQ) ? toQ : day;
     try {
-      const { getManualCallsMode, listManualCallRows } = await import('../../automations/telecalling/manual-calls');
-      const mode = await getManualCallsMode();
+      const { listManualCallRows } = await import('../../automations/telecalling/manual-calls');
       const agents: any[] = await listActiveTelecallers(prisma, { id: true, name: true, region: true, type: true });
       const rows = await listManualCallRows(from, to);
-      return c.json({ mode, day, from, to, agents, entries: rows });
+      return c.json({ day, from, to, agents, entries: rows });
     } catch (e: any) {
       return c.json({ error: e?.message || 'failed to load manual calls' }, 500);
     }

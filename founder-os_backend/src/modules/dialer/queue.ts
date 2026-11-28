@@ -21,7 +21,7 @@ export async function saveConfig(db: Db, raw: unknown, actor: string): Promise<D
 }
 
 export interface EnqueueRow {
-  /** Ledger row id (NeoDoveLeadPush.id) — echoed back so the caller can mark outcomes. */
+  /** Caller-side row id — echoed back so the caller can mark outcomes. */
   ref: string;
   telecallerId: string;
   customerId: string;
@@ -124,15 +124,14 @@ export async function listBatches(db: Db, sinceIso: string): Promise<DialerBatch
     `SELECT q.batchId, MIN(q.createdAt) AS createdAt, COUNT(*) AS total, COUNT(DISTINCT q.telecallerId) AS agents,
             SUM(CASE WHEN q.status = 'pending' THEN 1 ELSE 0 END) AS waiting,
             SUM(CASE WHEN q.status IN ('done', 'unreachable') THEN 1 ELSE 0 END) AS worked,
-            SUM(CASE WHEN q.status = 'recalled' THEN 1 ELSE 0 END) AS removed,
-            b.region, b.state, b.requestedByName
-       FROM DialerQueue q LEFT JOIN NeoDovePushBatch b ON b.id = q.batchId
+            SUM(CASE WHEN q.status = 'recalled' THEN 1 ELSE 0 END) AS removed
+       FROM DialerQueue q
       WHERE q.batchId <> '' AND q.createdAt >= ?
       GROUP BY q.batchId ORDER BY createdAt DESC LIMIT 100`,
   ).bind(sinceIso).all();
   return ((res?.results ?? []) as any[]).map((r) => ({
     batchId: String(r.batchId), createdAt: String(r.createdAt ?? ''),
-    region: String(r.region ?? ''), state: String(r.state ?? ''), requestedByName: String(r.requestedByName ?? ''),
+    region: '', state: '', requestedByName: '',
     agents: Number(r.agents ?? 0), total: Number(r.total ?? 0), waiting: Number(r.waiting ?? 0),
     worked: Number(r.worked ?? 0), removed: Number(r.removed ?? 0),
   }));

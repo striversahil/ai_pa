@@ -8,7 +8,6 @@
 export const LiveEvent = {
   Estimates: "estimates",
   Baseline: "baseline",
-  Neodove: "neodove",
   Automation: "automation",
   Messages: "messages",
   Digests: "digests",
@@ -77,12 +76,6 @@ export const LiveEvent = {
    * per tap. The post-cache tag overlay guarantees the next full read agrees.
    */
   TelecallingTag: "telecalling-tag",
-  /**
-   * NeoDove campaign lead pushes (Controller tab). Fires on batch create and
-   * on completion only — the chunk endpoint is opted out of auto-live so a
-   * 260-lead push cannot refetch every open dashboard 13 times.
-   */
-  NeodoveCampaign: "neodove-campaign",
   /**
    * Field Staff visit writes (check-in/ping/out, mill rows, expenses,
    * follow-ups). The Field Staff board subscribes to this + the generic

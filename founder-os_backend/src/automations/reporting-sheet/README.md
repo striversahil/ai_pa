@@ -27,9 +27,9 @@ Auto-fill sources (suggestions — the saved snapshot is frozen history):
 
 | section | source |
 |---|---|
-| Sales A telecaller rows | NeoDove agent report for the week (`getNeodoveRangeMap`) |
+| Sales A telecaller rows | auto dialer / manual call log for the week |
 | Sales A region orders | accepted estimates snapshot (`loadAcceptedSnapshot`) |
-| Sales B lead status | NeoDove lead pipeline sums |
+| Sales B lead status | manual entry (the enquiry dashboard owns live pipeline) |
 | Operations B outstanding | debtors ledger live snapshot (`netDue = gross − advances`) |
 | Digital B/C/D sends + leads | marketing log series (`getDigitalMarketingMetricsSeries`) |
 

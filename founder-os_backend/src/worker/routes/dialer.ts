@@ -28,6 +28,7 @@ import { applySync } from '../../modules/dialer/sync';
 import { dayReport, liveBoard } from '../../modules/dialer/report';
 import { latestAppRelease, streamLatestApk } from '../../modules/dialer/app-release';
 import { resetAgent } from '../../modules/dialer/reset';
+import { getCallSource, setCallSource } from '../../automations/telecalling/call-source';
 import { readBody, writeError } from '../http';
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -150,6 +151,20 @@ function registerControllerRoutes(app: Hono<{ Bindings: Bindings }>): void {
     } catch (e) {
       return writeError(c, e, 'invalid dialer config');
     }
+  });
+
+  // Which call source the leaderboard reads: auto dialer (default) or manual.
+  app.get('/api/dialer/call-source', async (c) => {
+    if (!(await manager(c))) return c.json({ error: 'sales-head or root only' }, 403);
+    return c.json({ mode: await getCallSource() });
+  });
+
+  app.put('/api/dialer/call-source', async (c) => {
+    if (!(await manager(c))) return c.json({ error: 'sales-head or root only' }, 403);
+    const body = await readBody(c);
+    const mode = await setCallSource(body?.mode);
+    notifyLive(c, { type: LiveEvent.Telecalling });
+    return c.json({ mode });
   });
 
   app.get('/api/dialer/board', async (c) => {

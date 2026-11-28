@@ -18,12 +18,11 @@ const API = Object.freeze({
   zohoComments: '/api/runner/zoho/comments',
   zohoClassification: '/api/runner/zoho/classification',
   leadDetails: '/api/runner/estimates/lead-details',
+  agentRoster: '/api/runner/roster',
   salesOrdersToday: '/api/runner/zoho/salesorders-today',
   // Dispatch-floor sync (migration 0097): SO rows + items into D1.
   crmState: '/api/runner/crm/state',
   crmOrdersSync: '/api/runner/crm/orders/sync',
-  neodoveReportLive: '/api/automations/neodove-telecaller-report/data',
-  neodoveReportLatest: '/api/neodove/report',
   linkedinToday: '/api/linkedin/today',
   linkedinPick: '/api/linkedin/pick',
   linkedinPosted: '/api/linkedin/posted',

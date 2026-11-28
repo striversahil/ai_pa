@@ -2,7 +2,7 @@
 
 One-page concise highlight across every dashboard: Zoho sent analysis, CRM
 sales orders, telecalling, enquiries (tracker + procurement + management),
-accounts, digital marketing, NeoDove calls, enterprise ops.
+accounts, digital marketing, auto-dialer calls, enterprise ops.
 
 - Read-only aggregator: `data()` reuses each source automation's `data()` via
   `AutomationEngine.getData()` (see `../_overview-shared/`). No duplicated logic.

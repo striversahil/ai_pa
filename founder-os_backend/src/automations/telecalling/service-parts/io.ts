@@ -2,14 +2,18 @@
 // service.ts re-exports everything public here, so existing imports keep working.
 import { prisma } from "../../../shared/prisma";
 import { logger } from "../../../shared/logger";
-import { syncTelecallersFromNeodove } from "../roster";
 import { sweepEnquiryEstimateLinks } from "../enquiry-links";
 import { getEpochDate, closePointsFor, getConvertersMap, EPOCH_SETTING_KEY } from "../scoring";
 import { loadCreatorIndex, loadAcceptedSnapshot, groupAcceptedByWeek, groupAcceptedByWeekFiltered, roundAgg } from "../accepted";
 import { displayNameForEmail } from '../../../shared/employee-name';
 import { loadEmployeeNameIndex } from '../../../shared/employee-name-store';
 import type { AcceptedSnapshot, AcceptedAgg, AcceptedEstimate } from "../accepted";
-import { getNeodoveAgentMap, getNeodoveRangeMap, CONNECTED_CALLS_PER_DAY, LEADS_PER_AGENT_PER_DAY } from "../../neodove-telecaller-report";
+import { getCallSource } from "../call-source";
+
+// KRA targets stay the founder's numbers; calls now come from the auto dialer
+// (DeviceCall) or the hand-counted manual log, never a stale portal snapshot.
+const CONNECTED_CALLS_PER_DAY = 120;
+const LEADS_PER_AGENT_PER_DAY = 10;
 import type { AutomationContext } from "../../../modules/automation/types";
 import { DATE_RE, istDate } from "../util";
 import { cached, cacheGet, cacheRevs } from "../../../shared/cache";
@@ -56,7 +60,6 @@ export async function getEnquiryLeadCounts(from: string, to: string): Promise<Ma
  *  region links. (The old assignment dealing is retired — regions own
  *  estimates now.) */
 export async function runLeadConversion(): Promise<{ linked: number }> {
-  await syncTelecallersFromNeodove();
   try { await sweepEnquiryEstimateLinks(); } catch { /* non-fatal — run still completes */ }
   return { linked: 0 };
 }
@@ -65,7 +68,7 @@ export async function runLeadConversion(): Promise<{ linked: number }> {
  * Per-day × per-staff manager breakdown for an inclusive IST range (region
  * model). Sources per day: close-credit events split 20/80 across
  * generator/closer rows (+ legacy full-slab rows), accepted estimate values,
- * enquiry-sourced leads and the stored NeoDove day snapshot. Gated by the
+ * enquiry-sourced leads and the selected call source. Gated by the
  * history epoch (getEpochDate) — pre-epoch rows never count.
  */
 export async function computeTelecallingDaily(
@@ -123,13 +126,11 @@ export async function computeTelecallingDaily(
 
   // Owner list = active roster (so zero-days still render) + any creator who
   // closed in the window but is no longer active (Sales Head / departed staff).
-  type Owner = { id: string; name: string; region: string; neodoveUserName?: string | null; neodoveUserId?: string | null };
+  type Owner = { id: string; name: string; region: string };
   const owners: Owner[] = (telecallers as any[]).map((t) => ({
     id: String(t.id),
     name: creatorIndex.nameById.get(String(t.id)) ?? String(t.name ?? ''),
     region: String((t as any).region ?? ''),
-    neodoveUserName: (t as any).neodoveUserName,
-    neodoveUserId: (t as any).neodoveUserId,
   }));
   const knownOwners = new Set(owners.map((o) => o.id));
   if ([...agg.keys()].some((k) => !knownOwners.has(k.slice(k.indexOf('|') + 1)))) {
@@ -148,26 +149,16 @@ export async function computeTelecallingDaily(
     }
   }
 
-  // NeoDove snapshots, one cached read per day.
-  const neoByDay = new Map<string, Record<string, any>>();
-  for (const d of dates) {
-    try {
-      neoByDay.set(d, await getNeodoveAgentMap(d));
-    } catch {
-      neoByDay.set(d, {});
-    }
-  }
-
   const out: TelecallingDailyRow[] = [];
-  // Enquiry-sourced leads (replaces NeoDove get-leads): one count map for the
-  // whole range, looked up per (day, agent) cell below.
+  // Enquiry-sourced leads: one count map for the whole range, looked up per
+  // (day, agent) cell below.
   const enquiryLeadsDaily = await getEnquiryLeadCounts(from, to).catch(() => new Map<string, number>());
-  // Connected-call source: neodove | manual | device (Setting `call_source`).
+  // Connected-call source: manual | device (Setting `call_source`). The auto
+  // dialer (DeviceCall) is the default; the hand-counted log stays available.
   let manualByDay = new Map<string, Record<string, unknown>>();
   let deviceByDay = new Map<string, { attempted: number; connected: number; notConnected: number; talkSec: number }>();
-  let callSource: 'neodove' | 'manual' | 'device' = 'neodove';
+  let callSource: 'manual' | 'device' = 'device';
   try {
-    const { getCallSource } = await import('../call-source');
     callSource = await getCallSource();
     if (callSource === 'manual') {
       const { listManualCallRows } = await import('../manual-calls');
@@ -176,27 +167,20 @@ export async function computeTelecallingDaily(
         const k = `${String(r.day ?? '')}|${String(r.telecallerId ?? '')}`;
         manualByDay.set(k, r as Record<string, unknown>);
       }
-    } else if (callSource === 'device') {
+    } else {
       const { getDeviceCallSums } = await import('../device-calls');
       deviceByDay = await getDeviceCallSums(from, to);
     }
-  } catch { /* pre-migration → NeoDove as before */ }
+  } catch { /* pre-migration → no calls */ }
   for (const d of dates) {
-    const neoMap = neoByDay.get(d) ?? {};
     for (const o of owners) {
       const id = o.id;
       const c = agg.get(`${d}|${id}`);
-      const nd = (o.neodoveUserName && neoMap[o.neodoveUserName])
-        // userId fallback only when the row holds no userName (recycled ids
-        // must never credit a stranger's calls — see the ndByTc note above).
-        || (!o.neodoveUserName && o.neodoveUserId && neoMap[o.neodoveUserId])
-        || undefined;
       const manualRow = manualByDay.get(`${d}|${id}`);
       const deviceRow = deviceByDay.get(`${d}|${id}`);
       const callsConnected = deviceRow
         ? deviceRow.connected
-        : manualRow ? Number((manualRow as any).connectedCalls ?? 0) || 0 : nd?.callsConnected ?? 0;
-      // Enquiry-sourced (Sales Enquiries dashboard) — not NeoDove get-leads.
+        : manualRow ? Number((manualRow as any).connectedCalls ?? 0) || 0 : 0;
       const leadsGenerated = enquiryLeadsDaily.get(`${d}|${id}`) ?? 0;
       out.push({
         date: d,
@@ -207,12 +191,12 @@ export async function computeTelecallingDaily(
         won: c?.won ?? 0,
         closedValue: Math.round(c?.value ?? 0),
         closedEstimates: (c?.estIds ?? []).join(' | '),
-        callsAttempted: deviceRow ? deviceRow.attempted : manualRow ? callsConnected : nd?.callsAttempted ?? 0,
+        callsAttempted: deviceRow ? deviceRow.attempted : manualRow ? callsConnected : 0,
         callsConnected,
-        callsNotConnected: deviceRow ? deviceRow.notConnected : manualRow ? 0 : nd?.callsNotConnected ?? 0,
-        talkTimeMin: deviceRow ? Math.round(deviceRow.talkSec / 60) : Math.round((nd?.talkTimeSec ?? 0) / 60),
+        callsNotConnected: deviceRow ? deviceRow.notConnected : 0,
+        talkTimeMin: deviceRow ? Math.round(deviceRow.talkSec / 60) : 0,
         leadsGenerated,
-        leadsConverted: nd?.leadsConverted ?? 0,
+        leadsConverted: 0,
         score: (c?.closePoints ?? 0) + leadsGenerated * 15 + Math.round(callsConnected * 0.5),
       });
     }
@@ -245,8 +229,8 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
   const requestedDay = typeof q.date === 'string' && DATE_RE.test(q.date) ? q.date : istDate();
   // Revision fragment: a write bumps ONE key and every derived cache entry is
   // abandoned at once, instead of the old prefix delete (one KV delete per
-  // variant) that ran on every estimate write and every 5-min NeoDove refresh.
-  const revs = await cacheRevs(['est', 'neo']);
+  // variant) that ran on every estimate write and every cron refresh.
+  const revs = await cacheRevs(['est']);
 
   // ── Region drill (?region= / ?agent=) ────────────────────────────────────
   // Served from its OWN small cache: the drill needs one region's open
@@ -283,17 +267,6 @@ export async function getTelecallingDashboardData(ctx?: AutomationContext): Prom
       );
     }
   }
-
-  // The roster sync is a WRITE. It used to run inside every cold compute, so a
-  // page load could upsert the roster ten times over; now it runs at most once
-  // per 10 minutes behind the cache (new NeoDove agents still appear same-day,
-  // and the daily engine run keeps the roster authoritative).
-  try {
-    await cached('telecalling:roster_sync', 10 * 60 * 1000, async () => {
-      await syncTelecallersFromNeodove();
-      return true;
-    });
-  } catch { /* roster sync is best-effort — the board never waits on it */ }
 
   // Filter window: a preset (?period=week) OR an arbitrary ?from=&to=.
   // resolvePeriod normalizes (swap / no-future / 93-day cap), so the cache key
@@ -362,7 +335,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   // outside the payload cache (a page load used to upsert the roster per
   // compute, and 7 concurrent computes meant 7 roster syncs).
 
-  // Always use the requested day/range. Never substitute an older NeoDove
+  // Always use the requested day/range. Never substitute an older snapshot
   // snapshot: doing that mixed yesterday's calls with today's enquiry leads
   // (and mislabeled stale data as "Today"). If today's push is empty, calls
   // legitimately read 0 until the next sync — leads stay live from enquiries.
@@ -376,7 +349,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   // wave feeds another member of it — the derivations below consume the results
   // exactly as before, in the same order.
   const [
-    neodoveMap,
+    callSource,
     telecallers,
     salesRegionRows,
     epoch,
@@ -389,10 +362,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     holidayRows,
     penaltyEvents,
   ] = await Promise.all([
-    // Period leaderboard sums the stored daily NeoDove reports across the range.
-    periodMode && periodRangeInfo
-      ? getNeodoveRangeMap(periodRangeInfo.from, periodRangeInfo.to)
-      : getNeodoveAgentMap(requestedDay),
+    getCallSource().catch(() => 'device' as const),
     prisma.telecaller.findMany({ where: { deleted: false }, orderBy: { order: 'asc' } }),
     // HR-owned region labels/tiers (fallback: the bundled taxonomy). One read
     // per compute; R1–R4 stay the identity every target already keys on.
@@ -428,43 +398,23 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     tlLevelByTc.set(String(t.id), ((t as any).tlLevel ?? '') as TlLevel);
   }
 
-  // Lead Generation: drilled call KPis per staff member from the NeoDove map.
-  // The userId fallback serves ONLY rows with no stored userName: NeoDove ids
-  // are recycled across staff, so a stored userName that misses the map means
-  // "this person has no report" — falling back to their (possibly reassigned)
-  // id would credit them a stranger's calls (2026-11-02: Muskan's stale
-  // 3518625a would have read Kamal's calls).
-  // Links are sales-head set on the roster row (NeoDove user picker);
-  // auto-sync only fills empty link fields and never overwrites a hand link.
-  const ndByTc = new Map<string, Record<string, number>>();
-  for (const t of telecallers as any[]) {
-    const nd = (t.neodoveUserName && neodoveMap[t.neodoveUserName])
-      || (!t.neodoveUserName && t.neodoveUserId && neodoveMap[t.neodoveUserId])
-      || null;
-    ndByTc.set(String(t.id), nd ?? {});
-  }
-
-  // TEMPORARY manual-call override (founder 2026-11-04): while Setting
-  // `manual_calls_mode` = 'manual', connected calls come from the hand-counted
-  // ManualCallLog rows (screenshot proof) instead of NeoDove. Attempted is set
-  // = connected (no attempted split is collected manually); talk/other NeoDove
-  // fields ride through unchanged.
-  let callsSource: 'manual' | 'neodove' | 'device' = 'neodove';
+  // Connected-call KPIs: the ONE source is the auto dialer (DeviceCall) or the
+  // hand-counted manual log, chosen by Setting `call_source`. Nothing here
+  // touches a call snapshot table; the historic rows stay intact in D1.
+  const callsByTc = new Map<string, Record<string, number>>();
+  for (const t of telecallers as any[]) callsByTc.set(String(t.id), {});
   try {
-    const { getCallSource } = await import('../call-source');
-    callsSource = await getCallSource();
     const leadFrom0 = periodMode && periodRangeInfo ? periodRangeInfo.from : day;
     const leadTo0 = periodMode && periodRangeInfo ? periodRangeInfo.to : day;
-    if (callsSource === 'manual') {
+    if (callSource === 'manual') {
       const { getManualCallsSum } = await import('../manual-calls');
       const manualSum = await getManualCallsSum(leadFrom0, leadTo0);
       for (const t of telecallers as any[]) {
         const id = String((t as any).id ?? '');
         const m = manualSum.get(id) ?? 0;
-        const prev = ndByTc.get(id) ?? {};
-        ndByTc.set(id, { ...prev, callsConnected: m, callsAttempted: m, callsNotConnected: 0 });
+        callsByTc.set(id, { callsConnected: m, callsAttempted: m, callsNotConnected: 0 });
       }
-    } else if (callsSource === 'device') {
+    } else {
       const { getDeviceCallSums } = await import('../device-calls');
       const sums = await getDeviceCallSums(leadFrom0, leadTo0);
       const perAgent = new Map<string, { attempted: number; connected: number; notConnected: number; talkSec: number }>();
@@ -481,9 +431,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
         const id = String((t as any).id ?? '');
         const d = perAgent.get(id);
         if (!d) continue;
-        const prev = ndByTc.get(id) ?? {};
-        ndByTc.set(id, {
-          ...prev,
+        callsByTc.set(id, {
           callsAttempted: d.attempted,
           callsConnected: d.connected,
           callsNotConnected: d.notConnected,
@@ -491,9 +439,9 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
         });
       }
     }
-  } catch { /* call_source unavailable (pre-migration) → NeoDove as before */ }
+  } catch { /* call_source unavailable (pre-migration) → calls read 0 */ }
 
-  // Enquiry-sourced leads (Sales Enquiries dashboard — replaces NeoDove
+  // Enquiry-sourced leads (Sales Enquiries dashboard — replaces call-portal
   // get-leads): per-agent enquiry-creation totals over the leaderboard window.
   // The UNATTRIBUTED_LEADS_KEY sentinel is peeled off into unattributedLeads
   // (meta) — never attributed to an agent id of ''.
@@ -990,7 +938,7 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
   const staffRows = new Map<string, StaffRow>();
   for (const t of telecallers as any[]) {
     const id = String(t.id);
-    const nd = ndByTc.get(id) ?? {};
+    const nd = callsByTc.get(id) ?? {};
     const callsAttempted = Number(nd?.callsAttempted ?? 0) || 0;
     const callsConnected = Number(nd?.callsConnected ?? 0) || 0;
     const callsNotConnected = Number(nd?.callsNotConnected ?? 0) || 0;
@@ -1245,9 +1193,9 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     declinedValue: Math.round(declinedSnapshot.total.value),
     declinedUnattributed: declinedSnapshot.unattributed.count,
     leadsGenerated: [...leadsByAgent.values()].reduce((s, n) => s + n, 0),
-    callsAttempted: [...ndByTc.values()].reduce((s, nd) => s + (Number(nd?.callsAttempted ?? 0) || 0), 0),
-    callsConnected: [...ndByTc.values()].reduce((s, nd) => s + (Number(nd?.callsConnected ?? 0) || 0), 0),
-    talkTimeSec: [...ndByTc.values()].reduce((s, nd) => s + (Number(nd?.talkTimeSec ?? 0) || 0), 0),
+    callsAttempted: [...callsByTc.values()].reduce((s, nd) => s + (Number(nd?.callsAttempted ?? 0) || 0), 0),
+    callsConnected: [...callsByTc.values()].reduce((s, nd) => s + (Number(nd?.callsConnected ?? 0) || 0), 0),
+    talkTimeSec: [...callsByTc.values()].reduce((s, nd) => s + (Number(nd?.talkTimeSec ?? 0) || 0), 0),
   };
 
   // Team bar = the SUM of the four region targets. The old team-wide ₹5L/₹10L
@@ -1304,27 +1252,6 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
     tlLevel: String(t.tlLevel ?? ''),
     active: !!t.assignEstimateFollowUps,
   }));
-
-  // NeoDove users with no roster link — the Controller's link picker source.
-  // Links are sales-head set on the roster row; auto-sync only fills empty
-  // link fields, so this list is the entire manual-mapping queue.
-  const unmappedNeodoveUsers: Array<{ userId: string; userName: string }> = [];
-  try {
-    const linkedNames = new Set((telecallers as any[]).map((t) => String((t as any)?.neodoveUserName ?? '').trim()).filter(Boolean));
-    const linkedIds = new Set((telecallers as any[]).map((t) => String((t as any)?.neodoveUserId ?? '').trim()).filter(Boolean));
-    const seenNeo = new Set<string>();
-    for (const a of Object.values(neodoveMap ?? {}) as any[]) {
-      const uid = String(a?.userId ?? '').trim();
-      const uname = String(a?.userName ?? '').trim();
-      const key = `${uid}‖${uname}`;
-      if (!key || seenNeo.has(key)) continue;
-      seenNeo.add(key);
-      if ((uname && linkedNames.has(uname)) || (uid && linkedIds.has(uid))) continue;
-      unmappedNeodoveUsers.push({ userId: uid, userName: uname });
-      if (unmappedNeodoveUsers.length >= 100) break;
-    }
-    unmappedNeodoveUsers.sort((x, y) => x.userName.localeCompare(y.userName));
-  } catch { /* picker list is best-effort — the board never depends on it */ }
 
   // ── Recent activity ──────────────────────────────────────────────────────────
   // Viewer scope: the route injects `selfAgentId` for NON-admin users only, so
@@ -1390,9 +1317,8 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       title: 'Sales Leaderboard',
       day,
       requestedDay,
-      // TEMPORARY: which source the connected-call column reads (manual log vs
-      // NeoDove). The Call Log tab owns the toggle.
-      callsSource,
+      // Which source the connected-call column reads: manual log | device.
+      callsSource: callSource,
       period: periodRangeInfo?.kind === 'custom' ? 'custom' : periodMode && periodRangeInfo ? String(q.period) : 'today',
       periodLabel: periodRangeInfo?.label ?? 'Today',
       periodFrom: periodRangeInfo?.from ?? null,
@@ -1415,8 +1341,6 @@ export async function computeTelecallingDashboardData(ctx?: AutomationContext): 
       unmappedStaffCount: unmappedStaff.length,
       staff: agentList,
       agents: agentList,
-      // NeoDove users with no roster link — Controller link-picker source.
-      unmappedNeodoveUsers,
       // Enquiries in the window with no roster match (assignedAgentId empty).
       // Surfaced so root can fix attribution instead of silently undercounting.
       unattributedLeads,

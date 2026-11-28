@@ -1,15 +1,29 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // routes/estimates.ts — estimates payload + lookup, CRM manual order actions,
-// baseline snapshots, NeoDove report, Zoho classification, bulk-upsert.
+// baseline snapshots, Zoho classification, bulk-upsert.
 // Telecaller roster/assignment/call-tag/next-step handlers live in
 // routes/telecalling.ts (Phase-3 split). URLs unchanged.
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Hono } from 'hono';
-import { deps, requireSecret, adminGuard, notifyLive, LiveEvent, kolkataDateStr, getEstimatesPayload, refreshNeodoveReport, type Bindings } from '../context';
+import { deps, requireSecret, adminGuard, notifyLive, LiveEvent, kolkataDateStr, getEstimatesPayload, type Bindings } from '../context';
 import { getViewerMe } from '../viewer';
 import { readBody } from '../http';
 
 export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void {
+  // ── Runner roster (Zoho sync agent attribution) ────────────────────────────
+  // The HR register is the only roster; runners never call a dialer portal.
+  app.get('/api/runner/roster', async (c) => {
+    if (!requireSecret(c)) return c.text('Unauthorized', 401);
+    const { prisma } = deps();
+    const rows: any[] = await prisma.telecaller.findMany({
+      where: { deleted: false },
+      select: { name: true },
+      orderBy: { order: 'asc' },
+    });
+    const names = [...new Set(rows.map((r) => String(r?.name ?? '').trim()).filter(Boolean))];
+    return c.json({ names });
+  });
+
   // ── Estimates ───────────────────────────────────────────────────────────────
   app.get('/api/estimates', async (c) => {
     return c.json(await getEstimatesPayload());
@@ -132,105 +146,6 @@ export function registerEstimatesRoutes(app: Hono<{ Bindings: Bindings }>): void
       return c.json({ date, isStale, baseline: row?.value ? JSON.parse(row.value) : null });
     } catch {
       return c.json({ date, isStale: true, baseline: null });
-    }
-  });
-
-  // ── NeoDove daily user/call report ──────────────────────────────────────────
-  app.post('/api/runner/neodove-refresh', async (c) => {
-    if (!requireSecret(c)) return c.text('Unauthorized', 401);
-    try {
-      const body = await readBody(c);
-      // Probe mode (founder 2026-11-05): inventory the NeoDove API shape for
-      // agent phone data (keys only, no PII) without storing anything.
-      if ((body as any)?.probe) {
-        const { probeNeodoveDirectory } = await import('../../automations/neodove-refresh');
-        const result = await probeNeodoveDirectory();
-        return c.json(result, result.ok ? 200 : 502);
-      }
-      const result = await refreshNeodoveReport(typeof body?.date === 'string' ? body.date : undefined);
-      return c.json(result, result.ok ? 200 : 502);
-    } catch (e: any) {
-      return c.json({ ok: false, error: e?.message || String(e) }, 500);
-    }
-  });
-
-  // ── NeoDove snapshot backfill (manager repair tool) ────────────────────────
-  // The 5-min cron writes one `neodove_user_report:<date>` snapshot per day.
-  // When the NeoDove token dies (401), days go missing and every week view
-  // sums to nothing. This replays ONE missing day per call through the same
-  // refreshNeodoveReport() the cron uses (report + leads + cache
-  // invalidation), oldest first; the dashboard button loops it until
-  // `remaining` hits 0, so no single request outruns worker limits.
-  app.post('/api/neodove/backfill', async (c) => {
-    const denied = await adminGuard(c); if (denied) return denied;
-    try {
-      const shift = (ymd: string, n: number): string => {
-        const [y, m, d] = ymd.split('-').map(Number);
-        const t = new Date(Date.UTC(y, m - 1, d + n));
-        return t.toISOString().slice(0, 10);
-      };
-      const body = await readBody(c);
-      const { getLatestNeodoveDay } = await import('../../automations/neodove-telecaller-report/index');
-      const today = kolkataDateStr();
-      const latest = await getLatestNeodoveDay().catch(() => null);
-      const validDay = (v: unknown): string | null =>
-        typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
-      let end = validDay(body?.to) ?? today;
-      if (end > today) end = today;
-      let start = validDay(body?.from) ?? (latest ? shift(latest, 1) : shift(today, -13));
-      if (start > end) return c.json({ ok: true, done: true, remaining: 0, date: null });
-      const result = await refreshNeodoveReport(start);
-      let remaining = 0;
-      for (let d = shift(start, 1); d <= end; d = shift(d, 1)) remaining++;
-      return c.json({
-        ok: result.ok, date: start, stored: result.stored ?? 0,
-        error: (result as any).error ?? null, remaining, done: result.ok && remaining === 0,
-      });
-    } catch (e: any) {
-      return c.json({ ok: false, error: e?.message || String(e) }, 500);
-    }
-  });
-
-  app.post('/api/runner/neodove/report', async (c) => {
-    if (!requireSecret(c)) return c.text('Unauthorized', 401);
-    const { prisma } = deps();
-    const body = await readBody(c);
-    const reportDate = String(body?.reportDate || kolkataDateStr());
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(reportDate)) return c.json({ error: 'reportDate must be YYYY-MM-DD' }, 400);
-    const rows = body?.report?.rows;
-    if (!Array.isArray(rows)) return c.json({ error: 'report.rows[] required' }, 400);
-    const key = `neodove_user_report:${reportDate}`;
-    const value = JSON.stringify({ reportDate, fetchedAt: new Date().toISOString(), rows });
-    await prisma.setting.upsert({ where: { key }, update: { value }, create: { key, value } });
-    // NeoDove users NEVER create a roster row (mig 0177): the sales roster is
-    // the HR register, and an unlinked NeoDove identity surfaces in the person
-    // drawer's picker for the sales head to hand-link.
-    notifyLive(c, { type: 'neodove', date: reportDate });
-    const { invalidateNeodoveCache } = require('../../automations/neodove-telecaller-report');
-    await invalidateNeodoveCache();
-    return c.json({ ok: true, key, count: rows.length });
-  });
-
-  app.get('/api/neodove/report', async (c) => {
-    if (!requireSecret(c)) return c.text('Unauthorized', 401);
-    const { prisma } = deps();
-    const dateParam = c.req.query('date');
-    let row: any;
-    if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
-      row = await prisma.setting.findUnique({ where: { key: `neodove_user_report:${dateParam}` } });
-    } else {
-      const rows = await prisma.setting.findMany({
-        where: { key: { startsWith: 'neodove_user_report:' } },
-        orderBy: { key: 'desc' },
-        take: 1,
-      });
-      row = rows[0];
-    }
-    if (!row?.value) return c.json({ error: 'no neodove report found' }, 404);
-    try {
-      return c.json(JSON.parse(row.value));
-    } catch {
-      return c.json({ error: 'corrupt report row' }, 500);
     }
   });
 

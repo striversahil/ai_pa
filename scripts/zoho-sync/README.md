@@ -43,7 +43,7 @@ The files below own only zoho-sent endpoint shapes and orchestration; the old
 
 | File | Owns | Never touches |
 |---|---|---|
-| `fetch.js` | Zoho endpoint shapes: All-status 2-page list, comment batches, vanished-row detail check, NeoDove roster, sales-orders snapshot (auth/net/dates/orgs from the core) | D1, AI |
+| `fetch.js` | Zoho endpoint shapes: All-status 2-page list, comment batches, vanished-row detail check, roster, sales-orders snapshot (auth/net/dates/orgs from the core) | D1, AI |
 | `estimate-changes.js` *(core)* | Pure change detection (no I/O — unit-testable): fingerprint build/parse/capped-tick merge, metadata diff (status excluded), `detectTransitions`, comment newcomer sets, `selectWorkItems` with the `PROCESSABLE` gate (`sent/accepted/declined/confirmed`) | network, DB, AI |
 | `persist.js` | Worker writes via core `contract.js` endpoint paths: `getDbState`, `postMetadataUpserts`, `postStatusUpdates`, `postComments` (HTML-cleaned, batched), `postClassification`, `postLeadDetails`, watermark, fingerprint, sales-orders tile | Zoho, AI |
 | `analyze.js` | The only AI spender: badge + journey classification, pooled with retry (`AI_CONCURRENCY=1`, 3s pacing), lead-details capture loop | Zoho reads, D1 (writes via `persist.js`) |

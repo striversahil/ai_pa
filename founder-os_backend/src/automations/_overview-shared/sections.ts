@@ -145,27 +145,6 @@ function summarizeTaskbar(d: any, kind: string) {
   };
 }
 
-function summarizeNeodove(d: any) {
-  const agents: any[] = Array.isArray(d.agents) ? d.agents : [];
-  const totals = d.totals ?? {};
-  const connected = num(totals.callsConnected);
-  const red = agents.filter((a) => a?.kra?.overall === 'red').length;
-  const att: string[] = [];
-  if (red > 0) att.push(`${red}/${agents.length} agents below target`);
-  const worst = [...agents].sort((a, b) => num(a?.kra?.connectedPct) - num(b?.kra?.connectedPct))[0];
-  if (worst) att.push(`Lowest: ${String(worst.userName ?? '?')} ${num(worst?.kra?.connectedPct)}% connects`);
-  return {
-    headline: `${agents.length} agents · ${connected} connects · ${d?.meta?.reportDate ?? 'latest'}`,
-    kpis: [
-      { label: 'Agents', value: String(agents.length) },
-      { label: 'Connects', value: String(connected) },
-      { label: 'Leads', value: String(num(totals.leadsGenerated ?? totals.leadsConverted)) },
-      { label: 'Below target', value: String(red) },
-    ],
-    attention: att.slice(0, 3),
-  };
-}
-
 function summarizeStock(d: any) {
   const totals = d?.totals ?? {};
   const items: any[] = Array.isArray(d?.items) ? d.items : [];
@@ -207,7 +186,6 @@ export const SECTIONS: SectionDef[] = [
   { key: 'accounts', title: 'Accounts', slugs: ['accounts'], linkSlug: 'accounts', build: (r) => section('accounts', 'Accounts', r.accounts?.data, r.accounts?.error, (d) => summarizeTaskbar(d, 'accounts')) },
   { key: 'digital', title: 'Digital Marketing', slugs: ['digital-marketing'], linkSlug: 'digital-marketing', build: (r) => section('digital-marketing', 'Digital Marketing', r['digital-marketing']?.data, r['digital-marketing']?.error, (d) => summarizeTaskbar(d, 'marketing')) },
   { key: 'stock', title: 'Stock', slugs: ['stock'], linkSlug: 'stock', build: (r) => section('stock', 'Stock', r.stock?.data, r.stock?.error, summarizeStock) },
-  { key: 'neodove', title: 'NeoDove Calls', slugs: ['neodove-telecaller-report'], linkSlug: 'neodove-telecaller-report', build: (r) => section('neodove-telecaller-report', 'NeoDove Calls', r['neodove-telecaller-report']?.data, r['neodove-telecaller-report']?.error, summarizeNeodove) },
 ];
 
 export const ALL_SOURCE_SLUGS: string[] = [...new Set(SECTIONS.flatMap((s) => s.slugs))];

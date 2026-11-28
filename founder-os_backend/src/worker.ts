@@ -8,8 +8,8 @@
 //                     estimates, whatsapp, triggers, runner, autopilot,
 //                     automations (registry), session (viewer workspaces),
 //                     whatsapp-marketing, events).
-//   cron.ts         — native `* * * * *` cron router (neodove-refresh +
-//                     GitHub Actions workflow_dispatch dispatcher).
+//   cron.ts         — native `* * * * *` cron router + GitHub Actions
+//                     workflow_dispatch dispatcher.
 // ─────────────────────────────────────────────────────────────────────────────
 import { EventHub } from './durable/event-hub';
 import { AsyncTaskRunner } from './durable/async-task-runner';
@@ -53,7 +53,6 @@ import { registerEmailRoutes } from './worker/routes/email';
 import { registerDebtorsTrackerRoutes } from './worker/routes/debtors-tracker';
 import { registerMasterDataRoutes } from './worker/routes/master-data';
 import { registerReportingSheetRoutes } from './worker/routes/reporting-sheet';
-import { registerNeodoveCampaignRoutes } from './worker/routes/neodove-campaign';
 import { registerStockRoutes } from './worker/routes/stock';
 import { registerEventsRoute } from './worker/routes/events';
 import { registerAndroidRoutes } from './worker/routes/android';
@@ -119,7 +118,6 @@ registerEmailRoutes(app);
 registerDebtorsTrackerRoutes(app);
 registerMasterDataRoutes(app);
 registerReportingSheetRoutes(app);
-registerNeodoveCampaignRoutes(app);
 registerStockRoutes(app);
 registerMarketingRoutes(app);
 registerEventsRoute(app);

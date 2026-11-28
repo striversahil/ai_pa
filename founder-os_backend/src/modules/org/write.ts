@@ -81,8 +81,6 @@ export async function assignPerson(opts: {
     profile.salesRegions = JSON.stringify(regions);
     profile.salesTeamLeadId = teamLeadId;
     if (input.whatsapp !== undefined) profile.whatsapp = input.whatsapp ? String(input.whatsapp) : null;
-    if (input.neodoveUserId !== undefined) profile.neodoveUserId = input.neodoveUserId || null;
-    if (input.neodoveUserName !== undefined) profile.neodoveUserName = input.neodoveUserName || null;
     if (input.assignEstimateFollowUps !== undefined) {
       profile.salesAssignFollowUps = !!input.assignEstimateFollowUps;
     }

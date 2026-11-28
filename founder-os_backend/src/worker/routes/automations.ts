@@ -98,7 +98,7 @@ export function registerAutomationRoutes(app: Hono<{ Bindings: Bindings }>): voi
 
   // DEPRECATED alias of GET /api/session/workspaces/:slug/data (same handler,
   // worker/workspace-data.ts). Kept for old clients/bookmarks + the public
-  // telecalling/NeoDove paths in AUTH_EXEMPT. Viewer scoping lives in
+  // telecalling paths in AUTH_EXEMPT. Viewer scoping lives in
   // modules/workspaces/scoping.ts — do not add per-slug logic here.
   app.get('/api/automations/:slug/data', async (c) => {
     const res = await serveWorkspaceData(c, c.req.param('slug'));
