@@ -68,6 +68,7 @@ test('manifest.json v2.0.0 is the only provider list', () => {
   assert.ok(zoho.auth.secretFields.some((f) => f.requiredWhen?.authMode === 'oauth2'), 'raw bridge must gate its secret');
   assert.ok(manifest.providers.google_maps.auth.configFields.some((f) => f.key === 'regionCode'));
   assert.equal(manifest.providers.openai.outbound.supported, true);
+  assert.equal(manifest.providers.justdial.inbound.normalizeQueryToBodyOnGet, true);
 });
 
 test('Gmail is the ONLY poller and it runs every 5 minutes', () => {
@@ -96,6 +97,7 @@ test('manifest loader is the only source for providers + URLs', () => {
   }
   assert.match(loader, /requiredWhen/);
   assert.match(loader, /MANIFEST_VERSION/);
+  assert.match(loader, /normalizeQueryToBodyOnGet:\s*Boolean\(rawInbound\.normalizeQueryToBodyOnGet\)/);
 });
 
 test('every provider has an adapter + every inbound provider a mapper', () => {

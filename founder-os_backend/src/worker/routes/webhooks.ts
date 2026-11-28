@@ -87,7 +87,7 @@ export function registerWebhookRoutes(app: Hono<{ Bindings: any }>): void {
       body = text;
     }
 
-    const inbound = normalizeInboundRequest({ method: c.req.method, query, body, headers });
+    const inbound = normalizeInboundRequest({ method: c.req.method, provider: source, query, body, headers });
     const check = await verifyInbound(source, {
       raw: inbound.raw,
       payload: inbound.payload,

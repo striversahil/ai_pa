@@ -54,6 +54,7 @@ export interface NormalizedInbound {
  */
 export function normalizeInboundRequest(input: {
   method: string;
+  provider?: string;
   query?: Record<string, string | undefined>;
   body?: unknown;
   headers?: Record<string, string>;
@@ -66,8 +67,10 @@ export function normalizeInboundRequest(input: {
   let payload: Record<string, unknown> = {};
   let raw = '';
   if (String(input.method).toUpperCase() === 'GET') {
-    payload = { ...query };
-    raw = JSON.stringify(payload);
+    if (!input.provider || normalizesQueryToBody(input.provider)) {
+      payload = { ...query };
+      raw = JSON.stringify(payload);
+    }
   } else if (typeof input.body === 'string') {
     raw = input.body;
     try {

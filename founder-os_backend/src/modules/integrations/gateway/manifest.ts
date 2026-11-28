@@ -93,6 +93,7 @@ interface RawInbound {
   liveEvent?: string;
   fieldMap?: Record<string, string>;
   labelAliases?: Record<string, string>;
+  normalizeQueryToBodyOnGet?: boolean;
   quietHoursIst?: RawQuietHours | [number, number];
   poller?: { intervalMinutes?: number; cursorField?: string };
   poll?: { supported?: boolean; intervalMinutes?: number; cursorField?: string };
@@ -299,6 +300,7 @@ function hydrate(provider: string, p: RawProvider): ProviderManifest {
     idempotencyKey: normalizeIdempotency(rawInbound.idempotencyKey),
     fieldMap: rawInbound.fieldMap,
     labelAliases: rawInbound.labelAliases,
+    normalizeQueryToBodyOnGet: Boolean(rawInbound.normalizeQueryToBodyOnGet),
     mapper: rawInbound.mapper,
     canonicalType: rawInbound.canonicalType,
     targetSink: rawInbound.targetSink,
