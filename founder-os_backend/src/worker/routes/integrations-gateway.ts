@@ -11,6 +11,9 @@ import {
   bindGatewayContext,
   manifestFor,
   PROVIDER_MANIFESTS,
+  MANIFEST_VERSION,
+  MANIFEST_CATEGORIES,
+  validateInstancePayload,
   testInstance,
   IntegrationError,
 } from '../../modules/integrations/gateway';
@@ -19,7 +22,7 @@ import { decryptSecrets, encryptSecrets, vaultKey } from '../../modules/integrat
 import type { InstanceRow, InstanceView } from '../../modules/integrations/gateway/types';
 import { parsePageQuery } from '../../shared/paging';
 import { safeJsonObject } from '../../shared/json';
-import { ingestStats, listIngested, replayRow } from '../../modules/ingestion/store';
+import { getRow, ingestStats, listIngested, replayRow } from '../../modules/ingestion/store';
 import { processIngestedRow } from '../../modules/ingestion/processor';
 
 function normalizeKey(value: unknown): string {
@@ -60,7 +63,7 @@ export function registerIntegrationsGatewayRoutes(app: Hono<{ Bindings: any }>):
   app.get('/api/integrations/manifest', async (c) => {
     const denied = await adminGuard(c);
     if (denied) return denied;
-    return c.json({ providers: PROVIDER_MANIFESTS });
+    return c.json({ version: MANIFEST_VERSION, categories: MANIFEST_CATEGORIES, providers: PROVIDER_MANIFESTS });
   });
 
   app.get('/api/integrations/instances', async (c) => {
@@ -70,7 +73,7 @@ export function registerIntegrationsGatewayRoutes(app: Hono<{ Bindings: any }>):
     const rows = await listInstances(c.env.DB);
     const instances = await Promise.all(rows.map((row) => toView(row, c.env)));
     const stats = await ingestStats(c.env.DB);
-    return c.json({ instances, providers: PROVIDER_MANIFESTS, stats });
+    return c.json({ instances, providers: PROVIDER_MANIFESTS, version: MANIFEST_VERSION, categories: MANIFEST_CATEGORIES, stats });
   });
 
   app.post('/api/integrations/instances', async (c) => {
@@ -88,6 +91,8 @@ export function registerIntegrationsGatewayRoutes(app: Hono<{ Bindings: any }>):
     const previousSecrets = existing ? await decryptSecrets(existing.encryptedSecrets, key) : {};
     const secrets = merge(previousSecrets, body?.secrets) as Record<string, string>;
     const config = merge(existing ? safeJsonObject(existing.configJson) : {}, body?.config);
+    const check = validateInstancePayload(provider, config, secrets);
+    if (!check.ok) return c.json({ error: check.errors.join('; '), errors: check.errors }, 400);
     const deliveryMode = body?.deliveryMode === 'realtime' ? 'realtime' : body?.deliveryMode === 'batch'
       ? 'batch' : manifest.defaultDeliveryMode;
     const label = String(body?.label ?? '').trim().slice(0, 120) || `${manifest.label} ${instanceKey}`.trim();
@@ -119,6 +124,8 @@ export function registerIntegrationsGatewayRoutes(app: Hono<{ Bindings: any }>):
     const previousSecrets = await decryptSecrets(row.encryptedSecrets, key);
     const secrets = merge(previousSecrets, body?.secrets) as Record<string, string>;
     const config = merge(safeJsonObject(row.configJson), body?.config);
+    const check = manifest ? validateInstancePayload(row.provider, config, secrets) : { ok: true, errors: [] };
+    if (!check.ok) return c.json({ error: check.errors.join('; '), errors: check.errors }, 400);
     const deliveryMode = body?.deliveryMode === 'realtime' || body?.deliveryMode === 'batch'
       ? body.deliveryMode : row.deliveryMode;
     const isDefault = body?.isDefault === undefined ? Number(row.isDefault) === 1 : body.isDefault === true;
@@ -178,6 +185,14 @@ export function registerIntegrationsGatewayRoutes(app: Hono<{ Bindings: any }>):
       mode: c.req.query('mode') || undefined,
     });
     return c.json(page);
+  });
+
+  app.get('/api/integrations/ingested/:id', async (c) => {
+    const denied = await adminGuard(c);
+    if (denied) return denied;
+    const row = await getRow(c.env.DB, c.req.param('id') ?? '');
+    if (!row) return c.json({ error: 'row not found' }, 404);
+    return c.json({ row });
   });
 
   app.post('/api/integrations/ingested/:id/replay', async (c) => {

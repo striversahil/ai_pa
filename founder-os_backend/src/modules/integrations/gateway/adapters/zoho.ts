@@ -51,6 +51,28 @@ async function writeToken(source: string, token: string, expiresAt: number): Pro
   }
 }
 
+/** `rawCurlHeaders` may be JSON, `-H 'k: v'` lines, or plain `k: v` lines. */
+export function parseRawHeaders(raw: string): Record<string, string> {
+  const text = String(raw || '').trim();
+  if (!text) return {};
+  if (text.startsWith('{')) {
+    try {
+      const obj = JSON.parse(text);
+      return Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, String(v)]));
+    } catch {
+      /* fall through to line parsing */
+    }
+  }
+  const out: Record<string, string> = {};
+  for (const line of text.split(/\r?\n/)) {
+    const cleaned = line.trim().replace(/^-H\s+/, '').replace(/^['"]|['"]$/g, '');
+    const idx = cleaned.indexOf(':');
+    if (idx <= 0) continue;
+    out[cleaned.slice(0, idx).trim()] = cleaned.slice(idx + 1).trim();
+  }
+  return out;
+}
+
 export const zohoAdapter: IntegrationAdapter<ZohoClient> = {
   provider: 'zoho',
   async connect(instance: ResolvedInstance): Promise<ZohoClient> {
@@ -60,9 +82,17 @@ export const zohoAdapter: IntegrationAdapter<ZohoClient> = {
     const accountsUrl = String(cfg.accountsUrl || 'https://accounts.zoho.in').replace(/\/+$/, '');
     const apiDomain = String(cfg.apiDomain || instance.baseUrl || 'https://www.zohoapis.in').replace(/\/+$/, '');
     const source = `zoho:${instance.instanceKey || 'default'}`;
-    if (!organizationId) throw new IntegrationError('zoho', 'instance is missing organizationId', 409);
-    if (!s.clientId || !s.clientSecret || !s.refreshToken) {
-      throw new IntegrationError('zoho', 'instance is missing OAuth credentials', 409);
+    const authMode = String(cfg.authMode || 'oauth2');
+    const bridgeHeaders = authMode === 'raw_headers_bridge' ? parseRawHeaders(s.rawCurlHeaders || '') : {};
+    if (authMode === 'raw_headers_bridge') {
+      if (!Object.keys(bridgeHeaders).length) {
+        throw new IntegrationError('zoho', 'instance is missing rawCurlHeaders', 409);
+      }
+    } else {
+      if (!organizationId) throw new IntegrationError('zoho', 'instance is missing organizationId', 409);
+      if (!s.clientId || !s.clientSecret || !s.refreshToken) {
+        throw new IntegrationError('zoho', 'instance is missing OAuth credentials', 409);
+      }
     }
 
     async function refresh(): Promise<string> {
@@ -83,6 +113,7 @@ export const zohoAdapter: IntegrationAdapter<ZohoClient> = {
     }
 
     async function accessToken(): Promise<string> {
+      if (authMode === 'raw_headers_bridge') return '';
       const hit = await readToken(source);
       return hit ? hit.token : refresh();
     }
@@ -92,10 +123,14 @@ export const zohoAdapter: IntegrationAdapter<ZohoClient> = {
       const once = async (token: string) => fetch(url, {
         method: init.method ?? 'GET',
         body: init.body,
-        headers: { Authorization: `Zoho-oauthtoken ${token}`, ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...(init.headers ?? {}) },
+        headers: {
+          ...(authMode === 'raw_headers_bridge' ? bridgeHeaders : { Authorization: `Zoho-oauthtoken ${token}` }),
+          ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+          ...(init.headers ?? {}),
+        },
       });
       let res = await once(await accessToken());
-      if (res.status === 401) {
+      if (res.status === 401 && authMode !== 'raw_headers_bridge') {
         memory.delete(source);
         res = await once(await refresh());
       }

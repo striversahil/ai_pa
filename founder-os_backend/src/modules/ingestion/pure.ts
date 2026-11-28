@@ -1,12 +1,31 @@
 // pure.ts — sync-only inbound normalization + signature verification.
 // Imports nothing but the types: usable from guards, Workers and runners.
 
+import { getProviderManifest, idempotencyFor, verificationFor } from '../integrations/gateway/manifest';
 import type { IngestSource } from './types';
 
-const SOURCES: IngestSource[] = ['whatsapp', 'tally', 'tradeindia', 'justdial', 'alibaba', 'zoho', 'custom'];
-
 export function isIngestSource(value: string): value is IngestSource {
-  return SOURCES.includes(String(value) as IngestSource);
+  const manifest = getProviderManifest(String(value));
+  return !!manifest?.inbound.supported;
+}
+
+export function headerValue(headers: Record<string, string> | undefined, name: string): string {
+  const wanted = name.toLowerCase();
+  for (const [k, v] of Object.entries(headers ?? {})) {
+    if (k.toLowerCase() === wanted) return String(v ?? '');
+  }
+  return '';
+}
+
+/** `messages.0.id` / `entry.0.changes.0.value` — arrays and objects alike. */
+export function getPath(root: unknown, path: string): unknown {
+  if (!path) return undefined;
+  let cur: any = root;
+  for (const part of path.split('.')) {
+    if (cur === null || cur === undefined) return undefined;
+    cur = Array.isArray(cur) && /^\d+$/.test(part) ? cur[Number(part)] : cur[part];
+  }
+  return cur;
 }
 
 /** `custom:erp` → base `custom`, slug `erp`. */
@@ -192,4 +211,92 @@ export function eventTypeOf(source: string, payload: Record<string, any>): strin
   if (base === 'zoho') return payload?.estimate_id || payload?.estimate ? 'estimate.updated' : 'webhook';
   if (base === 'tally') return payload?.eventType || payload?.event_type || 'form.response';
   return 'lead';
+}
+/**
+ * Manifest-driven door check. The ORDER is law: this runs BEFORE any row is
+ * staged, so a forged payload never reaches hlp_ingested_data.
+ */
+export async function verifyInbound(
+  provider: string,
+  input: {
+    raw: string;
+    payload: Record<string, any>;
+    headers?: Record<string, string>;
+    config?: Record<string, unknown>;
+    secrets?: Record<string, string>;
+  },
+): Promise<{ ok: boolean; reason?: string }> {
+  const spec = verificationFor(provider);
+  if (!spec || spec.kind === 'none') return { ok: true };
+  const headers = input.headers || {};
+  const cfg = input.config || {};
+  const secrets = input.secrets || {};
+
+  if (spec.kind === 'hmac') {
+    const secret = String(secrets[spec.secretField || 'webhookSecret'] || secrets.webhookSecret || '');
+    if (!secret) return { ok: false, reason: 'webhook secret is not configured' };
+    const header = headerValue(headers, spec.header || 'x-ingest-signature');
+    if (!header) return { ok: false, reason: `missing ${spec.header || 'signature'} header` };
+    const ok = await verifyWebhookSignature(input.raw, [header], secret);
+    return ok ? { ok: true } : { ok: false, reason: 'signature mismatch' };
+  }
+
+  if (spec.kind === 'field_match') {
+    const field = spec.field || 'id';
+    const expected = String(cfg[spec.configField || ''] ?? '');
+    const got = String(getPath(input.payload, field) ?? input.payload[field] ?? '');
+    if (expected && got && got !== expected) return { ok: false, reason: `field ${field} does not match the instance` };
+    return { ok: true };
+  }
+
+  // optional_header_token: when the instance has a token, the header must match;
+  // when it does not, the provider's own payload is the only credential.
+  const expected = String(
+    (spec.secretField ? secrets[spec.secretField] : '') ||
+      (spec.configField ? cfg[spec.configField] : '') ||
+      secrets.webhookSecret || cfg.verifyToken || '',
+  );
+  if (!expected) return { ok: true };
+  const got = headerValue(headers, spec.header || 'x-webhook-token');
+  return got === expected ? { ok: true } : { ok: false, reason: 'webhook token mismatch' };
+}
+
+/** ONE idempotency answer, chosen by the manifest (path | composite | config_path). */
+export function extractIdempotencyKey(
+  provider: string,
+  payload: Record<string, any>,
+  config: Record<string, unknown> = {},
+): string | null {
+  const spec = idempotencyFor(provider);
+  if (!spec) return extractExternalEventId(provider, payload);
+  if (spec.mode === 'path' && spec.path) {
+    const value = getPath(payload, spec.path);
+    if (value !== undefined && value !== null && String(value).trim()) return String(value).trim();
+  }
+  if (spec.mode === 'config_path') {
+    const field = String(config[spec.configField || 'idempotencyField'] || '');
+    if (field) {
+      const value = getPath(payload, field);
+      if (value !== undefined && value !== null && String(value).trim()) return String(value).trim();
+    }
+  }
+  const parts = spec.parts || [];
+  const values = parts
+    .map((part) => {
+      const direct = getPath(payload, part);
+      if (direct !== undefined && direct !== null && String(direct).trim()) return String(direct).trim();
+      for (const prefix of spec.prefixes || []) {
+        const nested = getPath(payload, `${prefix}${part}`);
+        if (nested !== undefined && nested !== null && String(nested).trim()) return String(nested).trim();
+      }
+      return '';
+    })
+    .filter(Boolean);
+  if (values.length) return values.join(':');
+  return extractExternalEventId(provider, payload);
+}
+
+/** Manifest flag: GET query params are the payload for this provider. */
+export function normalizesQueryToBody(provider: string): boolean {
+  return !!getProviderManifest(provider)?.inbound.normalizeQueryToBodyOnGet;
 }

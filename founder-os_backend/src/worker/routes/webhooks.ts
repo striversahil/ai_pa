@@ -1,18 +1,26 @@
 // webhooks.ts — the ONE inbound door for every third-party push.
 //
-//   POST /api/webhooks/:source[/:instanceKey]
+//   GET|POST /api/webhooks/:source[/:instanceKey]
 //
-// Auth is the provider HMAC over the RAW body against the instance's
-// webhookSecret. The body is staged in hlp_ingested_data BEFORE any
-// normalization; realtime instances process in waitUntil, batch instances
-// wait for the ingestion runner. Response is always 202 (fast ACK) so a slow
-// mapper can never make a provider retry a row we already stored.
+// Everything provider-specific comes from manifest.json: whether the
+// provider accepts pushes, its challenge handshake, verification kind
+// (hmac / field_match / optional_header_token), idempotency key and live
+// event. Raw body is staged in hlp_ingested_data BEFORE any normalization;
+// realtime instances process in waitUntil, batch instances wait for the
+// ingestion runner. Response is always 202 so a slow mapper can never make a
+// provider retry a row we already stored.
 
 import type { Hono } from 'hono';
 import { bindGatewayContext, resolveInstance, IntegrationError } from '../../modules/integrations/gateway';
+import { getProviderManifest } from '../../modules/integrations/gateway/manifest';
 import { insertIngested } from '../../modules/ingestion/store';
 import { processIngestedRow } from '../../modules/ingestion/processor';
-import { extractExternalEventId, eventTypeOf, normalizeInboundRequest, signatureHeaders, verifyWebhookSignature } from '../../modules/ingestion/pure';
+import {
+  extractIdempotencyKey,
+  eventTypeOf,
+  normalizeInboundRequest,
+  verifyInbound,
+} from '../../modules/ingestion/pure';
 import { notifyLive, LiveEvent } from '../context';
 
 const MAX_BODY_BYTES = 256 * 1024;
@@ -40,6 +48,10 @@ export function registerWebhookRoutes(app: Hono<{ Bindings: any }>): void {
   const handle = async (c: any) => {
     const source = String(c.req.param('source') ?? '').toLowerCase();
     const instanceKey = String(c.req.param('instanceKey') ?? 'default');
+    const manifest = getProviderManifest(source);
+    if (!manifest || !manifest.inbound.supported) {
+      return c.json({ error: `not a webhook provider: ${source}` }, 404);
+    }
     bindGatewayContext({ db: c.env.DB, env: c.env });
 
     let instance;
@@ -54,9 +66,9 @@ export function registerWebhookRoutes(app: Hono<{ Bindings: any }>): void {
     const query: Record<string, string> = {};
     for (const [k, v] of Object.entries(c.req.query() ?? {})) query[k] = String(v);
 
-    // Meta subscription handshake: echo the challenge, never stage it.
-    if (c.req.method === 'GET' && query['hub.mode'] === 'subscribe') {
-      const expected = instance.secrets.webhookVerifyToken || '';
+    // Meta-family subscription handshake: echo the challenge, never stage it.
+    if (c.req.method === 'GET' && manifest.inbound.challengeGet && query['hub.mode'] === 'subscribe') {
+      const expected = String(instance.secrets.webhookVerifyToken || instance.config.verifyToken || '');
       if (!expected || query['hub.verify_token'] !== expected) {
         return c.json({ error: 'verify token mismatch' }, 403);
       }
@@ -73,12 +85,19 @@ export function registerWebhookRoutes(app: Hono<{ Bindings: any }>): void {
     }
 
     const inbound = normalizeInboundRequest({ method: c.req.method, query, body, headers });
-    const secret = instance.secrets.webhookSecret || instance.secrets.appSecret || '';
-    if (!secret) return c.json({ error: 'instance has no webhook secret' }, 503);
-    const ok = await verifyWebhookSignature(inbound.raw, signatureHeaders(inbound.headers), secret);
-    if (!ok) return c.json({ error: 'invalid signature' }, 401);
+    const check = await verifyInbound(source, {
+      raw: inbound.raw,
+      payload: inbound.payload,
+      headers: inbound.headers,
+      config: instance.config,
+      secrets: instance.secrets,
+    });
+    if (!check.ok) {
+      const status = check.reason?.includes('not configured') ? 503 : 401;
+      return c.json({ error: check.reason || 'invalid signature' }, status);
+    }
 
-    const externalEventId = extractExternalEventId(source, inbound.payload);
+    const externalEventId = extractIdempotencyKey(source, inbound.payload, instance.config);
     const eventType = eventTypeOf(source, inbound.payload);
     const staged = await insertIngested(c.env.DB, {
       source: instance.instanceKey === 'default' ? source : `${source}:${instance.instanceKey}`,
@@ -93,7 +112,8 @@ export function registerWebhookRoutes(app: Hono<{ Bindings: any }>): void {
     if (instance.deliveryMode === 'realtime' && staged.inserted) {
       const job = processIngestedRow({ db: c.env.DB, env: c.env }, staged.id).then((outcome) => {
         if (outcome.ok) {
-          notifyLive(c, { type: LiveEvent.Enquiries, action: 'ingested', id: staged.id });
+          const live = manifest.inbound.liveEvent === 'integrations' ? 'integrations' : LiveEvent.Enquiries;
+          notifyLive(c, { type: live as any, action: 'ingested', id: staged.id });
           notifyLive(c, { type: 'integrations', action: 'processed', id: staged.id });
         }
         return outcome;

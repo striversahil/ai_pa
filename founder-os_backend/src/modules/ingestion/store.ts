@@ -2,6 +2,7 @@
 // one queue index, one partial unique index (provider retries dedupe).
 
 import { parsePageQuery, pagedQuery, searchClause, type PageRequest } from '../../shared/paging';
+import { listProviderManifests } from '../integrations/gateway/manifest';
 import type { IngestInsert, IngestRow, SqlDb } from './types';
 
 const SELECT_ALL = 'SELECT * FROM hlp_ingested_data';
@@ -51,6 +52,19 @@ export async function getRow(db: SqlDb, id: string): Promise<IngestRow | null> {
 
 /** Claim up to `limit` rows for the runner: pending, or processing for a
  *  worker that died mid-flight (15 min). */
+/** Providers inside their declared quiet window (IST) are not claimed. */
+export function quietSourcesNow(now = new Date()): string[] {
+  const hourIst = new Date(now.getTime() + 5.5 * 3600_000).getUTCHours();
+  return listProviderManifests()
+    .filter((m) => {
+      const window = m.inbound.quietHoursIst;
+      if (!window) return false;
+      const [start, end] = window;
+      return start < end ? hourIst >= start && hourIst < end : hourIst >= start || hourIst < end;
+    })
+    .map((m) => m.provider);
+}
+
 export async function claimBatch(
   db: SqlDb,
   opts: { limit?: number; source?: string; mode?: string } = {},
@@ -59,6 +73,11 @@ export async function claimBatch(
   const staleBefore = new Date(Date.now() - STALE_PROCESSING_MS).toISOString();
   const conds = ['(("status" = \'pending\') OR ("status" = \'processing\' AND "receivedAt" < ?))'];
   const binds: unknown[] = [staleBefore];
+  const quiet = quietSourcesNow();
+  if (quiet.length) {
+    conds.push(`"source" NOT IN (${quiet.map(() => '?').join(',')})`);
+    binds.push(...quiet);
+  }
   if (opts.source) { conds.push('"source" = ?'); binds.push(opts.source); }
   if (opts.mode) { conds.push('"deliveryMode" = ?'); binds.push(opts.mode); }
   const claimed = rows<IngestRow>(

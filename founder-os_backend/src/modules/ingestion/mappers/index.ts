@@ -1,26 +1,33 @@
-// mappers/index.ts — source → mapper. Every provider the door accepts has
-// exactly one entry here; `custom` falls back to the generic lead shape.
+// mappers/index.ts — source → mapper. Every manifest provider with inbound
+// support resolves: a specialized mapper when the shape needs one, otherwise
+// the manifest-driven generic mapper.
 
+import { getProviderManifest, listProviderManifests } from '../../integrations/gateway/manifest';
 import { parseSourceKey } from '../pure';
 import type { MapperResult } from '../types';
-import { mapAlibaba, mapJustdial, mapTradeindia } from './b2b-portals';
 import { mapTally } from './tally';
-import { mapWhatsApp, mapCustomLead } from './whatsapp';
+import { mapWhatsApp } from './whatsapp';
 import { mapZohoEstimate } from './zoho-estimate';
+import { mapGmail } from './email';
+import { genericMapper } from './generic';
 import type { Mapper, MapperContext } from './types';
 
-const MAPPERS: Record<string, Mapper> = {
-  tradeindia: mapTradeindia,
-  justdial: mapJustdial,
-  alibaba: mapAlibaba,
-  tally: mapTally,
-  whatsapp: mapWhatsApp,
-  zoho: mapZohoEstimate,
-  custom: mapCustomLead,
-};
+export function mapperFor(source: string): Mapper | null {
+  const { base } = parseSourceKey(source);
+  const manifest = getProviderManifest(base);
+  if (!manifest?.inbound.supported) return null;
+  if (base === 'whatsapp') return mapWhatsApp;
+  if (base === 'zoho') return mapZohoEstimate;
+  if (base === 'tally') return mapTally;
+  if (base === 'gmail') return mapGmail;
+  return genericMapper(base);
+}
 
 export function mapperSources(): string[] {
-  return Object.keys(MAPPERS).sort();
+  return listProviderManifests()
+    .filter((m) => m.inbound.supported)
+    .map((m) => m.provider)
+    .sort();
 }
 
 export function mapInbound(
@@ -29,7 +36,7 @@ export function mapInbound(
   ctx: MapperContext,
 ): MapperResult {
   const { base } = parseSourceKey(source);
-  const mapper = MAPPERS[base];
+  const mapper = mapperFor(source);
   if (!mapper) return { warnings: [`no mapper for source "${base}"`] };
   try {
     return mapper(payload ?? {}, ctx);

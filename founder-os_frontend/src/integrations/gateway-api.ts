@@ -2,7 +2,7 @@
 // Paths are relative to /api (see api/client.ts).
 
 import { api } from "@/api/client";
-import type { InstancesPayload, InstanceView } from "./gateway-types";
+import type { IngestedDetail, InstancesPayload, InstanceView } from "./gateway-types";
 
 export const fetchInstances = () => api.get<InstancesPayload>("/integrations/instances");
 
@@ -16,6 +16,9 @@ export const removeInstance = (id: string) =>
 
 export const testInstance = (id: string) =>
   api.post<{ ok: boolean; detail?: string }>(`/integrations/instances/${id}/test`, {});
+
+export const fetchIngested = (id: string) =>
+  api.get<{ row: IngestedDetail }>(`/integrations/ingested/${id}`);
 
 export const replayIngested = (id: string) =>
   api.post<{ ok: boolean; coreRefId: string; error: string }>(`/integrations/ingested/${id}/replay`, {});

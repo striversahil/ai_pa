@@ -1,38 +1,94 @@
-// types.ts — the outbound facade's vocabulary. No I/O, no env, no DOM.
+// types.ts — the integration vocabulary. No I/O, no env, no DOM.
 //
 // An INSTANCE is one provider ACCOUNT (a Zoho org, a WABA number, a portal
 // seller). (provider, instanceKey) is the address; `call('zoho')` hits the
 // default one, `call('zoho', { instanceKey: 'dpg' })` the named one.
+// The provider catalogue itself lives in ../manifest.json (v2.0.0).
 
-export type ProviderKey =
-  | 'zoho' | 'whatsapp' | 'tally' | 'tradeindia' | 'justdial'
-  | 'alibaba' | 'openai' | 'custom';
+/** Providers are data now: any key present in manifest.json is valid. */
+export type ProviderKey = string;
 
 export type DeliveryMode = 'realtime' | 'batch';
+export type FieldType = 'text' | 'textarea' | 'number' | 'boolean' | 'select' | 'json';
 
-export interface ProviderField {
-  key: string;
-  label: string;
-  hint?: string;
-  placeholder?: string;
-  required?: boolean;
+export interface FieldCondition {
+  field: string;
+  equals?: string | number | boolean;
+  includes?: string;
 }
 
+export interface ManifestField {
+  key: string;
+  label: string;
+  type?: FieldType;
+  required?: boolean;
+  requiredWhen?: FieldCondition;
+  options?: string[];
+  placeholder?: string;
+  hint?: string;
+  defaultValue?: string | number | boolean;
+}
+
+export type VerificationKind = 'hmac' | 'field_match' | 'optional_header_token' | 'none';
+
+export interface VerificationSpec {
+  kind: VerificationKind;
+  header?: string;
+  algorithm?: 'sha256' | 'sha1';
+  secretField?: string;
+  configField?: string;
+  field?: string;
+}
+
+export interface IdempotencySpec {
+  mode: 'path' | 'composite' | 'config_path';
+  path?: string;
+  parts?: string[];
+  prefixes?: string[];
+  configField?: string;
+}
+
+export interface PollSpec { supported: boolean; configPath?: string; cursorField?: string }
+
+export interface InboundSpec {
+  supported: boolean;
+  methods?: string[];
+  defaultDeliveryMode?: DeliveryMode;
+  quietHoursIst?: [number, number];
+  liveEvent?: string;
+  challengeGet?: boolean;
+  normalizeQueryToBodyOnGet?: boolean;
+  verification?: VerificationSpec;
+  idempotencyKey?: IdempotencySpec;
+  fieldMap?: Record<string, string>;
+  labelAliases?: Record<string, string>;
+  poll?: PollSpec;
+}
+
+export interface OutboundSpec {
+  supported: boolean;
+  defaultDeliveryMode?: DeliveryMode;
+  operations?: string[];
+}
+
+/** One provider as declared in manifest.json, hydrated for the app. */
 export interface ProviderManifest {
   provider: ProviderKey;
   label: string;
   category: string;
-  hint?: string;
-  /** Non-secret config (organizationId, phoneNumberId, pollUrl…). */
-  fields: ProviderField[];
-  /** Encrypted at rest with the vault key; never returned by any route. */
-  secretFields: ProviderField[];
+  direction: 'outbound' | 'inbound' | 'both';
+  multiInstance: boolean;
+  instanceRequired: boolean;
+  description?: string;
+  configFields: ManifestField[];
+  secretFields: ManifestField[];
+  outbound: OutboundSpec;
+  inbound: InboundSpec;
+  /** Legacy flat views kept for the existing console + gateway. */
+  fields: { key: string; label: string; hint?: string; placeholder?: string; required?: boolean }[];
   supportsWebhook: boolean;
   supportsPolling: boolean;
   defaultDeliveryMode: DeliveryMode;
-  /** false for `openai` (keys live in Setting ai:providers, not here). */
-  instanceRequired: boolean;
-  /** Path a provider posts to; the panel shows the resolved absolute URL. */
   webhookPath: string;
 }
 
@@ -89,6 +145,8 @@ export interface CallOptions {
   /** Named account; omitted = the instance flagged isDefault (else 'default'). */
   instanceKey?: string;
 }
+
+export interface ValidationResult { ok: boolean; errors: string[] }
 
 /** The handful of D1 methods the gateway stores need. */
 export interface SqlStatement {

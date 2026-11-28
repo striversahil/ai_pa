@@ -45,24 +45,65 @@ test('the d1 shim knows the new models', () => {
   }
 });
 
-test('every provider has a manifest + an adapter registration', () => {
-  const manifest = readBackend('src/modules/integrations/gateway/manifest.ts');
-  const index = readBackend('src/modules/integrations/gateway/index.ts');
-  for (const provider of ['zoho', 'whatsapp', 'tally', 'tradeindia', 'justdial', 'alibaba', 'openai', 'custom']) {
-    assert.match(manifest, new RegExp(`provider: '${provider}'`), `${provider} missing from PROVIDER_MANIFESTS`);
-    assert.match(index, new RegExp(`${provider}`), `${provider} missing from the adapter registry`);
+test('manifest.json v2.0.0 is the only provider list', () => {
+  const manifest = JSON.parse(readBackend('src/modules/integrations/manifest.json'));
+  assert.equal(manifest.version, '2.0.0');
+  assert.ok(manifest.defaults && manifest.categories, 'defaults + categories are required');
+  assert.equal(manifest.defaults.maxRetriesBeforeDeadLetter, 3);
+  const providers = Object.entries(manifest.providers);
+  assert.ok(providers.length >= 19, `expected the full provider set, saw ${providers.length}`);
+  for (const [key, provider] of providers) {
+    assert.equal(provider.provider, key, `${key}: provider key must match its map key`);
+    assert.ok(provider.label && provider.category, `${key}: label/category missing`);
+    assert.ok(Array.isArray(provider.configFields), `${key}: configFields must be an array`);
+    assert.ok(Array.isArray(provider.secretFields), `${key}: secretFields must be an array`);
+    assert.ok(['outbound', 'inbound', 'both'].includes(provider.direction), `${key}: bad direction`);
   }
-  assert.match(index, /export async function call/);
+  const zoho = manifest.providers.zoho;
+  const authMode = zoho.configFields.find((f) => f.key === 'authMode');
+  assert.deepEqual(authMode.options, ['oauth2', 'raw_headers_bridge']);
+  assert.ok(zoho.secretFields.some((f) => f.requiredWhen?.field === 'authMode'), 'raw bridge must gate its secret');
+  assert.ok(manifest.providers.google_maps.configFields.some((f) => f.key === 'fieldMask'));
+  assert.equal(manifest.providers.openai.outbound.supported, true);
 });
 
-test('the inbound door verifies HMAC before staging and never trusts the body', () => {
+test('manifest loader is the only source for providers + URLs', () => {
+  const loader = readBackend('src/modules/integrations/gateway/manifest.ts');
+  assert.match(loader, /from '\.\.\/manifest\.json'/);
+  for (const fn of ['getProviderManifest', 'listProviderManifests', 'resolveWebhookUrl', 'validateInstancePayload', 'idempotencyFor', 'verificationFor']) {
+    assert.match(loader, new RegExp(`export function ${fn}`), `${fn} missing from manifest.ts`);
+  }
+  assert.match(loader, /requiredWhen/);
+  assert.match(loader, /MANIFEST_VERSION/);
+});
+
+test('every provider has an adapter + every inbound provider a mapper', () => {
+  const manifest = JSON.parse(readBackend('src/modules/integrations/manifest.json'));
+  const index = readBackend('src/modules/integrations/gateway/index.ts');
+  const mappers = readBackend('src/modules/ingestion/mappers/index.ts');
+  for (const [provider, spec] of Object.entries(manifest.providers)) {
+    assert.match(index, new RegExp(provider), `${provider} missing from the adapter registry`);
+    if (spec.inbound?.supported) {
+      assert.match(mappers, /genericMapper|mapWhatsApp|mapZohoEstimate|mapTally|mapGmail|mapperFor/, `${provider} has no mapper path`);
+    }
+  }
+  assert.match(index, /export async function call/);
+  assert.match(mappers, /export function mapperFor/);
+  assert.match(mappers, /export function mapperSources/);
+});
+
+test('the inbound door is manifest-driven and verifies before staging', () => {
   const door = readBackend('src/worker/routes/webhooks.ts');
-  const verifyAt = door.indexOf('verifyWebhookSignature');
+  const verifyAt = door.indexOf('verifyInbound(');
   const insertAt = door.indexOf('insertIngested(');
   assert.ok(verifyAt > -1 && insertAt > -1, 'door must verify + stage');
-  assert.ok(verifyAt < insertAt, 'signature check must run BEFORE the row is staged');
-  assert.match(door, /if \(!secret\) return c\.json\(\{ error: 'instance has no webhook secret' \}, 503\)/);
+  assert.ok(verifyAt < insertAt, 'verification must run BEFORE the row is staged');
+  assert.match(door, /getProviderManifest\(source\)/);
+  assert.match(door, /manifest\.inbound\.challengeGet/);
+  assert.match(door, /extractIdempotencyKey\(source/);
   assert.match(door, /instance\.deliveryMode === 'realtime'/);
+  assert.match(door, /normalizeInboundRequest/);
+  assert.ok(!door.includes('webhookVerifyToken'), 'door must not hard-code a provider token');
 });
 
 test('the processor never writes an ERP core table', () => {
@@ -80,6 +121,15 @@ test('ingestion is registered in the worker behind auth exemption + no auto-live
   assert.match(worker, /registerIntegrationsGatewayRoutes\(app\)/);
   const context = readBackend('src/worker/context.ts');
   assert.match(context, /'\/api\/webhooks\/'/);
+});
+
+test('poller providers come from the manifest (quiet hours respected)', () => {
+  const poller = read('scripts/portal-poller-runner.js');
+  assert.match(poller, /manifest\.json/);
+  assert.match(poller, /inbound\?\.poll\?\.supported/);
+  const store = readBackend('src/modules/ingestion/store.ts');
+  assert.match(store, /quietSourcesNow/);
+  assert.match(store, /quietHoursIst/);
 });
 
 test('runners + workflows exist for batch and polling', () => {

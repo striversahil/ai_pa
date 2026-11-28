@@ -1,18 +1,29 @@
 "use client";
 
 // InstanceEditor.tsx — add/edit one provider ACCOUNT (the (provider, key)
-// address `call()` resolves). Secrets are write-only: the server returns
-// names, never values, so an empty box means \"keep the stored value\".
+// address `call()` resolves). Fields, types, options, defaults and
+// requiredWhen all come from manifest.json; secrets are write-only (the
+// server returns names, never values, so an empty box means "keep stored").
 
 import { useState } from "react";
 import { Button, Drawer } from "@/components/ui";
 import { saveInstance } from "@/integrations/gateway-api";
-import type { InstanceDraft, InstanceView, ProviderManifest } from "@/integrations/gateway-types";
+import type { FieldCondition, InstanceDraft, InstanceView, ProviderField, ProviderManifest } from "@/integrations/gateway-types";
+
+function conditionMet(condition: FieldCondition | undefined, config: Record<string, string>): boolean {
+  if (!condition) return true;
+  const value = String(config[condition.field] ?? "");
+  if (condition.includes !== undefined) return value.includes(condition.includes);
+  if (condition.equals !== undefined) return value === String(condition.equals);
+  return value !== "";
+}
 
 function initialDraft(manifest: ProviderManifest, instance?: InstanceView | null): InstanceDraft {
   const config: Record<string, string> = {};
-  for (const field of manifest.fields) {
-    config[field.key] = instance ? String(instance.config?.[field.key] ?? "") : "";
+  for (const field of manifest.configFields) {
+    const stored = instance ? instance.config?.[field.key] : undefined;
+    const fallback = field.defaultValue !== undefined ? String(field.defaultValue) : "";
+    config[field.key] = stored === undefined || stored === null ? fallback : String(stored);
   }
   return {
     provider: manifest.provider,
@@ -27,8 +38,45 @@ function initialDraft(manifest: ProviderManifest, instance?: InstanceView | null
   };
 }
 
-const inputClass =
-  "w-full rounded-lg border border-[var(--border-card)] bg-[var(--bg-card)] px-2.5 py-1.5 text-xs text-[var(--text-primary)] outline-none focus:border-brand-indigo";
+const inputClass = "w-full rounded-lg border border-[var(--border-card)] bg-[var(--bg-card)] px-2.5 py-1.5 text-xs text-[var(--text-primary)] outline-none focus:border-brand-indigo";
+
+function FieldInput({ field, value, onChange }: { field: ProviderField; value: string; onChange: (v: string) => void }) {
+  if (field.type === "select") {
+    return (
+      <select className={inputClass} value={value} onChange={(e) => onChange(e.target.value)}>
+        {!field.options?.includes(value) && <option value="">Choose…</option>}
+        {(field.options ?? []).map((option) => <option key={option} value={option}>{option}</option>)}
+      </select>
+    );
+  }
+  if (field.type === "boolean") {
+    return (
+      <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+        <input type="checkbox" checked={value === "true"} onChange={(e) => onChange(e.target.checked ? "true" : "false")} />
+        {field.hint ?? "Enabled"}
+      </label>
+    );
+  }
+  if (field.type === "textarea" || field.type === "json") {
+    return (
+      <textarea
+        className={`${inputClass} min-h-[72px] font-mono`}
+        value={value}
+        placeholder={field.placeholder ?? field.hint ?? ""}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    );
+  }
+  return (
+    <input
+      className={inputClass}
+      type={field.type === "number" ? "number" : "text"}
+      value={value}
+      placeholder={field.placeholder ?? field.hint ?? ""}
+      onChange={(e) => onChange(e.target.value)}
+    />
+  );
+}
 
 export function InstanceEditor({ manifest, instance, onClose, onSaved }: {
   manifest: ProviderManifest;
@@ -73,7 +121,7 @@ export function InstanceEditor({ manifest, instance, onClose, onSaved }: {
   return (
     <Drawer
       title={instance ? `Edit ${instance.label}` : `Add ${manifest.label}`}
-      subtitle={manifest.hint}
+      subtitle={manifest.description}
       onClose={onClose}
       width="max-w-xl"
     >
@@ -101,7 +149,7 @@ export function InstanceEditor({ manifest, instance, onClose, onSaved }: {
             </select>
           </label>
           <label className="space-y-1">
-            <span className="text-[10px] font-bold uppercase tracking-wide text-[var(--text-tertiary)]">Base URL (optional)</span>
+            <span className="text-[10px] font-bold uppercase tracking-wide text-[var(--text-tertiary)]">Base URL (optional override)</span>
             <input className={inputClass} value={draft.baseUrl} placeholder="https://…"
               onChange={(e) => patch({ baseUrl: e.target.value })} />
           </label>
@@ -118,30 +166,33 @@ export function InstanceEditor({ manifest, instance, onClose, onSaved }: {
           </label>
         </div>
 
-        {manifest.fields.map((field) => (
-          <label key={field.key} className="block space-y-1">
-            <span className="text-[10px] font-bold uppercase tracking-wide text-[var(--text-tertiary)]">
-              {field.label}{field.required ? " *" : ""}
-            </span>
-            <input className={inputClass} value={draft.config[field.key] ?? ""}
-              placeholder={field.placeholder ?? field.hint ?? ""}
-              onChange={(e) => setConfig(field.key, e.target.value)} />
-          </label>
-        ))}
+        {manifest.configFields
+          .filter((field) => conditionMet(field.requiredWhen, draft.config))
+          .map((field) => (
+            <label key={field.key} className="block space-y-1">
+              <span className="text-[10px] font-bold uppercase tracking-wide text-[var(--text-tertiary)]">
+                {field.label}{field.required || field.requiredWhen ? " *" : ""}
+              </span>
+              <FieldInput field={field} value={draft.config[field.key] ?? ""} onChange={(v) => setConfig(field.key, v)} />
+              {field.hint && field.type !== "boolean" && <span className="text-[10px] text-[var(--text-tertiary)]">{field.hint}</span>}
+            </label>
+          ))}
 
         <div className="space-y-2 rounded-lg border border-[var(--border-card)] p-3">
           <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--text-tertiary)]">Credentials</p>
-          {manifest.secretFields.map((field) => (
-            <label key={field.key} className="block space-y-1">
-              <span className="text-[11px] font-bold text-[var(--text-secondary)]">
-                {field.label}{field.required ? " *" : ""}
-              </span>
-              <input className={inputClass} type="password" autoComplete="new-password"
-                value={draft.secrets[field.key] ?? ""}
-                placeholder={instance?.secretKeys.includes(field.key) ? "•••• stored — type to replace" : (field.placeholder ?? field.hint ?? "")}
-                onChange={(e) => setSecret(field.key, e.target.value)} />
-            </label>
-          ))}
+          {manifest.secretFields
+            .filter((field) => conditionMet(field.requiredWhen, draft.config))
+            .map((field) => (
+              <label key={field.key} className="block space-y-1">
+                <span className="text-[11px] font-bold text-[var(--text-secondary)]">
+                  {field.label}{field.required || field.requiredWhen ? " *" : ""}
+                </span>
+                <input className={inputClass} type="password" autoComplete="new-password"
+                  value={draft.secrets[field.key] ?? ""}
+                  placeholder={instance?.secretKeys.includes(field.key) ? "•••• stored — type to replace" : (field.placeholder ?? field.hint ?? "")}
+                  onChange={(e) => setSecret(field.key, e.target.value)} />
+              </label>
+            ))}
           <p className="text-[10px] text-[var(--text-tertiary)]">
             Empty = keep the stored value. Encrypted at rest (AES-256-GCM); never returned by any route.
           </p>

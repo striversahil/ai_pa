@@ -15,7 +15,11 @@
 const crypto = require('node:crypto');
 const { requireEnv, workerRequest } = require('./runner-lib');
 
-const PROVIDERS = ['tradeindia', 'justdial', 'alibaba'];
+// Providers are data: manifest.json decides who supports polling.
+const MANIFEST = require('../founder-os_backend/src/modules/integrations/manifest.json');
+const PROVIDERS = Object.entries(MANIFEST.providers)
+  .filter(([, provider]) => provider?.inbound?.poll?.supported)
+  .map(([key]) => key);
 const MAX_PAGES = 3;
 
 function sign(secret, raw) {
@@ -44,12 +48,12 @@ function itemsOf(body) {
 async function deliver(provider, instance, item) {
   const raw = JSON.stringify(item);
   const secret = String(instance.secrets?.webhookSecret || '');
-  if (!secret) throw new Error('instance has no webhookSecret');
+  const signature = secret ? { 'X-Ingest-Signature': sign(secret, raw) } : {};
   const res = await fetch(
     `${process.env.WORKER_URL}/api/webhooks/${provider}/${instance.instanceKey}`,
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Ingest-Signature': sign(secret, raw) },
+      headers: { 'Content-Type': 'application/json', ...signature },
       body: raw,
       signal: AbortSignal.timeout(30000),
     },
@@ -67,7 +71,7 @@ async function pollProvider(provider) {
     console.log(`portal-poller: ${provider} not configured (${error?.message || error})`);
     return { seen: 0, duplicates: 0 };
   }
-  const pullUrl = String(instance.config?.pullUrl || '');
+  const pullUrl = String(instance.config?.pollUrl || instance.config?.pullUrl || '');
   if (!pullUrl) {
     console.log(`portal-poller: ${provider} is push-only`);
     return { seen: 0, duplicates: 0 };

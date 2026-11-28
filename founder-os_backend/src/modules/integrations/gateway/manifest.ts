@@ -1,171 +1,182 @@
-// manifest.ts — what the console renders and what the routes validate.
-// ONE list: a provider exists because it appears here (and has an adapter).
+// manifest.ts — manifest.json is the ONE catalogue. This file only hydrates it.
+// A provider exists because it is a key in the JSON: no second list to drift.
 
-import type { ProviderKey, ProviderManifest } from './types';
+import raw from '../manifest.json';
+import type {
+  DeliveryMode,
+  IdempotencySpec,
+  InboundSpec,
+  ManifestField,
+  ProviderKey,
+  ProviderManifest,
+  ValidationResult,
+  VerificationSpec,
+} from './types';
 
-function f(key: string, label: string, extra: Partial<{ hint: string; placeholder: string; required: boolean }> = {}) {
-  return { key, label, ...extra };
+interface RawProvider {
+  label: string;
+  category: string;
+  direction: 'outbound' | 'inbound' | 'both';
+  multiInstance?: boolean;
+  instanceRequired?: boolean;
+  description?: string;
+  configFields?: ManifestField[];
+  secretFields?: ManifestField[];
+  outbound?: { supported?: boolean; defaultDeliveryMode?: DeliveryMode; operations?: string[] };
+  inbound?: InboundSpec;
 }
 
-export const PROVIDER_MANIFESTS: ProviderManifest[] = [
-  {
-    provider: 'zoho',
-    label: 'Zoho Books',
-    category: 'Estimates',
-    hint: 'Refresh-token OAuth. Access tokens are cached in Token (source zoho:<instanceKey>) and refreshed on 401.',
-    fields: [
-      f('organizationId', 'Organization ID', { required: true, placeholder: '60000000000' }),
-      f('accountsUrl', 'Accounts domain', { placeholder: 'https://accounts.zoho.in' }),
-      f('apiDomain', 'API domain', { placeholder: 'https://www.zohoapis.in' }),
-    ],
-    secretFields: [
-      f('clientId', 'Client ID', { required: true }),
-      f('clientSecret', 'Client secret', { required: true }),
-      f('refreshToken', 'Refresh token', { required: true }),
-      f('webhookSecret', 'Webhook secret', { hint: 'HMAC over the raw body for estimate pushes.' }),
-    ],
-    supportsWebhook: true,
-    supportsPolling: false,
-    defaultDeliveryMode: 'batch',
-    instanceRequired: true,
-    webhookPath: '/api/webhooks/zoho',
-  },
-  {
-    provider: 'whatsapp',
-    label: 'WhatsApp Cloud',
-    category: 'Messaging',
-    hint: 'Meta Cloud API. Unnamed instance = the env-configured WABA client.',
-    fields: [
-      f('phoneNumberId', 'Phone number ID', { required: true }),
-      f('apiVersion', 'Graph version', { placeholder: 'v21.0' }),
-      f('businessId', 'Business account ID'),
-    ],
-    secretFields: [
-      f('accessToken', 'Access token', { required: true }),
-      f('appSecret', 'App secret'),
-      f('webhookVerifyToken', 'Webhook verify token', { required: true }),
-      f('webhookSecret', 'Webhook signature secret', { hint: 'Defaults to appSecret.' }),
-    ],
-    supportsWebhook: true,
-    supportsPolling: false,
-    defaultDeliveryMode: 'realtime',
-    instanceRequired: true,
-    webhookPath: '/api/webhooks/whatsapp',
-  },
-  {
-    provider: 'tally',
-    label: 'Tally Forms',
-    category: 'Forms',
-    fields: [f('formName', 'Form name')],
-    secretFields: [f('webhookSecret', 'Webhook secret', { required: true })],
-    supportsWebhook: true,
-    supportsPolling: false,
-    defaultDeliveryMode: 'realtime',
-    instanceRequired: true,
-    webhookPath: '/api/webhooks/tally',
-  },
-  {
-    provider: 'tradeindia',
-    label: 'TradeIndia',
-    category: 'B2B portal',
-    fields: [
-      f('sellerId', 'Seller ID'),
-      f('pollUrl', 'Enquiry pull URL', { hint: 'Optional: the batch runner polls it.' }),
-    ],
-    secretFields: [
-      f('webhookSecret', 'Webhook secret', { required: true }),
-      f('apiKey', 'API key'),
-    ],
-    supportsWebhook: true,
-    supportsPolling: true,
-    defaultDeliveryMode: 'batch',
-    instanceRequired: true,
-    webhookPath: '/api/webhooks/tradeindia',
-  },
-  {
-    provider: 'justdial',
-    label: 'Justdial',
-    category: 'B2B portal',
-    hint: 'GET lead push: query params are the payload.',
-    fields: [f('partnerId', 'Partner ID'), f('pollUrl', 'Lead pull URL')],
-    secretFields: [
-      f('webhookSecret', 'Webhook secret', { required: true }),
-      f('apiKey', 'API key'),
-    ],
-    supportsWebhook: true,
-    supportsPolling: true,
-    defaultDeliveryMode: 'realtime',
-    instanceRequired: true,
-    webhookPath: '/api/webhooks/justdial',
-  },
-  {
-    provider: 'alibaba',
-    label: 'Alibaba.com',
-    category: 'B2B portal',
-    fields: [f('sellerId', 'Seller ID'), f('pollUrl', 'Inquiry pull URL')],
-    secretFields: [
-      f('webhookSecret', 'Webhook secret', { required: true }),
-      f('appKey', 'App key'),
-      f('appSecret', 'App secret'),
-    ],
-    supportsWebhook: true,
-    supportsPolling: true,
-    defaultDeliveryMode: 'batch',
-    instanceRequired: true,
-    webhookPath: '/api/webhooks/alibaba',
-  },
-  {
-    provider: 'custom',
-    label: 'Custom HTTP',
-    category: 'Generic',
-    hint: 'Any REST endpoint. `custom:erp` addresses the instanceKey erp.',
-    fields: [
-      f('baseUrl', 'Base URL', { required: true, placeholder: 'https://erp.example.com' }),
-      f('authHeaderName', 'Auth header', { placeholder: 'Authorization' }),
-      f('authScheme', 'Auth scheme', { placeholder: 'bearer | x-api-key | basic' }),
-    ],
-    secretFields: [
-      f('authToken', 'Auth token'),
-      f('webhookSecret', 'Webhook secret', { required: true }),
-    ],
-    supportsWebhook: true,
-    supportsPolling: true,
-    defaultDeliveryMode: 'batch',
-    instanceRequired: true,
-    webhookPath: '/api/webhooks/custom',
-  },
-  {
-    provider: 'openai',
-    label: 'AI gateway',
-    category: 'AI',
-    hint: 'Thin adapter over Setting ai:providers — this row never stores a key.',
-    fields: [],
-    secretFields: [],
-    supportsWebhook: false,
-    supportsPolling: false,
-    defaultDeliveryMode: 'realtime',
-    instanceRequired: false,
-    webhookPath: '',
-  },
-];
-
-const BY_PROVIDER = new Map<string, ProviderManifest>(
-  PROVIDER_MANIFESTS.map((m) => [m.provider, m]),
-);
-
-export function manifestFor(provider: string): ProviderManifest | null {
-  return BY_PROVIDER.get(String(provider ?? '').trim().toLowerCase()) ?? null;
+interface RawManifest {
+  version: string;
+  description?: string;
+  defaults: { defaultInstanceKey?: string; maxRetriesBeforeDeadLetter?: number; batchClaimSize?: number; webhookRoutePattern?: string };
+  categories?: Record<string, string>;
+  providers: Record<string, RawProvider>;
 }
 
-export function providerKeys(): ProviderKey[] {
-  return PROVIDER_MANIFESTS.map((m) => m.provider);
+const FILE = raw as unknown as RawManifest;
+
+export const MANIFEST_VERSION = FILE.version;
+export const MANIFEST_DEFAULTS = FILE.defaults;
+export const MANIFEST_CATEGORIES: Record<string, string> = FILE.categories || {};
+
+function hydrate(provider: string, p: RawProvider): ProviderManifest {
+  const configFields = p.configFields || [];
+  const secretFields = p.secretFields || [];
+  const inbound: InboundSpec = { supported: false, ...(p.inbound || {}) };
+  const outbound = { supported: false, ...(p.outbound || {}) };
+  const mode = inbound.defaultDeliveryMode || outbound.defaultDeliveryMode || 'batch';
+  return {
+    provider,
+    label: p.label,
+    category: p.category,
+    direction: p.direction,
+    multiInstance: p.multiInstance !== false,
+    instanceRequired: p.instanceRequired !== false,
+    description: p.description,
+    configFields,
+    secretFields,
+    outbound,
+    inbound,
+    fields: configFields.map((f) => ({ key: f.key, label: f.label, hint: f.hint, placeholder: f.placeholder, required: f.required })),
+    supportsWebhook: !!inbound.supported,
+    supportsPolling: !!inbound.poll?.supported,
+    defaultDeliveryMode: mode,
+    webhookPath: `/api/webhooks/${provider}`,
+  };
 }
 
-export function isProvider(provider: string): provider is ProviderKey {
-  return BY_PROVIDER.has(provider);
+const BY_KEY = new Map<string, ProviderManifest>();
+for (const [key, value] of Object.entries(FILE.providers || {})) BY_KEY.set(key, hydrate(key, value));
+
+/** Every provider, in manifest order. */
+export function listProviderManifests(): ProviderManifest[] {
+  return [...BY_KEY.values()];
 }
 
-/** Webhook source accepted by the door for this provider (custom has slugs). */
-export function webhookSourceFor(provider: string): string {
-  return String(provider ?? '').split(':')[0];
+export const PROVIDER_MANIFESTS: ProviderManifest[] = listProviderManifests();
+
+export function getProviderManifest(provider: string): ProviderManifest | null {
+  return BY_KEY.get(String(provider || '').trim().toLowerCase()) || null;
+}
+
+/** Back-compat alias used by the gateway. */
+export const manifestFor = getProviderManifest;
+
+export function providerKeys(): string[] {
+  return [...BY_KEY.keys()];
+}
+
+export function isProvider(value: string): boolean {
+  return BY_KEY.has(String(value || '').trim().toLowerCase());
+}
+
+/** Source stored on an ingested row for a provider-scoped webhook. */
+export function webhookSourceFor(provider: string, instanceKey?: string): string {
+  const key = String(instanceKey || '').trim();
+  return key && key !== 'default' ? `${provider}:${key}` : provider;
+}
+
+/** Public URL a provider is told to POST to (default instance omits the key). */
+export function resolveWebhookUrl(origin: string, provider: string, instanceKey?: string): string {
+  const base = String(origin || '').replace(/\/+$/, '');
+  const manifest = getProviderManifest(provider);
+  const path = manifest?.webhookPath || `/api/webhooks/${provider}`;
+  const key = String(instanceKey || '').trim();
+  return key && key !== 'default' ? `${base}${path}/${encodeURIComponent(key)}` : `${base}${path}`;
+}
+
+export function verificationFor(provider: string): VerificationSpec | null {
+  return getProviderManifest(provider)?.inbound.verification || null;
+}
+
+export function idempotencyFor(provider: string): IdempotencySpec | null {
+  return getProviderManifest(provider)?.inbound.idempotencyKey || null;
+}
+
+export function inboundFor(provider: string): InboundSpec | null {
+  return getProviderManifest(provider)?.inbound || null;
+}
+
+export function pollProviders(): ProviderManifest[] {
+  return PROVIDER_MANIFESTS.filter((m) => m.inbound.poll?.supported);
+}
+
+function conditionMet(condition: ManifestField['requiredWhen'], config: Record<string, unknown>, secrets: Record<string, unknown>): boolean {
+  if (!condition) return true;
+  const value = config[condition.field] ?? secrets[condition.field];
+  if (condition.includes !== undefined) return String(value ?? '').includes(condition.includes);
+  if (condition.equals !== undefined) return String(value ?? '') === String(condition.equals);
+  return value !== undefined && value !== null && value !== '';
+}
+
+function typeError(field: ManifestField, value: unknown): string | null {
+  if (value === undefined || value === null || value === '') return null;
+  if (field.type === 'number' && Number.isNaN(Number(value))) return `${field.label} must be a number`;
+  if (field.type === 'boolean' && typeof value !== 'boolean' && !['true', 'false', '0', '1'].includes(String(value)))
+    return `${field.label} must be true/false`;
+  if (field.type === 'json') {
+    try {
+      JSON.parse(typeof value === 'string' ? value : JSON.stringify(value));
+    } catch {
+      return `${field.label} must be valid JSON`;
+    }
+  }
+  if (field.type === 'select' && field.options?.length && !field.options.includes(String(value)))
+    return `${field.label} must be one of ${field.options.join(', ')}`;
+  return null;
+}
+
+/**
+ * The console + webhook door validate through THIS function so `required` and
+ * `requiredWhen` can never disagree with the manifest (e.g. Zoho oauth2 vs
+ * raw_headers_bridge).
+ */
+export function validateInstancePayload(
+  provider: string,
+  config: Record<string, unknown> | undefined,
+  secrets: Record<string, unknown> | undefined,
+): ValidationResult {
+  const manifest = getProviderManifest(provider);
+  if (!manifest) return { ok: false, errors: [`unknown provider "${provider}"`] };
+  const cfg = config || {};
+  const sec = secrets || {};
+  const errors: string[] = [];
+
+  for (const field of manifest.configFields) {
+    const present = cfg[field.key] !== undefined && cfg[field.key] !== null && cfg[field.key] !== '';
+    const wanted = field.required || conditionMet(field.requiredWhen, cfg, sec);
+    if (!present && wanted) errors.push(`${field.label} is required`);
+    if (present) {
+      const bad = typeError(field, cfg[field.key]);
+      if (bad) errors.push(bad);
+    }
+  }
+  for (const field of manifest.secretFields) {
+    const present = sec[field.key] !== undefined && sec[field.key] !== null && sec[field.key] !== '';
+    const wanted = field.required || conditionMet(field.requiredWhen, cfg, sec);
+    if (!present && wanted) errors.push(`${field.label} is required`);
+  }
+
+  return { ok: errors.length === 0, errors };
 }
