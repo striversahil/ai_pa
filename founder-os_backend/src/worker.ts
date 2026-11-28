@@ -62,6 +62,9 @@ import { registerDialerRoutes } from './worker/routes/dialer';
 import { registerFieldStaffRoutes } from './worker/routes/field-staff';
 import { registerIngestRoutes } from './worker/routes/ingest';
 import { registerIntegrationRoutes } from './worker/routes/integrations';
+import { registerIntegrationsGatewayRoutes } from './worker/routes/integrations-gateway';
+import { registerIntegrationsRunnerRoutes } from './worker/routes/integrations-runner';
+import { registerWebhookRoutes } from './worker/routes/webhooks';
 import { registerSalesObjectionsRoutes } from './worker/routes/sales-objections';
 import { registerNotificationRoutes } from './worker/routes/notifications';
 import { registerWorkRoutes } from './worker/routes/work';
@@ -125,8 +128,13 @@ registerCallLogRoutes(app);
 registerDialerRoutes(app);
 registerFieldStaffRoutes(app);
 // Integration hub: the public webhook door first, then the root-only console.
+registerWebhookRoutes(app);
 registerIngestRoutes(app);
 registerIntegrationRoutes(app);
+// Unified gateway console + runner API. Registered AFTER the hub so the literal
+// /instances|/manifest|/ingested paths are matched before the hub's /:id routes.
+registerIntegrationsGatewayRoutes(app);
+registerIntegrationsRunnerRoutes(app);
 registerSalesObjectionsRoutes(app);
 // Registered BEFORE work.ts so the richer notification API owns
 // /api/notifications (work.ts keeps the legacy Phase-6a handlers).

@@ -117,6 +117,8 @@ const BOOL_FIELDS: Record<string, string[]> = {
   CorePermRule: ['active'],
   CoreAccessConfig: ['logViews'],
   CoreFieldPolicy: ['editable', 'derived'],
+  HlpIntegrationInstance: ['isDefault', 'enabled'],
+  HlpIngestedData: [],
 };
 
 const DATE_FIELDS: Record<string, string[]> = {
@@ -256,6 +258,8 @@ const DATE_FIELDS: Record<string, string[]> = {
   HlpWidget: [],
   HlpFlag: ['updatedAt'],
   HlpCursor: ['updatedAt'],
+  HlpIntegrationInstance: ['createdAt', 'updatedAt'],
+  HlpIngestedData: ['receivedAt', 'processedAt'],
   DeviceCall: ['attemptAt', 'ringStartAt', 'connectAt', 'endAt', 'recordingUploadedAt', 'receivedAt', 'createdAt', 'updatedAt'],
   TelecallerScoreEvent: ['createdAt'],
   DepartmentScoreEvent: ['createdAt'],
@@ -424,6 +428,8 @@ const ID_FIELDS: Record<string, string> = {
   HlpWidget: 'id',
   HlpFlag: 'key',
   HlpCursor: 'consumerKey',
+  HlpIntegrationInstance: 'id',
+  HlpIngestedData: 'id',
 };
 
 const UNIQUE_FIELDS: Record<string, string[]> = {
@@ -468,6 +474,8 @@ const UNIQUE_FIELDS: Record<string, string[]> = {
   CoreFieldPolicy: ['entityType', 'fieldName'],
   DeviceRegistration: ['tokenHash'],
   DeviceCall: ['idempotencyKey'],
+  HlpIntegrationInstance: ['provider', 'instanceKey'],
+  HlpIngestedData: ['source', 'externalEventId'],
 };
 
 const FLOAT_FIELDS: Record<string, string[]> = {

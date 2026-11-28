@@ -253,6 +253,10 @@ export const AUTH_EXEMPT = [
   // raw body are verified inside routes/ingest.ts, which also records every
   // delivery. The console (/api/integrations/*) stays behind the root session.
   '/api/ingest/',
+  // Unified inbound door (mig 0183): every provider posts/pushes here with no
+  // session; each instance's webhook secret (HMAC over the raw body) is the
+  // credential, verified inside routes/webhooks.ts.
+  '/api/webhooks/',
   // Android devices authenticate with a per-device bearer token (requireDevice)
   // instead of the Google session cookie.
   '/api/android/',
@@ -573,6 +577,11 @@ export function createApp(): Hono<{ Bindings: Bindings }> {
     '/api/enquiries/files', // enquiry attachment store — the owning save broadcasts; a bare upload must not storm the list (would merge a media-stripped row over the just-hydrated photo)
     '/api/whatsapp/events', // SSE stream
     '/api/events',     // WebSocket upgrade
+    // Inbound provider pushes: the door stages the raw body and, for realtime
+    // instances, broadcasts typed `enquiries`/`integrations` events after the
+    // row is processed. A generic data-changed here would refetch every screen
+    // for a webhook that changed nothing (portal pings, status callbacks).
+    '/api/webhooks/',
     // CSV export counters are not dashboard data; a download must not make
     // every open dashboard refetch the (cached) payload.
     '/api/debtors-tracker/exports',

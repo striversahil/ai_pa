@@ -37,6 +37,21 @@ jobs:
   # Zoho-backed jobs (crm + zoho-sent-analyzer) live in cron-every-15min.yml —
   # see the header note. This workflow never pings Zoho.
 
+  # Batch half of the unified ingestion pipeline (mig 0183): lease the rows
+  # the webhook door staged for `deliveryMode=batch` instances and ack them.
+  # Job-level serial group: two ticks must never lease the same rows.
+  ingestion-batch:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ingestion-batch
+    steps:
+      - uses: actions/checkout@v4
+      - name: ingestion-batch (staged webhook rows)
+        env:
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+          SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
+        run: node scripts/ingestion-batch-runner.js
+
   light-triggers:
     runs-on: ubuntu-latest
     steps:
