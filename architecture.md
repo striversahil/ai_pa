@@ -38,7 +38,7 @@ WhatsApp providers ──► POST /webhook  (merged waba path, raw row in `waba_
 | Cloudflare Pages `founder-os-frontend` | `founder-os_frontend/src/app/page.tsx` + `public/_redirects` | static `out/` | Static export dashboard; all views are client-side History-API paths. |
 | Pages Function | `founder-os_frontend/functions/api/[[path]].ts` | — | Proxies `/api/*` to `API_WORKER_URL`; passes a WebSocket `101` through verbatim. |
 | Durable Objects | `src/durable/event-hub.ts`, `async-task-runner.ts`, `chat-room.ts` | DO storage | Live event fan-out, background task runner, chat presence/typing. |
-| GitHub Actions | `.github/workflows/cron-*.yml` → `scripts/*-runner.js` | calls the Worker | Heavy AI + Zoho/NeoDove/linkedin jobs; dispatched by the Worker only. |
+| GitHub Actions | `.github/workflows/cron-*.yml` → `scripts/*-runner.js` | calls the Worker | Heavy AI + Zoho/linkedin/ingestion jobs; dispatched by the Worker only. |
 | `waba-worker` (separate Worker) | `waba-worker/src/index.ts` | same D1 database | Standalone WhatsApp ingress buffer (`/webhook`, `/api/logs`, `/api/update`, `/dashboard`). The main Worker mirrors these endpoints for compatibility. |
 | Express/PostgreSQL (alt/local) | `founder-os_backend/src/server.ts` | PostgreSQL via Prisma | Shares `src/modules/*` + `src/automations/*`; **not production**. `src/routes/` is frozen. |
 | `local-runner.js` (root) | `node local-runner.js` | reads `waba-worker` queue | Local AI classification loop; no cron workflow drains `waba-worker`. |
@@ -55,7 +55,7 @@ WhatsApp providers ──► POST /webhook  (merged waba path, raw row in `waba_
 | `ASYNC_RUNNER` | DO | class `AsyncTaskRunner` | Long-running background work off the request path. |
 | `CHAT_ROOM` | DO | class `ChatRoomDO` | Chat typing/presence fan-out. |
 
-Secrets are Worker/GH secrets, never repository files: `SHARED_SECRET` (runner + webhook bearer), `GITHUB_ACCESS_TOKEN` (workflow dispatch), `WA_ENGINE_API_KEY`, `TOKEN_WEBHOOK_KEY` (limited NeoDove token overwrite), Zoho Books (`ZOHO_BOOKS_SENT_URL`, `ZOHO_BOOKS_AUTH_TOKEN`), Google OAuth/Sheets (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_SERVICE_ACCOUNT_JSON`), `ANDROID_DEBUG_KEYSTORE_BASE64` (stable device ids), `PUBLIC_ORIGIN`, `ALLOWED_ORIGINS`, and the Pages `API_WORKER_URL`.
+Secrets are Worker/GH secrets, never repository files: `SHARED_SECRET` (runner + webhook bearer), `GITHUB_ACCESS_TOKEN` (workflow dispatch), `WA_ENGINE_API_KEY`, `TOKEN_WEBHOOK_KEY` (WhatsApp token overwrite only), Zoho Books (`ZOHO_BOOKS_SENT_URL`, `ZOHO_BOOKS_AUTH_TOKEN`), Google OAuth/Sheets (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_SERVICE_ACCOUNT_JSON`), `ANDROID_DEBUG_KEYSTORE_BASE64` (stable device ids), `PUBLIC_ORIGIN`, `ALLOWED_ORIGINS`, and the Pages `API_WORKER_URL`.
 
 **AI keys are not environment variables.** The pool lives only in Setting `ai:providers` (see §4.1); `AI_KEYS`, `GROQ_*`, `OPENROUTER_*`, `REQUESTLY_*` and `LLM_*` env keys are ignored by the gateway even though older `Bindings` fields still exist.
 
@@ -101,7 +101,7 @@ ai_pa/
 
 | # | Middleware | Behaviour |
 | --- | --- | --- |
-| 1 | CORS | Reflects `*.pages.dev`, `*.neodove.com`, `localhost`/`127.0.0.1`, plus `ALLOWED_ORIGINS`; `credentials: true`; headers include `X-Api-Key`, `Authorization`, `Cookie`. Never `*` on an authenticated API. |
+| 1 | CORS | Reflects `*.pages.dev`, `localhost`/`127.0.0.1`, plus `ALLOWED_ORIGINS`; `credentials: true`; headers include `X-Api-Key`, `Authorization`, `Cookie`. Never `*` on an authenticated API. |
 | 2 | Auth rate limit | 30 requests/minute per IP on `/api/auth/*` (per isolate, in-memory) → `429`. |
 | 3 | Cache-Control | `/api/status`, `/api/health`, `/health` get `public, s-maxage=60`; everything else `no-store`. |
 | 4 | Boot | `bootstrapEnv(c.env)` then opportunistic `ensureBoot()`; trigger routes wait for the registry, dashboards never block. |
@@ -219,13 +219,13 @@ accounts    → debtors-tracker
 | `/api/trigger/` | Manual/automation triggers, same secret gate. |
 | `/api/health`, `/health`, `/api/status` | Liveness/status snapshots. |
 | `/webhook`, `/dashboard` | Merged `waba` ingress + its tiny dashboard; `X-Api-Key` checked when `WA_ENGINE_API_KEY` is set. |
-| `/api/automations/<public>/data`, `/api/session/workspaces/<public>/data` | Derived from catalog `publicData: true` — only `telecalling` and `neodove-telecaller-report`. |
+| `/api/automations/<public>/data`, `/api/session/workspaces/<public>/data` | Derived from catalog `publicData: true` — only `telecalling`. |
 | `/api/linkedin/image/` | Public marketing diagrams served into `<img>` tags (UUID ids). |
 | `/api/enquiries/files/`, `/api/crm/files/` | Byte-serving for unguessable ids shared with customers/transporters and fetched by vision providers; upload/list/delete stay gated. |
 | `/api/email/oauth/callback` | Google redirect before a session exists; KV state token is the CSRF guard. |
-| `/api/token/` | NeoDove token extractor: full `SHARED_SECRET` or the limited `TOKEN_WEBHOOK_KEY` (neodove source only). |
+| `/api/token/` | WhatsApp token extractor: full `SHARED_SECRET` or the limited `TOKEN_WEBHOOK_KEY` (whatsapp source only). |
 | `/api/ai/` | `POST /api/ai/complete` accepts a runner secret **or** a viewer session in-handler. |
-| `/api/estimates/bulk-upsert`, `/api/neodove/report` | Runner writes, secret-gated in-handler. |
+| `/api/estimates/bulk-upsert` | Runner writes, secret-gated in-handler. |
 | `/api/ingest/` | External portals post with a path token (only its SHA-256 in D1) plus optional HMAC. |
 | `/api/android/` | Devices authenticate with a per-device bearer token (`requireDevice`). |
 
@@ -294,9 +294,9 @@ One gateway serves the Worker, every GitHub runner, the playground and the copil
 | `cacheRev` / `cacheRevs` / `bumpRev` | Revision counters folded into hot keys, so one write invalidates a whole family without scanning KV. |
 | `cacheKeys` | Key builders, so no module hand-writes `kvx:` strings. |
 
-- Revisions in use: `est` (estimates/attribution taxonomy), `neo` (NeoDove), `debtors`. The sales board folds `cacheRevs(['est','neo'])`; a write calls `bumpRev`, never `cacheDelPrefix`.
-- Where a revision is overkill, the write path deletes the exact key (`invalidateDerivedEstimateCaches`, `invalidateRiskCache`, `invalidateNeodoveCache`). Every write path must call its invalidator or the dashboard is stale until TTL.
-- Hot dashboard payloads use short TTLs (60 s for the sales board and drills); warmers (NeoDove today/week/month) pre-compute the expensive ones so a page load never eats a cold aggregation.
+- Revisions in use: `est` (estimates/attribution taxonomy), `debtors`. The sales board folds `cacheRevs(['est'])`; a write calls `bumpRev`, never `cacheDelPrefix`.
+- Where a revision is overkill, the write path deletes the exact key (`invalidateDerivedEstimateCaches`, `invalidateRiskCache`). Every write path must call its invalidator or the dashboard is stale until TTL.
+- Hot dashboard payloads use short TTLs (60 s for the sales board and drills); warmers pre-compute the expensive ones so a page load never eats a cold aggregation.
 - Never cache a viewer-scoped payload under a viewer-independent key: scope/subject is part of the key, or the payload is not cached.
 
 ### 4.3 Live transport — EventHub Durable Object
@@ -382,7 +382,7 @@ Each domain below is a `src/modules/<name>/` core (types · pure · store · ser
 
 ### 5.5 HR, Organisation & Auto Dialer
 
-- **One employee master**: `HumanResourcesMember` carries the person, their chart seat and their sales profile (`salesType`, `salesRegions` as a JSON array of 0..N regions, `salesTeamLeadId`, follow-ups, WhatsApp, NeoDove ids). There is no roster table: `Telecaller` is a read-only view over those columns, so leaderboards, drills and history re-point to the employee id.
+- **One employee master**: `HumanResourcesMember` carries the person, their chart seat and their sales profile (`salesType`, `salesRegions` as a JSON array of 0..N regions, `salesTeamLeadId`, follow-ups, WhatsApp). There is no roster table: `Telecaller` is a read-only view over those columns, so leaderboards, drills and history re-point to the employee id.
 - `HumanResourcesRegion` (codes fixed R1–R4 because `Estimate.region` and `ClientClass.masterRegion` store them; name, `tlLevel`, `states`, `order`, `active` editable) is **sales-head/root only** via `GET/PATCH /api/sales/regions[/:code]` (`requireSalesManager`). HR has no region editor; forms read `GET /api/org/regions`.
 - The org chart is one graph with one save: `OrgChartPosition` in D1, seeded lazily from `organization.json` (kept equal by `org-chart-parity`), read by `GET /api/org/chart`, written by HR/root/admin. The top cannot be renamed or deleted, a head must report to the top, and cycles, active seats, role titles and position standards block edits. `loginPosition` is a display suggestion only, never an access grant.
 - Employee form designation is **free text** (picking a chart position is the optional seating shortcut); `PUT /api/org/people/:id` writes the employee master plus the sales profile and never touches access. `canManagePerson`: root/admin all, `human-resources` all, `sales-head` Sales only, department scopes their own department.
@@ -399,7 +399,7 @@ Each domain below is a `src/modules/<name>/` core (types · pure · store · ser
 
 - Ingress has one raw sink and one controller: `POST /webhook` (merged `waba` path, `X-Api-Key` against `WA_ENGINE_API_KEY`, writes `waba_payloads`, enriches media) and `POST /api/whatsapp/webhook` (WA Engine Pro payload → `WhatsAppController.handleWebhook` under `waitUntil`). `waba-worker` buffers the free-tier queue; `local-runner.js` drains it locally.
 - Tokens are rows in `Token` (`/api/token/:source`, `/api/token`), never files. Sends go through `/api/whatsapp/send` and `/api/whatsapp-proxy/send`; contacts, messages, picture, note and summarize live on the same route module. Pending items are `/api/pending-items*` (sales follow-up prompts derived from threads).
-- Automations: `whatsapp-digest`, `whatsapp-autopilot` (rule-driven replies) and WhatsApp marketing campaigns (`MarketingCampaign` / `MarketingLead`). Campaign pushes use per-agent NeoDove URLs (secret names only, SSRF-validated `*.neodove.com`), `single` / `split` routing on a **stable** mobile hash (never migrates), fail-closed behaviour, an append-only ledger and the `NEODOVE_CAMPAIGN_LIVE=1` switch. NeoDove userIds recycle across staff, so a hand-link via the roster picker is authoritative and auto-sync never overwrites it.
+- Automations: `whatsapp-digest`, `whatsapp-autopilot` (rule-driven replies) and WhatsApp marketing campaigns (`MarketingCampaign` / `MarketingLead`). Campaign pushes always target the in-app dialer queue, with a stable mobile hash for `single` / `split` routing and an append-only ledger.
 - Chat: `ChatChannel` / `ChatMessage` / `ChatMember` / `ChatReadState`, with `ChatRoomDO` for typing and presence. Root (`auth_user.isRoot`) is filtered from members, DMs and root-authored messages/typing/reactions; names resolve through the same employee index; DMs are `senior` | `junior` (legacy `manager` → Senior). Unread counts feed the sidebar badge.
 - Brain: `BrainContext` rows plus `POST /api/brain/query` (and `/api/ask-founder-ai`) / `GET /api/brain/stats`, and the 30-minute email brain index runner (`/api/runner/brain/sources`, `/api/runner/brain/context`). Ingestion is append-only and retrieval is scoped to the requesting desk; the runner never writes embeddings to env.
 - Guards: `chat-root` · `live-transport` · `enquiry-threads` (shared attachment rules).
@@ -422,7 +422,7 @@ Each domain below is a `src/modules/<name>/` core (types · pure · store · ser
 There is exactly one Cloudflare Cron Trigger, `* * * * *`, handled by `scheduled()` in `src/worker/cron.ts`. It does two things:
 
 1. **Native work** — small, deterministic D1 jobs run inside the Worker with `ctx.waitUntil`.
-2. **Dispatch** — `workflow_dispatch` to GitHub Actions for the heavy AI/Zoho/NeoDove jobs, chosen by UTC minute alignment.
+2. **Dispatch** — `workflow_dispatch` to GitHub Actions for the heavy AI/Zoho/linkedin/ingestion jobs, chosen by UTC minute alignment.
 
 - Every gate uses `event.scheduledTime`, **never** `new Date()`: delivery can lag 1–2 minutes and a minute-aligned gate would drift or skip a slot.
 - Workflow files have **no `schedule:`** of their own; the Worker is the only clock. `inputs.slot` tells a workflow which daily job family fired, and a manual run defaults to `all`.
@@ -433,10 +433,9 @@ There is exactly one Cloudflare Cron Trigger, `* * * * *`, handled by `scheduled
 | Job | Fires | Quiet hours (21:00–09:00 IST) |
 | --- | --- | --- |
 | Notification sweep (`runNotificationSweep`) | every tick; no-op = one indexed read | runs — round-the-clock escalation |
-| NeoDove campaign drain (`drainPendingPushes`) | every tick, 3 batches × 20 leads; only when the live switch is set | runs — a manager started the push |
+| Inbound poller (`pollGmail`) | `min % 5 === 0`; every enabled Gmail instance | runs — Gmail has no push API |
 | Email outbox (`processDueEmails`) | every tick, CAS-claimed, 10/tick, 5 attempts then dead | runs — sales/ops mail, no Zoho |
 | AI key health sweep | `min % 5 === 0` | runs — telemetry must not sleep |
-| NeoDove refresh + dashboard warmer | `min % 5 === 0` | **paused** — Zoho/NeoDove source |
 | Intake retry sweeper (`sweepStuckIntake`) | `min % 15 === 0`, last 24 h, ≤3 intakes/tick | runs — LLM only |
 | Accounts thread maintenance | `02:30` UTC (08:00 IST) | runs — D1 only |
 | Debtors reminder dry-run | `04:30` UTC (10:00 IST) | runs — D1 only |
@@ -449,25 +448,24 @@ The intake sweeper and the GH intake runner share the same claim keys (`enquiry:
 | Workflow | Fires when | Jobs |
 | --- | --- | --- |
 | `cron-every-5min.yml` | `min % 5` (all hours) | `whatsapp-digest`, `whatsapp-autopilot`, `light-triggers` |
-| `cron-every-10min.yml` | `min % 10`, ops window only | `neodove-today` |
 | `cron-every-15min.yml` | `min % 15`, ops window only | `crm`, `zoho-sent-analyzer` |
 | `cron-every-30min.yml` | `min % 30` (all hours) | `email-brain-index`, `enquiry-intake-backstop`, `light-triggers` |
-| `cron-daily-ist.yml` | 02:30 / 13:30 / 19:30 / 21:30 UTC | `baseline-freeze`, `data-retention`, `telecalling-distribution`, `morning-brief`, `eod-summary`, `neodove-report`, `linkedin-daily` |
+| `cron-daily-ist.yml` | 02:30 / 13:30 / 19:30 / 21:30 UTC | `baseline-freeze`, `data-retention`, `telecalling-distribution`, `morning-brief`, `eod-summary`, `linkedin-daily` |
 
 Daily slots in UTC → IST:
 
 | Slot | IST | Job family |
 | --- | --- | --- |
-| `02:30` | 08:00 | telecalling distribution + morning brief (and the NeoDove backfill) |
+| `02:30` | 08:00 | telecalling distribution + morning brief |
 | `13:30` | 19:00 | EOD summary |
 | `19:30` | 01:00 | baseline freeze |
 | `21:30` | 03:00 | data retention + LinkedIn daily (5 founder drafts) |
 
 The former `15:30` (21:00 IST) telecalling deduction slot is retired: the region model has no individual holds, so there is no EOD deduction machinery. Starter stubs still answer `{retired:true}`.
 
-Quiet hours (21:00–09:00 IST, `isOpsWindow`) skip the 10- and 15-minute dispatches (pure Zoho/NeoDove analysis), still fire the 5- and 30-minute ones (WhatsApp, light triggers, email index, intake backstop), and fire the daily workflow with `run_neodove=false`.
+Quiet hours (21:00–09:00 IST, `isOpsWindow`) skip the 15-minute dispatch (pure Zoho analysis), still fire the 5- and 30-minute ones (WhatsApp, Gmail polling, light triggers, email index, intake backstop), and always fire the daily workflow.
 
-Two ingestion jobs ride this dispatch: `ingestion-batch` in the 5-minute workflow (processes staged `batch` rows) and `portal-poller` in the 15-minute one (pulls portal feeds). Both are serial per job and never ping Zoho themselves (see §9.4).
+One ingestion job rides this dispatch: `ingestion-batch` in the 5-minute workflow (processes staged `batch` rows), serial and never pinging Zoho itself. Gmail polling is native Worker cron, not a GitHub job (see §9.4).
 
 ### 6.4 Runner conventions
 
@@ -492,7 +490,7 @@ Two ingestion jobs ride this dispatch: `ingestion-batch` in the 5-minute workflo
 - `GET /api/session/workspaces` returns the viewer's catalog (server-filtered, ordered). The catalog is `modules/workspaces/catalog.ts` (23 slugs; 21 render, 2 headless providers: `telecalling`, `master-data`); `workspaces/aliases.ts` mirrors the alias table and guard `workspace-catalog` fails on drift.
 - Rendering: `workspaces/registry.tsx` maps slug → lazy `dynamic()` component; any slug without an entry falls back to the generic `SheetAnalysisDashboard`, so a new automation with `data()` returning `{meta:{analysis:'sheet'}}` gets a dashboard for free. A new dashboard = one catalog entry + one `dynamic()` line + one `RENDERERS` entry.
 - Dashboards are host-agnostic: they fetch through `workspaceDataUrl(slug)` and navigate through `useWorkspaceHost().navigate`, never a prop chain or a hardcoded `/api/automations/...` URL. The same component mounts under `/session` and the `/automations` registry console.
-- Scoping is server-owned (`modules/workspaces/scoping.ts` + `resolvers.ts`); routes never branch on `if (slug === …)`. Public data is `telecalling` + `neodove-telecaller-report` only.
+- Scoping is server-owned (`modules/workspaces/scoping.ts` + `resolvers.ts`); routes never branch on `if (slug === …)`. Public data is `telecalling` only.
 - Known gap (documented, unchanged): the generic workspace data route has no per-slug permission check for the remaining providers, so any signed-in user can read another provider's payload. The Samarth/Sahil overviews depend on that today; tightening it needs a server-side overview aggregator first.
 
 ### 7.3 Data, live updates and UI primitives
@@ -642,7 +640,7 @@ const ai   = await call('openai');                           // thin adapter ove
 ```
 
 - **Address** = `(provider, instanceKey)`; `hlp_integration_instance` is UNIQUE on that pair and holds `isDefault`, `enabled`, `deliveryMode`, `baseUrl`, `configJson` and `encryptedSecrets` (AES-256-GCM, `VAULT_KEY`, falls back to `SHARED_SECRET` with one warning). Secret values are never returned by any route — the console sees only `secretKeys`.
-- **Providers are data**: `modules/integrations/manifest.json` (v2.0.0) is the ONLY provider list — 19 providers with `category`, `direction`, `configFields`/`secretFields` (`type`, `required`, `requiredWhen`, `options`, `defaultValue`), `outbound.operations` and `inbound` (`methods`, `challengeGet`, `verification`, `idempotencyKey`, `fieldMap`, `poll`, `liveEvent`, `quietHoursIst`). `manifest.ts` imports the JSON and hydrates it (flat legacy `fields`, `supportsWebhook`, `webhookPath`, `defaultDeliveryMode`); adding a provider = JSON entry + adapter registration, never an edit to a list. `openai` is a facade over §4.1 (`instanceRequired: false`, falls back to the global pool).
+- **Providers are data**: `modules/integrations/manifest.json` (v2.0.0) is the ONLY provider list — 18 providers with `category`, `direction`, `configFields`/`secretFields` (`type`, `required`, `requiredWhen`, `options`, `defaultValue`), `outbound.operations` and `inbound` (`transport`, `allowedDeliveryModes`, `challengeGet`, `verification`, `idempotencyKey`, `fieldMap`, `normalizeQueryToBodyOnGet`, `poller`, `liveEvent`, `quietHoursIst`). `manifest.ts` imports the JSON and hydrates it (flat legacy `fields`, `supportsWebhook`, `webhookPath`, `defaultDeliveryMode`); adding a provider = JSON entry + adapter registration, never an edit to a list. `openai` is a facade over §4.1 (`instanceRequired: false`, falls back to the global pool).
 - **Resolution** = manifest → cached row (`int:inst:<provider>:<key>:<rev>`, 300 s, `cacheRevs(['integrations'])`) → decrypt → `adapter.connect(instance)`. Missing/disabled instance throws `IntegrationError` (409); unknown provider 400.
 - **Auth per provider**: Zoho OAuth2 (cached `Token` `source = zoho:<instanceKey>`, refresh on expiry/401) OR `authMode: raw_headers_bridge` (parses `secrets.rawCurlHeaders` — JSON, `-H 'k: v'` lines or `k: v` — and sends them verbatim); Gmail OAuth2 cached `gmail:<instanceKey>`; WhatsApp wraps the WABA client with `config.phoneNumberId`/`secrets.accessToken`; OpenAI rotates `secrets.apiKeys` (comma/newline separated) against `config.baseUrl`/`config.model` with `embed()`; Google Maps uses `X-Goog-Api-Key` + per-call `X-Goog-FieldMask` (`places:searchText`, Routes `directions/v2:computeRoutes`); Google Search uses `key`+`cx` with optional `config.baseUrlOverride`; `custom` + portals support `bearer|custom_header|basic|query_param|none`. Runners never see client secrets — `GET /api/runner/integrations/resolve?provider=zoho` returns a fresh token.
 - **Webhook URL** comes from `resolveWebhookUrl(origin, provider, instanceKey)` (manifest path + default key); the console prints it.
@@ -651,11 +649,11 @@ const ai   = await call('openai');                           // thin adapter ove
 
 | Provider | Path |
 | --- | --- |
-| any `inbound.supported` provider (Zoho, WhatsApp, Tally, Gmail, portals, Meta/LinkedIn/Telegram, Google Forms, NeoDove, custom) | `POST /api/webhooks/<source>[/<instanceKey>]` |
+| any `inbound.supported` provider (Zoho, WhatsApp, Tally, portals, Meta/LinkedIn/Telegram, Google Forms, custom) | `POST /api/webhooks/<source>[/<instanceKey>]` |
 | providers with `inbound.challengeGet` (Meta handshake) | `GET /api/webhooks/<source>?hub.mode=subscribe…` (echoes `hub.challenge` when `hub.verify_token` matches `config.verifyToken`/`secrets.webhookVerifyToken`) |
 | GET-only portals with `normalizeQueryToBodyOnGet` | the query string is normalized to a JSON body before verification |
 
-Order is fixed and guarded: manifest lookup (404 when the provider is not an inbound provider) → resolve instance (409/404 if absent) → `verifyInbound(provider, …)` over the **RAW body** (401; `hmac` = `x-hub-signature-256`/`tally-signature`/`x-ingest-signature`, bare hex/base64/sha1 accepted; `field_match` = e.g. Justdial `parentid`; `optional_header_token` = Zoho/Gmail push tokens; `none`) → `INSERT OR IGNORE` into `hlp_ingested_data` → 202.
+Order is fixed and guarded: manifest lookup (404 when the provider is not an inbound provider) → resolve instance (409/404 if absent) → `verifyInbound(provider, …)` over the **RAW body** (401; `hmac` = `x-hub-signature-256`/`tally-signature`/`x-ingest-signature`, bare hex/base64/sha1 accepted; `field_match` = e.g. Justdial `parentid`; `optional_header_token` = Zoho/Telegram/Google Forms push tokens; `none`) → `INSERT OR IGNORE` into `hlp_ingested_data` → 202.
 
 - `deliveryMode` is the **instance's** choice. `realtime` processes in `executionCtx.waitUntil` and broadcasts `enquiries` + `integrations`; `batch` leaves the row `pending` for the 5-minute runner. Both answer `202` in milliseconds, so a slow mapper can never make a provider retry a row already stored.
 - Dedupe is the partial UNIQUE `(source, externalEventId) WHERE externalEventId IS NOT NULL`; `extractIdempotencyKey` reads the manifest (`path` e.g. WhatsApp `messages.0.id`, `composite` e.g. Zoho `estimate_id`+`last_modified_time`, `config_path`, with optional prefixes). A duplicate answers `duplicate: true` and is **not** reprocessed. `eventType`/`liveEvent` also come from the manifest.
@@ -664,7 +662,7 @@ Order is fixed and guarded: manifest lookup (404 when the provider is not an inb
 
 ### 9.3 Processing (the only writer)
 
-`modules/ingestion/processor.ts` maps + routes a staged row; `mappers/` is pure. `mapperFor(source)` picks the specialized mapper (`whatsapp`, `zoho-estimate`, `tally`, `gmail`) and otherwise falls back to `genericMapper(provider)` — a manifest-driven lead/message mapper (flat / `data.*` / `fields[{label,value}]` / Meta `entry[].changes[]` shapes, `fieldMap` first then fuzzy aliases). Every `inbound.supported` provider therefore has a mapper by construction.
+`modules/ingestion/processor.ts` maps + routes a staged row; `mappers/` is pure. `mapperFor(source)` picks the specialized mapper (`whatsapp`, `zoho-estimate`, `tally`, `gmail`, portals/social/forms/custom groups) and otherwise falls back to `genericMapper(provider)` — a manifest-driven lead/message mapper (flat / `data.*` / `fields[{label,value}]` / Meta `entry[].changes[]` shapes, `fieldMap` first then fuzzy aliases). Every `inbound.supported` provider therefore has a mapper by construction.
 
 | Canonical | Destination | Rule |
 | --- | --- | --- |
@@ -676,7 +674,7 @@ Order is fixed and guarded: manifest lookup (404 when the provider is not an inb
 ### 9.4 Runners & schedules
 
 - `scripts/ingestion-batch-runner.js` (job `ingestion-batch`, 5-min workflow, serial group): `POST /api/runner/ingestion/claim {mode:'batch'}` → rows, then `POST /api/runner/ingestion/ack {results:[{id}]}`. The **ack** runs `processIngestedRow` server-side, so the mapper never leaves the Worker. A runner that dies leaves `processing` rows that the 15-minute stale rule reclaims.
-- `scripts/portal-poller-runner.js` (job `portal-poller`, 15-min workflow): the provider list is `manifest.providers` where `inbound.poll.supported`; an instance with `config.pollUrl`/`config.pullUrl` is fetched and each item replayed through the HMAC-signed webhook door (`X-Ingest-Signature`), so dedupe/mapping stay in one place. Push-only providers are skipped. `claimBatch` skips providers whose `inbound.quietHoursIst` window (IST) is active.
+- Gmail is the ONLY poller (`modules/ingestion/gmail-poll.ts`, native Worker cron every 5 min, all hours): enabled Gmail instances are listed, the Gmail adapter lists inbox messages since the `lastPollAt` cursor, and each message is staged through `insertIngested` (idempotent on the Gmail message id). Every other inbound provider is webhook-only — there is no portal poller and no generic `pollUrl` fetch loop.
 - `scripts/zoho-sync/credentials.js` resolves the Zoho session from the gateway (`/api/runner/integrations/resolve`); `fetch.js` uses it for headers/orgs/API base and only falls back to `zoho_sent/sent_estimates.txt` when the Worker has no Zoho instance or is unreachable. The file is now the emergency path, not the source of truth.
 
 ### 9.5 Console (root-only)

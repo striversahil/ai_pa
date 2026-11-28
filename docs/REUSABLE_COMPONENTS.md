@@ -119,11 +119,6 @@ Shared kits: `@/components/ui` (Badge, Card, KpiCard, Skeleton, EmptyState/Error
 - `Kpi.tsx` — components: `Kpi`
 - `helpers.ts` — functions/values: `CustomerDrawer`, `EditorsPanel`, `ImportModal`, `DUPLICATE_OPTIONS`
 
-### `components/neodove-telecaller-dashboard/`
-- `KraBar.tsx` — components: `KraBar`
-- `helpers.ts` — functions/values: `REFRESH_MS`, `PRESETS`, `DATE_RE`, `istToday`, `addDays`, `computeRange`, `fmtRangeLabel`, `LIGHT_TEXT`, `LIGHT_BG`, `LIGHT_CHIP`, `fmtTalkTime`, `fmtNum`
-- `types.ts` — types: `TrafficLight`, `Kra`, `AgentRow`, `Totals`, `DataResponse`, `PresetKey`
-
 ### `components/procurement-queue/`
 - `EnquiryStatus.tsx` — components: `EnquiryStatus`
 - `helpers.ts` — functions/values: `isProcurementPending`, `byNewest`
@@ -246,15 +241,6 @@ Shared kits: `@/components/ui` (Badge, Card, KpiCard, Skeleton, EmptyState/Error
 - `io.ts` — functions/values: `resolveSelfHumanResourcesMember`, `computeDashboard`, `getHumanResourcesDashboardData`, `listMembers`, `createMember`, `updateMember`, `ensureAssignableMember`, `createTask`, `updateTask`, `deleteTask`, `createExpense`, `updateExpense`, `deleteExpense`, `createFundTxn`, `updateFundTxn`, `deleteFundTxn`
 - `pure.ts` — functions/values: `normId`, `emailTokens`, `expenseJson`, `fundTxnJson`, `splitTaskBuckets`
 
-### `automations/neodove-refresh-parts/`
-- `io.ts` — functions/values: `fetchLeadsGenerated`, `fetchRosterUserIds`, `probeNeodoveDirectory`, `refreshNeodoveReport`
-- `pure.ts` — functions/values: `NEODOVE_API`, `DAYS`, `MONTHS`, `istDateStr`, `istRangeStrings`, `rowDateStr`, `istDayEpochRange`, `NEODOVE_PIPELINE_ID`, `NEODOVE_LEAD_STAGE_ID`, `normalizeRow`
-
-### `automations/neodove-telecaller-report/index-parts/`
-- `io.ts` — functions/values: `loadReportsInRange`, `invalidateNeodoveCache`, `getNeodoveAgentMap`, `getAllNeodoveAgents`, `getNeodoveRangeMap`, `getLatestNeodoveDay`, `loadZohoNameMap`, `loadZohoByAgent`, `handler`, `data`
-- `pure.ts` — functions/values: `CONNECTED_CALLS_PER_DAY`, `LEADS_PER_AGENT_PER_DAY`, `NUMERIC_KEYS`, `DATE_RE`, `aggregate`, `lightFor`, `ORDER`, `computeAgentKra`
-- `types.ts` — types: `NeodoveAgentRow`, `TrafficLight`, `AgentKra`
-
 ### `automations/product-line/intake-parts/`
 - `io.ts` — functions/values: `captureSpecs`, `ensureVendorId`, `ensureProductId`, `fileDraft`, `liveCategories`, `requiredSpecs`, `fullChecklist`, `specDetails`, `specLabels`, `dedupeRates`, `refreshMissing`, `execTool`, `executeProposal`, `TOOL_DEFS`, `productLineIntakeDef`
 - `pure.ts` — functions/values: `parseAttrValues`, `parseMissingList`, `rateCard`, `SPEC_FILLER`, `SPEC_SYNONYMS`, `SPEC_SYN_MAP`, `specTokens`, `specTokenHits`, `resolveSpecKeys`, `canonicalAttrKey`, `missing`, `validDate`, `norm`, `vendorCanon`, `aliasList`, `matchVendors`, `matchProducts`, `pageArgs`, `includes`
@@ -333,18 +319,6 @@ Shared kits: `@/components/ui` (Badge, Card, KpiCard, Skeleton, EmptyState/Error
 
 ### `modules/estimates/movement-parts/`
 - `pure.ts` — functions/values: `bucketOf`, `normalizeRegionParam`, `normalizeMovementRange`, `aggregateSalesOrderMovement`; types: `RegionBucket`, `MovementOrderRow`, `MovementParams`, `MovementRegionTotal`, `MovementResult`
-
-### `modules/neodove-campaign/service-parts/`
-- `io.ts` — functions/values: `resolveAgents`, `resolveTeamLeads`, `teamLeadCoverage`, `setAgentCampaignUrl`, `getCampaignStates`, `getCampaignDistricts`, `getCampaignPreview`, `getCampaignBatches`, `getCampaignTypes`, `createPush`, `sendOne`, `talliesFor`, `runBatchChunk`, `failedView`, `drainPendingPushes`
-- `pure.ts` — functions/values: `REGIONS`, `DEFAULT_CHUNK`, `MAX_CHUNK`, `CONCURRENCY`, `FETCH_TIMEOUT_MS`, `AGENT_SECRET_RE`, `CampaignError`, `normalizeRegion`, `normalizeState`, `normalizeDistrict`, `normalizeDistribution`, `normalizeClientType`, `normalizeCampaignUrl`, `urlFromSecret`, `extractUrlFromPaste`, `validateAgentUrl`, `liveEnabled`, `participantsFor`, `hostOf`, `newId`
-- `targets.ts` — functions/values: `normalizeTarget`, `resolveDialerTargets`, `deliverToDialer`
-- `types.ts` — types: `ResolvedAgent`, `SendOutcome`
-
-### `modules/neodove-campaign/store-parts/`
-- `dialer-target.ts` — functions/values: `listDialerAgents`, `listDialerTeamLeads`, `markSkippedLeads`
-- `io.ts` — functions/values: `campaignDb`, `listAgents`, `listTeamLeads`, `getAgentRow`, `setAgentUrl`, `agentTallies`, `listCustomersByState`, `listStateCounts`, `listDistrictCounts`, `listTypeCounts`, `lastLivePushes`, `lastDistrictPushes`, `insertBatch`, `getBatch`, `updateBatch`, `recountBatch`, `listBatches`, `insertLeadRows`, `recoverStuckClaims`, `claimPending`, `markOutcomes`, `listFailedLeads`, `batchesWithPending`
-- `pure.ts` — functions/values: `AGENT_COLUMNS`, `LIVE_CUSTOMER_WHERE`, `CUSTOMER_COLUMNS`, `BATCH_COLUMNS`, `BATCH_COLUMNS_PRE_TARGET`, `toBatch`, `PATCHABLE`, `LEAD_COLUMNS`, `INSERT_CHUNK`
-- `types.ts` — types: `LeadOutcome`
 
 ### `shared/ai-gateway-parts/`
 - `io.ts` — functions/values: `logGatewayUsage`, `readGatewayUsage`, `modelFlagged`, `flagModelDown`, `AiGateway`
