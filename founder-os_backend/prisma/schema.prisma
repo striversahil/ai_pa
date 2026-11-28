@@ -1373,6 +1373,25 @@ model DigitalMarketingOpenTaskAttachment {
 }
 
 // ── Human Resources (ad-hoc delegated task list + fixed/variable expenses) ──
+// HR shifts (migration 0186): one row per shift. employmentType NULL is the
+// company default; an employee may be assigned any shift, and the most specific
+// active shift for their employment type is the fallback when shiftId is NULL.
+model HumanResourcesShift {
+  id             String   @id @default(uuid())
+  name           String
+  employmentType String?
+  startTime      String   // HH:mm IST
+  endTime        String   // HH:mm IST (<= startTime means overnight)
+  graceMinutes   Int      @default(10)
+  active         Boolean  @default(true)
+  order          Int      @default(0)
+  members        HumanResourcesMember[]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([active, order])
+}
+
 model HumanResourcesMember {
   id                    String   @id @default(uuid())
   name                  String
@@ -1392,6 +1411,10 @@ model HumanResourcesMember {
   joiningDate           String?
   exitDate              String?
   employmentType        String?  @default("full_time")
+  // Assigned shift (migration 0186); NULL falls back to the employment-type
+  // default shift, then the company default (employmentType NULL).
+  shiftId               String?
+  shift                 HumanResourcesShift? @relation(fields: [shiftId], references: [id], onDelete: SetNull)
   active                Boolean  @default(true)
   dateOfBirth           String?
   address               String?
@@ -1514,7 +1537,7 @@ model HumanResourcesAttendance {
   date      String               // YYYY-MM-DD IST
   inTime    String?              // HH:mm IST
   outTime   String?              // HH:mm IST
-  status    String               @default("present") // present | half_day | absent | holiday
+  status    String               @default("present") // present | late | half_day | short_leave | absent
   notes     String?
   createdBy String?
   updatedBy String?

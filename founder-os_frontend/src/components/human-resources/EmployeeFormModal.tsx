@@ -5,8 +5,8 @@ import Modal from "../Modal";
 import SalaryComponentsEditor from "./SalaryComponentsEditor";
 import SalaryPlanEditor from "./SalaryPlanEditor";
 import OrgPositionPicker from "./OrgPositionPicker";
-import { EMPLOYMENT_TYPES, EMPLOYMENT_TYPE_LABEL, type EmploymentType, type HrEmployee, type HrSalaryComponent, type HrSalaryTemplate } from "@/hr/types";
-import { applySalaryPlan, jsonRequest, listSalaryTemplates, readError, reapplySalaryPlan } from "@/hr/api";
+import { EMPLOYMENT_TYPES, EMPLOYMENT_TYPE_LABEL, type EmploymentType, type HrEmployee, type HrSalaryComponent, type HrSalaryTemplate, type HrShift } from "@/hr/types";
+import { applySalaryPlan, jsonRequest, listSalaryTemplates, listShifts, readError, reapplySalaryPlan } from "@/hr/api";
 import { fileToDataUrl, uploadMediaFile } from "@/lib/imageFiles";
 import { resolveSalary } from "@/hr/salary";
 import { initials, todayIST } from "@/hr/format";
@@ -43,6 +43,8 @@ export default function EmployeeFormModal({ employee, onClose, onSaved }: {
     joiningDate: employee?.joiningDate ?? todayIST(),
     exitDate: employee?.exitDate ?? "",
     employmentType: (employee?.employmentType ?? "full_time") as EmploymentType,
+    // Empty = fall back to the employment-type default shift.
+    shiftId: employee?.shiftId ?? "",
     active: employee?.active ?? true,
     dateOfBirth: employee?.dateOfBirth ?? "",
     address: employee?.address ?? "",
@@ -66,6 +68,7 @@ export default function EmployeeFormModal({ employee, onClose, onSaved }: {
   const initialTemplateId = employee?.salaryTemplateId ?? "";
   const initialPlanAmount = employee?.salaryInputAmount ? String(employee.salaryInputAmount) : "";
   const [templates, setTemplates] = useState<HrSalaryTemplate[]>([]);
+  const [shifts, setShifts] = useState<HrShift[]>([]);
   const [templateId, setTemplateId] = useState(initialTemplateId);
   const [planAmount, setPlanAmount] = useState(initialPlanAmount);
   const [busy, setBusy] = useState(false);
@@ -90,6 +93,14 @@ export default function EmployeeFormModal({ employee, onClose, onSaved }: {
       .catch(() => { /* templates stay unavailable; legacy structure remains editable */ });
     return () => { alive = false; };
   }, [editing, initialTemplateId]);
+
+  useEffect(() => {
+    let alive = true;
+    listShifts()
+      .then((rows) => { if (alive) setShifts(rows.filter((row) => row.active)); })
+      .catch(() => { /* shifts stay unavailable; the type default still applies */ });
+    return () => { alive = false; };
+  }, []);
 
   const reapply = async () => {
     if (!employee) return;
@@ -297,6 +308,17 @@ export default function EmployeeFormModal({ employee, onClose, onSaved }: {
             <div><label className={label}>Joining date</label><input type="date" value={form.joiningDate} onChange={(e) => set("joiningDate", e.target.value)} className={field} /></div>
             <div><label className={label}>Exit date</label><input type="date" value={form.exitDate} onChange={(e) => set("exitDate", e.target.value)} className={field} /></div>
             <div><label className={label}>Employment type</label><select value={form.employmentType} onChange={(e) => set("employmentType", e.target.value as EmploymentType)} className={field}>{EMPLOYMENT_TYPES.map((t) => <option key={t} value={t}>{EMPLOYMENT_TYPE_LABEL[t]}</option>)}</select></div>
+            <div>
+              <label className={label}>Shift (check-in window)</label>
+              <select value={form.shiftId} onChange={(e) => set("shiftId", e.target.value)} className={field} title="Attendance marks this employee late when their check-in is past the shift start + grace.">
+                <option value="">Employment-type default</option>
+                {shifts.map((shift) => (
+                  <option key={shift.id} value={shift.id}>
+                    {shift.name} · {shift.startTime}–{shift.endTime}{shift.graceMinutes ? " (+" + shift.graceMinutes + "m)" : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
             <label className="flex items-end gap-2 pb-2 text-sm font-semibold"><input type="checkbox" checked={form.active} onChange={(e) => set("active", e.target.checked)} /> Active employee</label>
           </div>
         </Section>

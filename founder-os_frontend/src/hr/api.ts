@@ -1,6 +1,6 @@
 import type {
   HrDelegationBoard, HrDelegationTask, HrEmployee, HrHiringPosition, HrLeave,
-  HrMyLeave, HrPositionDoc, HrSalaryPreview, HrSalaryTemplate, HrTaskLog, HiringDocKind,
+  HrMyLeave, HrPositionDoc, HrSalaryPreview, HrSalaryTemplate, HrShift, HrTaskLog, HiringDocKind,
 } from "./types";
 import type { HrAsset, HrAssetsData, HrAssetType, HrPositionAsset } from "./assets";
 import type { HrControllerData, HrLookup, LookupKind } from "./lookups";
@@ -209,6 +209,30 @@ export async function applyLeaveRequest(payload: Record<string, unknown>): Promi
 }
 
 // ── Controller lists (document types, expense categories, asset types) ───────
+
+// ── Shifts (the expected check-in / check-out window) ─────────────────────
+
+export async function listShifts(): Promise<HrShift[]> {
+  const res = await fetch("/api/human-resources/shifts", { cache: "no-store" });
+  if (!res.ok) throw new Error(await readError(res));
+  const body = await res.json();
+  return Array.isArray(body?.shifts) ? body.shifts : [];
+}
+
+export async function saveShift(payload: Record<string, unknown>, id?: string): Promise<HrShift> {
+  const res = await jsonRequest(
+    id ? `/api/human-resources/shifts/${id}` : "/api/human-resources/shifts",
+    id ? "PATCH" : "POST",
+    payload,
+  );
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
+export async function deleteShift(id: string): Promise<void> {
+  const res = await jsonRequest(`/api/human-resources/shifts/${id}`, "DELETE");
+  if (!res.ok) throw new Error(await readError(res));
+}
 
 export async function fetchController(): Promise<HrControllerData> {
   const res = await fetch("/api/human-resources/controller", { cache: "no-store" });

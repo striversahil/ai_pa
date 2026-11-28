@@ -57,6 +57,7 @@ const BOOL_FIELDS: Record<string, string[]> = {
   DigitalMarketingOpenTaskEntry: [],
   DigitalMarketingOpenTaskAttachment: [],
   HumanResourcesMember: ['deleted', 'active', 'useCharacterName', 'salesAssignFollowUps'],
+  HumanResourcesShift: ['active'],
   HumanResourcesDocumentType: ['required', 'active'],
   HumanResourcesMemberDocument: ['deleted'],
   HumanResourcesExpenseCategory: ['active'],
@@ -159,6 +160,7 @@ const DATE_FIELDS: Record<string, string[]> = {
   DigitalMarketingOpenTaskEntry: ['createdAt', 'updatedAt'],
   DigitalMarketingOpenTaskAttachment: ['createdAt'],
   HumanResourcesMember: ['createdAt', 'salaryTemplateAppliedAt', 'salesAbsentSince'],
+  HumanResourcesShift: ['createdAt', 'updatedAt'],
   HumanResourcesDocumentType: ['createdAt', 'updatedAt'],
   HumanResourcesMemberDocument: ['createdAt', 'updatedAt'],
   HumanResourcesExpenseCategory: ['createdAt', 'updatedAt'],
@@ -329,6 +331,7 @@ const ID_FIELDS: Record<string, string> = {
   DigitalMarketingOpenTaskEntry: 'id',
   DigitalMarketingOpenTaskAttachment: 'id',
   HumanResourcesMember: 'id',
+  HumanResourcesShift: 'id',
   HumanResourcesTask: 'id',
   HumanResourcesExpense: 'id',
   HumanResourcesFundTxn: 'id',
@@ -589,7 +592,9 @@ const RELATIONS: Record<string, Record<string, { model: string; fk: string; one?
     task: { model: 'DigitalMarketingOpenTask', fk: 'taskId', one: true },
     entry: { model: 'DigitalMarketingOpenTaskEntry', fk: 'entryId', one: true },
   },
+  HumanResourcesShift: { members: { model: 'HumanResourcesMember', fk: 'shiftId' } },
   HumanResourcesMember: {
+    shift: { model: 'HumanResourcesShift', fk: 'shiftId', one: true },
     tasks: { model: 'HumanResourcesTask', fk: 'assignedToId' },
     salaryComponents: { model: 'HumanResourcesSalaryComponent', fk: 'memberId' },
     attendance: { model: 'HumanResourcesAttendance', fk: 'memberId' },
@@ -1267,6 +1272,7 @@ export class D1PrismaClient {
   get digitalMarketingOpenTaskAttachment() { return this.model('DigitalMarketingOpenTaskAttachment'); }
   // Human Resources (ad-hoc tasks + fixed/variable expenses).
   get humanResourcesMember() { return this.model('HumanResourcesMember'); }
+  get humanResourcesShift() { return this.model('HumanResourcesShift'); }
   get humanResourcesTask() { return this.model('HumanResourcesTask'); }
   get humanResourcesExpense() { return this.model('HumanResourcesExpense'); }
   get humanResourcesFundTxn() { return this.model('HumanResourcesFundTxn'); }

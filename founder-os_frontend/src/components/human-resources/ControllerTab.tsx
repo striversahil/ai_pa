@@ -5,6 +5,7 @@ import { useLiveDashboard } from "@/hooks/useLiveData";
 import { deleteLookup, fetchController } from "@/hr/api";
 import type { HrLookup, LookupKind } from "@/hr/lookups";
 import LookupModal from "./LookupModal";
+import ShiftSection from "./ShiftSection";
 import ConfirmDialog from "../ui/ConfirmDialog";
 
 const SECTIONS: Array<{ kind: LookupKind; title: string; hint: string }> = [
@@ -68,6 +69,10 @@ export default function ControllerTab() {
       {err && <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-500">{err}</div>}
       {dash.loading && !dash.data && <div className="py-10 text-center text-sm text-zinc-500 animate-pulse">Loading controller…</div>}
       {Boolean(dash.error) && <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-3 text-sm text-rose-500">{String(dash.error)}</div>}
+
+      <section className="rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
+        <ShiftSection />
+      </section>
 
       <div className="grid gap-4 xl:grid-cols-3">
         {SECTIONS.map((section) => {

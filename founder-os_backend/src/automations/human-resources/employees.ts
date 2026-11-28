@@ -6,6 +6,7 @@ import { cleanSalaryPlan } from './templates-parse';
 import { resolveSalary, round2 } from './salary';
 import { templateComponentsForCopy } from './templates';
 import { createWithEmployeeCode } from './employee-codes';
+import { assertShift } from './shifts';
 import { mirrorRosterRemoved, mirrorRosterRow } from '../../modules/core/sync';
 import { DATA_CACHE_PREFIX, DATA_TTL_MS, invalidateEmployeeNameCaches, invalidateHumanResourcesCache } from './cache';
 import { employeeDisplayName } from '../../shared/employee-name';
@@ -63,6 +64,7 @@ export function employeeJson(row: any, components: any[] = [], template: any = n
     joiningDate: row.joiningDate ?? null,
     exitDate: row.exitDate ?? null,
     employmentType: row.employmentType ?? 'full_time',
+    shiftId: row.shiftId ? String(row.shiftId) : null,
     active: row.active !== false,
     dateOfBirth: row.dateOfBirth ?? null,
     address: row.address ?? null,
@@ -156,6 +158,7 @@ export async function getEmployee(id: string) {
 
 export async function createEmployee(input: Record<string, any>) {
   const data = cleanEmployeeCreate(input);
+  await assertShift(data.shiftId);
   const row: any = await createWithEmployeeCode((employeeCode) =>
     prisma.humanResourcesMember.create({ data: { ...data, employeeCode } }),
   );
@@ -170,6 +173,7 @@ export async function updateEmployee(id: string, input: Record<string, any>) {
   if (Object.keys(patch).length === 0) throw new HrError('employee code is generated automatically');
   const current: any = await prisma.humanResourcesMember.findUnique({ where: { id } });
   if (!current || current.deleted) throw new HrError('employee not found', 404);
+  if (patch.shiftId !== undefined) await assertShift(patch.shiftId);
   const joining = patch.joiningDate !== undefined ? patch.joiningDate : current.joiningDate;
   const exit = patch.exitDate !== undefined ? patch.exitDate : current.exitDate;
   if (joining && exit && exit < joining) throw new HrError('exitDate cannot be before joiningDate');

@@ -25,10 +25,20 @@ function buildDrafts(day: HrAttendanceDay): Record<string, Draft> {
 
 function statusTone(status: AttendanceStatus | "") {
   if (status === "present") return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400";
+  if (status === "late") return "bg-orange-500/10 text-orange-600 dark:text-orange-400";
+  if (status === "short_leave") return "bg-sky-500/10 text-sky-600 dark:text-sky-400";
   if (status === "half_day") return "bg-amber-500/10 text-amber-600 dark:text-amber-400";
   if (status === "absent") return "bg-rose-500/10 text-rose-500";
-  if (status === "holiday") return "bg-indigo-500/10 text-indigo-500";
   return "bg-zinc-500/10 text-zinc-500";
+}
+
+/** 11 -> "11m", 75 -> "1h 15m" (late / early chips). */
+function minutesLabel(minutes: number): string {
+  const value = Math.round(minutes);
+  if (value < 60) return `${value}m`;
+  const h = Math.floor(value / 60);
+  const m = value % 60;
+  return m ? `${h}h ${m}m` : `${h}h`;
 }
 
 export default function AttendanceTab() {
@@ -74,7 +84,9 @@ export default function AttendanceTab() {
     setDrafts((prev) => ({ ...prev, [memberId]: { ...prev[memberId], ...patch } }));
     setOk(null);
   };
+  const holidayDay = !!dayData?.holiday;
   const markAllPresent = () => {
+    if (holidayDay) return;
     setDrafts((prev) => {
       const next = { ...prev };
       for (const row of rows) {
@@ -88,6 +100,7 @@ export default function AttendanceTab() {
 
   const save = async () => {
     if (!dayData) return;
+    if (dayData.holiday) { setErr("A company holiday is paid automatically — attendance is not marked today."); return; }
     const payload = rows
       .map((row) => {
         const d = drafts[row.member.id];
@@ -108,7 +121,9 @@ export default function AttendanceTab() {
       const res = await jsonRequest("/api/human-resources/attendance", "PUT", { rows: payload });
       if (!res.ok) throw new Error(await readError(res));
       const out = await res.json();
-      setOk(`Saved ${out.saved ?? payload.length} attendance record${(out.saved ?? payload.length) === 1 ? "" : "s"}.`);
+      const okCount = out.saved ?? payload.length;
+      const notes = Array.isArray(out.warnings) && out.warnings.length ? ` ${out.warnings[0]}` : "";
+      setOk(`Saved ${okCount} attendance record${okCount === 1 ? "" : "s"}.${notes}`);
       dash.refresh();
     } catch (e) { setErr(e instanceof Error ? e.message : "Save failed"); }
     finally { setBusy(false); }
@@ -129,20 +144,21 @@ export default function AttendanceTab() {
           <span className="ml-1 text-xs font-semibold text-zinc-500">{dateLabel(date)}{isSunday(date) ? " · Sunday off" : ""}</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <button onClick={markAllPresent} className="rounded-lg bg-emerald-500/10 px-3 py-1.5 text-xs font-bold text-emerald-600 hover:bg-emerald-500/20 dark:text-emerald-400">All present</button>
-          <button onClick={save} disabled={busy || !changedCount} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-500 disabled:opacity-40">{busy ? "Saving…" : changedCount ? `Save ${changedCount} change${changedCount === 1 ? "" : "s"}` : "Saved"}</button>
+          <button onClick={markAllPresent} disabled={holidayDay} title={holidayDay ? "Holiday — attendance is not marked" : undefined} className="rounded-lg bg-emerald-500/10 px-3 py-1.5 text-xs font-bold text-emerald-600 hover:bg-emerald-500/20 disabled:opacity-40 dark:text-emerald-400">All present</button>
+          <button onClick={save} disabled={busy || !changedCount || holidayDay} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-500 disabled:opacity-40">{busy ? "Saving…" : changedCount ? `Save ${changedCount} change${changedCount === 1 ? "" : "s"}` : "Saved"}</button>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-6">
         <div className="rounded-xl border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950"><div className="text-[10px] font-extrabold uppercase text-zinc-500">Team</div><div className="text-lg font-extrabold">{dayData?.summary.total ?? 0}</div></div>
         <div className="rounded-xl border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950"><div className="text-[10px] font-extrabold uppercase text-zinc-500">Marked</div><div className="text-lg font-extrabold text-indigo-500">{dayData?.summary.marked ?? 0}</div></div>
         <div className="rounded-xl border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950"><div className="text-[10px] font-extrabold uppercase text-zinc-500">Present</div><div className="text-lg font-extrabold text-emerald-600 dark:text-emerald-400">{dayData?.summary.present ?? 0}</div></div>
+        <div className="rounded-xl border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950"><div className="text-[10px] font-extrabold uppercase text-zinc-500">Late</div><div className="text-lg font-extrabold text-orange-600 dark:text-orange-400">{dayData?.summary.late ?? 0}</div></div>
         <div className="rounded-xl border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950"><div className="text-[10px] font-extrabold uppercase text-zinc-500">Absent</div><div className="text-lg font-extrabold text-rose-500">{dayData?.summary.absent ?? 0}</div></div>
         <div className="rounded-xl border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950"><div className="text-[10px] font-extrabold uppercase text-zinc-500">On leave</div><div className="text-lg font-extrabold text-amber-600 dark:text-amber-400">{dayData?.summary.leave ?? 0}</div></div>
       </div>
 
-      {dayData?.holiday && <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/5 px-3 py-2 text-xs font-semibold text-indigo-600 dark:text-indigo-400">Company holiday · {dayData.holiday.name}</div>}
+      {dayData?.holiday && <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/5 px-3 py-2 text-xs font-semibold text-indigo-600 dark:text-indigo-400">Company holiday · {dayData.holiday.name} · attendance is not marked on a holiday (payroll pays it automatically).</div>}
       {err && <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 px-3 py-2 text-xs text-rose-500">{err}</div>}
       {ok && <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-600 dark:text-emerald-400">{ok}</div>}
 
@@ -155,7 +171,7 @@ export default function AttendanceTab() {
         <div className="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
           <table className="w-full min-w-[760px] border-collapse text-xs">
             <thead className="bg-zinc-50 text-left text-[10px] uppercase tracking-wide text-zinc-500 dark:bg-zinc-900">
-              <tr><th className="px-3 py-2">Employee</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">In time</th><th className="px-3 py-2">Out time</th><th className="px-3 py-2">Note</th></tr>
+              <tr><th className="px-3 py-2">Employee</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Expected</th><th className="px-3 py-2">In time</th><th className="px-3 py-2">Out time</th><th className="px-3 py-2">Note</th></tr>
             </thead>
             <tbody>
               {rows.map((row) => {
@@ -174,6 +190,8 @@ export default function AttendanceTab() {
                     <td className="px-3 py-2">
                       {row.leave ? (
                         <span className="rounded-full bg-amber-500/10 px-2 py-1 text-[10px] font-bold text-amber-600 dark:text-amber-400">Leave · {LEAVE_TYPE_LABEL[row.leave.leaveType]}{row.leave.paid ? "" : " (unpaid)"}</span>
+                      ) : holidayDay ? (
+                        <span className="rounded-full bg-indigo-500/10 px-2 py-1 text-[10px] font-bold text-indigo-500">Holiday</span>
                       ) : (
                         <select value={d.status} onChange={(e) => update(row.member.id, { status: e.target.value as AttendanceStatus | "" })} className={`${field} font-semibold ${statusTone(d.status)}`}>
                           <option value="">Not marked</option>
@@ -181,9 +199,25 @@ export default function AttendanceTab() {
                         </select>
                       )}
                     </td>
-                    <td className="px-3 py-2"><input type="time" value={d.inTime} disabled={!!row.leave} onChange={(e) => update(row.member.id, { inTime: e.target.value, status: d.status || "present" })} className={field} /></td>
-                    <td className="px-3 py-2"><input type="time" value={d.outTime} disabled={!!row.leave} onChange={(e) => update(row.member.id, { outTime: e.target.value, status: d.status || "present" })} className={field} /></td>
-                    <td className="px-3 py-2"><input value={d.notes} disabled={!!row.leave} onChange={(e) => update(row.member.id, { notes: e.target.value })} placeholder="Optional" className={field} /></td>
+                    <td className="px-3 py-2">
+                      {row.shift ? (
+                        <div className="leading-tight">
+                          <div className="font-semibold">{row.shift.startTime}–{row.shift.endTime}</div>
+                          <div className="text-[10px] text-zinc-500">{row.shift.name}{row.shift.graceMinutes ? ` · ${row.shift.graceMinutes}m grace` : ""}</div>
+                        </div>
+                      ) : <span className="text-[10px] text-zinc-400">No shift set</span>}
+                    </td>
+                    <td className="px-3 py-2">
+                      <input type="time" value={d.inTime} disabled={!!row.leave || holidayDay} onChange={(e) => update(row.member.id, { inTime: e.target.value, status: d.status || "present" })} className={field} />
+                      {!!row.attendance?.lateMinutes && (
+                        <div className="mt-1 inline-flex rounded-full bg-orange-500/10 px-1.5 py-0.5 text-[10px] font-bold text-orange-600 dark:text-orange-400">Late by {minutesLabel(row.attendance.lateMinutes)}</div>
+                      )}
+                      {!!row.attendance?.earlyMinutes && (
+                        <div className="mt-1 ml-1 inline-flex rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-bold text-amber-600 dark:text-amber-400">Left {minutesLabel(row.attendance.earlyMinutes)} early</div>
+                      )}
+                    </td>
+                    <td className="px-3 py-2"><input type="time" value={d.outTime} disabled={!!row.leave || holidayDay} onChange={(e) => update(row.member.id, { outTime: e.target.value, status: d.status || "present" })} className={field} /></td>
+                    <td className="px-3 py-2"><input value={d.notes} disabled={!!row.leave || holidayDay} onChange={(e) => update(row.member.id, { notes: e.target.value })} placeholder="Optional" className={field} /></td>
                   </tr>
                 );
               })}
@@ -199,15 +233,17 @@ export default function AttendanceTab() {
         </button>
         {showSummary && (
           <div className="overflow-x-auto border-t border-zinc-200 dark:border-zinc-800">
-            <table className="w-full min-w-[620px] border-collapse text-xs">
+            <table className="w-full min-w-[720px] border-collapse text-xs">
               <thead className="bg-zinc-50 text-left text-[10px] uppercase tracking-wide text-zinc-500 dark:bg-zinc-900">
-                <tr><th className="px-3 py-2">Employee</th><th className="px-2 py-2">Present</th><th className="px-2 py-2">Half</th><th className="px-2 py-2">Absent</th><th className="px-2 py-2">Holiday</th><th className="px-2 py-2">Leave</th><th className="px-2 py-2">Hours</th></tr>
+                <tr><th className="px-3 py-2">Employee</th><th className="px-2 py-2">Present</th><th className="px-2 py-2">Late</th><th className="px-2 py-2">Short</th><th className="px-2 py-2">Half</th><th className="px-2 py-2">Absent</th><th className="px-2 py-2">Holiday</th><th className="px-2 py-2">Leave</th><th className="px-2 py-2">Hours</th></tr>
               </thead>
               <tbody>
                 {summary.map((r) => (
                   <tr key={r.member.id} className="border-t border-zinc-100 dark:border-zinc-800/80">
                     <td className="px-3 py-2 font-semibold">{r.member.displayName || r.member.name}</td>
                     <td className="px-2 py-2 font-bold text-emerald-600 dark:text-emerald-400">{r.present}</td>
+                    <td className="px-2 py-2 text-orange-600 dark:text-orange-400">{r.late ?? 0}</td>
+                    <td className="px-2 py-2 text-sky-600 dark:text-sky-400">{r.shortLeave ?? 0}</td>
                     <td className="px-2 py-2 text-amber-600 dark:text-amber-400">{r.halfDay}</td>
                     <td className="px-2 py-2 text-rose-500">{r.absent}</td>
                     <td className="px-2 py-2 text-indigo-500">{r.holiday}</td>

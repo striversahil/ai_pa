@@ -17,6 +17,7 @@ import {
   setDefaultTemplate, updateTemplate,
 } from '../../automations/human-resources/templates';
 import { attendanceSummary, listAttendance, saveAttendance } from '../../automations/human-resources/attendance';
+import { createShift, deleteShift, listShifts, updateShift } from '../../automations/human-resources/shifts';
 import { createLeave, deleteLeave, listLeaves, updateLeave } from '../../automations/human-resources/leaves';
 import {
   decideLeaveRequest, listLeaveRequests,
@@ -211,6 +212,47 @@ export function registerHumanResourcesRoutes(app: Hono<{ Bindings: Bindings }>):
       const out = await saveAttendance(body?.rows, actorLabel(a.me));
       notifyLive(c, { type: LiveEvent.HumanResources });
       return c.json(out);
+    } catch (e) { return errorResponse(c, e); }
+  });
+
+  // ── Shifts (the expected check-in / check-out window) ──────────────────
+  app.get('/api/human-resources/shifts', async (c) => {
+    const a = await access(c);
+    if (a.error) return a.error;
+    try {
+      return c.json({ shifts: await listShifts() });
+    } catch (e) { return errorResponse(c, e); }
+  });
+
+  app.post('/api/human-resources/shifts', async (c) => {
+    const a = await access(c);
+    if (a.error) return a.error;
+    const body = await readBody(c);
+    try {
+      const row = await createShift(body || {});
+      notifyLive(c, { type: LiveEvent.HumanResources });
+      return c.json(row, 201);
+    } catch (e) { return errorResponse(c, e); }
+  });
+
+  app.patch('/api/human-resources/shifts/:id', async (c) => {
+    const a = await access(c);
+    if (a.error) return a.error;
+    const body = await readBody(c);
+    try {
+      const row = await updateShift(c.req.param('id') ?? '', body || {});
+      notifyLive(c, { type: LiveEvent.HumanResources });
+      return c.json(row);
+    } catch (e) { return errorResponse(c, e); }
+  });
+
+  app.delete('/api/human-resources/shifts/:id', async (c) => {
+    const a = await access(c);
+    if (a.error) return a.error;
+    try {
+      await deleteShift(c.req.param('id') ?? '');
+      notifyLive(c, { type: LiveEvent.HumanResources });
+      return c.json({ ok: true });
     } catch (e) { return errorResponse(c, e); }
   });
 

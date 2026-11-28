@@ -17,7 +17,9 @@ export function cleanAttendanceRow(raw: Record<string, any>): AttendanceRowInput
     : 'present';
   const inTime = normalizeTime(raw.inTime);
   const outTime = normalizeTime(raw.outTime);
-  if (inTime && outTime && outTime <= inTime) throw new HrError('outTime must be after inTime');
+  // An overnight shift legitimately checks out after midnight (outTime < inTime);
+  // the shift-aware check lives in saveAttendance, which knows the window.
+  if (inTime && outTime && outTime === inTime) throw new HrError('outTime must differ from inTime');
   return {
     memberId,
     date,

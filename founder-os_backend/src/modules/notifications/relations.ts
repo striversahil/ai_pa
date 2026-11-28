@@ -12,7 +12,7 @@
 // Live SQLite foreign keys ("fk") and the curated no-FK application joins
 // ("app") are merged at runtime in ./schema.ts.
 //
-// source-hash: 0566a939d5a6
+// source-hash: 05d9d767028f
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type RelationKind = 'orm' | 'declared';
@@ -29,7 +29,7 @@ export interface TableRelation {
   kind: RelationKind;
 }
 
-export const RELATIONS_SOURCE_HASH = "0566a939d5a6";
+export const RELATIONS_SOURCE_HASH = "05d9d767028f";
 
 export const TABLE_RELATIONS: readonly TableRelation[] = [
   { from: "AccountsTaskAttachment", field: "logId", model: "AccountsTaskLog", ref: "id", kind: "orm" },
@@ -93,6 +93,7 @@ export const TABLE_RELATIONS: readonly TableRelation[] = [
   { from: "HumanResourcesMember", field: "memberId", model: "HumanResourcesMemberDocument", ref: "id", kind: "orm" },
   { from: "HumanResourcesMember", field: "memberId", model: "HumanResourcesAsset", ref: "id", kind: "orm" },
   { from: "HumanResourcesMember", field: "salaryTemplateId", model: "HumanResourcesSalaryTemplate", ref: "id", kind: "orm" },
+  { from: "HumanResourcesMember", field: "shiftId", model: "HumanResourcesShift", ref: "id", kind: "orm" },
   { from: "HumanResourcesMemberDocument", field: "documentTypeId", model: "HumanResourcesDocumentType", ref: "id", kind: "orm" },
   { from: "HumanResourcesMemberDocument", field: "memberId", model: "HumanResourcesMember", ref: "id", kind: "orm" },
   { from: "HumanResourcesPositionAsset", field: "assetTypeId", model: "HumanResourcesAssetType", ref: "id", kind: "orm" },

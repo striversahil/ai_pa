@@ -71,9 +71,10 @@ function computeStats(
     if (holidayDates.has(date)) { add(stats, 'holiday'); continue; }
     const record = attendanceBy.get(date);
     if (record) {
+      // present | late | short_leave all mean the employee was in; the old
+      // 'holiday' attendance status was retired in migration 0186.
       if (record.status === 'half_day') add(stats, 'half');
       else if (record.status === 'absent') add(stats, 'absent');
-      else if (record.status === 'holiday') add(stats, 'holiday');
       else add(stats, 'present');
       continue;
     }

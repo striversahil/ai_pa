@@ -17,13 +17,17 @@ export const EMPLOYMENT_TYPE_LABEL: Record<EmploymentType, string> = {
   intern: "Intern",
 };
 
-export const ATTENDANCE_STATUSES = ["present", "half_day", "absent", "holiday"] as const;
+// Mirror: founder-os_backend/src/automations/human-resources/types.ts.
+// A holiday is never an attendance status (HR decides it in the calendar);
+// "late" is derived from the shift window, "short_leave" is a part-day leave.
+export const ATTENDANCE_STATUSES = ["present", "late", "half_day", "short_leave", "absent"] as const;
 export type AttendanceStatus = (typeof ATTENDANCE_STATUSES)[number];
 export const ATTENDANCE_STATUS_LABEL: Record<AttendanceStatus, string> = {
   present: "Present",
+  late: "Late",
   half_day: "Half day",
+  short_leave: "Short leave",
   absent: "Absent",
-  holiday: "Holiday",
 };
 
 export const LEAVE_TYPES = ["casual", "sick", "earned", "unpaid", "other"] as const;
@@ -172,6 +176,8 @@ export interface HrEmployee extends HrMember {
   joiningDate: string | null;
   exitDate: string | null;
   employmentType: EmploymentType;
+  /** Assigned shift; null = the employment-type default shift. */
+  shiftId: string | null;
   active: boolean;
   dateOfBirth: string | null;
   address: string | null;
@@ -202,6 +208,21 @@ export interface HrEmployee extends HrMember {
   deductions: { name: string; amount: number }[];
 }
 
+/** A shift HR defined (GET /api/human-resources/shifts). */
+export interface HrShift {
+  id: string;
+  name: string;
+  /** null = company default; otherwise the employment type it fits. */
+  employmentType: EmploymentType | null;
+  /** HH:mm IST. */
+  startTime: string;
+  /** HH:mm IST; an end at or before the start is an overnight shift. */
+  endTime: string;
+  graceMinutes: number;
+  active: boolean;
+  order: number;
+}
+
 export interface HrAttendanceRecord {
   id: string;
   memberId: string;
@@ -211,10 +232,18 @@ export interface HrAttendanceRecord {
   status: AttendanceStatus;
   notes: string | null;
   updatedAt: string | null;
+  /** Minutes past shift start + grace (0 = on time, null = nothing to compare). */
+  lateMinutes?: number | null;
+  /** Minutes before shift end (0 = full shift). */
+  earlyMinutes?: number | null;
+  /** status after the late rule (present past grace = late). */
+  effectiveStatus?: AttendanceStatus | null;
 }
 
 export interface HrAttendanceRow {
   member: HrMember & { active: boolean };
+  /** The expected window for this employee (own shift, else the type default). */
+  shift: HrShift | null;
   attendance: HrAttendanceRecord | null;
   leave: { id: string; leaveType: LeaveType; paid: boolean; startDate: string; endDate: string; reason: string | null } | null;
   holiday: { id: string; name: string } | null;
@@ -224,14 +253,18 @@ export interface HrAttendanceDay {
   date: string;
   holiday: { id: string; name: string } | null;
   rows: HrAttendanceRow[];
-  summary: { total: number; marked: number; present: number; halfDay: number; absent: number; leave: number };
+  summary: { total: number; marked: number; present: number; late?: number; halfDay: number; shortLeave?: number; absent: number; leave: number; holiday?: number };
 }
 
 export interface HrAttendanceSummaryRow {
   member: HrMember & { active: boolean };
   present: number;
+  /** Present after grace (already included in `present`). */
+  late?: number;
   halfDay: number;
+  shortLeave?: number;
   absent: number;
+  /** Calendar holidays in the month (never attendance rows). */
   holiday: number;
   leaveDays: number;
   hours: number;

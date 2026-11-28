@@ -2,9 +2,11 @@ import { prisma } from '../../shared/prisma';
 import { HrError } from './errors';
 import { cleanAttendanceRows } from './attendance-parse';
 import { monthRange } from './calendar';
-import { holidaySet } from './holidays';
 import { invalidateHumanResourcesCache } from './cache';
 import { employeeDisplayName } from '../../shared/employee-name';
+import { deriveAttendanceStatus, earlyMinutes, lateMinutes, shiftWindow } from './shifts-parse';
+import { effectiveShift, shiftJson } from './shifts';
+import type { AttendanceStatus } from './types';
 
 function memberLite(row: any) {
   return {
@@ -36,8 +38,10 @@ export function hoursBetween(inTime: string | null, outTime: string | null): num
   return mins > 0 ? Math.round((mins / 60) * 100) / 100 : 0;
 }
 
+const PRESENT_STATUSES = ['present', 'late', 'short_leave'];
+
 export async function listAttendance(date: string) {
-  const [employees, records, leaves, holiday] = await Promise.all([
+  const [employees, records, leaves, holiday, shifts] = await Promise.all([
     prisma.humanResourcesMember.findMany({
       where: { deleted: false, active: true }, orderBy: { order: 'asc' },
     }) as Promise<any[]>,
@@ -46,6 +50,7 @@ export async function listAttendance(date: string) {
     // look like leave (migration 0153).
     prisma.humanResourcesLeave.findMany({ where: { deleted: false, status: 'approved' } }) as Promise<any[]>,
     prisma.humanResourcesHoliday.findFirst({ where: { date } }) as Promise<any>,
+    prisma.humanResourcesShift.findMany({ orderBy: { order: 'asc' } }) as Promise<any[]>,
   ]);
   const recordBy = new Map(records.map((r) => [String(r.memberId), r]));
   const leaveBy = new Map<string, any>();
@@ -57,9 +62,22 @@ export async function listAttendance(date: string) {
   const rows = employees.map((emp) => {
     const record = recordBy.get(String(emp.id));
     const leave = leaveBy.get(String(emp.id));
+    const shift = effectiveShift(emp, shifts);
+    const late = record ? lateMinutes(record.inTime, shift) : null;
+    const early = record ? earlyMinutes(record.outTime, shift) : null;
+    const status = record ? String(record.status ?? 'present') as AttendanceStatus : null;
     return {
       member: memberLite(emp),
-      attendance: record ? attendanceJson(record) : null,
+      // The window the employee is expected in (their own shift, else the
+      // employment-type default, else the company default).
+      shift: shift ? shiftJson(shift) : null,
+      attendance: record ? {
+        ...attendanceJson(record),
+        lateMinutes: late,
+        earlyMinutes: early,
+        // 'present' past the grace window is shown (and stored) as 'late'.
+        effectiveStatus: status ? deriveAttendanceStatus(status, late) : null,
+      } : null,
       leave: leave ? {
         id: String(leave.id), leaveType: leave.leaveType, paid: leave.paid !== false,
         startDate: leave.startDate, endDate: leave.endDate, reason: leave.reason ?? null,
@@ -69,6 +87,7 @@ export async function listAttendance(date: string) {
       holiday: holiday ? { id: String(holiday.id), name: holiday.name } : null,
     };
   });
+  const statusOf = (row: any) => String(row.attendance?.effectiveStatus ?? row.attendance?.status ?? '');
   return {
     date,
     holiday: holiday ? { id: String(holiday.id), name: holiday.name } : null,
@@ -76,39 +95,64 @@ export async function listAttendance(date: string) {
     summary: {
       total: rows.length,
       marked: rows.filter((r) => !!r.attendance).length,
-      present: rows.filter((r) => r.attendance?.status === 'present').length,
-      halfDay: rows.filter((r) => r.attendance?.status === 'half_day').length,
-      absent: rows.filter((r) => !r.leave && r.attendance?.status === 'absent').length,
+      present: rows.filter((r) => PRESENT_STATUSES.includes(statusOf(r))).length,
+      late: rows.filter((r) => statusOf(r) === 'late').length,
+      halfDay: rows.filter((r) => statusOf(r) === 'half_day').length,
+      shortLeave: rows.filter((r) => statusOf(r) === 'short_leave').length,
+      absent: rows.filter((r) => !r.leave && statusOf(r) === 'absent').length,
       leave: rows.filter((r) => !!r.leave).length,
+      holiday: holiday ? 1 : 0,
     },
   };
 }
 
 export async function saveAttendance(input: unknown, actor: string | null) {
-  const rows = cleanAttendanceRows(input);
-  if (!rows.length) return { saved: 0 };
+  const warnings: string[] = [];
+  // 'holiday' was retired as an attendance status (migration 0186). A stale
+  // screen that still posts it is skipped with a warning, never saved.
+  const raw = (Array.isArray(input) ? input : []).filter((row) => {
+    const status = String((row as any)?.status ?? '');
+    if (status !== 'holiday') return true;
+    warnings.push('Holiday is decided in the holiday calendar — the holiday attendance row was skipped');
+    return false;
+  });
+  const rows = cleanAttendanceRows(raw);
+  if (!rows.length) return { saved: 0, warnings };
   const memberIds = [...new Set(rows.map((r) => r.memberId))];
-  const members = await prisma.humanResourcesMember.findMany({
-    where: { id: { in: memberIds }, deleted: false },
-  }) as any[];
+  const [members, shifts] = await Promise.all([
+    prisma.humanResourcesMember.findMany({
+      where: { id: { in: memberIds }, deleted: false },
+    }) as Promise<any[]>,
+    prisma.humanResourcesShift.findMany({ orderBy: { order: 'asc' } }) as Promise<any[]>,
+  ]);
   if (members.length !== memberIds.length) throw new HrError('one or more employees were not found');
+  const memberBy = new Map(members.map((row) => [String(row.id), row]));
   for (const row of rows) {
+    // Auto-mark late: a 'present' check-in after the shift start + grace is
+    // stored as 'late', so payroll and the monthly summary see the same fact.
+    const member = memberBy.get(String(row.memberId));
+    const shift = effectiveShift(member, shifts);
+    const window = shiftWindow(shift);
+    if (window && !window.overnight && row.inTime && row.outTime && row.outTime <= row.inTime) {
+      throw new HrError(`${member?.name ?? 'employee'}: outTime must be after inTime for this shift`);
+    }
+    const status = deriveAttendanceStatus(row.status, lateMinutes(row.inTime, shift));
     const existing: any = await prisma.humanResourcesAttendance.findFirst({
       where: { memberId: row.memberId, date: row.date },
     });
     if (existing) {
       await prisma.humanResourcesAttendance.update({
         where: { id: existing.id },
-        data: { ...row, deleted: false, updatedBy: actor },
+        data: { ...row, status, deleted: false, updatedBy: actor },
       });
     } else {
       await prisma.humanResourcesAttendance.create({
-        data: { ...row, createdBy: actor, updatedBy: actor },
+        data: { ...row, status, createdBy: actor, updatedBy: actor },
       });
     }
   }
   await invalidateHumanResourcesCache();
-  return { saved: rows.length };
+  return { saved: rows.length, warnings };
 }
 
 export async function attendanceSummary(month: string) {
@@ -129,12 +173,16 @@ export async function attendanceSummary(month: string) {
     const leaveDays = leaves.filter((l) => String(l.memberId) === String(emp.id)
       && String(l.endDate) >= start && String(l.startDate) <= end)
       .reduce((sum, l) => sum + Number(l.days || 0), 0);
+    const count = (statuses: string[]) => mine.filter((r) => statuses.includes(String(r.status))).length;
     return {
       member: memberLite(emp),
-      present: mine.filter((r) => r.status === 'present').length,
-      halfDay: mine.filter((r) => r.status === 'half_day').length,
-      absent: mine.filter((r) => r.status === 'absent').length,
-      holiday: mine.filter((r) => r.status === 'holiday').length || holidayDates.size,
+      present: count(PRESENT_STATUSES),
+      late: count(['late']),
+      halfDay: count(['half_day']),
+      shortLeave: count(['short_leave']),
+      absent: count(['absent']),
+      // Holiday days are calendar facts, never attendance rows.
+      holiday: holidayDates.size,
       leaveDays,
       hours: Math.round(mine.reduce((sum, r) => sum + hoursBetween(r.inTime, r.outTime), 0) * 100) / 100,
       marked: mine.length,

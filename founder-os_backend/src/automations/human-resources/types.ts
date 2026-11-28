@@ -118,7 +118,12 @@ export interface InventoryTxnInput {
 export const EMPLOYMENT_TYPES = ['full_time', 'part_time', 'contract', 'intern'] as const;
 export type EmploymentType = (typeof EMPLOYMENT_TYPES)[number];
 
-export const ATTENDANCE_STATUSES = ['present', 'half_day', 'absent', 'holiday'] as const;
+/** Attendance is a record of the day, never a holiday: HR decides holidays in
+ *  the holiday calendar (migration 0186 retires the old 'holiday' status).
+ *  'late' and 'short_leave' were added on 2026-11-28 — 'late' is derived from
+ *  the employee's shift window (HR can also set it by hand), 'short_leave' is
+ *  a day the employee was in but away for part of the shift. */
+export const ATTENDANCE_STATUSES = ['present', 'late', 'half_day', 'short_leave', 'absent'] as const;
 export type AttendanceStatus = (typeof ATTENDANCE_STATUSES)[number];
 
 export const LEAVE_TYPES = ['casual', 'sick', 'earned', 'unpaid', 'other'] as const;
@@ -162,6 +167,8 @@ export interface EmployeeInput {
   joiningDate: string | null;
   exitDate: string | null;
   employmentType: EmploymentType;
+  /** Assigned shift; NULL = the employment-type default shift. */
+  shiftId: string | null;
   active: boolean;
   dateOfBirth: string | null;
   address: string | null;
@@ -208,6 +215,21 @@ export interface SalaryPlanInput {
   inputAmount: number;
   components?: SalaryComponentInput[];
 }
+
+export interface ShiftInput {
+  name: string;
+  /** NULL = the company default (applies to every employment type). */
+  employmentType: EmploymentType | null;
+  /** HH:mm IST. */
+  startTime: string;
+  /** HH:mm IST; an end at or before the start is an overnight shift. */
+  endTime: string;
+  graceMinutes: number;
+  active: boolean;
+  order: number;
+}
+
+export type ShiftPatch = Partial<ShiftInput>;
 
 export interface AttendanceRowInput {
   memberId: string;

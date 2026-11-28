@@ -39,6 +39,8 @@ function employeeFields(input: Record<string, any>): Omit<EmployeeInput, 'name'>
     joiningDate: optionalDate(input.joiningDate, 'joiningDate'),
     exitDate: optionalDate(input.exitDate, 'exitDate'),
     employmentType,
+    // Assigned shift (migration 0186); the store validates it exists.
+    shiftId: nullableText(input.shiftId, 40),
     active: input.active === undefined ? true : Boolean(input.active),
     dateOfBirth: optionalDate(input.dateOfBirth, 'dateOfBirth'),
     address: nullableText(input.address, 1000),
