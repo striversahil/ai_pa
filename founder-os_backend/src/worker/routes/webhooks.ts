@@ -96,6 +96,17 @@ export function registerWebhookRoutes(app: Hono<{ Bindings: any }>): void {
       secrets: instance.secrets,
     });
     if (!check.ok) {
+      // Mirror the failure reason into logs (never the header VALUE): Tally's
+      // portal only shows the status code, so this is the only way to tell an
+      // unsigned delivery from a wrong signing secret.
+      console.log(JSON.stringify({
+        tag: 'webhook_verify_failed',
+        source,
+        reason: check.reason || 'invalid signature',
+        signatureHeaders: Object.keys(headers).filter((k) => /signature/i.test(k)),
+        contentType: headers['content-type'] || '',
+        bodyBytes: inbound.raw.length,
+      }));
       const status = check.reason?.includes('not configured') ? 503 : 401;
       return c.json({ error: check.reason || 'invalid signature' }, status);
     }
