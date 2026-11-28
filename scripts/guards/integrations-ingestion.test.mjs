@@ -133,6 +133,9 @@ test('the inbound door is manifest-driven and verifies before staging', () => {
   assert.match(door, /instance\.deliveryMode === 'realtime'/);
   assert.match(door, /normalizeInboundRequest/);
   assert.match(door, /config\.verifyToken/);
+  assert.match(door, /normalizeInboundRequest\(\{ method: c\.req\.method, provider: source/);
+  const pure = readBackend('src/modules/ingestion/pure.ts');
+  assert.match(pure, /if \(!input\.provider \|\| normalizesQueryToBody\(input\.provider\)\)/);
 });
 
 test('the processor never writes an ERP core table', () => {
