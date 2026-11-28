@@ -249,9 +249,9 @@ export async function verifyInbound(
       ? String(cfg[spec.headerNameFromConfig] || '')
       : (spec.header || 'x-ingest-signature');
     const header = headerValue(headers, headerName);
-    if (!header) {
-      return spec.optionalIfSecretUnset ? { ok: true } : { ok: false, reason: `missing ${headerName} header` };
-    }
+    // A configured secret means the provider MUST sign: only a missing
+    // SECRET is optional, never a missing signature header.
+    if (!header) return { ok: false, reason: `missing ${headerName} header` };
     const candidate = spec.prefix && header.startsWith(spec.prefix) ? header.slice(spec.prefix.length) : header;
     const ok = await verifyWebhookSignature(input.raw, [candidate], secret);
     return ok ? { ok: true } : { ok: false, reason: 'signature mismatch' };

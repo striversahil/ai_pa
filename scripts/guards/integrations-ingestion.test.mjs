@@ -115,6 +115,16 @@ test('nested verification envelopes are unwrapped for signatures + challenges', 
   assert.ok(manifest.providers.whatsapp.inbound.verification.challengeGet, 'Meta challenge must stay nested');
 });
 
+test('a configured webhook secret always requires its signature header', () => {
+  const pure = readBackend('src/modules/ingestion/pure.ts');
+  assert.match(pure, /if \(!header\) return \{ ok: false, reason: `missing \$\{headerName\} header` \};/);
+  assert.doesNotMatch(
+    pure,
+    /!header\)[^}]*optionalIfSecretUnset/s,
+    'optionalIfSecretUnset applies to the SECRET, never to a missing signature',
+  );
+});
+
 test('every provider has an adapter + every inbound provider a mapper', () => {
   const manifest = JSON.parse(readBackend('src/modules/integrations/manifest.json'));
   const index = readBackend('src/modules/integrations/gateway/index.ts');
