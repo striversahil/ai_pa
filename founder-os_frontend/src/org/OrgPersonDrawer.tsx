@@ -35,11 +35,6 @@ export default function OrgPersonDrawer({ person, positions, people = [], region
   const [assignFollowUps, setAssignFollowUps] = useState(person.roster?.assignEstimateFollowUps !== false);
   const [whatsapp, setWhatsapp] = useState(person.roster?.whatsapp ?? "");
   const [officePhone, setOfficePhone] = useState(person.roster?.phone ?? person.employee.phone ?? "");
-  const neoKeyOf = (userId: unknown, userName: unknown) => `${String(userId ?? "").trim()}‖${String(userName ?? "").trim()}`;
-  const [neoLink, setNeoLink] = useState(
-    person.roster?.neodoveUserName ? neoKeyOf(person.roster.neodoveUserId, person.roster.neodoveUserName) : "",
-  );
-  const [neoUsers, setNeoUsers] = useState<Array<{ userId: string; userName: string }>>([]);
   const [active, setActive] = useState(person.employee.active);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -68,17 +63,6 @@ export default function OrgPersonDrawer({ person, positions, people = [], region
     ...catalog.filter((r) => r.active === false && picked.includes(r.code)),
   ];
 
-  useEffect(() => {
-    if (!showSales) return;
-    let alive = true;
-    import("@/org/api").then((m) =>
-      m.fetchUnmappedNeodoveUsers()
-        .then((rows) => { if (alive) setNeoUsers(rows); })
-        .catch(() => { /* picker keeps the current link; manual entry can wait */ }),
-    );
-    return () => { alive = false; };
-  }, [showSales]);
-
   const toggleRegion = (code: string) => {
     setPicked((prev) => (prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code]));
   };
@@ -91,7 +75,6 @@ export default function OrgPersonDrawer({ person, positions, people = [], region
     if (!chartPosition) { setErr("Seating needs a chart title — free-text designations are edited in HR → Employees"); return; }
     setBusy(true);
     try {
-      const neoParts = neoLink ? String(neoLink).split("‖") : [];
       await saveOrgPerson(person.employee.id, {
         position: title,
         regions: showSales ? picked : undefined,
@@ -99,8 +82,6 @@ export default function OrgPersonDrawer({ person, positions, people = [], region
         assignEstimateFollowUps: canPickLead ? assignFollowUps : undefined,
         whatsapp: rules.whatsapp ? (whatsapp.trim() || null) : undefined,
         officePhone: showSales ? (officePhone.trim() || null) : undefined,
-        neodoveUserId: rules.neodove ? (neoParts.length === 2 && (neoParts[0] || neoParts[1]) ? neoParts[0] : null) : undefined,
-        neodoveUserName: rules.neodove ? (neoParts.length === 2 && (neoParts[0] || neoParts[1]) ? neoParts[1] : null) : undefined,
         active,
       });
       onSaved();
@@ -188,28 +169,9 @@ export default function OrgPersonDrawer({ person, positions, people = [], region
                 <input value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)} className={field} placeholder="WhatsApp number" />
               </div>
               <div>
-                <label className={label}>Office phone — must match NeoDove call report</label>
+                <label className={label}>Office phone</label>
                 <input value={officePhone} onChange={(e) => setOfficePhone(e.target.value)} className={field} placeholder="Office phone" />
               </div>
-            </div>
-            <div>
-              <label className={label}>NeoDove user (the office-phone mapping)</label>
-              <select value={neoLink} onChange={(e) => setNeoLink(e.target.value)} className={field}>
-                <option value="">No link</option>
-                {person.roster?.neodoveUserName && !neoUsers.some((u) => neoKeyOf(u.userId, u.userName) === neoKeyOf(person.roster!.neodoveUserId, person.roster!.neodoveUserName)) && (
-                  <option value={neoKeyOf(person.roster.neodoveUserId, person.roster.neodoveUserName)}>
-                    ✓ {person.roster.neodoveUserName} (currently linked)
-                  </option>
-                )}
-                {neoUsers.map((u) => (
-                  <option key={neoKeyOf(u.userId, u.userName)} value={neoKeyOf(u.userId, u.userName)}>
-                    {u.userName || "(no name)"}{u.userId ? ` · ${String(u.userId).slice(0, 8)}…` : ""}
-                  </option>
-                ))}
-              </select>
-              <p className="mt-1 text-[11px] text-zinc-500">
-                Compare the office phone with the NeoDove User Call Report&apos;s Mobile Number column before linking — a wrong link misattributes calls.
-              </p>
             </div>
           </section>
         )}

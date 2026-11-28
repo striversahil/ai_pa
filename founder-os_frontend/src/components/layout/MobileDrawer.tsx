@@ -28,7 +28,6 @@ import {
 
 const DASH_ICONS: Record<string, LucideIcon> = {
   "dpp-prices-dashboard": Tag,
-  "neodove-telecaller-report": PhoneCall,
   "wa-engine-monitor": Radio,
   "whatsapp-marketing": Megaphone,
   "whatsapp-autopilot": Bot,

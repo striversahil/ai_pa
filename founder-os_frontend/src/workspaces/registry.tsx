@@ -18,7 +18,6 @@ const DppPricesDashboard = dynamic(() => import("@/components/DppPricesDashboard
 const SheetAnalysisDashboard = dynamic(() => import("@/components/SheetAnalysisDashboard"), { ssr: false });
 const WaEngineDashboard = dynamic(() => import("@/components/WaEngineDashboard"), { ssr: false });
 const WhatsAppMarketingDashboard = dynamic(() => import("@/components/WhatsAppMarketingDashboard"), { ssr: false });
-const NeodoveTelecallerDashboard = dynamic(() => import("@/components/NeodoveTelecallerDashboard"), { ssr: false });
 const AccountsDashboard = dynamic(() => import("@/components/AccountsDashboard"), { ssr: false });
 const DigitalMarketingDashboard = dynamic(() => import("@/components/DigitalMarketingDashboard"), { ssr: false });
 const HumanResourcesDashboard = dynamic(() => import("@/components/HumanResourcesDashboard"), { ssr: false });
@@ -46,7 +45,6 @@ const RENDERERS: Record<string, React.ComponentType> = {
   "dpp-prices-dashboard": DppPricesDashboard,
   "wa-engine-monitor": WaEngineDashboard,
   "whatsapp-marketing": WhatsAppMarketingDashboard,
-  "neodove-telecaller-report": NeodoveTelecallerDashboard,
   sales: SalesWorkspace,
   accounts: AccountsDashboard,
   "debtors-tracker": DebtorsTrackerDashboard,

@@ -49,7 +49,6 @@ export function adaptLeaderRow(s: any, region: any, targets: any): LeaderRow {
     id: String(s?.id ?? ""),
     name: String(s?.name ?? ""),
     assignEstimateFollowUps: !!s?.closerEligible,
-    neodoveUserName: null,
     conversion: {
       assigned: Number(open.count ?? 0),
       won,

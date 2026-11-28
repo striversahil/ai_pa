@@ -14,7 +14,6 @@ export const VIEW_SCOPE: Record<string, string> = {
   automations: "automations",
   admin: "admin",
   // Automation dashboard slugs whose scope differs from the slug:
-  "neodove-telecaller-report": "neodove",
   "dpp-prices-dashboard": "dpp",
   "wa-engine-monitor": "wa-engine",
   "whatsapp-marketing": "whatsapp-marketing",
@@ -80,7 +79,6 @@ export function grantedScopes(me: AuthUserMe | null): Set<string> {
 // without editing this list — it is kept for reference only.
 export const DASHBOARD_SCOPES = [
   "zoho",
-  "neodove",
   "dpp",
   "wa-engine",
   "whatsapp-marketing",

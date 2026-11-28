@@ -200,7 +200,7 @@ export default function EntryForm({
             <tbody>
               {teleRows.length === 0 && (
                 <tr><td colSpan={4} className="px-3 py-3 text-center text-[11px] text-[var(--text-tertiary)]">
-                  No rows yet — auto-fill from the NeoDove report or add rows below.
+                  No rows yet — auto-fill from the dialer or add rows below.
                 </td></tr>
               )}
               {teleRows.map((r, i) => (

@@ -34,7 +34,7 @@ const RULES = [
   { icon: Target, value: "₹1,00,000", label: "Per region · working day", note: "accepted estimate value" },
   { icon: RotateCcw, value: "↩ carry", label: "Missed weeks roll on", note: "shortfall is never forgiven" },
   { icon: Sparkles, value: "+15", label: "New lead", note: "per enquiry created" },
-  { icon: PhoneCall, value: "+0.5", label: "Connected call", note: "per NeoDove connect" },
+  { icon: PhoneCall, value: "+0.5", label: "Connected call", note: "per dialer connect" },
 ];
 
 export function BoardHeader({ meta, period, periods, onPeriod, loading = false, showControls = true, custom = null, customClamped = false, onCustom, onClearCustom }: BoardHeaderProps) {

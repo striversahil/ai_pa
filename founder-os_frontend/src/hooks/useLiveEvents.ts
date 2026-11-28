@@ -6,7 +6,7 @@ const PING_MS = 60_000;
 
 // Subscribes to the worker's EventHub WebSocket (/api/events) and invokes
 // `onEvent` for every broadcast data-change (e.g. { type: "estimates" },
-// { type: "neodove" }, { type: "baseline" }, { type: "automation", slug }).
+// { type: "telecalling" }, { type: "baseline" }, { type: "automation", slug }).
 // Auto-reconnects with backoff; periodic pings keep NAT/proxies from idling
 // the socket out. Components keep their own slow polling as a safety net.
 export function useLiveEvents(onEvent: (event: LiveEvent) => void) {

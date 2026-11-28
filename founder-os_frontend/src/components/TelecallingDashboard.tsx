@@ -197,7 +197,7 @@ export default function TelecallingDashboard() {
   }, [drillMap, tagOverrides]);
   const getAgentView = (key: string | null): AgentViewData | null => (key ? agentViewsMap[key] ?? null : null);
   const selectedAgentView = getAgentView(regionFilter);
-  // No-pickup subset of the selected agent's follow-ups (NeoDove dial outcome).
+  // No-pickup subset of the selected agent's follow-ups.
   const convFollowUps = selectedAgentView?.followUps ?? [];
   // Call-tag filter counts ( Sheets-style quick filters over the same rows).
   const tagCounts = useMemo(() => {
@@ -663,7 +663,7 @@ export default function TelecallingDashboard() {
                 <div>
                   <h3 className="text-lg font-bold mb-1">📞 Lead Generation</h3>
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    Per-agent enquiries created (live) + NeoDove call performance — calls from the NeoDove worker database.
+                    Per-agent enquiries created (live) + dialer call performance — calls from the auto dialer / manual log.
                   </p>
                 </div>
                 {/* Independent period filter for Lead Generation */}

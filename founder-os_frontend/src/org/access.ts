@@ -27,10 +27,10 @@ export function isSalesRosterTitle(title: string, loginPosition?: string | null)
 
 /** Which sales fields the editor shows for this position. The region list is
  *  free (0..N) for every sales seat since mig 0177 — no per-title second slot. */
-export function regionRulesFor(title: string, loginPosition?: string | null): { regions: boolean; whatsapp: boolean; neodove: boolean } {
+export function regionRulesFor(title: string, loginPosition?: string | null): { regions: boolean; whatsapp: boolean } {
   const t = rosterTypeFor(title, loginPosition);
-  if (!t) return { regions: false, whatsapp: false, neodove: false };
-  return { regions: true, whatsapp: true, neodove: true };
+  if (!t) return { regions: false, whatsapp: false };
+  return { regions: true, whatsapp: true };
 }
 
 /**

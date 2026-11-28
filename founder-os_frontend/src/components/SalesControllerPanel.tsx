@@ -3,7 +3,6 @@
 import { useState, useCallback } from "react";
 import { useLiveQuery } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
-import NeoDoveCampaignSection from "@/components/telecalling/NeoDoveCampaignSection";
 import AutoDialerSection from "@/components/telecalling/auto-dialer/AutoDialerSection";
 import RehomeEstimateSection from "@/components/telecalling/RehomeEstimateSection";
 import SalesHolidaysSection from "@/components/telecalling/SalesHolidaysSection";
@@ -106,7 +105,6 @@ export default function SalesControllerPanel() {
         refreshAll={refreshAll}
       />
       <AutoDialerSection rosterRows={roster.data?.telecallers ?? []} />
-      <NeoDoveCampaignSection canManage={canManage} />
       <RehomeEstimateSection
         busy={busy}
         setBusy={setBusy}

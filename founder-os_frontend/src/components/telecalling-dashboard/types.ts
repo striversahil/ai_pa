@@ -7,7 +7,6 @@ export interface LeaderRow {
   id: string;
   name: string;
   assignEstimateFollowUps: boolean;
-  neodoveUserName: string | null;
   conversion: { assigned: number; won: number; conversionRate: number; pipelineValue: number; acceptedValue?: number; estimatedConversion: { count: number; value: number } };
   generation: {
     callsAttempted: number;
@@ -276,7 +275,7 @@ export interface FollowUp {  estimateId: string;
   nextStep?: string | null;
   /** Date the commitment is due (YYYY-MM-DD, max +30 days). */
   nextStepDate?: string | null;
-  /** True when today's NeoDove effort on this customer shields the EOD −10. */
+  /** True when today's dialer effort on this customer shields the EOD −10. */
   effortShielded?: boolean | null;
   /** Zoho Books org (multi-org sync; null/'' = primary). */
   organizationId?: string | null;
@@ -320,8 +319,6 @@ export interface RosterRow {
   assignEstimateFollowUps: boolean;
   absentSince: string | null;
   order: number;
-  neodoveUserId: string | null;
-  neodoveUserName: string | null;
   totalAssigned: number;
   activeAssigned: number;
   /** Every region held, in order (first = primary). */

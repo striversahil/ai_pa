@@ -37,7 +37,7 @@ export default function FounderAssistant() {
       const data = await res.json();
       return data.content ?? "";
     },
-    { events: ["founder-notes", "digests", "tasks", "estimates", "neodove"] },
+    { events: ["founder-notes", "digests", "tasks", "estimates"] },
   );
 
   const digests = useLiveQuery<any[]>(

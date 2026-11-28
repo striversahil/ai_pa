@@ -32,9 +32,9 @@ function SalesLine({ p }: { p: OrgPerson }) {
       {r.whatsapp && (
         <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold text-emerald-600 dark:text-emerald-300">WA {r.whatsapp}</span>
       )}
-      {(r.neodoveUserName || r.phone) && (
-        <span className="rounded-full bg-zinc-500/10 px-2 py-0.5 text-[10px] font-bold text-zinc-500" title={r.neodoveUserId ? `NeoDove id ${r.neodoveUserId}` : "Office phone"}>
-          ☎ {r.neodoveUserName || r.phone}
+      {r.phone && (
+        <span className="rounded-full bg-zinc-500/10 px-2 py-0.5 text-[10px] font-bold text-zinc-500" title="Office phone">
+          ☎ {r.phone}
         </span>
       )}
     </div>

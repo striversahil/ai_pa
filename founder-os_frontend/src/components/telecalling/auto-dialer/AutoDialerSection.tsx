@@ -80,11 +80,10 @@ export default function AutoDialerSection({ rosterRows }: { rosterRows: RosterRo
           <span className="font-semibold uppercase tracking-wide text-zinc-500">Leaderboard counts calls from</span>
           <select
             id="dialer-call-source"
-            value={source.data?.mode ?? "neodove"}
+            value={source.data?.mode ?? "device"}
             onChange={(e) => void setSource(e.target.value as CallSource)}
             className="rounded-lg border border-zinc-200 bg-white px-2 py-1 text-xs dark:border-zinc-800 dark:bg-zinc-950"
           >
-            <option value="neodove">NeoDove</option>
             <option value="device">Founder OS dialer</option>
             <option value="manual">Manual log</option>
           </select>

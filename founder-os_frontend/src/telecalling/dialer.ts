@@ -102,7 +102,7 @@ export interface AgentDay {
   breakSec: number;
 }
 
-export type CallSource = "neodove" | "manual" | "device";
+export type CallSource = "manual" | "device";
 
 /** One call row from /api/call-log/calls (backend mirror: modules/device-calls/store.ts `view`). */
 export interface RecordedCall {
@@ -200,8 +200,8 @@ export const dialerApi = {
     call<{ recalled: number; breaksClosed: number; callsDeleted: number; breaksDeleted: number; recordingsDeleted: number }>(
       `/api/dialer/agents/${encodeURIComponent(telecallerId)}/reset`, json("POST", { wipeToday })),
   revokeDevice: (deviceId: string) => call<{ ok: boolean }>(`/api/call-log/devices/${encodeURIComponent(deviceId)}`, { method: "DELETE" }),
-  callSource: () => call<{ mode: CallSource }>("/api/telecalling/manual-calls/mode"),
-  setCallSource: (mode: CallSource) => call<{ mode: CallSource }>("/api/telecalling/manual-calls/mode", json("PUT", { mode })),
+  callSource: () => call<{ mode: CallSource }>("/api/dialer/call-source"),
+  setCallSource: (mode: CallSource) => call<{ mode: CallSource }>("/api/dialer/call-source", json("PUT", { mode })),
   app: () => call<AppRelease>("/api/dialer/app"),
   batches: (days = 30) => call<{ batches: DialerBatch[] }>(`/api/dialer/batches?days=${days}`),
   /** Whole batch off every agent's dialer (waiting leads only; calls made stay). */

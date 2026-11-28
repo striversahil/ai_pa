@@ -24,8 +24,6 @@ export interface OrgRoster {
   teamLeadId: string | null;
   whatsapp: string | null;
   phone: string | null;
-  neodoveUserId: string | null;
-  neodoveUserName: string | null;
   assignEstimateFollowUps: boolean;
   absentSince: string | null;
 }
@@ -143,8 +141,6 @@ export interface AssignPersonInput {
   assignEstimateFollowUps?: boolean;
   whatsapp?: string | null;
   officePhone?: string | null;
-  neodoveUserId?: string | null;
-  neodoveUserName?: string | null;
   /** Deprecated: HR never grants access (Users & Permissions owns it). Ignored by the server. */
   scopes?: string[];
   active?: boolean;
@@ -181,14 +177,3 @@ export async function fetchOrgRegions(): Promise<OrgRegionsResponse> {
   return res.json();
 }
 
-
-/** NeoDove users not yet linked to any roster row (for the office-phone
- *  mapping picker). Lazy-loaded by the person drawer — the telecalling
- *  payload is KV-cached, so this is one cheap read per drawer open. */
-export async function fetchUnmappedNeodoveUsers(): Promise<Array<{ userId: string; userName: string }>> {
-  const { workspaceDataUrl } = await import("@/workspaces/api");
-  const res = await fetch(workspaceDataUrl("telecalling"), { cache: "no-store" });
-  if (!res.ok) throw new Error(await readError(res));
-  const j = await res.json();
-  return Array.isArray(j?.meta?.unmappedNeodoveUsers) ? j.meta.unmappedNeodoveUsers : [];
-}

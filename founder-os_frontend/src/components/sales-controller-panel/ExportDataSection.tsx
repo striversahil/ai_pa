@@ -41,7 +41,7 @@ export function ExportDataSection({ rosterRows, showRisk }: { rosterRows: Roster
       // Section 1 — Performance (per-telecaller leaderboard)
       rows.push(["═══ PERFORMANCE (LEADERBOARD) ═══"]);
       rows.push([
-        "Rank", "Sales staff", "Type", "Follow-ups", "NeoDove user",
+        "Rank", "Sales staff", "Type", "Follow-ups",
         "Open (region)", "Won", "Conv %", "Pipeline ₹", "Closed ₹",
         "Calls Attempted", "Calls Connected", "Calls %", "Talk (min)",
         "Leads Generated", "Leads %", "Score",
@@ -55,7 +55,6 @@ export function ExportDataSection({ rosterRows, showRisk }: { rosterRows: Roster
             r.name,
             r.type === "field_staff" ? "Field Staff" : r.type === "team_lead" ? "Team Lead" : "Telecaller",
             r.type === "field_staff" ? "n/a" : r.type === "team_lead" ? "reseller target" : r.assignEstimateFollowUps ? "yes" : "no",
-            r.neodoveUserName,
             r.conversion.assigned,
             r.conversion.won,
             r.conversion.conversionRate,
