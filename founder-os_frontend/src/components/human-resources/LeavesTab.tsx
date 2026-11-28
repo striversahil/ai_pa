@@ -19,14 +19,32 @@ import { TabBar, type TabBarItem } from "../ui/TabBar";
 import { useLiveDashboard } from "@/hooks/useLiveData";
 import {
   LEAVE_DURATION_LABEL, LEAVE_TYPE_LABEL,
-  type HrEmployee, type HrHoliday, type HrLeave, type LeaveStatus,
+  type HrEmployee, type HrHoliday, type HrHolidayKind, type HrLeave, type LeaveStatus,
 } from "@/hr/types";
 import { jsonRequest, readError, fetchLeaveRequests } from "@/hr/api";
-import { currentMonthIST, dateLabel, monthLabel, shiftMonth, shortDate, timeLabel } from "@/hr/format";
+import { currentMonthIST, monthLabel, shiftMonth, shortDate, timeLabel } from "@/hr/format";
 
 const field = "rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2.5 py-1.5 text-xs outline-none focus:border-indigo-500";
 
 type LeaveTab = "requests" | "approved" | "rejected" | "calendar";
+
+// mirror: founder-os_backend/src/automations/human-resources/holidays-parse.ts
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+type HolidayDraft = {
+  id: string;
+  kind: HrHolidayKind;
+  date: string;
+  startDate: string;
+  endDate: string;
+  weekday: number;
+  name: string;
+};
+
+function blankHoliday(month: string): HolidayDraft {
+  const first = `${month}-01`;
+  return { id: "", kind: "single", date: first, startDate: first, endDate: first, weekday: 0, name: "" };
+}
 
 const STATUS_TONE: Record<LeaveStatus, string> = {
   pending: "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
@@ -113,12 +131,12 @@ export default function LeavesTab() {
   const [deleting, setDeleting] = useState<HrLeave | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [holidayForm, setHolidayForm] = useState({ id: "", date: `${month}-01`, name: "" });
+  const [holidayForm, setHolidayForm] = useState<HolidayDraft>(() => blankHoliday(month));
   const [holidayBusy, setHolidayBusy] = useState(false);
 
   const leaves = dash.data?.leaves ?? [];
   const requests = dash.data?.requests ?? [];
-  const holidays = useMemo(() => (dash.data?.holidays ?? []).slice().sort((a, b) => a.date.localeCompare(b.date)), [dash.data?.holidays]);
+  const holidays = useMemo(() => (dash.data?.holidays ?? []).slice().sort((a, b) => a.startDate.localeCompare(b.startDate)), [dash.data?.holidays]);
   const year = month.slice(0, 4);
   const paidDays = leaves.filter((l) => l.paid).reduce((s, l) => s + l.days, 0);
   const unpaidDays = leaves.filter((l) => !l.paid).reduce((s, l) => s + l.days, 0);
@@ -148,14 +166,28 @@ export default function LeavesTab() {
 
   const saveHoliday = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!holidayForm.date || !holidayForm.name.trim()) { setErr("Holiday date and name are required"); return; }
+    const name = holidayForm.name.trim();
+    if (!name) { setErr("Holiday name is required"); return; }
+    let payload: Record<string, unknown>;
+    if (holidayForm.kind === "single") {
+      if (!holidayForm.date) { setErr("Pick the holiday date"); return; }
+      payload = { kind: "single", date: holidayForm.date, name };
+    } else if (holidayForm.kind === "range") {
+      if (!holidayForm.startDate || !holidayForm.endDate) { setErr("Pick the first and last day of the holiday"); return; }
+      if (holidayForm.endDate < holidayForm.startDate) { setErr("The last day cannot be before the first day"); return; }
+      payload = { kind: "range", startDate: holidayForm.startDate, endDate: holidayForm.endDate, name };
+    } else {
+      if (!holidayForm.startDate || !holidayForm.endDate) { setErr("Pick the window this weekday applies to"); return; }
+      if (holidayForm.endDate < holidayForm.startDate) { setErr("The window end cannot be before its start"); return; }
+      payload = { kind: "weekday", weekday: holidayForm.weekday, startDate: holidayForm.startDate, endDate: holidayForm.endDate, name };
+    }
     setHolidayBusy(true); setErr(null);
     try {
       const res = holidayForm.id
-        ? await jsonRequest(`/api/human-resources/holidays/${holidayForm.id}`, "PATCH", { date: holidayForm.date, name: holidayForm.name.trim() })
-        : await jsonRequest("/api/human-resources/holidays", "POST", { date: holidayForm.date, name: holidayForm.name.trim() });
+        ? await jsonRequest(`/api/human-resources/holidays/${holidayForm.id}`, "PATCH", payload)
+        : await jsonRequest("/api/human-resources/holidays", "POST", payload);
       if (!res.ok) throw new Error(await readError(res));
-      setHolidayForm({ id: "", date: `${month}-01`, name: "" });
+      setHolidayForm(blankHoliday(month));
       dash.refresh();
     } catch (e2) { setErr(e2 instanceof Error ? e2.message : "Holiday save failed"); }
     finally { setHolidayBusy(false); }
@@ -166,7 +198,7 @@ export default function LeavesTab() {
     try {
       const res = await jsonRequest(`/api/human-resources/holidays/${holiday.id}`, "DELETE");
       if (!res.ok) throw new Error(await readError(res));
-      if (holidayForm.id === holiday.id) setHolidayForm({ id: "", date: `${month}-01`, name: "" });
+      if (holidayForm.id === holiday.id) setHolidayForm(blankHoliday(month));
       dash.refresh();
     } catch (e) { setErr(e instanceof Error ? e.message : "Holiday delete failed"); }
   };
@@ -273,12 +305,35 @@ export default function LeavesTab() {
             <div className="space-y-2">
               <h3 className="text-xs font-extrabold uppercase tracking-wide text-zinc-500">Company holidays · {year}</h3>
               <form onSubmit={saveHoliday} className="space-y-2 rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
-                <div className="grid grid-cols-[1fr_1.4fr] gap-2">
-                  <input type="date" value={holidayForm.date} onChange={(e) => setHolidayForm((f) => ({ ...f, date: e.target.value }))} className={field} />
-                  <input value={holidayForm.name} onChange={(e) => setHolidayForm((f) => ({ ...f, name: e.target.value }))} placeholder="Holiday name" className={field} />
+                <div className="flex flex-wrap gap-1">
+                  {(["single", "range", "weekday"] as HrHolidayKind[]).map((kind) => (
+                    <button key={kind} type="button" onClick={() => setHolidayForm((f) => ({ ...f, kind }))} className={`rounded-lg px-2.5 py-1 text-[11px] font-bold capitalize ${holidayForm.kind === kind ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900" : "text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"}`}>
+                      {kind === "single" ? "One day" : kind === "range" ? "Timespan" : "Day of week"}
+                    </button>
+                  ))}
                 </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {holidayForm.kind === "single" ? (
+                    <input type="date" value={holidayForm.date} onChange={(e) => setHolidayForm((f) => ({ ...f, date: e.target.value }))} className={field} />
+                  ) : holidayForm.kind === "range" ? (
+                    <>
+                      <label className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">First day<input type="date" value={holidayForm.startDate} onChange={(e) => setHolidayForm((f) => ({ ...f, startDate: e.target.value }))} className={field + " mt-1 block w-full"} /></label>
+                      <label className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">Last day<input type="date" value={holidayForm.endDate} onChange={(e) => setHolidayForm((f) => ({ ...f, endDate: e.target.value }))} className={field + " mt-1 block w-full"} /></label>
+                    </>
+                  ) : (
+                    <>
+                      <label className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">Every<select value={holidayForm.weekday} onChange={(e) => setHolidayForm((f) => ({ ...f, weekday: Number(e.target.value) }))} className={field + " mt-1 block w-full"}>{WEEKDAYS.map((day, index) => <option key={day} value={index}>{day}</option>)}</select></label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <label className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">From<input type="date" value={holidayForm.startDate} onChange={(e) => setHolidayForm((f) => ({ ...f, startDate: e.target.value }))} className={field + " mt-1 block w-full"} /></label>
+                        <label className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">To<input type="date" value={holidayForm.endDate} onChange={(e) => setHolidayForm((f) => ({ ...f, endDate: e.target.value }))} className={field + " mt-1 block w-full"} /></label>
+                      </div>
+                    </>
+                  )}
+                  <input value={holidayForm.name} onChange={(e) => setHolidayForm((f) => ({ ...f, name: e.target.value }))} placeholder="Holiday name" className={field + " sm:col-span-2"} />
+                </div>
+                <p className="text-[10px] text-zinc-500">Every date in a rule is paid like a working day by payroll; leaves skip it. A weekday rule repeats between “From” and “To”.</p>
                 <div className="flex justify-end gap-1.5">
-                  {holidayForm.id && <button type="button" onClick={() => setHolidayForm({ id: "", date: `${month}-01`, name: "" })} className="rounded-lg px-2.5 py-1.5 text-xs font-semibold text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800">Cancel</button>}
+                  {holidayForm.id && <button type="button" onClick={() => setHolidayForm(blankHoliday(month))} className="rounded-lg px-2.5 py-1.5 text-xs font-semibold text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800">Cancel</button>}
                   <button type="submit" disabled={holidayBusy} className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900">{holidayBusy ? "Saving…" : holidayForm.id ? "Update" : "Add holiday"}</button>
                 </div>
               </form>
@@ -288,10 +343,10 @@ export default function LeavesTab() {
                 <div key={holiday.id} className="flex items-center justify-between gap-2 rounded-xl border border-zinc-200 bg-white p-2.5 dark:border-zinc-800 dark:bg-zinc-950">
                   <div>
                     <div className="text-xs font-bold">{holiday.name}</div>
-                    <div className="text-[10px] text-zinc-500">{dateLabel(holiday.date)}, {holiday.date.slice(0, 4)}</div>
+                    <div className="text-[10px] text-zinc-500">{holiday.label || holiday.startDate}{holiday.kind === "range" ? " (timespan)" : holiday.kind === "weekday" ? " (day of week)" : ""}</div>
                   </div>
                   <div className="flex items-center gap-1">
-                    <button onClick={() => setHolidayForm({ id: holiday.id, date: holiday.date, name: holiday.name })} className="rounded-lg px-2 py-1 text-[10px] font-semibold text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800">Edit</button>
+                    <button onClick={() => setHolidayForm({ id: holiday.id, kind: holiday.kind, date: holiday.date ?? holiday.startDate, startDate: holiday.startDate, endDate: holiday.endDate, weekday: holiday.weekday ?? 0, name: holiday.name })} className="rounded-lg px-2 py-1 text-[10px] font-semibold text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800">Edit</button>
                     <button onClick={() => void removeHoliday(holiday)} className="rounded-lg px-2 py-1 text-[10px] font-semibold text-rose-500 hover:bg-rose-500/10">Delete</button>
                   </div>
                 </div>

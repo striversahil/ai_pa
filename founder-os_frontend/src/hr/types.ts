@@ -307,9 +307,20 @@ export interface HrMyLeave {
   requests: HrLeave[];
 }
 
+export type HrHolidayKind = "single" | "range" | "weekday";
+
+/** mirror: founder-os_backend/src/automations/human-resources/holidays-parse.ts */
 export interface HrHoliday {
   id: string;
-  date: string;
+  kind: HrHolidayKind;
+  /** Single-date pointer; null for range/weekday rules. */
+  date: string | null;
+  startDate: string;
+  endDate: string;
+  /** 0 = Sunday … 6 = Saturday; null unless kind="weekday". */
+  weekday: number | null;
+  /** Server-rendered one-line description ("2026-12-25", "… → …", "Every Monday"). */
+  label: string;
   name: string;
 }
 

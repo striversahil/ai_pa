@@ -1582,14 +1582,22 @@ model HumanResourcesLeave {
   @@index([status, startDate])
 }
 
+/// A holiday rule (migration 0187): one date ('single'), a continuous range
+/// ('range'), or every <weekday> inside [startDate, endDate] ('weekday').
+/// Payroll pays every one of them — a holiday stays a working, paid day.
 model HumanResourcesHoliday {
   id        String   @id @default(uuid())
-  date      String   @unique // YYYY-MM-DD IST
+  /// Legacy single-date pointer (kind='single'); null for ranges/weekdays.
+  date      String?  @unique
+  startDate String   // YYYY-MM-DD IST
+  endDate   String   // YYYY-MM-DD IST
+  weekday   Int?     // 0 = Sunday … 6 = Saturday, weekday rules only
+  kind      String   @default("single") // single | range | weekday
   name      String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([date])
+  @@index([startDate, endDate])
 }
 
 // National holidays excluded from the sales deficit (Sales Leaderboard).

@@ -269,10 +269,10 @@ export async function generatePayroll(monthInput: unknown, actor: string | null)
       where: { date: { gte: start, lte: end }, deleted: false },
     }) as Promise<any[]>,
     prisma.humanResourcesLeave.findMany({ where: { deleted: false, status: 'approved' } }) as Promise<any[]>,
-    prisma.humanResourcesHoliday.findMany({ where: { date: { gte: start, lte: end } } }) as Promise<any[]>,
+    holidaySet(start, end),
     prisma.humanResourcesSalarySlip.findMany({ where: { month } }) as Promise<any[]>,
   ]);
-  const holidayDates = new Set(holidays.map((h: any) => String(h.date)));
+  const holidayDates = holidays;
   const componentsBy = new Map<string, any[]>();
   for (const c of allComponents) {
     const list = componentsBy.get(String(c.memberId)) ?? [];

@@ -253,8 +253,19 @@ export interface LeaveInput {
   days: number;
 }
 
+/** A holiday is one date, a continuous range, or every <weekday> inside a
+ *  window. Payroll pays all of them (a holiday stays a working, paid day). */
+export const HOLIDAY_KINDS = ['single', 'range', 'weekday'] as const;
+export type HolidayKind = (typeof HOLIDAY_KINDS)[number];
+
 export interface HolidayInput {
-  date: string;
+  kind: HolidayKind;
+  /** Set for kind='single', null for a range/weekday rule. */
+  date: string | null;
+  startDate: string;
+  endDate: string;
+  /** 0 = Sunday … 6 = Saturday; null unless kind='weekday'. */
+  weekday: number | null;
   name: string;
 }
 

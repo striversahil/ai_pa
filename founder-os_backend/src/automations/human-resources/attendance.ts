@@ -6,6 +6,7 @@ import { invalidateHumanResourcesCache } from './cache';
 import { employeeDisplayName } from '../../shared/employee-name';
 import { deriveAttendanceStatus, earlyMinutes, lateMinutes, shiftWindow } from './shifts-parse';
 import { effectiveShift, shiftJson } from './shifts';
+import { holidayRuleFor, holidaySet } from './holidays';
 import type { AttendanceStatus } from './types';
 
 function memberLite(row: any) {
@@ -49,7 +50,7 @@ export async function listAttendance(date: string) {
     // Only APPROVED leave auto-marks the day — a pending application must never
     // look like leave (migration 0153).
     prisma.humanResourcesLeave.findMany({ where: { deleted: false, status: 'approved' } }) as Promise<any[]>,
-    prisma.humanResourcesHoliday.findFirst({ where: { date } }) as Promise<any>,
+    holidayRuleFor(date),
     prisma.humanResourcesShift.findMany({ orderBy: { order: 'asc' } }) as Promise<any[]>,
   ]);
   const recordBy = new Map(records.map((r) => [String(r.memberId), r]));
@@ -165,9 +166,9 @@ export async function attendanceSummary(month: string) {
       where: { date: { gte: start, lte: end }, deleted: false },
     }) as Promise<any[]>,
     prisma.humanResourcesLeave.findMany({ where: { deleted: false, status: 'approved' } }) as Promise<any[]>,
-    prisma.humanResourcesHoliday.findMany({ where: { date: { gte: start, lte: end } } }) as Promise<any[]>,
+    holidaySet(start, end),
   ]);
-  const holidayDates = new Set(holidays.map((h) => String(h.date)));
+  const holidayDates = holidays;
   return employees.map((emp) => {
     const mine = records.filter((r) => String(r.memberId) === String(emp.id));
     const leaveDays = leaves.filter((l) => String(l.memberId) === String(emp.id)

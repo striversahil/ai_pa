@@ -4,7 +4,7 @@ import {
 } from './parse';
 import {
   ATTENDANCE_STATUSES, LEAVE_DURATIONS, LEAVE_TYPES,
-  type AttendanceRowInput, type HolidayInput, type LeaveInput,
+  type AttendanceRowInput, type LeaveInput,
 } from './types';
 
 export function cleanAttendanceRow(raw: Record<string, any>): AttendanceRowInput {
@@ -67,12 +67,4 @@ export function cleanLeave(raw: Record<string, any>): LeaveInput {
     toTime,
     days: 0,
   };
-}
-
-export function cleanHoliday(raw: Record<string, any>): HolidayInput {
-  const date = String(raw.date ?? '').slice(0, 10);
-  if (!isValidDate(date)) throw new HrError('date must be YYYY-MM-DD');
-  const name = text(raw.name, 120);
-  if (!name) throw new HrError('name is required');
-  return { date, name };
 }
