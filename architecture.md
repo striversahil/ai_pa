@@ -139,7 +139,7 @@ Locked paths (hashed in `prisma/core.lock`): `migrations/0125_core_foundation.sq
 ### 2.3 D1 access, shim and migrations
 
 - The Worker never runs the real Prisma client: `src/shared/prisma-d1.ts` (and `d1-prisma.ts`) translate model calls to D1 SQL. After editing `prisma/schema.prisma` you must run `npx prisma generate` **and** register new fields/models in the shim's `BOOL_FIELDS` / `DATE_FIELDS` / `ID_FIELDS` / `UNIQUE_FIELDS` / `RELATIONS`; guard `d1-parity` fails on drift (its allowlist documents the known `Core*` gap).
-- Migrations are plain numbered SQL in `founder-os_backend/migrations/` (4 digits, monotonic; 203 files, latest `0182`). Apply with `npx wrangler d1 execute waba-worker --remote --file migrations/NNNN_x.sql`. A fresh database must re-run seeds in order (e.g. `0154` after `0046`).
+- Migrations are plain numbered SQL in `founder-os_backend/migrations/` (4 digits, monotonic; 206 files, latest `0185`). Apply with `npx wrangler d1 execute waba-worker --remote --file migrations/NNNN_x.sql`. A fresh database must re-run seeds in order (e.g. `0154` after `0046`).
 - Bulk work uses prepared statements in `db.batch()` chunks (~50 statements) instead of per-row `create`/`update`, which cost a write **plus** a read-back each. Never loop `INSERT` in a request handler (see §4.4).
 
 ### 2.4 Operational tables by domain (representative)
