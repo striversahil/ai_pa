@@ -11,6 +11,7 @@ import { readBody } from '../http';
 import { bindGatewayContext, call, resolveInstance, IntegrationError } from '../../modules/integrations/gateway';
 import { claimBatch, getRow, markFailed } from '../../modules/ingestion/store';
 import { processIngestedRow } from '../../modules/ingestion/processor';
+import { pollGmail } from '../../modules/ingestion/gmail-poll';
 
 export function registerIntegrationsRunnerRoutes(app: Hono<{ Bindings: any }>): void {
   app.get('/api/runner/integrations/resolve', async (c) => {
@@ -38,6 +39,15 @@ export function registerIntegrationsRunnerRoutes(app: Hono<{ Bindings: any }>): 
       const status = error instanceof IntegrationError ? error.status : 500;
       return c.json({ error: (error as Error).message }, status as any);
     }
+  });
+
+  // The ONE inbound poller: Gmail has no push API. Every other provider is
+  // webhook-only (founder decision), so this endpoint deliberately polls
+  // nothing else and ignores a provider argument.
+  app.post('/api/runner/integrations/poll', async (c) => {
+    if (!requireSecret(c)) return c.json({ error: 'unauthorized' }, 401);
+    bindGatewayContext({ db: c.env.DB, env: c.env });
+    return c.json(await pollGmail(c.env.DB, c.env));
   });
 
   app.post('/api/runner/ingestion/claim', async (c) => {

@@ -10,8 +10,8 @@ compatibility_flags = ["nodejs_compat"]
 [triggers]
 # Router pattern: ONE `* * * * *` Cron Trigger (free plan, ≤3 allowed per worker).
 # The scheduled handler runs every minute and routes by UTC minute alignment:
-#   every-5min (always on :00/:05/...), every-10/15/30min on alignment,
-#   daily at 02:30/13:30/15:30/19:30/21:30 UTC (one slot per job family), and neodove-refresh every 10 min.
+#   every-5min (always on :00/:05/...), 15/30min on alignment, Gmail polling
+#   every 5 min natively, and daily at 02:30/13:30/19:30/21:30 UTC.
 crons = ["* * * * *"]
 
 [[d1_databases]]

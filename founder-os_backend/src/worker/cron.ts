@@ -4,30 +4,25 @@
 // Router pattern: ONE `* * * * *` Cron Trigger (wrangler.toml [triggers]); the
 // scheduled handler runs every minute and routes by UTC minute alignment:
 //   every-5min  → minute % 5 == 0
-//   every-10min → minute % 10 == 0
 //   every-15min → minute % 15 == 0
 //   every-30min → minute % 30 == 0
 //   daily       → 02:30 / 13:30 / 19:30 / 21:30 UTC (one slot per job
 //                  family; the `slot` input tells the workflow which jobs run)
-//   neodove-refresh → minute % 5 == 0 (native D1 write; GH egress is blocked by NeoDove)
 //
 // Replaces the cPanel/web-server cron that used to fire workflow_dispatch.
 // Free-plan safe (1 Cron Trigger). Heavy AI still runs on the GH Actions runner.
 //
-// Quiet hours: Zoho/NeoDove-backed analysis pauses 21:00–09:00 IST (no shop-floor
+// Quiet hours: Zoho-backed analysis pauses 21:00–09:00 IST (no shop-floor
 // operation then). isOpsWindow() gates, all from the *scheduled* slot time:
-//   - every-10min / every-15min dispatches are skipped (pure NeoDove/Zoho jobs:
+//   - every-10min / every-15min dispatches are skipped (pure Zoho jobs:
 //     effort-sync + crm + zoho-sent-analyzer)
 //   - every-5min keeps firing (WhatsApp jobs + light triggers — it never
 //     pings Zoho; the Zoho jobs moved to every-15min)
-//   - daily dispatches with run_neodove=false (skips the neodove-report job;
-//     brief / telecalling / retention / baseline keep running — they read D1)
-//   - the native neodove-refresh (+ dashboard warmer) is skipped in-worker
+//   - daily brief / telecalling / retention / baseline keep running (D1)
 // Manual dispatch from the Actions tab defaults both inputs to true, so an
 // overnight manual run still works.
 // ─────────────────────────────────────────────────────────────────────────────
-import { bootstrapEnv, refreshNeodoveReport, neodoveTodayIst, type Bindings } from './context';
-import { getTelecallingDashboardData } from '../automations/telecalling/service';
+import { bootstrapEnv, type Bindings } from './context';
 
 const GITHUB_REPO = 'striversahil/ai_pa';
 const GITHUB_REF = 'main';
@@ -36,7 +31,6 @@ const GITHUB_REF = 'main';
 export const INTAKE_WORKFLOW = 'ops-enquiry-intake.yml';
 const GITHUB_WORKFLOWS: Record<string, string> = {
   'every-5min': 'cron-every-5min.yml',
-  'every-10min': 'cron-every-10min.yml',
   'every-15min': 'cron-every-15min.yml',
   'every-30min': 'cron-every-30min.yml',
   daily: 'cron-daily-ist.yml',
@@ -67,7 +61,7 @@ export async function dispatchGitHubWorkflow(workflowFile: string, token: string
   }
 }
 
-/** Ops window 09:00–21:00 IST. Outside it, Zoho/NeoDove-backed analysis pauses. */
+/** Ops window 09:00–21:00 IST. Outside it, Zoho-backed analysis pauses. */
 function isOpsWindow(now: Date): boolean {
   const istMin = (now.getUTCHours() * 60 + now.getUTCMinutes() + 330) % 1440;
   return istMin >= 540 && istMin < 1260;
@@ -76,7 +70,7 @@ function isOpsWindow(now: Date): boolean {
 // Slot map (UTC → IST job family):
 //   02:30 (08:00 IST) → telecalling-distribution + morning-brief
 //   13:30 (19:00 IST) → eod-summary
-//   19:30 (01:00 IST) → baseline-freeze (+ neodove backfill via 02:30 slot)
+//   19:30 (01:00 IST) → baseline-freeze
 //   21:30 (03:00 IST) → data-retention + linkedin-daily (5 founder drafts)
 // The workflow gates each job on `inputs.slot` (default 'all' = manual runs
 // execute everything). Never gate on `github.event.schedule` — it is only set
@@ -93,7 +87,6 @@ function dueWorkflows(now: Date): string[] {
   const hhmm = now.getUTCHours() * 60 + min;
   const due: string[] = [];
   if (min % 5 === 0) due.push('every-5min');
-  if (min % 10 === 0) due.push('every-10min');
   if (min % 15 === 0) due.push('every-15min');
   if (min % 30 === 0) due.push('every-30min');
   if (DAILY_SLOTS.includes(hhmm)) due.push('daily');
@@ -271,24 +264,6 @@ async function runScheduled(event: { cron?: string; scheduledTime?: number }, en
     })(),
   );
 
-  // NeoDove campaign drain — finishes a lead push whose tab was closed mid-run.
-  // Not gated by quiet hours: the push was explicitly started by a manager and
-  // a stranded batch would otherwise sit `pending` until 09:00 IST. No-op
-  // unless NEODOVE_CAMPAIGN_LIVE is set; bounded to 3 batches × 20 leads.
-  ctx.waitUntil(
-    (async () => {
-      try {
-        const { drainPendingPushes } = await import('../modules/neodove-campaign/service');
-        const r = await drainPendingPushes(env as any, 20);
-        if (r.processed > 0) {
-          console.log(`[cron] neodove-campaign drain: batches=${r.batches} leads=${r.processed}`);
-        }
-      } catch (e: any) {
-        console.error('[cron] neodove-campaign drain failed:', e?.message);
-      }
-    })(),
-  );
-
   // AI key health sweep — every 5 min, ALL hours (a key that died at 02:00
   // is still dead at 09:00; telemetry must not sleep). Native D1: scores the
   // last 24 h of calls, auto-disables under-threshold keys, prunes >30 d.
@@ -306,36 +281,27 @@ async function runScheduled(event: { cron?: string; scheduledTime?: number }, en
     );
   }
 
-  // neodove-refresh every 5 min in ops hours (native D1 write). Paused in
-  // quiet hours — NeoDove is a Zoho/NeoDove-backed analysis source.
-  if (min % 5 === 0 && isOpsWindow(now)) {
-    ctx.waitUntil(
-      refreshNeodoveReport(neodoveTodayIst(0))
-        .then((r) => console.log(`[cron] neodove-refresh ${r.reportDate}: ok=${r.ok} stored=${r.stored} ${r.error ?? ''}`))
-        .catch((e: any) => console.error('[cron] neodove-refresh failed:', e?.message)),
-    );
-    // Dashboard warmer: pre-compute the hot filter payloads (today/week/month)
-    // into KV right after the refresh, so page loads and filter clicks never
-    // eat a cold aggregation. Sequential (no self-contention); each compute is
-    // ~2-3s of mostly I/O wait. Failures are silent — worst case the next user
-    // request computes on demand as before.
+  // Gmail polling — the ONE inbound poller, every 5 minutes, all hours. Gmail
+  // has no push API; every other provider is webhook-only. The manifest owns
+  // the interval + cursor field, and staging is idempotent on the message id.
+  if (min % 5 === 0) {
     ctx.waitUntil(
       (async () => {
-        for (const period of ['today', 'week', 'month']) {
-          const t0 = Date.now();
-          try {
-            await getTelecallingDashboardData({ subject: { period } } as any);
-            console.log(`[cron] dash-warm ${period}: ok in ${Date.now() - t0}ms`);
-          } catch (e: any) {
-            console.error(`[cron] dash-warm ${period} failed:`, e?.message);
+        try {
+          const { pollGmail } = await import('../modules/ingestion/gmail-poll');
+          const r = await pollGmail((env as any).DB, env as unknown as Record<string, unknown>);
+          if (r.staged > 0 || r.errors.length > 0) {
+            console.log(`[cron] gmail poll: instances=${r.instances} staged=${r.staged} dup=${r.duplicates} errors=${r.errors.length}`);
           }
+        } catch (e: any) {
+          console.error('[cron] gmail poll failed:', e?.message);
         }
       })(),
     );
   }
 
   // Debtors Tracker daily reminder dry-run at 10:00 IST (04:30 UTC). Native,
-  // D1-only, no Zoho/NeoDove — runs in quiet hours too. Logs one preview row
+  // D1-only, no Zoho/dialer — runs in quiet hours too. Logs one preview row
   // per eligible customer; live sending stays disabled until WABA template +
   // opt-in are provisioned (see automations/debtors-tracker/reminders.ts).
   if (now.getUTCHours() === 4 && min === 30) {
@@ -371,7 +337,7 @@ async function runScheduled(event: { cron?: string; scheduledTime?: number }, en
   // Email outbox tick every minute (native, token-independent — runs before
   // the dispatcher early-return below): sends due one-shot + daily-repeat
   // mails via the Gmail API. CAS-claimed, max 10/tick, 5 attempts then dead.
-  // Sales/ops mail (not Zoho/NeoDove) — runs in quiet hours too.
+  // Sales/ops mail (not Zoho/dialer) — runs in quiet hours too.
   ctx.waitUntil(
     (async () => {
       try {
@@ -394,7 +360,7 @@ async function runScheduled(event: { cron?: string; scheduledTime?: number }, en
     })(),
   );
 
-  // Intake retry sweeper, every 15 min (native, LLM-only — no Zoho/NeoDove,
+  // Intake retry sweeper, every 15 min (native, LLM-only — no Zoho/dialer,
   // so quiet hours don't apply). Heals rows whose write-path intake exited
   // tracelessly (Oct 2026 stuck-chip outage: a pool-wide rate-limit storm hit
   // "no AI key — skipping" at creation, leaving no done marker, no KV intake
@@ -413,7 +379,7 @@ async function runScheduled(event: { cron?: string; scheduledTime?: number }, en
   // BEFORE the team starts, whether or not anyone opened the dashboard. The
   // 14-day lookback repairs days that were never viewed (previously those days
   // produced no rows at all and vanished from the backlog). Quiet hours don't
-  // apply: no Zoho/NeoDove call, just two bounded D1 passes.
+  // apply: no Zoho/dialer call, just two bounded D1 passes.
   const hhmm = now.getUTCHours() * 60 + min;
   if (hhmm === 2 * 60 + 30) {
     ctx.waitUntil(
@@ -437,23 +403,20 @@ async function runScheduled(event: { cron?: string; scheduledTime?: number }, en
     return;
   }
   const due = dueWorkflows(now);
-  // Quiet-hours gate (21:00–09:00 IST): pause Zoho/NeoDove-backed analysis.
-  // every-10min (neodove-today) and every-15min (effort-sync + crm +
-  // zoho-sent-analyzer) are pure NeoDove/Zoho jobs → skipped whole.
-  // every-5min still fires for WhatsApp + light triggers (it never pings
-  // Zoho — the Zoho jobs moved to every-15min). daily still fires
-  // (brief / telecalling / retention read D1), but with run_neodove=false
-  // so the neodove-report job is skipped.
+  // Quiet-hours gate (21:00–09:00 IST): pause Zoho-backed analysis.
+  // every-10min and every-15min (effort-sync + crm + zoho-sent-analyzer) are
+  // pure Zoho jobs → skipped whole. every-5min still fires for WhatsApp +
+  // light triggers (it never pings Zoho — the Zoho jobs moved to every-15min).
+  // daily still fires (brief / telecalling / retention read D1).
   const ops = isOpsWindow(now);
   const runs: Promise<void>[] = [];
   for (const key of due) {
-    if (!ops && (key === 'every-10min' || key === 'every-15min')) {
+    if (!ops && key === 'every-15min') {
       console.log(`[cron] quiet hours — skipping ${key}`);
       continue;
     }
     const inputs: Record<string, string> = {};
     if (key === 'daily') {
-      inputs.run_neodove = ops ? 'true' : 'false';
       // Tell the workflow which slot fired so each job runs once/day.
       // Gated on scheduled (not wall-clock) time, like everything else here.
       inputs.slot = slotLabel(now.getUTCHours() * 60 + now.getUTCMinutes());
