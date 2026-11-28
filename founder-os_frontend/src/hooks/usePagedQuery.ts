@@ -20,6 +20,8 @@ export interface UsePagedQueryOptions {
   /** Extra server filters; changing one jumps back to page 1. */
   filters?: Record<string, string | number | undefined | null>;
   limit?: number;
+  /** Seed the server search on mount (e.g. a provider-scoped view). */
+  initialQ?: string;
   /** false = don't fetch yet (e.g. tab not open). */
   enabled?: boolean;
 }
@@ -30,10 +32,11 @@ export type PagedQuery<T> = ReturnType<typeof usePagedQuery<T>>;
 /** `R` = the full response when the endpoint adds fields beside the page
  *  (e.g. dispatch's `viewer`); read them from `data`. */
 export function usePagedQuery<T, R extends Paged<T> = Paged<T>>(base: string, opts: UsePagedQueryOptions) {
-  const { events, filters = {}, limit = PAGE_SIZE, enabled = true } = opts;
+  const { events, filters = {}, limit = PAGE_SIZE, initialQ = "", enabled = true } = opts;
+  const seed = initialQ.trim();
   const [page, setPage] = useState(1);
-  const [q, setQ] = useState("");
-  const [debouncedQ, setDebouncedQ] = useState("");
+  const [q, setQ] = useState(seed);
+  const [debouncedQ, setDebouncedQ] = useState(seed);
   const [changes, setChanges] = useState(0);
   const quietUntil = useRef(0);
 

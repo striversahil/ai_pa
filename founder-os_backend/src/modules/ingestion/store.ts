@@ -153,13 +153,13 @@ export async function listIngested(
     if (value) { where.push(`"${column}" = ?`); binds.push(value); }
   }
   if (query.q) {
-    const clause = searchClause(['source', '"externalEventId"', '"coreRefId"'], query.q);
+    const clause = searchClause(['source', '"eventType"', '"externalEventId"', '"coreRefId"'], query.q);
     if (clause.sql) { where.push(clause.sql); binds.push(...clause.binds); }
   }
   return pagedQuery<IngestRow>(
     db,
     {
-      select: 'id, source, "instanceKey", "eventType", "externalEventId", "deliveryMode", status, "coreRefId", "retryCount", "errorLog", "receivedAt", "processedAt"',
+      select: 'id, source, "instanceKey", "eventType", "externalEventId", "deliveryMode", status, "coreRefId", "retryCount" AS attempts, "errorLog" AS error, "receivedAt", "processedAt"',
       from: 'hlp_ingested_data',
       where,
       binds,

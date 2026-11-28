@@ -184,8 +184,19 @@ test('the zoho sync resolves its session from the gateway (file is fallback)', (
   assert.match(read('scripts/zoho-sync/credentials.js'), /\/api\/runner\/integrations\/resolve/);
 });
 
-test('the console mounts the gateway panel (never a dead tab)', () => {
+test('the console is the routed integration workspace, not a Settings tab', () => {
   const settings = read('founder-os_frontend/src/components/SettingsDashboard.tsx');
-  assert.match(settings, /IntegrationsGatewayPanel/);
-  assert.match(settings, /Third-party providers/);
+  assert.doesNotMatch(settings, /IntegrationsGatewayPanel|Third-party providers/);
+
+  const view = read('founder-os_frontend/src/views/integrations/IntegrationsDashboard.tsx');
+  assert.match(view, /@\/components\/integrations\/IntegrationsDashboard/);
+
+  const panel = read('founder-os_frontend/src/components/integrations/IntegrationsDashboard.tsx');
+  assert.match(panel, /fetchInstances/);
+  assert.match(panel, /OverviewTab/);
+  assert.match(panel, /ProvidersTab/);
+  assert.match(panel, /ProviderDrawer/);
+  assert.match(panel, /DeliveriesTab/);
+  assert.match(read('founder-os_frontend/src/components/integrations/DeliveriesTab.tsx'), /EventDrawer/);
+  assert.match(read('founder-os_frontend/src/components/integrations/AccountForm.tsx'), /saveInstance/);
 });

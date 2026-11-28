@@ -116,6 +116,9 @@ export interface ProviderManifest {
   supportsPolling: boolean;
   defaultDeliveryMode: DeliveryMode;
   webhookPath: string;
+  /** Manifest-owned adapter defaults surfaced read-only in the console. */
+  defaultBaseUrl?: string;
+  auth?: { strategy?: string; defaultBaseUrl?: string } | null;
 }
 
 export interface InstanceRow {

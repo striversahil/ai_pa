@@ -336,6 +336,8 @@ function hydrate(provider: string, p: RawProvider): ProviderManifest {
     supportsPolling: Boolean(poll?.supported),
     defaultDeliveryMode: mode,
     webhookPath: `/api/webhooks/${provider}`,
+    defaultBaseUrl: p.auth?.defaultBaseUrl,
+    auth: p.auth ? { strategy: p.auth.strategy, defaultBaseUrl: p.auth.defaultBaseUrl } : null,
   };
 }
 

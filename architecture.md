@@ -633,7 +633,7 @@ Core changes take the slow path: propose in `docs/core-change-requests/<date>-<t
 
 ## 9. Unified integration gateway & ingestion (mig 0183)
 
-Before this, every outside service had its own door and its own credential story (`sent_estimates.txt` + a coupled Zoho analyzer, a per-portal script, a WABA client reading env). §9 replaces that with **two** primitives: one outbound facade, one inbound staging table. Migration `0183_integrations_and_ingestion.sql` creates `hlp_integration_instance` and `hlp_ingested_data`; the hub from mig 0180 (§5) keeps its own nouns (`IntegrationConnector`/`IntegrationSource`/`IntegrationEvent`) and is **not** replaced — the new console is `/settings`, the old hub console stays `/integrations`.
+Before this, every outside service had its own door and its own credential story (`sent_estimates.txt` + a coupled Zoho analyzer, a per-portal script, a WABA client reading env). §9 replaces that with **two** primitives: one outbound facade, one inbound staging table. Migration `0183_integrations_and_ingestion.sql` creates `hlp_integration_instance` and `hlp_ingested_data`; the hub from mig 0180 (§5) keeps its own nouns (`IntegrationConnector`/`IntegrationSource`/`IntegrationEvent`) and is **not** replaced — its console is gone, so `/integrations` is the v2 gateway workspace and the 0180 hub is API-only.
 
 ### 9.1 Outbound: `call(provider, { instanceKey })`
 
@@ -681,9 +681,15 @@ Order is fixed and guarded: manifest lookup (404 when the provider is not an inb
 - Gmail is the ONLY 0183 ingester poller (`modules/ingestion/gmail-poll.ts`, native Worker cron every 5 min, all hours): enabled Gmail instances are listed, the Gmail adapter lists inbox messages since the `lastPollAt` cursor, and each message is staged through `insertIngested` (idempotent on the Gmail message id). Every other 0183 inbound provider is webhook-only — there is no portal poller and no generic `pollUrl` fetch loop. **Deliberate exception:** the pre-existing Zoho estimate sync (`zoho-sent-analyzer` + `crm`) still polls Zoho Books every 15 minutes because the CRM depends on it; it is not a manifest poller and must not be removed with the retired portal poller.
 - `scripts/zoho-sync/credentials.js` resolves the Zoho session from the gateway (`/api/runner/integrations/resolve`); `fetch.js` uses it for headers/orgs/API base and only falls back to `zoho_sent/sent_estimates.txt` when the Worker has no Zoho instance or is unreachable. The file is now the emergency path, not the source of truth.
 
-### 9.5 Console (root-only)
+### 9.5 Console (root-only, /integrations)
 
-`Settings → Third-party providers` (`components/settings/integrations/`): providers grouped by manifest `category`, dynamic field inputs (`text|textarea|number|boolean|select|json`, `requiredWhen` visibility, `defaultValue`), Test/Delete, webhook path, delivery mode, default flag, plus the ingested log (filters, pager, Replay) with an **inspector Drawer** showing raw vs normalized JSON + headers. The FE mirrors `manifest.ts#validateInstancePayload` client-side; the server re-validates `required`+`requiredWhen` on every save.
+The gateway console is the routed `/integrations` workspace (`views/integrations/IntegrationsDashboard.tsx` → `components/integrations/`), NOT a Settings tab. Three views over one manifest payload:
+
+- **Overview** — provider/account/queue/dead-letter KPIs, coverage by category, event ledger and source activity derived from `GET /api/integrations/instances`.
+- **Providers** — all 18 manifests as a searchable catalog (category/state/direction filters), with account state, last activity and webhook copy. A provider drawer opens Accounts / Setup / Activity; Account create/edit replaces the drawer body (no stacked drawer), secrets are write-only (blank keeps the stored value), and Test/Pause/Default/Delete act per account.
+- **Activity** — the paged `hlp_ingested_data` ledger (source/status/mode filters, whole-table search), raw-vs-normalized **EventDrawer** with headers, and confirmed Replay against the current mapper.
+
+The FE mirrors `manifest.ts#validateInstancePayload` client-side (`gateway-pure.ts`); the server re-validates `required`+`requiredWhen` on every save. The legacy 0180 hub remains API-only (no UI): its `/api/ingest/:sourceId/:token` door and tables are untouched for compatibility.
 
 | Endpoint | Purpose |
 | --- | --- |
