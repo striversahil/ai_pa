@@ -78,3 +78,63 @@ first. Tracked as a follow-up; behavior preserved byte-for-byte here.
 | 33 | — | Pending-from-Sales = any flagged draft row (2026-11-21): founder rule — the tab lists every unprocessed (draft, not concluded) enquiry procurement flagged on any item (open spec flag) or asked about (open sales thread waiting on management). Dropped the Active exclusion: mixed rows now double-list with Active by design (tabs are lenses — who owes action — not a partition). Guard `enquiry-threads` locks the lens rule; 247/249 (only pre-existing d1-parity ×2); FE tsc clean; ratchet ok; FE build+deploy (no BE change). |
 | 34 | — | Flagged draft rows held out of History (2026-11-21): `isManagementHistoryEnquiry` (BE `queues.ts` + FE `queue.ts` mirrors) no longer concludes a draft row while any open spec flag stands — even when every non-held item is decided (Enquiry No 3: 11 flags, 25/25 decided). Sent/Zoho-terminal rows still conclude; stale flags there never reopen. Rows surface in unprocessed → Pending from Sales (lens rule from #33). Mirror fixture added; 247/249 (only pre-existing d1-parity ×2); BE/FE tsc clean; ratchet ok; build+smoke+session-e2e+core-guard green; deployed BE `7d4cc8f2` + FE `650eaae7`; live /health 200. |
 | 35 | — | Sales leaderboard load path (2026-11-21): the board was paying a 15 s boot stall on EVERY dashboard request — `AutomationRegistry.load()` did 31 `automation.findUnique` round-trips per cold isolate and the boot middleware blocked `/api/session|automations|status` for the full 15 s. Now: one `automation.findMany`, read paths cap the boot wait at 2 s (triggers keep 15 s). Load went from 7 requests/7 aggregations to ONE request (`?follow_ups=1` carries every region's pipeline); region drills moved to `service-parts/drill.ts` (own 60 s cache, only that region's `sent` estimates, 5.5 s → 0.55 s). Cache invalidation is `bumpRev('est'|'neo')` folding `cacheRevs` into the key instead of `cacheDelPrefix('telecalling:dashboard')` (which wiped every variant on every estimate write and every 5-min NeoDove refresh); the refresh now no-ops when its rows are unchanged; roster sync + core shadow run behind `cached()`. Compute wave-parallelised (~12 serial D1 reads → 4 waves); `Enquiry` lead counts windowed + indexed; `declinedItems` capped 60. Mig `0159` adds 8 indexes. Measured live: `/api/status` 15.07 s → 0.06 s; warm board 15.1 s → 0.06 s; drill 16.4 s → 0.13 s warm; cold board 22 s → 4.8-7.7 s (risk-cache recompute is the residual). Guard `sales-board-cache` (16); suite 305/307 (only pre-existing d1-parity ×2); BE tsc 40 = baseline; smoke 77/0; core-guard green; deployed BE `a0c5f0f1` + FE `a90ebb7e`. |
+| 36 | — | Enquiry loop strandings (2026-11-28): a line added to a sent enquiry never reopened it, so sales saw the item but procurement (past their stamp) and management (sent = terminal) never did, and it could never get a rate. Appends now reopen through one shared `reopenSentRevision` (finalized + cleared procurementSubmittedAt + sentRevisionAt) used by the explicit revise verb and by new `applyImplicitSentRevision` (runs after the non-privileged scrub, so it is not gated as a finalize); `additional-requirements` does the full revision for sent rows; the first quote on a previously-unquoted line of a concluded or sent row clears the stamp and marks revision; the queue predicates (BE+FE mirrors) return a concluded row to Active while `hasFreshUnquotedWork` is true (History is the exact complement, resurfacing the 56 stranded prod rows); the conclude gate refuses while any procurement-held loop is open (the one row that said concluded but stayed Active); `applySentRevision` accepts a row the UI shows sent while the DB is still finalized (Zoho promotion lag, the 403 dead end). Junk removed: the sent-promotion branch tested the in-memory copy that attach had already flipped, so it was unreachable — now it reads `_origRateStatus`. New guard `enquiry-sent-revision` (10) + ownership guard covers fresh-line reopen and the open-ask gate; 632/632 guards, BE tsc no-new, FE tsc clean, build + smoke 89 PASS; deployed BE 8b9e480f, FE a94c1092. |
+| 37 | — | Unified gateway + dual-mode ingestion (2026-11-28, mig 0183): one outbound facade `call(provider,{instanceKey?})` over `hlp_integration_instance` (AES-256-GCM secrets, per-provider default, Zoho token cache/refresh, `openai` as a thin adapter over the AI gateway, manifests for 8 providers) and ONE inbound door `POST /api/webhooks/:source[/:key]` that verifies the raw-body HMAC before staging in `hlp_ingested_data` (partial UNIQUE dedupe), then processes realtime in `waitUntil` or batch via the 5-min `ingestion-batch` runner (3 attempts → dead_letter, 15-min stale reclaim, Replay). `modules/ingestion/processor.ts` routes leads through `enquiryCreate` (phone dedupe, never core tables), messages through `Message.wahaMessageId`, estimates to normalized+linked `coreRefId` (zoho-sync stays the single Estimate writer). Portal poller runner, `zoho-sync` now resolves its session from the gateway, root console Settings → Third-party providers. Guard `integrations-ingestion` (10); 642/642 guards; BE tsc 65 = baseline, FE tsc clean; build+smoke green; core-guard green; mig applied remote; deployed BE `101a0319` + FE `49e98331`; live /health 200, manifest 401, webhook 404-on-unknown. |
+| 38 | — | Manifest v2.0.0 alignment (2026-11-28): `modules/integrations/manifest.json` (19 providers: openai, zoho, whatsapp, gmail, google_maps, google_search, custom, indiamart, tradeindia, justdial, exportersindia, alibaba, facebook, instagram, linkedin, telegram, google_forms, tally, neodove) is the single source — `manifest.ts` imports it and derives `required`/`requiredWhen`/`type`/`options` validation, webhook URLs, verification, idempotency, pollers and quiet hours. Adapters: openai multi-instance key rotation + `{complete,completeJson,completeJsonStream,embed}` with global-pool fallback; zoho OAuth2 **or** `raw_headers_bridge`; gmail (`gmail:<key>` token cache); google_maps (`X-Goog-FieldMask`) / google_search (`key`+`cx`); whatsapp over the WABA client; custom + 11 portals (`bearer|custom_header|basic|query_param|none`). Inbound door verifies per manifest (`hmac`/`field_match`/`optional_header_token`), supports `challengeGet`, per-provider idempotency key paths and GET query normalization; one `genericMapper` (fieldMap-first) + gmail mapper cover every inbound provider; `claimBatch` skips providers inside `quietHoursIst`; poller iterates `inbound.poll.supported`. Console: category-grouped providers, dynamic Drawer fields, `GET /ingested/:id` + raw-vs-normalized inspector. Guard `integrations-ingestion` 13 tests (manifest schema, adapter/mapper parity, verify-before-stage, quiet hours); 645/645 guards; BE tsc 47 (< 65 baseline); FE tsc clean; build+smoke+core-guard green; deployed BE `ecf80ba2` + FE `95e849b4`; live /health 200, manifest 401, unknown webhook 404, known-without-instance 409. | Note: the original v2.0.0 JSON was never in git; the checked-in file is a reconstruction from the written spec (loader is generic). |
+## architecture.md rewrite (2026-11-28)
+
+Rewrote the root `architecture.md` from 1,963 lines to 628 lines: present-tense spec only, eight
+fixed sections (topology · database/core lock · auth/RBAC/view-as · shared infrastructure ·
+domains · cron/runners · frontend · discipline/guards/deploy). No behaviour changed; this entry
+keeps the history the old document was carrying.
+
+### Consolidated (one home each)
+
+- Request pipeline (CORS → auth rate limit → cache headers → boot → auth gate → view-as read-only
+  → handler → auto-live → `onError`) was spread over four sections; now §1.5.
+- Bindings and secrets were in three places (wrangler comment, a half table, a deploy table); now
+  one table plus the explicit rule that `AI_KEYS`, `GROQ_*`, `OPENROUTER_*`, `REQUESTLY_*` and
+  `LLM_*` env keys are IGNORED and Setting `ai:providers` is the only pool.
+- The auth-exempt surface was prose plus an inline snippet; now a table with the reason per prefix.
+- Duplicate deploy sections (§9 and §15) merged into §8.5; version strings, dashboard URLs and
+  per-release smoke tables dropped — those are live values, not architecture.
+- The guard inventory existed only as a folder listing; now a 56-row table naming what each locks.
+
+### Removed as obsolete
+
+- Express-first topology (Worker as a proxy in front of Express). The Worker is the data plane;
+  Express/PostgreSQL is alternate/local and `src/routes/` is frozen.
+- `webhook-relay/relay.js` and the GitHub "poll the waba queue" runner — neither exists. Ingress is
+  `POST /webhook` on the Worker, the standalone `waba-worker`, and `local-runner.js` for local drains.
+- `/api/auth/login` (never existed — sign-in is `/api/auth/google` + `/callback`).
+- MIS scope/role (`requireMisScope`), telecalling EOD deduction / effort-sync / snatch cover (retired
+  stubs), standalone Analyzer (sales tab since migration 0143), `enquiry-tracker` workspace (alias
+  only), roster table (the HR employee row is the sales profile since 0175/0177), hidden logins,
+  Core tab + `/api/core/*` endpoints, and the client master book (wiped by 0182; every row backs up
+  in `_backup_core_customer_20261127`).
+- The old claim that every helper table is `hlp_*`: only the platform sidecars (notification rule/delivery/state, view-as,
+  dashboard/widget, cursor/flag, plus the 0183 staging pair) carry it; business tables are unprefixed Prisma models
+  that reference core rows by id.
+
+### Dated rationale moved out of the doc (still law, see AGENTS.md)
+
+- 2026-09-21 groq keys are never loaded. · 2026-10-22 the 15:30 UTC slot is retired (region model,
+  no individual holds). · 2026-11-12 MIS retired; decided-means-done; core lock Phase 0.
+- 2026-11-14 Analyzer retired into Sales; org chart = one graph + one save. · 2026-11-20 R2 bucket
+  re-bound; enquiry threads (0148). · 2026-11-21 procurement owns the enquiry; paged-list standard;
+  debtors paste becomes bulk + resumable.
+- 2026-11-22 product line wiped (0154). · 2026-11-23 KYP catalogue editable and batch-logged
+  (0156–0160); custom sales range capped at 93 days.
+- 2026-11-24 view-as read-only overlay (0163); notifications console; WS `101` transport law;
+  debtors as-of rebuild (0161/0162). · 2026-11-25 accounts task threads (0166).
+- 2026-11-26 CRM floor counters, invoice gate, dispatch cash; HR documents/expense categories/assets
+  (0171–0173); SPA fallback is versioned; chat root filtered. · 2026-11-27 sales staff single master
+  (0175/0177, lead re-point 0181); integration hub (0180); AI key health + playground (0174); JSON
+  callers stream; master-data import cap removed. · 2026-11-28 sent-enquiry revision reopen.
+
+### Metrics
+
+- 1,963 → 627 lines for the eight sections (−68%). A parallel 0183 change appended §9 (70 lines), so the file is 700 lines; that section is referenced by `AGENTS.md` and was kept verbatim. 56 guards named in one table.
+- Verified before commit: every file path, route prefix, guard name, Setting key, cron slot and
+  binding cited in the new doc resolves in the tree at HEAD.
+

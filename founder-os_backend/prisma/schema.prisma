@@ -2585,3 +2585,47 @@ model StockReservation {
   @@index([itemId, status])
   @@index([refId, status])
 }
+// ── Unified integrations & ingestion (mig 0183) ─────────────────────────────
+// Raw-SQL tables (modules/integrations/gateway/store.ts + modules/ingestion/store.ts
+// own every read/write). Models exist so the D1 shim parity guard and schema
+// readers see the shape; secrets stay AES-GCM ciphertext in encryptedSecrets.
+model HlpIntegrationInstance {
+  id               String  @id @default(uuid())
+  provider         String
+  instanceKey      String
+  label            String
+  isDefault        Boolean @default(false)
+  enabled          Boolean @default(true)
+  deliveryMode     String  @default("batch")
+  baseUrl          String  @default("")
+  encryptedSecrets String  @default("")
+  configJson       String  @default("{}")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([provider, instanceKey])
+  @@index([provider, isDefault, enabled])
+}
+
+model HlpIngestedData {
+  id              String   @id @default(uuid())
+  source          String
+  instanceKey     String   @default("default")
+  eventType       String   @default("")
+  externalEventId String?
+  deliveryMode    String   @default("batch")
+  status          String   @default("pending")
+  rawPayload      String
+  headersJson     String   @default("{}")
+  normalizedJson  String   @default("")
+  coreRefId       String   @default("")
+  retryCount      Int      @default(0)
+  errorLog        String   @default("")
+  receivedAt      DateTime @default(now())
+  processedAt     DateTime?
+
+  @@index([source, externalEventId])
+  @@index([status, deliveryMode, receivedAt])
+  @@index([source, status, receivedAt])
+}
+

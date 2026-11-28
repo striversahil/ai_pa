@@ -14,6 +14,18 @@
 const { workerRequest } = require('../runner-lib');
 const { API } = require('../../founder-os_backend/src/shared/sync-core/contract');
 const { zohoContext } = require('../../founder-os_backend/src/shared/sync-core/zoho-auth');
+const { resolveZohoRuntime } = require('./credentials');
+
+// Runtime session comes from the DB instance via the runner endpoint; the
+// saved curl export is ONLY the emergency fallback (credentials.js header).
+// Resolved once per process, before any URL is built.
+let _runtime = null;
+async function ensureRuntime() {
+  if (_runtime === null) _runtime = (await resolveZohoRuntime().catch(() => null)) || false;
+  return _runtime;
+}
+function zctx() { return _runtime || zctx(); }
+function apiBase() { return (_runtime && _runtime.apiBase) || 'https://books.zoho.com/api/v3'; }
 const { sleep, zohoFetchJson } = require('../../founder-os_backend/src/shared/sync-core/zoho-net');
 const { istDateString } = require('../../founder-os_backend/src/shared/sync-core/zoho-dates');
 const orgs = require('../../founder-os_backend/src/shared/sync-core/zoho-orgs');
@@ -22,14 +34,14 @@ const { ZOHO_STATUSES } = require('../../founder-os_backend/src/shared/sync-core
 // Estimates-list retry policy (was the local zohoFetch): connection drops +
 // 429s absorbed, anything else throws. Same signature as before.
 async function zohoFetch(url, { retries = 3 } = {}) {
-  return zohoFetchJson(url, zohoContext().headers, { retries });
+  return zohoFetchJson(url, zctx().headers, { retries });
 }
 
 // Estimates list URL derived from the saved export: every moving status,
 // newest-modified first, so any transition lands in the window.
 // Per-org: the saved URL's organization_id is swapped for the target org.
 function buildEstimatesUrl(page, orgId) {
-  const { url } = zohoContext();
+  const { url } = zctx();
   const base = orgId ? orgs.urlForOrg(url, orgId) : url;
   const u = new URL(base);
   u.searchParams.set('filter_by', 'Status.All');
@@ -54,7 +66,8 @@ function buildEstimatesUrl(page, orgId) {
 // Per-org fault isolation: a dead org (bad id, no Books, wrong DC → 400/401)
 // is SKIPPED with a loud warning — one bad org must never kill the whole sync.
 async function fetchEstimatesAll(pages = 2, { coverIds = null, maxPages = 6 } = {}) {
-  const { orgIds, orgId: primaryOrg } = zohoContext();
+  await ensureRuntime();
+  const { orgIds, orgId: primaryOrg } = zctx();
   const seen = new Map();
   const skippedOrgs = [];
   for (const org of orgIds.length ? orgIds : [primaryOrg]) {
@@ -114,20 +127,22 @@ async function fetchEstimatesAll(pages = 2, { coverIds = null, maxPages = 6 } = 
 }
 
 async function fetchComments(zohoEstimateId, orgId) {
-  const ctx = zohoContext();
+  await ensureRuntime();
+  const ctx = zctx();
   const org = orgId || ctx.orgId;
-  const cj = await zohoFetch(`https://books.zoho.com/api/v3/estimates/${zohoEstimateId}/comments?organization_id=${org}`);
+  const cj = await zohoFetch(`${apiBase()}/estimates/${zohoEstimateId}/comments?organization_id=${org}`);
   return orgs.normalizeCommentRows(cj.comments || [], org, ctx.orgId);
 }
 
 // Comment batches (Zoho reads, NOT LLM — concurrency stays high here).
 // Keyed by DB estimate id; each estimate carries its own _orgId/_zohoId.
 async function fetchCommentsFor(estimates, { concurrency = 6, onError } = {}) {
+  await ensureRuntime();
   const out = new Map();
   for (let i = 0; i < estimates.length; i += concurrency) {
     await Promise.all(estimates.slice(i, i + concurrency).map(async (est) => {
       try {
-        const ctx = zohoContext();
+        const ctx = zctx();
         const org = est._orgId || ctx.orgId;
         const zohoId = est._zohoId || est.estimate_id;
         out.set(est.estimate_id, { comments: await fetchComments(zohoId, org), hasNew: false });
@@ -144,10 +159,11 @@ async function fetchCommentsFor(estimates, { concurrency = 6, onError } = {}) {
 // (org, zohoId) pair for the detail check.
 // Returns { status } or { gone: true } when Zoho 404s (deleted).
 async function fetchVanishedStatus(dbEstimateId) {
-  const ctx = zohoContext();
+  await ensureRuntime();
+  const ctx = zctx();
   const { orgId: org, zohoId } = orgs.splitDbEstimateId(dbEstimateId, ctx.orgId);
   try {
-    const detail = await zohoFetch(`https://books.zoho.com/api/v3/estimates/${zohoId}?organization_id=${org}`);
+    const detail = await zohoFetch(`${apiBase()}/estimates/${zohoId}?organization_id=${org}`);
     return { status: detail.estimate?.status || null };
   } catch (err) {
     if (/Zoho 404/.test(err.message)) return { gone: true };
@@ -182,9 +198,9 @@ async function fetchAgentRoster() {
 const SO_TODAY_EXCLUDED = new Set(ZOHO_STATUSES.SO_EXCLUDED);
 
 function buildSalesOrdersUrl(page, orgId) {
-  const { orgId: primary } = zohoContext();
+  const { orgId: primary } = zctx();
   const org = orgId || primary;
-  return `https://books.zoho.com/api/v3/salesorders?page=${page}&per_page=200&filter_by=Status.All&sort_column=created_time&sort_order=D&usestate=true&organization_id=${org}`;
+  return `${apiBase()}/salesorders?page=${page}&per_page=200&filter_by=Status.All&sort_column=created_time&sort_order=D&usestate=true&organization_id=${org}`;
 }
 
 // Newest first per org; stops when a page is short or its oldest order predates
@@ -193,7 +209,8 @@ function buildSalesOrdersUrl(page, orgId) {
 // Per-org fault isolation (see fetchEstimatesAll): a dead org is skipped with
 // a warning, never fatal. skippedOrgs rides the return for runner logging.
 async function fetchSalesOrdersToday() {
-  const { orgIds, orgId: primaryOrg } = zohoContext();
+  await ensureRuntime();
+  const { orgIds, orgId: primaryOrg } = zctx();
   const today = istDateString(new Date());
   const statuses = {};
   const orders = [];
@@ -247,7 +264,7 @@ async function fetchSalesOrdersToday() {
 }
 
 module.exports = {
-  zohoContext,
+  zohoContext: zctx,
   zohoFetch,
   buildEstimatesUrl,
   fetchEstimatesAll,

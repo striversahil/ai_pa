@@ -23,6 +23,23 @@ concurrency:
   group: cron-every-15min
 
 jobs:
+  # Pull side of the unified ingestion pipeline (mig 0183): portals with a
+  # feed (TradeIndia / Justdial / Alibaba) are fetched and replayed through
+  # the HMAC-signed inbound door, so dedupe + mapping stay in one place.
+  # Skipped during quiet hours by the Worker router (this workflow is not
+  # dispatched 21:00-09:00 IST at all).
+  portal-poller:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: portal-poller
+    steps:
+      - uses: actions/checkout@v4
+      - name: portal-poller (TradeIndia / Justdial / Alibaba feeds)
+        env:
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+          SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
+        run: node scripts/portal-poller-runner.js
+
   # Zoho Books pings live here and ONLY here (one workflow, serial group).
   # crm snapshots the active sales-orders pipeline; the analyzer full-syncs
   # estimates + sales orders (refreshing sales-orders-today first thing, so no

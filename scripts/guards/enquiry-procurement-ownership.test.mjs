@@ -57,9 +57,42 @@ describe('procurement queue ownership', () => {
   });
 
   it('moves to History only on the manual conclude stamp', () => {
-    const row = endedRow({ rateStatus: 'sent', zohoStatus: 'sent', procurementSubmittedAt: '2026-11-21T10:00:00.000Z' });
+    const row = endedRow({
+      rateStatus: 'sent',
+      zohoStatus: 'sent',
+      procurementSubmittedAt: '2026-11-21T10:00:00.000Z',
+      items: [item({ finalRate: 900, rates: [{ vendor: 'A', rate: 900 }] })],
+    });
     assert.deepEqual(pending(row), [false, false]);
     assert.deepEqual(history(row), [true, true]);
+  });
+
+  it('returns a concluded row to Active when a line was added after the stamp', () => {
+    // Sales added an item to a sent + concluded enquiry: the stamp only covered
+    // the old item set, so the fresh line must re-enter procurement instead of
+    // sitting invisible in History (no rate, no owner).
+    const row = endedRow({
+      rateStatus: 'sent',
+      zohoStatus: 'sent',
+      procurementSubmittedAt: '2026-11-21T10:00:00.000Z',
+      items: [
+        item({ finalRate: 900, rates: [{ vendor: 'A', rate: 900 }] }),
+        item({ name: 'Seal', rates: [], finalRate: null }),
+      ],
+    });
+    assert.deepEqual(pending(row), [true, true]);
+    assert.deepEqual(history(row), [false, false]);
+  });
+
+  it('refuses to conclude while a procurement-held ask is open', () => {
+    const row = endedRow({
+      items: [item({
+        rates: [{ vendor: 'A', rate: 900 }],
+        loops: [{ id: 'lp9', kind: 'rates', text: 'need another vendor', openedBy: 'management', openedAt: '2026-11-21T10:00:00.000Z', holder: 'procurement', status: 'open' }],
+      })],
+    });
+    assert.equal(be.procurementSubmittable(row).ok, false);
+    assert.equal(fe.procurementSubmittable(row).ok, false);
   });
 
   it('treats a dead requirement (cancelled / client-accepted) as History without a stamp', () => {

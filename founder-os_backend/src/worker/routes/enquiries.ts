@@ -206,16 +206,13 @@ async function aiConfigured(c: any): Promise<boolean> {
         // Open sent-revision: the row loops again — never auto-promote or
         // auto-conclude mid-revision (management owns it until re-sent).
         if (String((e as any)?.sentRevisionAt ?? '').trim()) continue;
-        if (String((e as any)?.rateStatus ?? '') === 'sent') {
-          // Already sent in this response — still eligible for auto-conclude.
-        } else {
-          const origRateStatus = String((e as any)?._origRateStatus ?? (e as any)?.rateStatus ?? '');
-          // Only promote rows that were NOT already `sent` in the DB (derived above
-          // already flipped the in-memory copy). We need the pre-derived value —
-          // stash it in attach if needed. Simpler: re-check the map: if zoho non-draft
-          // and DB still not sent, update. We track ids via `id`.
-          if (origRateStatus !== 'sent' && e?.id) ids.push(String(e.id));
-        }
+        // Promote from the PRE-DERIVED status: attachZohoStatus already
+        // flipped the in-memory copy to sent, so testing the copy (the old
+        // code) made this branch unreachable and left the DB at finalized
+        // while every screen showed sent. _origRateStatus is the DB value
+        // stashed by the attach pass (and by the no-estNumber branch).
+        const origRateStatus = String((e as any)?._origRateStatus ?? (e as any)?.rateStatus ?? '');
+        if (origRateStatus !== 'sent' && e?.id) ids.push(String(e.id));
         // Auto-conclude ONLY dead rows (cancelled/accepted). A live sent
         // estimate leaves procurement working (founder 2026-11-21).
         if (e?.id && isZohoClosedStatus(s) && !String((e as any)?.procurementSubmittedAt ?? '').trim()) {

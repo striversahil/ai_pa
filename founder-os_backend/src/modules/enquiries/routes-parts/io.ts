@@ -336,7 +336,15 @@ export async function enquiryAddRequirement(store: EnquiryStore, me: MeResponse,
   const patch: any = { items: [...((existing as any).items || []), newItem] };
   // A finalized enquiry with a new item has pending work again — reopen it so
   // the procurement queue (and, after rating, management review) picks it up.
-  if ((existing as any).rateStatus === "finalized") patch.rateStatus = "rate_pending";
+  // A SENT one needs the full revision (marker + cleared handoff): without it
+  // Zoho keeps deriving sent and both desks treat the row as terminal while
+  // the new line waits for a rate that can never arrive.
+  const wasSent = String((existing as any).rateStatus ?? '') === 'sent';
+  if (wasSent) {
+    patch.rateStatus = 'finalized';
+    patch.sentRevisionAt = new Date().toISOString();
+    patch.procurementSubmittedAt = '';
+  } else if ((existing as any).rateStatus === "finalized") patch.rateStatus = "rate_pending";
   const enquiry = await store.updateEnquiry(id, patch);
   if (!enquiry) return json(404, { error: "not found" });
   return {
@@ -445,6 +453,15 @@ export async function enquiryUpdate(store: EnquiryStore, me: MeResponse, id: str
     } else {
       delete (updates as any).rateStatus;
     }
+  }
+  // Adding a line to an already-sent enquiry is an implicit revision (see
+  // update.ts applyImplicitSentRevision): leaving the row sent and stamped
+  // hid the new, unquoted line from both desks forever. Runs after the
+  // non-privileged scrub and before auto-advance, so it is not gated as a
+  // finalize commitment.
+  {
+    const { applyImplicitSentRevision } = await import('../update');
+    applyImplicitSentRevision(updates, { stored: storedForItems, surface: declaredSurface });
   }
   // Auto-advance the workflow: first vendor rate moves Rate Pending → Received.
   // Finalized is set explicitly by Management (guarded above) — except the

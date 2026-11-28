@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { useAuth } from "@/auth/AuthContext";
 import { useLiveDashboard } from "@/hooks/useLiveData";
 import { AiGatewayPanel } from "@/components/settings/ai-gateway/AiGatewayPanel";
+import { IntegrationsGatewayPanel } from "@/components/settings/integrations/IntegrationsGatewayPanel";
 
 interface SettingsPayload {
   settings: Record<string, string>;
@@ -125,6 +126,11 @@ export default function SettingsDashboard() {
                 providerControl("ai:strategy"))}
               <AiGatewayPanel />
             </>
+          )}
+
+          {section("Third-party providers",
+            "Every outside service resolves through one call(provider, { instanceKey }) facade: Zoho Books, WhatsApp Cloud, Tally, TradeIndia, Justdial, Alibaba, custom HTTP. Each account's credentials are encrypted at rest and refreshed automatically; inbound pushes stage in one log and either process instantly or wait for the 5-minute runner.",
+            <IntegrationsGatewayPanel />
           )}
 
           {section("CRM dispatch floor",
