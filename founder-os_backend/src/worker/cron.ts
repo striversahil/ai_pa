@@ -281,9 +281,11 @@ async function runScheduled(event: { cron?: string; scheduledTime?: number }, en
     );
   }
 
-  // Gmail polling — the ONE inbound poller, every 5 minutes, all hours. Gmail
-  // has no push API; every other provider is webhook-only. The manifest owns
-  // the interval + cursor field, and staging is idempotent on the message id.
+  // Gmail polling — the ONE 0183 ingester poller, every 5 minutes, all hours.
+  // Gmail has no push API; every other 0183 inbound provider is webhook-only.
+  // The legacy Zoho estimate sync is a deliberate 15-min exception. The
+  // manifest owns the interval + cursor field, and staging is idempotent on
+  // the message id.
   if (min % 5 === 0) {
     ctx.waitUntil(
       (async () => {
