@@ -17,14 +17,44 @@ const { zohoContext } = require('../../founder-os_backend/src/shared/sync-core/z
 const { resolveZohoRuntime } = require('./credentials');
 
 // Runtime session comes from the DB instance via the runner endpoint; the
-// saved curl export is ONLY the emergency fallback (credentials.js header).
+// saved curl export is the emergency fallback (credentials.js header).
 // Resolved once per process, before any URL is built.
+//
+// 2026-11-27 incident: at least one 15-min tick is expected to get a session
+// here. The FIRST attempt resolves the DB instance (Settings → Third-party
+// providers). While no Zoho instance exists the runner endpoint answers 409, so
+// the export carry the sync — exactly like crm-runner. The old body swallowed
+// that into `_runtime = false` and `zctx()` then called ITSELF, so every tick
+// died with "Maximum call stack size exceeded" instead of naming the cause.
 let _runtime = null;
+let _runtimeSource = '';
 async function ensureRuntime() {
-  if (_runtime === null) _runtime = (await resolveZohoRuntime().catch(() => null)) || false;
+  if (_runtime === null) {
+    let fromDb = null;
+    let dbError = null;
+    try {
+      fromDb = await resolveZohoRuntime();
+    } catch (err) {
+      dbError = err;
+    }
+    if (fromDb) {
+      _runtime = fromDb;
+      _runtimeSource = 'db';
+      console.log('zoho-sync/fetch: session source = worker (Zoho instance)');
+    } else {
+      const why = dbError ? dbError.message : 'no Zoho instance configured';
+      console.warn(`zoho-sync/fetch: worker session unavailable (${why}) — using the saved curl export`);
+      _runtime = zohoContext();
+      _runtimeSource = 'export';
+    }
+  }
   return _runtime;
 }
-function zctx() { return _runtime || zctx(); }
+// Never recurse: a caller that skipped ensureRuntime() still receives a context
+// (the export parse is synchronous and cached). A missing export file throws a
+// readable error instead of a stack overflow.
+function zctx() { return _runtime || zohoContext(); }
+function sessionSource() { return _runtimeSource || (_runtime ? 'db' : 'none'); }
 function apiBase() { return (_runtime && _runtime.apiBase) || 'https://books.zoho.com/api/v3'; }
 const { sleep, zohoFetchJson } = require('../../founder-os_backend/src/shared/sync-core/zoho-net');
 const { istDateString } = require('../../founder-os_backend/src/shared/sync-core/zoho-dates');
@@ -256,6 +286,7 @@ async function fetchSalesOrdersToday() {
 
 module.exports = {
   zohoContext: zctx,
+  sessionSource,
   zohoFetch,
   buildEstimatesUrl,
   fetchEstimatesAll,
