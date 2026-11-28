@@ -44,19 +44,27 @@ export function allowanceFor(
     ?? null;
 }
 
-function daysBetween(start: string, date: string): number {
+/** Working days (Mon–Sat, holidays excluded) between the leave start and the
+ *  given date, i.e. the 0-based index of that leave day. Sundays are the only
+ *  weekly off, matching payroll's workingDatesInRange. */
+function workingDaysBefore(start: string, date: string, holidays: Set<string>): number {
   const [y1, m1, d1] = start.split('-').map(Number);
   const [y2, m2, d2] = date.split('-').map(Number);
-  return Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / 86400000);
+  let count = 0;
+  for (let t = Date.UTC(y1, m1 - 1, d1, 12); t < Date.UTC(y2, m2 - 1, d2, 12); t += 86400000) {
+    const day = new Date(t);
+    if (day.getUTCDay() === 0 || holidays.has(day.toISOString().slice(0, 10))) continue;
+    count++;
+  }
+  return count;
 }
 
-/** Is this calendar date paid for the given leave row? Legacy rows (paidDays
- *  NULL) keep the stored flag; a decided row pays the first N calendar days
- *  and the rest is unpaid. */
-export function leaveDayPaid(leave: any, date: string): boolean {
+/** Is this leave day paid? Legacy rows (paidDays NULL) keep the stored flag; a
+ *  decided row pays its first N WORKING days and the rest is unpaid. */
+export function leaveDayPaid(leave: any, date: string, holidays: Set<string> = new Set()): boolean {
   if (leave?.paidDays === null || leave?.paidDays === undefined) return leave?.paid !== false;
   const paid = Number(leave.paidDays) || 0;
   if (paid <= 0) return false;
   if (String(leave.durationType ?? 'full_day') !== 'full_day') return paid > 0;
-  return daysBetween(String(leave.startDate), date) < Math.floor(paid);
+  return workingDaysBefore(String(leave.startDate), date, holidays) < Math.floor(paid);
 }

@@ -93,7 +93,7 @@ function computeStats(
       const duration = String(leave.durationType ?? 'full_day');
       if (duration === 'short') add(stats, 'present');
       else if (duration === 'half_day') add(stats, 'half');
-      else add(stats, leaveDayPaid(leave, date) ? 'paidLeave' : 'unpaidLeave');
+      else add(stats, leaveDayPaid(leave, date, holidayDates) ? 'paidLeave' : 'unpaidLeave');
       continue;
     }
     add(stats, 'unmarked');

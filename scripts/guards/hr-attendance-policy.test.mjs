@@ -115,6 +115,18 @@ describe("hr policy: leave + short-leave allowances", () => {
     assert.equal(evalModule.leaveDayPaid({ ...leave, paidDays: null, paid: false }, "2026-11-02"), false);
     assert.equal(evalModule.leaveDayPaid({ paidDays: null, paid: true }, "2026-11-02"), true);
   });
+
+  it("counts working days, not calendar days, across a weekend", () => {
+    const leave = { durationType: "full_day", startDate: "2026-11-06", paidDays: 3, paid: true };
+    assert.equal(evalModule.leaveDayPaid(leave, "2026-11-06"), true); // Fri
+    assert.equal(evalModule.leaveDayPaid(leave, "2026-11-07"), true); // Sat
+    assert.equal(evalModule.leaveDayPaid(leave, "2026-11-09"), true); // Mon
+    assert.equal(evalModule.leaveDayPaid(leave, "2026-11-10"), false); // Tue
+    const twoDays = { ...leave, paidDays: 2 };
+    assert.equal(evalModule.leaveDayPaid(twoDays, "2026-11-09"), false);
+    const saturdayHoliday = new Set(["2026-11-07"]);
+    assert.equal(evalModule.leaveDayPaid(twoDays, "2026-11-09", saturdayHoliday), true);
+  });
 });
 
 describe("hr policy: payroll + leave decisions use it", () => {
@@ -122,7 +134,7 @@ describe("hr policy: payroll + leave decisions use it", () => {
     assert.match(payroll, /getPolicy\(\)/);
     assert.match(payroll, /evaluateMonth\(policy, member\.employmentType/);
     assert.match(payroll, /stats\.policyHalfDays \+ stats\.excessShortLeaves \* 0\.5/);
-    assert.match(payroll, /leaveDayPaid\(leave, date\)/);
+    assert.match(payroll, /leaveDayPaid\(leave, date, holidayDates\)/);
     assert.match(payroll, /policy: \{\n\s+lateCount/);
   });
 
