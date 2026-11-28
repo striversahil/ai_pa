@@ -161,3 +161,29 @@ describe('import reads the export spelling of every contact column', async () =>
     assert.equal(bad.skippedNoName, 1, 'the skip split names the missing name');
   });
 });
+// A re-import is the repair path for a bad import: it matches on the Zoho id
+// and updates in place. Anything the TEAM typed that no Zoho export carries —
+// the free type tag, the verified city (+ source/basis) — must survive that
+// re-import instead of being blanked by an absent column.
+describe('a re-import keeps hand-typed fields', () => {
+  const store = readFileSync(join(BACKEND_DIR, 'src', 'modules', 'master-data', 'store.ts'), 'utf8');
+  const upsert = store.slice(store.indexOf('export function prepareUpsert'), store.indexOf('export async function upsertCustomers'));
+
+  it('the upsert matches on the Zoho id, so a repeat updates instead of duplicating', () => {
+    assert.match(upsert, /ON CONFLICT\(id\) DO UPDATE SET/, 'upsert must update on the id conflict');
+  });
+
+  it('empty file columns cannot blank the hand-kept fields', () => {
+    for (const col of ['customerTypeTag', 'cityVerified', 'citySource', 'locationBasis']) {
+      const re = new RegExp(`${col} = CASE WHEN excluded\\.${col} = '' THEN core_customer\\.${col}`);
+      assert.match(upsert, re, `${col} must keep the stored value when the file has none`);
+      const plain = new RegExp(`${col} = excluded\\.${col},`);
+      assert.ok(!plain.test(upsert), `${col} must not be overwritten unconditionally`);
+    }
+  });
+
+  it('notes keep the same rule and district is never written', () => {
+    assert.match(upsert, /notes = CASE WHEN core_customer\.notes IS NULL/, 'notes must stay hand-written');
+    assert.ok(!/\bdistrict\b/.test(upsert), 'the upsert must not touch district');
+  });
+});

@@ -189,7 +189,12 @@ export async function deleteCustomerRow(id: string, actor?: { id: string; reason
 
 /** Upsert one customer (source columns only — local review survives; notes are
  *  seeded only when the stored row has none, so hand-written notes always win
- *  while lead imports still land their requirement text on fresh rows). */
+ *  while lead imports still land their requirement text on fresh rows).
+ *
+ *  Hand-kept fields — the type tag, the verified city (+ its source and basis) —
+ *  are updated only when the file actually carries them. A Zoho export has no
+ *  such columns, so a re-import used to blank every tag and verification the
+ *  team had typed by hand. The district is not written here at all. */
 export function prepareUpsert(db: any, c: ImportCustomer): any {
   const iso = new Date().toISOString();
   return db
@@ -206,15 +211,22 @@ export function prepareUpsert(db: any, c: ImportCustomer): any {
          region = excluded.region, zone = excluded.zone, subArea = excluded.subArea,
          state = excluded.state, pincode = excluded.pincode, displayName = excluded.displayName,
          companyName = excluded.companyName, customerType = excluded.customerType,
-         customerTypeBase = excluded.customerTypeBase, customerTypeTag = excluded.customerTypeTag,
+         customerTypeBase = excluded.customerTypeBase,
          status = excluded.status, contactPerson = excluded.contactPerson,
          designation = excluded.designation, phonesJson = excluded.phonesJson,
          emailsJson = excluded.emailsJson, billingAddress = excluded.billingAddress,
          gstin = excluded.gstin, owner = excluded.owner, pipelineStage = excluded.pipelineStage,
          estimateCount = excluded.estimateCount, lastEstimateDate = excluded.lastEstimateDate,
          salesOrderCount = excluded.salesOrderCount, lastSalesOrderDate = excluded.lastSalesOrderDate,
-         cityZoho = excluded.cityZoho, cityVerified = excluded.cityVerified,
-         citySource = excluded.citySource, locationBasis = excluded.locationBasis,
+         cityZoho = excluded.cityZoho,
+         cityVerified = CASE WHEN excluded.cityVerified = '' THEN core_customer.cityVerified
+                             ELSE excluded.cityVerified END,
+         citySource = CASE WHEN excluded.citySource = '' THEN core_customer.citySource
+                           ELSE excluded.citySource END,
+         locationBasis = CASE WHEN excluded.locationBasis = '' THEN core_customer.locationBasis
+                             ELSE excluded.locationBasis END,
+         customerTypeTag = CASE WHEN excluded.customerTypeTag = '' THEN core_customer.customerTypeTag
+                                ELSE excluded.customerTypeTag END,
          duplicateGroup = excluded.duplicateGroup,
          duplicateConfidence = excluded.duplicateConfidence,
          suggestedAction = excluded.suggestedAction,
