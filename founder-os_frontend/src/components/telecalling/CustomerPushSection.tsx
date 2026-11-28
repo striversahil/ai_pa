@@ -128,11 +128,14 @@ export default function CustomerPushSection() {
             className="rounded-lg border border-zinc-200 bg-white px-2 py-1 text-xs dark:border-zinc-800 dark:bg-zinc-950"
           >
             <option value="">All client types</option>
-            {types.map((t) => (
-              <option key={t.base} value={t.base === "Unspecified" ? "" : t.base}>
-                {t.base} ({t.withPhone})
-              </option>
-            ))}
+            {/* Untyped rows are part of "All client types"; don't offer them as a filter. */}
+            {types
+              .filter((t) => t.base !== "Unspecified")
+              .map((t) => (
+                <option key={t.base} value={t.base}>
+                  {t.base} ({t.withPhone})
+                </option>
+              ))}
           </select>
         </div>
       </div>
