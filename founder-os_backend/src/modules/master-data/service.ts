@@ -291,15 +291,31 @@ export async function importMasterData(json: unknown, actor: Actor): Promise<Mas
   const existing = await listCustomerIds();
   let inserted = 0;
   let updated = 0;
+  // What the file actually carried, per contact column. A column that reads 0
+  // here is EMPTY IN THE FILE, not silently dropped by the parser — the report
+  // the operator needs when an import turns up blank fields.
+  const fields = { contactPerson: 0, phones: 0, emails: 0, gstin: 0, city: 0 };
   for (const c of parsed.customers) {
     if (existing.has(c.zohoCustomerId)) updated++;
     else inserted++;
+    if (c.contactPerson) fields.contactPerson++;
+    if (c.phones.length) fields.phones++;
+    if (c.emails.length) fields.emails++;
+    if (c.gstin) fields.gstin++;
+    if (c.cityZoho || c.cityVerified) fields.city++;
   }
   await upsertRegions(parsed.regions);
   await upsertCustomers(parsed.customers);
+  const errors = parsed.skipped
+    ? [`${parsed.skipped} record(s) skipped — ${parsed.skippedNoId} without a Zoho customer id, ${parsed.skippedNoName} without a name`]
+    : [];
   await insertAudit({
     actorId: actor.id, actorName: actor.name, action: 'import', entityId: 'master',
-    detail: { received: parsed.customers.length, inserted, updated, skipped: parsed.skipped, regions: parsed.regions.length },
+    detail: {
+      received: parsed.customers.length, inserted, updated,
+      skipped: parsed.skipped, skippedNoId: parsed.skippedNoId, skippedNoName: parsed.skippedNoName,
+      regions: parsed.regions.length, fields,
+    },
   });
   await invalidateMasterDataCache();
   return {
@@ -308,6 +324,7 @@ export async function importMasterData(json: unknown, actor: Actor): Promise<Mas
     updated,
     skipped: parsed.skipped,
     regions: parsed.regions.length,
-    errors: [],
+    fields,
+    errors,
   };
 }

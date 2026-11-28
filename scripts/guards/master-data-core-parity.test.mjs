@@ -15,7 +15,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { BACKEND_DIR } from './_bundle.mjs';
+import { pathToFileURL } from 'node:url';
+import { BACKEND_DIR, bundleToFile } from './_bundle.mjs';
 
 const SRC = join(BACKEND_DIR, 'src');
 const store = readFileSync(join(SRC, 'modules', 'master-data', 'store.ts'), 'utf8');
@@ -96,3 +97,67 @@ describe('master import has no size cap of its own', () => {
   });
 });
 
+// The 2026-11-27 import landed 8,674 rows with EMPTY phones, emails and cities
+// because `toImportCustomer` only knew the generated extract spellings
+// ("Valid Phones / Mobiles", "City (Zoho)"). A Zoho CRM export spells the
+// same columns "Phones" / "Emails" / "City" and carries extra people under
+// "Additional Contact Persons" — both shapes must land the data.
+describe('import reads the export spelling of every contact column', async () => {
+  const parser = await import(pathToFileURL(bundleToFile(join(SRC, 'modules', 'master-data', 'import-parse.ts'))).href);
+
+  const zoho = {
+    'Record Type': 'customer',
+    'Customer ID (Zoho)': '1584229000000265622',
+    'Company Name': 'Shaktiman Rice & Flour Mill Pvt Ltd',
+    'Display Name': 'Shaktiman Rice & Flour Mill Pvt Ltd',
+    'Contact Person': 'Mr. Suresh Gupta',
+    Designation: 'Owner',
+    Phones: ['+919839098565', '+918604381882'],
+    Emails: [],
+    'Additional Contact Persons': [
+      { Name: 'Bahadur Singh', Designation: 'Miller', Email: 'bahadur@mill.in', Phone: '+918604381882', Mobile: null },
+    ],
+    GSTIN: '09AADCM5201F1ZU',
+    City: 'Fatehpur',
+    State: 'Uttar Pradesh',
+    Pincode: '212601',
+    Region: 'R2',
+  };
+
+  it('the Studio export lands phones, emails, city and contacts', () => {
+    const out = parser.parseImportPayload({ customers: [zoho] });
+    const row = out.customers[0];
+    assert.equal(out.skipped, 0, 'a complete record must never be skipped');
+    assert.deepEqual(row.phones, ['+919839098565', '+918604381882'], 'phones (merged with the extra contact, de-duped)');
+    assert.deepEqual(row.emails, ['bahadur@mill.in'], 'emails from the additional contact');
+    assert.equal(row.cityZoho, 'Fatehpur', 'the plain City column filled City (Zoho)');
+    assert.equal(row.contactPerson, 'Mr. Suresh Gupta');
+    assert.equal(row.designation, 'Owner');
+    assert.equal(row.gstin, '09AADCM5201F1ZU');
+  });
+
+  it('the generated extract spellings still land', () => {
+    const out = parser.parseImportPayload([{
+      'Customer ID (Zoho)': 'Z9', 'Display Name': 'Old Shape',
+      'Valid Phones / Mobiles': JSON.stringify(['9839098565']),
+      'Valid Emails': 'ops@old.in',
+      'City (Zoho)': 'Ajmer',
+      Contact: 'Asha', 'GST No': '09AADCM5201F1ZU',
+    }]);
+    const row = out.customers[0];
+    assert.deepEqual(row.phones, ['9839098565']);
+    assert.deepEqual(row.emails, ['ops@old.in']);
+    assert.equal(row.cityZoho, 'Ajmer');
+    assert.equal(row.contactPerson, 'Asha', 'the "Contact" spelling is accepted too');
+    assert.equal(row.gstin, '09AADCM5201F1ZU');
+  });
+
+  it('a single pasted record imports, and skips say why', () => {
+    const one = parser.parseImportPayload(zoho);
+    assert.equal(one.customers.length, 1, 'a bare record is a one-row import');
+    const bad = parser.parseImportPayload([{ 'Display Name': 'No id' }, { 'Customer ID (Zoho)': 'N1' }]);
+    assert.equal(bad.skipped, 2);
+    assert.equal(bad.skippedNoId, 1, 'the skip split names the missing id');
+    assert.equal(bad.skippedNoName, 1, 'the skip split names the missing name');
+  });
+});

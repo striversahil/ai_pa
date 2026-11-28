@@ -145,6 +145,9 @@ export interface MasterImportResult {
   updated: number;
   skipped: number;
   regions: number;
+  /** mirror: backend types.ts MasterImportResult.fields — rows carrying each
+   *  contact column (0 = the file itself was empty there). */
+  fields?: { contactPerson: number; phones: number; emails: number; gstin: number; city: number };
   errors: string[];
 }
 

@@ -29,6 +29,9 @@ function previewOf(json: any, bytes: number): Preview {
     customers = json.customers.length;
   } else if (Array.isArray(json)) {
     customers = json.length;
+  } else if (json && typeof json === "object") {
+    // One record pasted on its own (a single-client test import).
+    customers = 1;
   }
   return {
     customers,
@@ -150,6 +153,18 @@ export default function ImportModal({
               </div>
             ))}
           </div>
+          {result.fields && (
+            <p className="rounded-[var(--radius-control)] bg-[var(--surface-soft)] px-3 py-2 text-[11px] text-[var(--text-secondary)]">
+              Carried by the file: {result.fields.contactPerson.toLocaleString("en-IN")} contact persons · {" "}
+              {result.fields.phones.toLocaleString("en-IN")} with phone · {result.fields.emails.toLocaleString("en-IN")} with email · {" "}
+              {result.fields.gstin.toLocaleString("en-IN")} with GSTIN · {result.fields.city.toLocaleString("en-IN")} with city
+            </p>
+          )}
+          {result.errors.length > 0 && (
+            <p className="rounded-[var(--radius-control)] bg-[color-mix(in_srgb,var(--color-warning)_12%,transparent)] px-3 py-2 text-[11px] text-[var(--color-warning)]">
+              {result.errors.join(" · ")}
+            </p>
+          )}
           <p className="text-[11px] text-[var(--text-secondary)]">
             Notes and duplicate-review decisions were left untouched for every existing row.
           </p>
@@ -159,7 +174,7 @@ export default function ImportModal({
           <label className="flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-[var(--radius-card)] border border-dashed border-[var(--color-zinc-300)] bg-[var(--surface-sunken)] px-4 py-8 text-center transition-colors hover:border-[var(--color-brand-indigo)]">
             <span className="text-2xl">📄</span>
             <span className="text-label font-semibold text-[var(--text-primary)]">
-              {file ? file.name : "Choose the master_data.json extract"}
+              {file ? file.name : "Choose the client-master .json export"}
             </span>
             <span className="text-[11px] text-[var(--text-secondary)]">
               {file ? `${(file.size / 1024 / 1024).toFixed(2)} MB` : "Click to browse — the file never leaves this request"}

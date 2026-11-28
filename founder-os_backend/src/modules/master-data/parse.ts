@@ -65,12 +65,12 @@ export function normalizeDate(v: unknown): string {
   return new Date(t).toISOString().slice(0, 10);
 }
 
-function toCount(v: unknown): number {
+export function toCount(v: unknown): number {
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 }
 
-function uniqueList(list: string[]): string[] {
+export function uniqueList(list: string[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const v of list) {
@@ -210,105 +210,7 @@ export function toRegion(row: any): MasterRegion {
   };
 }
 
-// ── Import shape (master_data.json) → canonical rows ────────────────────────
 
-/** Pull the region rows out of the file's `summary` block (tolerant of a
- *  missing block — regions then derive from the customer rows themselves). */
-export function parseImportRegions(json: any): MasterRegion[] {
-  const summary = Array.isArray(json?.summary) ? json.summary : Array.isArray(json?.regionsSummary) ? json.regionsSummary : [];
-  return summary
-    .map((r: any) => ({
-      region: cleanText(r?.Region ?? r?.region, 8),
-      zone: cleanText(r?.Zone ?? r?.zone, 40),
-      coverage: cleanBlock(r?.Coverage ?? r?.coverage, 500),
-      salesPerson: cleanText(r?.['Sales Person'] ?? r?.salesPerson, 120),
-      allottedName: cleanText(r?.['Allotted Name'] ?? r?.allottedName, 160),
-    }))
-    .filter((r: MasterRegion) => !!r.region);
-}
-
-/** One raw customer object (from the file) → the canonical import row. */
-export function toImportCustomer(raw: any, fallbackRegion: string): ImportCustomer {
-  const type = normalizeCustomerType(raw?.['Customer Type'] ?? raw?.customerType);
-  const zohoId = cleanText(raw?.['Customer ID (Zoho)'] ?? raw?.zohoCustomerId ?? raw?.id, 40);
-  const region = cleanText(raw?.Region ?? raw?.region, 8) || cleanText(fallbackRegion, 8);
-  return {
-    id: zohoId,
-    zohoCustomerId: zohoId,
-    region,
-    zone: cleanText(raw?.Zone ?? raw?.zone, 40),
-    subArea: cleanText(raw?.['Sub-Area'] ?? raw?.subArea, 80),
-    state: cleanText(raw?.State ?? raw?.state, 80),
-    pincode: cleanText(raw?.Pincode ?? raw?.pincode, 12),
-    displayName: cleanText(raw?.['Display Name'] ?? raw?.displayName ?? raw?.name, 200),
-    companyName: cleanText(raw?.['Company Name'] ?? raw?.companyName, 200),
-    customerType: cleanText(raw?.['Customer Type'] ?? raw?.customerType, 120),
-    typeBase: type.base,
-    typeTag: type.tag,
-    status: normalizeStatus(raw?.Status ?? raw?.status),
-    contactPerson: cleanText(raw?.['Contact Person'] ?? raw?.contactPerson, 120),
-    designation: cleanText(raw?.Designation ?? raw?.designation, 80),
-    phones: uniqueList(parseJsonList(raw?.['Valid Phones / Mobiles'] ?? raw?.phones).map(normalizePhone)),
-    emails: uniqueList(parseJsonList(raw?.['Valid Emails'] ?? raw?.emails).map(normalizeEmail)),
-    billingAddress: cleanBlock(raw?.['Billing Address'] ?? raw?.billingAddress, 600),
-    gstin: normalizeGstin(raw?.GSTIN ?? raw?.gstin),
-    owner: cleanText(raw?.Owner ?? raw?.owner, 40),
-    pipelineStage: cleanText(raw?.['Pipeline Stage'] ?? raw?.pipelineStage, 40),
-    estimateCount: toCount(raw?.['# Estimates'] ?? raw?.estimateCount),
-    lastEstimateDate: normalizeDate(raw?.['Last Estimate Date'] ?? raw?.lastEstimateDate),
-    salesOrderCount: toCount(raw?.['# Sales Orders'] ?? raw?.salesOrderCount),
-    lastSalesOrderDate: normalizeDate(raw?.['Last Sales Order Date'] ?? raw?.lastSalesOrderDate),
-    cityZoho: cleanText(raw?.['City (Zoho)'] ?? raw?.cityZoho, 80),
-    cityVerified: cleanText(raw?.['City (Verified)'] ?? raw?.cityVerified, 80),
-    citySource: cleanText(raw?.['City Source'] ?? raw?.citySource, 120),
-    locationBasis: cleanText(raw?.['Location Basis'] ?? raw?.locationBasis, 40),
-    duplicateGroup: cleanText(raw?.['Duplicate Group'] ?? raw?.duplicateGroup, 20),
-    duplicateConfidence: cleanText(raw?.['Duplicate Confidence'] ?? raw?.duplicateConfidence, 20),
-    suggestedAction: cleanText(raw?.['Suggested Action'] ?? raw?.suggestedAction, 60),
-    // Lead notes (conveyor Product/Requirement). The store upsert only seeds
-    // this when the stored row has none — hand-written notes always win.
-    notes: cleanBlock(raw?.notes ?? raw?.['Product / Requirement'] ?? '', 2000),
-  };
-}
-
-/** Whole file → regions + rows. Tolerates three input shapes:
- *   { summary, regions: { R1: [...] } }  (the master extract)
- *   { customers: [...] } / bare array     (a flat export) */
-export function parseImportPayload(json: any): {
-  regions: MasterRegion[];
-  customers: ImportCustomer[];
-  skipped: number;
-} {
-  const regions = parseImportRegions(json);
-  const out: ImportCustomer[] = [];
-  let skipped = 0;
-  const push = (raw: any, fallback: string) => {
-    const row = toImportCustomer(raw, fallback);
-    if (!row.zohoCustomerId || !row.displayName) {
-      skipped++;
-      return;
-    }
-    out.push(row);
-  };
-  const grouped = json?.regions;
-  if (grouped && typeof grouped === 'object' && !Array.isArray(grouped)) {
-    for (const [regionId, list] of Object.entries(grouped)) {
-      if (!Array.isArray(list)) continue;
-      for (const raw of list) push(raw, regionId);
-    }
-  } else if (Array.isArray(json?.customers)) {
-    for (const raw of json.customers) push(raw, '');
-  } else if (Array.isArray(json)) {
-    for (const raw of json) push(raw, '');
-  }
-  // Regions missing from the summary block (flat imports) derive from the rows.
-  const known = new Set(regions.map((r) => r.region));
-  for (const c of out) {
-    if (c.region && !known.has(c.region)) {
-      known.add(c.region);
-      regions.push({ region: c.region, zone: c.zone || '', coverage: '', salesPerson: '', allottedName: '' });
-    }
-  }
-  regions.sort((a, b) => a.region.localeCompare(b.region));
-  return { regions, customers: out, skipped };
-}
+// ── Import (see import-parse.ts) ────────────────────────────────────────────
+// Re-exported so every caller keeps the './parse' import path.
+export { parseImportRegions, parseImportPayload, parseValueList, toImportCustomer } from './import-parse';

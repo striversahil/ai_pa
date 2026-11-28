@@ -162,6 +162,9 @@ export interface MasterImportResult {
   updated: number;
   skipped: number;
   regions: number;
+  /** Rows that actually carried each contact column — a 0 means the FILE was
+   *  empty there, not that the parser dropped it. */
+  fields?: { contactPerson: number; phones: number; emails: number; gstin: number; city: number };
   errors: string[];
 }
 
