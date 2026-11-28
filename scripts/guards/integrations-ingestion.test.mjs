@@ -100,6 +100,21 @@ test('manifest loader is the only source for providers + URLs', () => {
   assert.match(loader, /normalizeQueryToBodyOnGet:\s*Boolean\(rawInbound\.normalizeQueryToBodyOnGet\)/);
 });
 
+test('nested verification envelopes are unwrapped for signatures + challenges', () => {
+  const loader = readBackend('src/modules/integrations/gateway/manifest.ts');
+  assert.match(loader, /inbound\.verification\?\.signaturePost/, 'nested signaturePost must be read');
+  assert.match(loader, /rawInbound\.verification\?\.challengeGet/, 'nested challengeGet must be read');
+
+  const manifest = JSON.parse(readBackend('src/modules/integrations/manifest.json'));
+  const nested = Object.entries(manifest.providers)
+    .filter(([, provider]) => provider.inbound?.verification?.signaturePost)
+    .map(([key]) => key);
+  for (const provider of ['tally', 'whatsapp', 'facebook', 'instagram', 'custom']) {
+    assert.ok(nested.includes(provider), `${provider}: signaturePost must stay nested under verification`);
+  }
+  assert.ok(manifest.providers.whatsapp.inbound.verification.challengeGet, 'Meta challenge must stay nested');
+});
+
 test('every provider has an adapter + every inbound provider a mapper', () => {
   const manifest = JSON.parse(readBackend('src/modules/integrations/manifest.json'));
   const index = readBackend('src/modules/integrations/gateway/index.ts');

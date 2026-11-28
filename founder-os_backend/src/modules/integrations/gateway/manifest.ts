@@ -51,6 +51,10 @@ interface RawVerification extends RawSignature {
   configKey?: string;
   configField?: string;
   optionalIfConfigUnset?: boolean;
+  // The manifest groups these under `inbound.verification`, while the loader
+  // also accepts the flat `inbound.signaturePost`/`challengeGet` shape.
+  signaturePost?: RawSignature;
+  challengeGet?: RawChallenge | boolean;
 }
 
 interface RawChallenge {
@@ -193,9 +197,12 @@ function signatureSpec(sig: RawSignature): VerificationSpec {
 }
 
 function normalizeVerification(inbound: RawInbound): VerificationSpec | undefined {
-  const v: RawVerification | undefined = inbound.verification || (inbound.signaturePost as RawVerification | undefined);
-  if (!v && !inbound.signaturePost) return undefined;
+  // Tally/Meta/custom nest the HMAC spec under `verification.signaturePost`;
+  // flat providers keep it at `inbound.signaturePost`. Both are supported.
+  const nestedSignature = inbound.verification?.signaturePost;
+  if (nestedSignature) return signatureSpec(nestedSignature);
   if (inbound.signaturePost) return signatureSpec(inbound.signaturePost);
+  const v = inbound.verification;
   if (!v) return undefined;
   const type = String(v.type || v.kind || '').toLowerCase();
   if (type === 'optional_header_token' || type === 'header_token') {
@@ -295,7 +302,7 @@ function hydrate(provider: string, p: RawProvider): ProviderManifest {
     allowedDeliveryModes: rawInbound.allowedDeliveryModes,
     quietHoursIst: normalizeQuietHours(rawInbound.quietHoursIst),
     liveEvent: rawInbound.liveEvent || 'integrations',
-    challengeGet: normalizeChallenge(rawInbound.challengeGet),
+    challengeGet: normalizeChallenge(rawInbound.challengeGet || rawInbound.verification?.challengeGet),
     verification: normalizeVerification(rawInbound),
     idempotencyKey: normalizeIdempotency(rawInbound.idempotencyKey),
     fieldMap: rawInbound.fieldMap,
