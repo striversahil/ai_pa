@@ -4,6 +4,7 @@ import { useState, useCallback } from "react";
 import { useLiveQuery } from "@/hooks/useLiveData";
 import { useAuth } from "@/auth/AuthContext";
 import AutoDialerSection from "@/components/telecalling/auto-dialer/AutoDialerSection";
+import CustomerPushSection from "@/components/telecalling/CustomerPushSection";
 import RehomeEstimateSection from "@/components/telecalling/RehomeEstimateSection";
 import SalesHolidaysSection from "@/components/telecalling/SalesHolidaysSection";
 import ClientSegmentSection from "@/components/telecalling/ClientSegmentSection";
@@ -105,6 +106,7 @@ export default function SalesControllerPanel() {
         refreshAll={refreshAll}
       />
       <AutoDialerSection rosterRows={roster.data?.telecallers ?? []} />
+      <CustomerPushSection />
       <RehomeEstimateSection
         busy={busy}
         setBusy={setBusy}

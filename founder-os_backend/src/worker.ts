@@ -58,6 +58,7 @@ import { registerEventsRoute } from './worker/routes/events';
 import { registerAndroidRoutes } from './worker/routes/android';
 import { registerCallLogRoutes } from './worker/routes/call-log';
 import { registerDialerRoutes } from './worker/routes/dialer';
+import { registerCustomerPushRoutes } from './worker/routes/customer-push';
 import { registerFieldStaffRoutes } from './worker/routes/field-staff';
 import { registerIngestRoutes } from './worker/routes/ingest';
 import { registerIntegrationRoutes } from './worker/routes/integrations';
@@ -124,6 +125,7 @@ registerEventsRoute(app);
 registerAndroidRoutes(app);
 registerCallLogRoutes(app);
 registerDialerRoutes(app);
+registerCustomerPushRoutes(app);
 registerFieldStaffRoutes(app);
 // Integration hub: the public webhook door first, then the root-only console.
 registerWebhookRoutes(app);
