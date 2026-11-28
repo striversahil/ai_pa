@@ -14,7 +14,7 @@
 //
 // Quiet hours: Zoho-backed analysis pauses 21:00–09:00 IST (no shop-floor
 // operation then). isOpsWindow() gates, all from the *scheduled* slot time:
-//   - every-10min / every-15min dispatches are skipped (pure Zoho jobs:
+//   - every-15min dispatches are skipped (pure Zoho jobs:
 //     effort-sync + crm + zoho-sent-analyzer)
 //   - every-5min keeps firing (WhatsApp jobs + light triggers — it never
 //     pings Zoho; the Zoho jobs moved to every-15min)
@@ -239,7 +239,7 @@ async function runScheduled(event: { cron?: string; scheduledTime?: number }, en
   bootstrapEnv(env);
   // Gate cadence on the *scheduled* slot time, not execution time — Cloudflare
   // delivers cron events up to ~1-2 min late, and minute-aligned gates would
-  // drift/skip (e.g. the 07:40 slot delivered at 07:41 would skip every-10min).
+  // drift/skip (e.g. the 07:45 slot delivered at 07:46 would skip every-15min).
   const now = new Date(event.scheduledTime ?? Date.now());
   const min = now.getUTCMinutes();
 
@@ -404,8 +404,8 @@ async function runScheduled(event: { cron?: string; scheduledTime?: number }, en
   }
   const due = dueWorkflows(now);
   // Quiet-hours gate (21:00–09:00 IST): pause Zoho-backed analysis.
-  // every-10min and every-15min (effort-sync + crm + zoho-sent-analyzer) are
-  // pure Zoho jobs → skipped whole. every-5min still fires for WhatsApp +
+  // every-15min (effort-sync + crm + zoho-sent-analyzer) is a pure Zoho job
+  // → skipped whole. every-5min still fires for WhatsApp +
   // light triggers (it never pings Zoho — the Zoho jobs moved to every-15min).
   // daily still fires (brief / telecalling / retention read D1).
   const ops = isOpsWindow(now);
