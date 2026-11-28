@@ -228,7 +228,9 @@ export async function updateLookup(kind: LookupKind, id: string, body: Record<st
   return res.json();
 }
 
-export async function archiveLookup(kind: LookupKind, id: string): Promise<HrLookup> {
+// Document requirements are deleted; expense categories + asset types archive
+// (the server decides and says which one happened).
+export async function deleteLookup(kind: LookupKind, id: string): Promise<{ archival: boolean }> {
   const res = await fetch("/api/human-resources/controller/" + kind + "/" + id, { method: "DELETE" });
   if (!res.ok) throw new Error(await readError(res));
   return res.json();

@@ -5,7 +5,7 @@ import type { Hono } from "hono";
 import { notifyLive, LiveEvent, type Bindings } from "../context";
 import { access, actorLabel, errorResponse } from "./hr-route-shared";
 import { readBody } from "../http";
-import { archiveLookup, createLookup, listLookups, updateLookup } from "../../automations/human-resources/lookups";
+import { createLookup, deleteLookup, listLookups, updateLookup } from "../../automations/human-resources/lookups";
 import { isLookupKind } from "../../automations/human-resources/lookups-parse";
 
 export function registerHumanResourcesControllerRoutes(app: Hono<{ Bindings: Bindings }>): void {
@@ -52,7 +52,8 @@ export function registerHumanResourcesControllerRoutes(app: Hono<{ Bindings: Bin
     const kind = c.req.param("kind") ?? "";
     if (!isLookupKind(kind)) return c.json({ error: "unknown controller list" }, 404);
     try {
-      const row = await archiveLookup(kind, c.req.param("id") ?? "", actorLabel(a.me));
+      // Document requirements are deleted for real; the other lists archive.
+      const row = await deleteLookup(kind, c.req.param("id") ?? "", actorLabel(a.me));
       notifyLive(c, { type: LiveEvent.HumanResources });
       return c.json(row);
     } catch (e) { return errorResponse(c, e); }

@@ -65,6 +65,27 @@ export function cleanLookupCreate(kind: LookupKind, input: Record<string, any>):
   return out;
 }
 
+/**
+ * DELETE semantics for one controller list item. A document requirement is
+ * deleted for real (HR retires the checklist item), but never while an
+ * employee file is filed under it — remove the file first (founder rule
+ * 2026-11-28). Expense categories and asset types keep archiving so expenses
+ * and issued assets retain their history.
+ */
+export function lookupDeletionPlan(kind: LookupKind, filedCount: number): { archival: boolean } {
+  if (kind !== "document-types") return { archival: true };
+  const filed = Math.max(0, Math.round(Number(filedCount) || 0));
+  if (filed) {
+    throw new HrError(
+      filed === 1
+        ? "1 employee document is filed under this type — remove it before deleting the requirement"
+        : `${filed} employee documents are filed under this type — remove them before deleting the requirement`,
+      409,
+    );
+  }
+  return { archival: false };
+}
+
 export function cleanLookupPatch(kind: LookupKind, input: Record<string, any>): Partial<LookupCreate> {
   const out: Partial<LookupCreate> = {};
   if (input.name !== undefined) {

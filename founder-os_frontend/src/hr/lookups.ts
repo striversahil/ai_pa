@@ -8,6 +8,8 @@ export interface HrLookup {
   active: boolean;
   description?: string;
   required?: boolean;
+  // Document types only: live employee files filed under this requirement.
+  usageCount?: number;
   defaultSpecs?: string;
 }
 
